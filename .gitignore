@@ -1,0 +1,44 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+share/python-wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+venv/
+
+# Node
+node_modules/
+dist/
+.DS_Store
+
+# IDE
+.vscode/
+.idea/
+
+# Milimo Music Specific
+# Exclude large model files
+heartlib/ckpt/
+heartlib/assets/*.mp3
+heartlib/assets/*.wav
+
+# Temporary/Debug
+debug_instrumental.py
+backend/db.sqlite3
+*.log

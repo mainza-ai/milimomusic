@@ -1,0 +1,10 @@
+__pycache__/
+**.pyc
+checkpoint/
+.DS_Store
+**.wav
+**.mp3
+.vscode/
+**.egg-info/
+build/
+.idea/

@@ -62,17 +62,9 @@ conda activate milimo
 
 **Crucial Step**: You must download the large model weights manually as they are excluded from the repository.
 
-1.  Navigate to the `heartlib` directory:
-    ```bash
-    cd heartlib
-    ```
+**Crucial Step**: You must download the large model weights manually as they are excluded from the repository.
 
-2.  Install the library in editable mode:
-    ```bash
-    pip install -e .
-    ```
-
-3.  **Download Pretrained Models**:
+1.  **Download Pretrained Models**:
     You need to download the checkpoints into the `heartlib/ckpt` directory. You can use Hugging Face or ModelScope.
 
     **Using Hugging Face CLI:**
@@ -101,7 +93,7 @@ conda activate milimo
     cd ../backend
     ```
 
-2.  Install dependencies:
+2.  Install dependencies (this will automatically install `heartlib`):
     ```bash
     pip install -r requirements.txt
     ```

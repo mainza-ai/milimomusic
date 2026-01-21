@@ -3,7 +3,7 @@ import os
 import torch
 import logging
 from typing import Optional
-from backend.app.models import GenerationRequest, Job, JobStatus
+from app.models import GenerationRequest, Job, JobStatus
 from sqlmodel import Session, select
 from heartlib import HeartMuLaGenPipeline
 
@@ -22,7 +22,7 @@ class MusicService:
         return cls._instance
         return cls._instance
 
-    async def initialize(self, model_path: str = "./heartlib/ckpt", version: str = "3B"):
+    async def initialize(self, model_path: str = "../heartlib/ckpt", version: str = "3B"):
         if self.pipeline is not None or self.is_loading:
             return
 
@@ -74,7 +74,7 @@ class MusicService:
             try:
                 # 3. Create unique filename
                 output_filename = f"song_{job_id}.mp3"
-                save_path = os.path.abspath(f"backend/generated_audio/{output_filename}")
+                save_path = os.path.abspath(f"generated_audio/{output_filename}")
                 
                 # Create Cancellation Event
                 import threading
@@ -82,7 +82,7 @@ class MusicService:
                 self.active_jobs[job_id] = abort_event
                 
                 # 4. Generate Auto-Title (Robust)
-                from backend.app.services.llm_service import LLMService
+                from app.services.llm_service import LLMService
                 
                 # Use lyrics for context if available, otherwise prompt
                 context_source = request.lyrics if request.lyrics and len(request.lyrics) > 10 else request.prompt
@@ -149,7 +149,7 @@ class MusicService:
                     history_tokens = None
                     if request.parent_job_id:
                         try:
-                            parent_token_path = os.path.join(os.getcwd(), "backend", "generated_tokens", f"{request.parent_job_id}.pt")
+                            parent_token_path = os.path.join(os.getcwd(), "generated_tokens", f"{request.parent_job_id}.pt")
                             if os.path.exists(parent_token_path):
                                 logger.info(f"Loading history tokens from {parent_token_path}")
                                 history_tokens = torch.load(parent_token_path, map_location=self.device)
@@ -191,7 +191,7 @@ class MusicService:
                         # Save tokens if returned (Phase 9)
                         if "tokens" in output and output["tokens"] is not None:
                             try:
-                                tokens_dir = os.path.join(os.getcwd(), "backend", "generated_tokens")
+                                tokens_dir = os.path.join(os.getcwd(), "generated_tokens")
                                 os.makedirs(tokens_dir, exist_ok=True)
                                 token_path = os.path.join(tokens_dir, f"{job_id}.pt")
                                 torch.save(output["tokens"], token_path)

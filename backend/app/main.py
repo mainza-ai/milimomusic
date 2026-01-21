@@ -8,12 +8,12 @@ from sqlmodel import SQLModel, Session, create_engine, select
 from typing import List
 from uuid import UUID
 
-from backend.app.models import Job, JobStatus, GenerationRequest, LyricsRequest, EnhancePromptRequest, InspirationRequest
-from backend.app.services.music_service import music_service
-from backend.app.services.llm_service import LLMService
+from app.models import Job, JobStatus, GenerationRequest, LyricsRequest, EnhancePromptRequest, InspirationRequest
+from app.services.music_service import music_service
+from app.services.llm_service import LLMService
 
 # Database
-sqlite_file_name = "backend/jobs.db"
+sqlite_file_name = "jobs.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
 engine = create_engine(sqlite_url)
 
@@ -45,7 +45,7 @@ app.add_middleware(
 )
 
 # Static Files (Audio Serving)
-app.mount("/audio", StaticFiles(directory="backend/generated_audio"), name="audio")
+app.mount("/audio", StaticFiles(directory="generated_audio"), name="audio")
 
 # --- Routes ---
 
@@ -150,7 +150,7 @@ def download_track(job_id: UUID):
             
         # audio_path is "/audio/filename.mp3" -> "backend/generated_audio/filename.mp3"
         filename = job.audio_path.replace("/audio/", "")
-        file_path = f"backend/generated_audio/{filename}"
+        file_path = f"generated_audio/{filename}"
         
         # Sanitize Title for Filename
         import re
@@ -172,7 +172,7 @@ def delete_job(job_id: UUID):
             # audio_path is like "/audio/filename.mp3"
             # We need to map it back to "backend/generated_audio/filename.mp3"
             filename = job.audio_path.replace("/audio/", "")
-            file_path = f"backend/generated_audio/{filename}"
+            file_path = f"generated_audio/{filename}"
             import os
             if os.path.exists(file_path):
                 try:
@@ -203,7 +203,7 @@ def cancel_job(job_id: UUID):
     raise HTTPException(status_code=400, detail="Job not active or already completed")
 
 from fastapi.responses import StreamingResponse
-from backend.app.services.music_service import event_manager
+from app.services.music_service import event_manager
 
 @app.get("/events")
 async def events():

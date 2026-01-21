@@ -21,7 +21,7 @@ Milimo Music integrates state-of-the-art AI models to provide a seamless music c
 
 1.  **Text-to-Music Generation**: Create full 48kHz stereo tracks by simply describing a mood and style.
 2.  **Lyrics-Conditioned Synthesis**: The model aligns generated audio with provided lyrics, respecting prosody and structure.
-3.  **Track Extension**: Continue generating from where a previous track left off, allowing for the creation of longer compositions segment by segment.
+3.  **[Track Extension](https://youtu.be/Yppfm86lgk0)**: Continue generating from where a previous track left off, allowing for the creation of longer compositions segment by segment.
 4.  **Real-Time Progress**: Server-Sent Events (SSE) provide live feedback on the generation steps, from token inference to decoding.
 5.  **Smart History**: Automatically saves all generated tracks, lyrics, and metadata (seed, cfg, temperature) for easy retrieval and playback.
 

@@ -51,11 +51,11 @@ conda activate milimo
 1.  Download and install [Ollama](https://ollama.com/) for your operating system.
 2.  Pull a compatible model (e.g., Llama 3.2):
     ```bash
-    ollama pull llama3.2
+    ollama pull llama3.2:3b-instruct-fp16
     ```
 3.  Ensure Ollama is running in the background:
     ```bash
-    ollama run llama3.2
+    ollama run llama3.2:3b-instruct-fp16
     ```
 
 ### 3. HeartLib & Model Weights

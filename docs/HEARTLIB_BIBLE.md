@@ -142,26 +142,7 @@ np.random.seed(seed)
 
 ## 5. Advanced Generation Techniques
 
-### 5.1 Instrumental Mode (The "Square Bracket" Rule)
-Generating instrumental tracks via LLMs can be tricky. If you pass empty lyrics, the model sees `[BOS][EOS]` and stops immediately (~4s audio). If you use `(Instrumental)`, it tries to "sing" the word as backing vocals.
-
-**Best Practice:**
-Inject a "Ghost Structure" using **square brackets** `[]`. Square brackets are standard for "unsung metadata" in lyric datasets.
-
-```python
-# Backend Logic
-if instrumental_mode:
-    lyrics = (
-        "[Intro]\n[Instrumental]\n\n"
-        "[Verse]\n[Instrumental]\n\n"
-        "[Chorus]\n[Instrumental]\n\n"
-        "[Outro]\n[Instrumental]"
-    )
-    # Also force the tag
-    tags += ", Instrumental"
-```
-
-### 5.2 Infinite Extension (Context Injection)
+### 5.1 Infinite Extension (Context Injection)
 Heartlib allows continuing a song indefinitely.
 1.  **Save Tokens**: After Generation A, save `output["tokens"]` (Tensor `[1, seq_len, 9]`).
 2.  **Load Tokens**: Load this tensor for Generation B.
@@ -172,7 +153,7 @@ Heartlib allows continuing a song indefinitely.
 output = pipeline(..., history_tokens=previous_tokens)
 ```
 
-### 5.3 Auto-Titling
+### 5.2 Auto-Titling
 Heartlib does not generate titles. Use a strictly text-based LLM (like Llama 3 8B or GPT-4) to summarize the lyrics/prompt into a title *before* starting generation.
 
 ---
@@ -181,40 +162,15 @@ Heartlib does not generate titles. Use a strictly text-based LLM (like Llama 3 8
 
 | Symptom | Cause | Solution |
 | :--- | :--- | :--- |
-| **Audio is ~4 seconds of noise/silence** | Model collapse due to empty lyrics input. | **Do not** send empty strings. Use the "Instrumental Mode" structure described in Section 5.1. |
-| **Model sings "Instrumental" repeatedly** | Lyrics contained `(Instrumental)` in parentheses. | Change to `[Instrumental]` (square brackets). Parentheses denote backing vocals; Brackets denote metadata. |
 | **"NotImplementedError: The operator 'aten::conv1d'..."** | MPS (Mac) missing backend support for specific op. | Set `os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"`. |
 | **FastAPI server hangs during generation** | Pipeline running on main thread. | Wrap pipeline call in `await loop.run_in_executor(...)`. |
 | **Generation continues after client disconnect** | No cancellation logic connected. | Implement `abort_event` passing and trigger it on disconnect/API call. |
 
 ---
 
-## 7. Deep Dive: Internals & Findings
+## 7. Internal Mechanics & Secrets
 
-### 7.1 The "Instrumental" Paradox
-Our deep audit of the codebase (`music_generation.py`, `modeling_heartmula.py`) and tokenizer (`tokenizer.json`) reveals a critical architectural detail:
-**Heartlib has no native "Instrumental Mode".**
-
-*   **The Cause**: The model is trained to align audio tokens with text tokens (lyrics).
-*   **The Symptom**: When you provide structure markers like `[Instrumental]` as lyrics, the tokenizer splits them into subwords (`[`, `Instrument`, `al`, `]`). The model, desperate to align audio to *something*, "sings" these brackets, resulting in the "Fake Language" or gibberish vocals phenomenon.
-*   **The Logic Gap**: Standard generation stops immediately on `EOS` if no lyrics are provided (yielding ~4s audio).
-
-### 7.2 Vocabulary Secrets
-Inspection of `heartlib/ckpt/tokenizer.json` reveals:
-*   **Token 42045**: `Ġinstrumental` (Space + instrumental). This confirms "Instrumental" is a valid **Style Tag** that the model recognizes.
-*   **No Silence Token**: There is no specific token for "silent audio" or "no vocals" in the text vocabulary.
-
-### 7.3 The "EOS Suppression" Workaround
-To achieve true instrumental generation without vocal hallucinations, one must:
-1.  **Provide NO Lyrics** (Empty string).
-2.  **Force Generation**: Modify the generation loop to **ignore** the `audio_eos_id` prediction that usually occurs after 4 seconds.
-3.  **Rely on Style**: Let the `Ġinstrumental` style tag drive the autoregression indefinitely.
-
-*(Note: This requires patching `music_generation.py` or overriding the loop in your service).*
-
-## 8. Internal Mechanics & Secrets
-
-### 8.1 The Tokenizer (`tokenizer.json`)
+### 7.1 The Tokenizer (`tokenizer.json`)
 *   **Base**: Standard Llama 3 tokenizer.
 *   **Special Audio Tokens**:
     *   `audio_eos_id`: **8193** (The "Stop Generating" signal).
@@ -225,7 +181,7 @@ To achieve true instrumental generation without vocal hallucinations, one must:
     *   The model recognizes BPE-merged style words.
     *   Example: `Ġinstrumental` (ID **42045**) is a distinct token, validating its use in tags.
 
-### 8.2 The Generation Loop (`music_generation.py`)
+### 7.2 The Generation Loop (`music_generation.py`)
 *   **Mechanism**: Frame-by-frame autoregressive generation.
 *   **Latency**: Approx. 80 frames per second of audio (variable).
 *   **Context Injection**:
@@ -233,14 +189,14 @@ To achieve true instrumental generation without vocal hallucinations, one must:
     *   `muq_embed` vectors guide the continuous generation.
 *   **Stopping Condition**:
     *   The loop breaks if **ANY** parallel codebook token in the first frame predicts `audio_eos_id` (>= 8193).
-    *   *Critical Bug*: For instrumental tracks (no lyrics), the model predicts EOS extremely early (~4 seconds) because it has "run out of text" to align with.
 
-### 8.3 Context Extension Logic
+
+### 7.3 Context Extension Logic
 *   **History Tokens**: To extend a track, previous audio tokens are fed back into the model to warm up the Key-Value (KV) cache.
 *   **Pattern**: `[History Tokens] -> [Model] -> [New Tokens]`.
 *   **Implementation Note**: The history must be properly batched and match the `cfg_scale` dimensions (tiled if `cfg_scale > 1.0`).
 
-## 9. API Reference (`HeartMuLaGenPipeline`)
+## 8. API Reference (`HeartMuLaGenPipeline`)
 
 **`__call__` Parameters:**
 

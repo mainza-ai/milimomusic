@@ -42,5 +42,6 @@ backend/generated_tokens/
 
 # Temporary/Debug
 debug_instrumental.py
+backend/jobs.db
 backend/db.sqlite3
 *.log

@@ -126,3 +126,19 @@ conda activate milimo
 
 **Mainza Kangombe**  
 [LinkedIn Profile](https://www.linkedin.com/in/mainza-kangombe-6214295)
+
+## Troubleshooting
+
+### Windows: TorchCodec / FFmpeg Errors
+If you start the backend and see an error like:
+`Could not load libtorchcodec. Likely causes: FFmpeg is not properly installed...`
+
+This is because `torchcodec` requires FFmpeg shared libraries (.dll files) which are inconsistent on Windows.
+
+**Solution:**
+If you are using Conda (recommended), install FFmpeg from conda-forge:
+```bash
+conda install -c conda-forge ffmpeg
+```
+
+If you are not using Conda, you must download the **"Full Shared"** build of FFmpeg (e.g., from [gyan.dev](https://www.gyan.dev/ffmpeg/builds/)) and add the `bin` folder to your System PATH manually.

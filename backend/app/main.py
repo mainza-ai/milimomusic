@@ -45,6 +45,8 @@ app.add_middleware(
 )
 
 # Static Files (Audio Serving)
+import os
+os.makedirs("generated_audio", exist_ok=True)
 app.mount("/audio", StaticFiles(directory="generated_audio"), name="audio")
 
 # --- Routes ---

@@ -55,7 +55,7 @@ conda activate milimo
     ```
 3.  Ensure Ollama is running in the background:
     ```bash
-    ollama run llama2.3
+    ollama run llama3.2
     ```
 
 ### 3. HeartLib & Model Weights

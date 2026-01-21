@@ -215,6 +215,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                             MILIMO MUSIC
                         </h2>
                         <span className="text-[10px] font-mono text-cyan-600 uppercase tracking-widest bg-cyan-50 px-1.5 py-0.5 rounded-full border border-cyan-100/50 inline-block mt-1">v3.0</span>
+                        <div className="text-[9px] font-mono text-slate-400 mt-0.5">Powered by Ollama & HeartMuLa</div>
                     </div>
                 </div>
 

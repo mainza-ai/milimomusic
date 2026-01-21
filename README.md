@@ -1,16 +1,52 @@
 # Milimo Music
 
-A music generation application powered by HeartMuLa models.
+A music generation application powered by Ollama & HeartMuLa models.
+
+![Milimo Music Interface](assets/milimomusic.png)
+
+## Features & Architecture Deep Dive
+
+### Core Technology
+Milimo Music integrates state-of-the-art AI models to provide a seamless music creation experience.
+
+-   **HeartMuLa-3B Model**: The heart of the audio generation engine. HeartMuLa (Hear the Music Language) is a 3B parameter transformer model capable of generating high-fidelity music conditioned on lyrics and stylistic tags.
+-   **Audio Codec**: Uses `HeartCodec` (12.5 Hz) for efficient and high-quality audio reconstruction.
+-   **Ollama Integration**: Leverages local LLMs (like Llama 3) for:
+    -   **Lyrics Generation**: Automatically writes structured lyrics (Verse, Chorus, Bridge) based on a topic.
+    -   **Prompt Enhancement**: Expands simple concepts into detailed musical descriptors.
+    -   **Auto-Titling**: Generates creative titles based on the song content.
+    -   **Inspiration Mode**: Brainstorms unique song concepts and style combinations for you.
+
+### Key Capabilities
+
+1.  **Text-to-Music Generation**: Create full 48kHz stereo tracks by simply describing a mood and style.
+2.  **Lyrics-Conditioned Synthesis**: The model aligns generated audio with provided lyrics, respecting prosody and structure.
+3.  **Track Extension**: Continue generating from where a previous track left off, allowing for the creation of longer compositions segment by segment.
+4.  **Real-Time Progress**: Server-Sent Events (SSE) provide live feedback on the generation steps, from token inference to decoding.
+5.  **Smart History**: Automatically saves all generated tracks, lyrics, and metadata (seed, cfg, temperature) for easy retrieval and playback.
 
 ## Prerequisites
 
 - Python 3.10+
 - Node.js 18+
 - npm or yarn
+- **Ollama** (Required for lyrics generation)
 
 ## Setup Instructions
 
-### 1. HeartLib & Model Weights
+### 1. Ollama Setup (Required)
+
+1.  Download and install [Ollama](https://ollama.com/) for your operating system.
+2.  Pull a compatible model (e.g., Llama 3):
+    ```bash
+    ollama pull llama3
+    ```
+3.  Ensure Ollama is running in the background:
+    ```bash
+    ollama serve
+    ```
+
+### 2. HeartLib & Model Weights
 
 **Crucial Step**: You must download the large model weights manually as they are excluded from the repository.
 
@@ -46,7 +82,7 @@ A music generation application powered by HeartMuLa models.
     └── tokenizer.json
     ```
 
-### 2. Backend
+### 3. Backend
 
 1.  Navigate to the `backend` directory:
     ```bash
@@ -64,7 +100,7 @@ A music generation application powered by HeartMuLa models.
     ```
     The backend will start at `http://localhost:8000`.
 
-### 3. Frontend
+### 4. Frontend
 
 1.  Navigate to the `frontend` directory:
     ```bash

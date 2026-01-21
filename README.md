@@ -27,6 +27,7 @@ Milimo Music integrates state-of-the-art AI models to provide a seamless music c
 
 ## Prerequisites
 
+- **Conda** (Anaconda or Miniconda)
 - Python 3.10+
 - Node.js 18+
 - npm or yarn
@@ -34,7 +35,16 @@ Milimo Music integrates state-of-the-art AI models to provide a seamless music c
 
 ## Setup Instructions
 
-### 1. Ollama Setup (Required)
+### 1. Environment Setup
+
+It is highly recommended to use a Conda environment to manage dependencies.
+
+```bash
+conda create -n milimo python=3.12
+conda activate milimo
+```
+
+### 2. Ollama Setup (Required)
 
 1.  Download and install [Ollama](https://ollama.com/) for your operating system.
 2.  Pull a compatible model (e.g., Llama 3):
@@ -46,7 +56,7 @@ Milimo Music integrates state-of-the-art AI models to provide a seamless music c
     ollama serve
     ```
 
-### 2. HeartLib & Model Weights
+### 3. HeartLib & Model Weights
 
 **Crucial Step**: You must download the large model weights manually as they are excluded from the repository.
 
@@ -82,7 +92,7 @@ Milimo Music integrates state-of-the-art AI models to provide a seamless music c
     └── tokenizer.json
     ```
 
-### 3. Backend
+### 4. Backend
 
 1.  Navigate to the `backend` directory:
     ```bash
@@ -100,7 +110,7 @@ Milimo Music integrates state-of-the-art AI models to provide a seamless music c
     ```
     The backend will start at `http://localhost:8000`.
 
-### 4. Frontend
+### 5. Frontend
 
 1.  Navigate to the `frontend` directory:
     ```bash

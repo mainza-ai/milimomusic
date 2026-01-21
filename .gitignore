@@ -37,6 +37,8 @@ dist/
 heartlib/ckpt/
 heartlib/assets/*.mp3
 heartlib/assets/*.wav
+backend/generated_audio/
+backend/generated_tokens/
 
 # Temporary/Debug
 debug_instrumental.py

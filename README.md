@@ -23,7 +23,7 @@ Milimo Music integrates state-of-the-art AI models to provide a seamless music c
 2.  **Lyrics-Conditioned Synthesis**: The model aligns generated audio with provided lyrics, respecting prosody and structure.
 3.  **Track Extension**: Continue generating from where a previous track left off, allowing for the creation of longer compositions segment by segment.
     <br>
-    [![Track Extension Demo](https://img.youtube.com/vi/Yppfm86lgk0/0.jpg)](https://youtu.be/Yppfm86lgk0)
+    <iframe width="560" height="315" src="https://www.youtube.com/embed/Yppfm86lgk0?si=sPAl-2XWETrXfop3" title="YouTube video player" frameborder="0" allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; web-share" referrerpolicy="strict-origin-when-cross-origin" allowfullscreen></iframe>
 4.  **Real-Time Progress**: Server-Sent Events (SSE) provide live feedback on the generation steps, from token inference to decoding.
 5.  **Smart History**: Automatically saves all generated tracks, lyrics, and metadata (seed, cfg, temperature) for easy retrieval and playback.
 

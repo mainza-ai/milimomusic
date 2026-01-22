@@ -174,7 +174,11 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                         value={localSearch}
                         onChange={handleSearchInput}
                         onKeyDown={handleSearchSubmit}
-                        onBlur={() => onSearch(localSearch)} // Auto-search on blur too for convenience
+                        onBlur={() => {
+                            if (localSearch.trim() !== searchQuery.trim()) {
+                                onSearch(localSearch);
+                            }
+                        }}
                         placeholder="Search tracks... (Press Enter)"
                         className="w-full pl-9 pr-4 py-2 bg-white border border-slate-200 rounded-sm text-sm focus:outline-none focus:border-cyan-400 focus:ring-1 focus:ring-cyan-400/20 transition-all font-mono placeholder:text-slate-300 text-slate-700"
                     />

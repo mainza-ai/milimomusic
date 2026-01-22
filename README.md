@@ -50,7 +50,7 @@ conda create -n milimo python=3.12
 conda activate milimo
 ```
 
-### 2. Ollama Setup (Not Required if using other LLM providers)
+### 2. Ollama Setup
 
 1.  Download and install [Ollama](https://ollama.com/) for your operating system.
 2.  Pull a compatible model (e.g., Llama 3.2):

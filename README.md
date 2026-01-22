@@ -1,6 +1,6 @@
 # Milimo Music
 
-A music generation application powered by Ollama & HeartMuLa models.
+A music generation application powered by HeartMuLa models.
 
 ![Milimo Music Interface](assets/milimomusic.png)
 

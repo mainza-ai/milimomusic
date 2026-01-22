@@ -66,7 +66,7 @@ class OllamaProvider(LLMProvider):
                     "stream": False,
                     "options": kwargs.get("options", {})
                 },
-                timeout=kwargs.get("timeout", 30)
+                timeout=kwargs.get("timeout", 60)
             )
             if resp.status_code == 200:
                 return resp.json().get("response", "")

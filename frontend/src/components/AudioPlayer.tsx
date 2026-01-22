@@ -101,10 +101,35 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         }
     }, [audioUrl]);
 
+    // Handle Global Pause Event
+    useEffect(() => {
+        const handleGlobalPlay = (e: CustomEvent) => {
+            // If another player starts (id !== my id), pause myself
+            if (e.detail.id !== jobId && isPlaying) {
+                if (wavesurfer.current) {
+                    wavesurfer.current.pause();
+                    setIsPlaying(false);
+                }
+            }
+        };
+
+        window.addEventListener('milimo_play_start' as any, handleGlobalPlay as any);
+        return () => {
+            window.removeEventListener('milimo_play_start' as any, handleGlobalPlay as any);
+        };
+    }, [jobId, isPlaying]);
+
     const togglePlay = () => {
         if (wavesurfer.current) {
             wavesurfer.current.playPause();
-            setIsPlaying(!isPlaying);
+            const newIsPlaying = !isPlaying;
+            setIsPlaying(newIsPlaying);
+
+            if (newIsPlaying) {
+                // Broadcast I am playing
+                const event = new CustomEvent('milimo_play_start', { detail: { id: jobId } });
+                window.dispatchEvent(event);
+            }
         }
     };
 

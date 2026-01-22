@@ -74,6 +74,26 @@ function App() {
     loadHistory(0, newStatus, searchQuery, true);
   };
 
+  const handleToggleFavorite = (jobId: string) => {
+    // 1. Optimistic Update
+    setHistory(prevHistory =>
+      prevHistory.map(job =>
+        job.id === jobId ? { ...job, is_favorite: !job.is_favorite } : job
+      )
+    );
+
+    // 2. Background API Call
+    api.toggleFavorite(jobId).catch(err => {
+      console.error("Failed to toggle favorite", err);
+      // Revert on failure
+      setHistory(prevHistory =>
+        prevHistory.map(job =>
+          job.id === jobId ? { ...job, is_favorite: !job.is_favorite } : job
+        )
+      );
+    });
+  };
+
   const handleSearch = (query: string) => {
     setSearchQuery(query);
     setHistoryOffset(0);
@@ -212,6 +232,7 @@ function App() {
           onSearch={handleSearch}
           searchQuery={searchQuery}
           isLoadingMore={isLoadingHistory}
+          onToggleFavorite={handleToggleFavorite}
         />
       </main>
 

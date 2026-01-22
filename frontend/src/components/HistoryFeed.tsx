@@ -16,6 +16,7 @@ interface HistoryFeedProps {
     onSearch: (query: string) => void;
     searchQuery: string;
     isLoadingMore?: boolean;
+    onToggleFavorite: (id: string) => void;
 }
 
 export const HistoryFeed: React.FC<HistoryFeedProps> = ({
@@ -29,7 +30,8 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
     currentFilter,
     onSearch,
     searchQuery,
-    isLoadingMore
+    isLoadingMore,
+    onToggleFavorite
 }) => {
     const scrollRef = useRef<HTMLDivElement>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -272,9 +274,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                             <button
                                                                 onClick={(e) => {
                                                                     e.stopPropagation();
-                                                                    api.toggleFavorite(job.id).then(() => {
-                                                                        onRefresh();
-                                                                    });
+                                                                    onToggleFavorite(job.id);
                                                                 }}
                                                                 className={`p-1 rounded-sm transition-colors ${job.is_favorite
                                                                     ? "text-rose-500 hover:bg-rose-50"

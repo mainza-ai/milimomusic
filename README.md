@@ -4,6 +4,8 @@ A music generation application powered by HeartMuLa models.
 
 ![Milimo Music Interface](assets/milimomusic.png)
 
+### [🎵 Listen to a Sample Track generated with Milimo Music](https://www.youtube.com/watch?v=psmoiW1f6-I)
+
 ## Features & Architecture Deep Dive
 
 ### Core Technology

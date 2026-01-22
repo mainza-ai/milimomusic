@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api, type Job } from '../api';
 import { AudioPlayer } from './AudioPlayer';
-import { Music, AlertCircle, Disc, Edit2, Check, Trash2, ArrowRightCircle, Search, Calendar } from 'lucide-react';
+import { Music, AlertCircle, Disc, Edit2, Check, Trash2, ArrowRightCircle, Search, Calendar, Heart } from 'lucide-react';
 
 interface HistoryFeedProps {
     history: Job[];
@@ -139,7 +139,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                     </div>
                     {/* Status Filters */}
                     <div className="flex bg-slate-100/50 p-1 rounded-sm gap-1">
-                        {['all', 'completed', 'failed'].map(status => (
+                        {['all', 'favorites', 'completed', 'failed'].map(status => (
                             <button
                                 key={status}
                                 onClick={() => onFilterChange(status)}
@@ -257,6 +257,23 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                     {/* Status Badge */}
                                                     <div className="text-right flex flex-col items-end gap-1">
                                                         <div className="flex items-center gap-2">
+                                                            {/* Favorite Button */}
+                                                            <button
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    api.toggleFavorite(job.id).then(() => {
+                                                                        onRefresh();
+                                                                    });
+                                                                }}
+                                                                className={`p-1 rounded-sm transition-colors ${job.is_favorite
+                                                                        ? "text-rose-500 hover:bg-rose-50"
+                                                                        : "text-slate-300 hover:text-rose-500 hover:bg-rose-50"
+                                                                    }`}
+                                                                title={job.is_favorite ? "Remove from favorites" : "Add to favorites"}
+                                                            >
+                                                                <Heart className={`w-3.5 h-3.5 ${job.is_favorite ? "fill-current" : ""}`} />
+                                                            </button>
+
                                                             <span className={`inline-flex items-center px-1.5 py-0.5 rounded-sm text-[9px] font-mono font-bold uppercase tracking-wide border ${job.status === 'completed' ? 'bg-teal-50 text-teal-700 border-teal-200' :
                                                                 job.status === 'failed' ? 'bg-rose-50 text-rose-700 border-rose-200' :
                                                                     'bg-amber-50 text-amber-700 border-amber-200'

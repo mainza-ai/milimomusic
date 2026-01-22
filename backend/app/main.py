@@ -191,11 +191,13 @@ def get_history(limit: int = 50, offset: int = 0, status: Optional[str] = None, 
         query = select(Job).order_by(Job.created_at.desc())
         
         if status and status != 'all':
-            query = query.where(Job.status == status)
+            if status == 'favorites':
+                query = query.where(Job.is_favorite == True)
+            else:
+                query = query.where(Job.status == status)
             
         if search:
             # Case insensitive search usually requires ilike in Postgres, but SQLite uses LIKE which is case-insensitive by default for ASCII.
-            # safe lower-casing for robustness if desired, but .contains is simplest first step.
             query = query.where(or_(
                 Job.title.contains(search), 
                 Job.prompt.contains(search), 
@@ -204,6 +206,20 @@ def get_history(limit: int = 50, offset: int = 0, status: Optional[str] = None, 
             
         jobs = session.exec(query.offset(offset).limit(limit)).all()
         return jobs
+
+@app.post("/jobs/{job_id}/favorite", response_model=Job)
+def toggle_favorite(job_id: UUID):
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        
+        # Toggle
+        job.is_favorite = not job.is_favorite
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        return job
 
 @app.patch("/jobs/{job_id}", response_model=Job)
 def rename_job(job_id: UUID, upgrade: dict):

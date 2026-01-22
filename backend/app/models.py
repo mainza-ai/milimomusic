@@ -22,6 +22,7 @@ class Job(SQLModel, table=True):
     duration_ms: int = 240000
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_msg: Optional[str] = None
+    is_favorite: bool = Field(default=False)
 
 class GenerationRequest(SQLModel):
     model_config = {"protected_namespaces": ()}

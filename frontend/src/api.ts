@@ -14,9 +14,15 @@ export interface Job {
     created_at: string;
     duration_ms?: number;
     seed?: number; // Added field
+    is_favorite?: boolean;
 }
 
 export const api = {
+    toggleFavorite: async (jobId: string) => {
+        const res = await axios.post(`${API_BASE_URL}/jobs/${jobId}/favorite`);
+        return res.data;
+    },
+
     checkHealth: async () => {
         const res = await axios.get(`${API_BASE_URL}/health`);
         return res.data;

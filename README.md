@@ -20,6 +20,7 @@ Milimo Music integrates state-of-the-art AI models to provide a seamless music c
 ### Key Capabilities
 
 1.  **Text-to-Music Generation**: Create full 48kHz stereo tracks by simply describing a mood and style.
+    > **Note**: Music style integration is currently in beta and under active development. You may experience inconsistent style adherence in the current version.
 2.  **Lyrics-Conditioned Synthesis**: The model aligns generated audio with provided lyrics, respecting prosody and structure.
 3.  **Track Extension**: Continue generating from where a previous track left off, allowing for the creation of longer compositions segment by segment.
     <br>

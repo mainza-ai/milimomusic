@@ -1,4 +1,5 @@
 import React, { useEffect, useRef } from 'react';
+import { getAudioContext } from '../../utils/audioContext';
 
 interface AudioVisualizerProps {
     mediaElement: HTMLMediaElement | null;
@@ -6,6 +7,9 @@ interface AudioVisualizerProps {
     className?: string;
     barColor?: string;
 }
+
+// Cache source nodes to prevent "can only be connected once" errors
+const sourceCache = new WeakMap<HTMLMediaElement, MediaElementAudioSourceNode>();
 
 export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
     mediaElement,
@@ -15,52 +19,51 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
 }) => {
     const canvasRef = useRef<HTMLCanvasElement>(null);
     const contextRef = useRef<AudioContext | null>(null);
-    const sourceRef = useRef<MediaElementAudioSourceNode | null>(null);
     const analyserRef = useRef<AnalyserNode | null>(null);
     const animationRef = useRef<number | undefined>(undefined);
 
     useEffect(() => {
         if (!mediaElement) return;
 
-        // Initialize Audio Context (singleton-ish behavior needed usually, but scoped here is okay if handled carefully)
-        if (!contextRef.current) {
-            const AudioContextClass = (window.AudioContext || (window as any).webkitAudioContext);
-            contextRef.current = new AudioContextClass();
-            analyserRef.current = contextRef.current.createAnalyser();
-            analyserRef.current.fftSize = 256; // Tradeoff: resolution vs smooth bars. 256 = 128 bins.
+        // Use Singleton Context
+        const ctx = getAudioContext();
+        contextRef.current = ctx;
 
-            // Connect nodes
-            try {
-                // IMPORTANT: MediaElementSource can only be created once per element. 
-                // In React strict mode or re-renders, this might fail if not checked.
-                // However, since we re-use the same element from WaveSurfer, it should be persistent?
-                // Actually WaveSurfer might re-create it. We need to be careful.
-                // For now, we wrap in try-catch or check if we already have a source map (not easy).
-                // A better approach is usually to let WaveSurfer handle the audio graph, but WaveSurfer 7 is simpler.
+        // Create or Retrieve Source Node
+        let source: MediaElementAudioSourceNode;
+        if (sourceCache.has(mediaElement)) {
+            source = sourceCache.get(mediaElement)!;
+        } else {
+            source = ctx.createMediaElementSource(mediaElement);
+            sourceCache.set(mediaElement, source);
+        }
 
-                // Hack: We only create source if we haven't linked this exact element before?
-                // Or just try.
-                if (contextRef.current) {
-                    sourceRef.current = contextRef.current.createMediaElementSource(mediaElement);
-                    if (analyserRef.current) {
-                        sourceRef.current.connect(analyserRef.current);
-                        analyserRef.current.connect(contextRef.current.destination);
-                    }
-                }
-            } catch (e) {
-                // If source already connected, we might need to skip source creation?
-                // But we can't easily tap into an existing graph without the node reference.
-                // Assuming AudioPlayer unmounts cleans this up?
-                console.warn("Visualizer connection issue (likely strict mode re-mount):", e);
-            }
+        // Create Analyser (one per visualizer instance is fine, but cleaner to share? No, instance is visualizer)
+        // Analyser needs to be created on the SAME context
+        const analyser = ctx.createAnalyser();
+        analyser.fftSize = 256;
+        analyserRef.current = analyser;
+
+        // Connect: Source -> Analyser -> Destination
+        // We must be careful not to create multiple connections from the same source?
+        // Source node fan-out is allowed. 
+        try {
+            source.connect(analyser);
+            analyser.connect(ctx.destination);
+        } catch (e) {
+            console.warn("Visualizer connection error (ignoring already connected warning):", e);
         }
 
         return () => {
-            // Cleanup context? 
-            // If we close context, the media stops playing. AudioContext controls the hardware.
-            // So we generally DON'T close the context if we want audio to persist, 
-            // BUT this component is part of the player.
-            // Let's just cancel animation.
+            // Cleanup: Disconnect this analyser from the source to prevent graph buildup
+            // We CANNOT close the context (shared).
+            // We CAN disconnect the analyser.
+            try {
+                if (source) source.disconnect(analyser);
+                if (analyser) analyser.disconnect();
+            } catch (e) {
+                // Ignore disconnect errors
+            }
             if (animationRef.current) cancelAnimationFrame(animationRef.current);
         };
     }, [mediaElement]);
@@ -122,7 +125,7 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
 
     useEffect(() => {
         if (isPlaying) {
-            // Resume context if needed (browsers auto-suspend)
+            // Resume shared context if suspended
             if (contextRef.current?.state === 'suspended') {
                 contextRef.current.resume();
             }
@@ -140,7 +143,7 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
             ref={canvasRef}
             width={300}
             height={60}
-            className={`${className}`}
+            className={`${className} `}
         />
     );
 };

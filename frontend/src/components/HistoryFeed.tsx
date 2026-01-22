@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { api, type Job } from '../api';
 import { AudioPlayer } from './AudioPlayer';
-import { Music, AlertCircle, Disc, Edit2, Check, Trash2, ArrowRightCircle, Search, Calendar, Heart } from 'lucide-react';
+import { Music, AlertCircle, Disc, Edit2, Check, Trash2, ArrowRightCircle, Search, Calendar, Heart, Copy } from 'lucide-react';
 
 interface HistoryFeedProps {
     history: Job[];
@@ -38,6 +38,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
     const [tempTitle, setTempTitle] = useState("");
     const [progress, setProgress] = useState(0);
     const [expandedLyrics, setExpandedLyrics] = useState<Set<string>>(new Set());
+    const [copiedId, setCopiedId] = useState<string | null>(null);
 
     const toggleLyrics = (id: string) => {
         const newSet = new Set(expandedLyrics);
@@ -47,6 +48,13 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
             newSet.add(id);
         }
         setExpandedLyrics(newSet);
+    };
+
+    const handleCopy = (id: string, text: string) => {
+        navigator.clipboard.writeText(text).then(() => {
+            setCopiedId(id);
+            setTimeout(() => setCopiedId(null), 2000);
+        });
     };
 
     // Real-time Progress (SSE)
@@ -353,7 +361,21 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                             }}
                                                             className="text-[10px] bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-cyan-600 px-2 py-1 rounded-sm w-full text-left flex items-center justify-between transition-colors font-mono"
                                                         >
-                                                            <span>Lyrics Data</span>
+                                                            <div className="flex items-center gap-2">
+                                                                <span>Lyrics Data</span>
+                                                                {/* Copy Button */}
+                                                                <div
+                                                                    role="button"
+                                                                    onClick={(e) => {
+                                                                        e.stopPropagation();
+                                                                        if (job.lyrics) handleCopy(job.id, job.lyrics);
+                                                                    }}
+                                                                    className="p-1 hover:bg-slate-200 rounded-sm text-slate-400 hover:text-cyan-600 transition-colors"
+                                                                    title="Copy Lyrics"
+                                                                >
+                                                                    {copiedId === job.id ? <Check className="w-3 h-3 text-green-500" /> : <Copy className="w-3 h-3" />}
+                                                                </div>
+                                                            </div>
                                                             <span className="opacity-70">{expandedLyrics.has(job.id) ? 'Hide' : 'Show'}</span>
                                                         </button>
 

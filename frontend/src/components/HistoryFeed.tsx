@@ -236,7 +236,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                             {/* Clickable Tags */}
                                                             {job.tags && (
                                                                 <div className="flex flex-wrap gap-1 mt-1.5">
-                                                                    {job.tags.split(',').slice(0, 3).map((tag, idx) => (
+                                                                    {job.tags.split(',').slice(0, 6).map((tag, idx) => (
                                                                         <button
                                                                             key={idx}
                                                                             onClick={(e) => {

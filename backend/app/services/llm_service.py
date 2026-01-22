@@ -21,18 +21,12 @@ from .config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
 
-MUSIC_STYLES_LIBRARY = [
-    "Cinematic", "Lo-fi", "Synthwave", "Rock", "HipHop", "Orchestral", "Ambient", "Trap", "Techno",
-    "Jazz", "Blues", "Country", "Folk", "Reggae", "Soul", "R&B", "Funk", "Disco", "House", "Trance",
-    "Dubstep", "Drum & Bass", "Jungle", "Garage", "Grime", "Afrobeats", "K-Pop", "J-Pop", "Indie Pop",
-    "Dream Pop", "Shoegaze", "Post-Rock", "Math Rock", "Prog Rock", "Metal", "Punk", "Emo", "Grunge",
-    "Acoustic", "Piano", "Classical", "Opera", "Gregorian Chant", "Medieval", "Celtic", "Nordic Folk",
-    "Latin", "Salsa", "Bossa Nova", "Reggaeton", "Flamenco", "Tango", "Bollywood", "Indian Classical",
-    "Gospel", "Spiritual", "Meditative", "New Age", "Dark Ambient", "Drone", "Noise", "Industrial",
-    "Cyberpunk", "Vaporwave", "Chiptune", "Glitch", "IDM", "Complextro", "Electro Swing", "Nu-Disco",
-    "Future Bass", "Tropical House", "Deep House", "Tech House", "Acid House", "Psytrance", "Hardstyle",
-    "Breakbeat", "Trip-Hop", "Downtempo", "Chillout", "Lounge", "Elevator Music", "Muzak", "Experimental",
-    "Avant-Garde", "Musique Concrete", "Minimalism", "Baroque", "Renaissance", "Romantic", "Impressionist"
+VALID_HEARTMULA_TAGS = [
+    "Warm", "Reflection", "Pop", "Cafe", "R&B", "Keyboard", "Regret", "Drum machine",
+    "Electric guitar", "Synthesizer", "Soft", "Energetic", "Electronic", "Self-discovery",
+    "Sad", "Ballad", "Longing", "Meditation", "Faith", "Acoustic", "Peaceful", "Wedding",
+    "Piano", "Strings", "Acoustic guitar", "Romantic", "Drums", "Emotional", "Walking",
+    "Hope", "Hopeful", "Powerful", "Epic", "Driving", "Rock"
 ]
 
 class LLMProvider(ABC):
@@ -378,37 +372,39 @@ class LLMService:
         provider = LLMService._get_provider()
         model = model or LLMService._get_active_model()
 
+        valid_tags_str = ", ".join(VALID_HEARTMULA_TAGS)
         prompt = (
             f"Act as a professional music producer. Transform this simple user concept into a detailed musical direction.\n"
             f"USER CONCEPT: '{concept}'\n\n"
             "INSTRUCTIONS:\n"
             "1. Create a 'topic' description that is evocative and detailed (1 sentence).\n"
-            "2. Select 3-5 'tags' that describe the genre, mood, instruments, and tempo (comma separated).\n"
+            f"2. Select 3-5 'tags' ONLY from this list: [{valid_tags_str}]. Do NOT use any other tags.\n"
             "3. Return ONLY a raw JSON object with keys 'topic' and 'tags'. Do NOT wrap in markdown code blocks.\n\n"
             "Example Output:\n"
-            '{"topic": "A melancholic acoustic ballad about lost love in autumn.", "tags": "Acoustic, Folk, Sad, Guitar, Slow"}'
+            '{"topic": "A melancholic acoustic ballad about lost love in autumn.", "tags": "Acoustic, Sad, Soft"}'
         )
 
         try:
             return provider.generate_json(prompt, model)
         except Exception as e:
             logger.warning(f"Enhance prompt failed: {e}")
-            return {"topic": concept, "tags": "Pop, Experimental"}
+            return {"topic": concept, "tags": "Pop, Soft"}
 
     @staticmethod
     def generate_inspiration(model: Optional[str] = None) -> dict:
         provider = LLMService._get_provider()
         model = model or LLMService._get_active_model()
 
+        valid_tags_str = ", ".join(VALID_HEARTMULA_TAGS)
         prompt = (
             "Act as a professional music producer brainstorming new hit songs.\n"
             "INSTRUCTIONS:\n"
             "1. Invent a UNIQUE, creative song concept/topic (1 vivid sentence).\n"
-            "2. Select a matching musical style (3-5 tags like genre, mood, instruments).\n"
+            f"2. Select a matching musical style using 3-5 tags ONLY from this list: [{valid_tags_str}].\n"
             "3. Return ONLY a raw JSON object with keys 'topic' and 'tags'.\n\n"
             "Examples:\n"
-            '{"topic": "A lonely astronaut drifting through the cosmos.", "tags": "Ambient, Space, Ethereal"}\n'
-            '{"topic": "A cyberpunk detective chasing a suspect in rain.", "tags": "Synthwave, Dark, Retro"}'
+            '{"topic": "A lonely astronaut drifting through the cosmos.", "tags": "Reflection, Space, Soft"}\n'
+            '{"topic": "A cyberpunk detective chasing a suspect in rain.", "tags": "Electronic, Dark, Driving"}'
         )
 
         try:
@@ -416,14 +412,14 @@ class LLMService:
             return provider.generate_json(prompt, model, options={"temperature": 0.9})
         except Exception as e:
             logger.warning(f"Inspiration generation failed: {e}")
-            return {"topic": "A mysterious journey through time", "tags": "Orchestral, Epic, Cinematic"}
+            return {"topic": "A mysterious journey through time", "tags": "Strings, Epic, Cinematic"}
 
     @staticmethod
     def generate_styles_list(model: Optional[str] = None) -> List[str]:
         try:
-            return random.sample(MUSIC_STYLES_LIBRARY, 12)
+            return random.sample(VALID_HEARTMULA_TAGS, 12)
         except Exception:
-            return MUSIC_STYLES_LIBRARY[:12]
+            return VALID_HEARTMULA_TAGS[:12]
 
     @staticmethod
     def update_config(provider_name: str, config_data: Dict[str, Any]):

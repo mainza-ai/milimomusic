@@ -209,27 +209,36 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
         }
     };
 
-    const [stylePills, setStylePills] = useState<string[]>(["Cinematic", "Lo-fi", "Synthwave", "Rock", "HipHop", "Orchestral", "Ambient", "Trap", "Techno"]);
-    const [isLoadingStyles, setIsLoadingStyles] = useState(false);
+    // Curated HeartMuLa Tags
+    const HEARTMULA_TAGS = [
+        "Warm", "Reflection", "Pop", "Cafe", "R&B", "Keyboard", "Regret", "Drum machine",
+        "Electric guitar", "Synthesizer", "Soft", "Energetic", "Electronic", "Self-discovery",
+        "Sad", "Ballad", "Longing", "Meditation", "Faith", "Acoustic", "Peaceful", "Wedding",
+        "Piano", "Strings", "Acoustic guitar", "Romantic", "Drums", "Emotional", "Walking",
+        "Hope", "Hopeful", "Powerful", "Epic", "Driving", "Rock"
+    ];
 
-    const refreshStyles = async () => {
-        setIsLoadingStyles(true);
-        try {
-            const styles = await api.getStylePresets(lyricsModel);
-            if (styles && styles.length > 0) {
-                setStylePills(styles);
-            }
-        } catch (e) {
-            console.error("Failed to load styles", e);
-        } finally {
-            setIsLoadingStyles(false);
-        }
+    const getRandomTags = (count: number) => {
+        const shuffled = [...HEARTMULA_TAGS].sort(() => 0.5 - Math.random());
+        return shuffled.slice(0, count);
     };
 
-    // Load initial styles
+    const [stylePills, setStylePills] = useState<string[]>([]);
+    const [isLoadingStyles, setIsLoadingStyles] = useState(false);
+
     useEffect(() => {
-        refreshStyles();
-    }, [lyricsModel]);
+        // Initial load
+        setStylePills(getRandomTags(12));
+    }, []);
+
+    const refreshStyles = () => {
+        setIsLoadingStyles(true);
+        // Simulate "loading" feel briefly
+        setTimeout(() => {
+            setStylePills(getRandomTags(12));
+            setIsLoadingStyles(false);
+        }, 300);
+    };
 
     const addStyle = (s: string) => {
         if (style.includes(s)) return;
@@ -437,7 +446,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                             <textarea
                                 value={style}
                                 onChange={(e) => setStyle(e.target.value)}
-                                placeholder="e.g. 'Synthwave, 80s, fast tempo, dark'"
+                                placeholder="e.g. 'Pop, Electronic, Emotional, Rock'"
                                 className="w-full h-20 bg-white/60 rounded-sm border border-slate-200/60 p-3 focus:ring-1 focus:ring-cyan-500/50 outline-none resize-none text-sm placeholder:text-slate-400 transition-all shadow-inner font-mono text-slate-700"
                             />
                             {/* Style Pills */}

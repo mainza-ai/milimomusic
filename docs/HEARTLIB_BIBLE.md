@@ -59,17 +59,15 @@ The model expects a continuous sequence without internal resets. The required st
 *   **[MUQ]**: A placeholder for the MuQ-MuLan embeddings of reference audio.
 *   **Lyrics**: Structured lyrics with markers like `[Verse]`, `[Chorus]`.
 
-### 3.2 Tag Weighting
-During training, tag categories are sampled with different probabilities. Prioritize these categories in your prompts for better control:
+### 3.2 Supported Tags (HeartMuLa-3B Beta)
+For optimal results, stick to the following supported tags. The model is fine-tuned to respond specifically to these concepts:
 
-| Category | Probability | Examples |
-| :--- | :--- | :--- |
-| **Genre** | 0.95 | Pop, Rock, Hip Hop |
-| **Timbre** | 0.50 | Female Vocals, Raspy |
-| **Gender** | 0.375 | Male, Female |
-| **Mood** | 0.325 | Sad, Energetic, Uplifting |
-| **Instrumentation**| 0.25 | Guitar, Piano, Synth |
-| **Scene/Topic** | 0.2/0.1 | Workout, Love, Party |
+*   **Warm, Reflection, Pop, Cafe, R&B, Keyboard, Regret**
+*   **Drum machine, Electric guitar, Synthesizer, Soft, Energetic, Electronic**
+*   **Self-discovery, Sad, Ballad, Longing, Meditation, Faith**
+*   **Acoustic, Peaceful, Wedding, Piano, Strings, Acoustic guitar**
+*   **Romantic, Drums, Emotional, Walking, Hope, Hopeful**
+*   **Powerful, Epic, Driving, Rock**
 
 ---
 

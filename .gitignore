@@ -44,4 +44,5 @@ backend/generated_tokens/
 debug_instrumental.py
 backend/jobs.db
 backend/db.sqlite3
+backend/llm_config.json
 *.log

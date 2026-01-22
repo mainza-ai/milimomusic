@@ -4,8 +4,8 @@ from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
-from sqlmodel import SQLModel, Session, create_engine, select
-from typing import List
+from sqlmodel import SQLModel, Session, create_engine, select, or_
+from typing import List, Optional
 from uuid import UUID
 
 from app.services.music_service import music_service
@@ -186,9 +186,23 @@ def get_job_status(job_id: UUID):
         return job
 
 @app.get("/history", response_model=List[Job])
-def get_history():
+def get_history(limit: int = 50, offset: int = 0, status: Optional[str] = None, search: Optional[str] = None):
     with Session(engine) as session:
-        jobs = session.exec(select(Job).order_by(Job.created_at.desc())).all()
+        query = select(Job).order_by(Job.created_at.desc())
+        
+        if status and status != 'all':
+            query = query.where(Job.status == status)
+            
+        if search:
+            # Case insensitive search usually requires ilike in Postgres, but SQLite uses LIKE which is case-insensitive by default for ASCII.
+            # safe lower-casing for robustness if desired, but .contains is simplest first step.
+            query = query.where(or_(
+                Job.title.contains(search), 
+                Job.prompt.contains(search), 
+                Job.tags.contains(search)
+            ))
+            
+        jobs = session.exec(query.offset(offset).limit(limit)).all()
         return jobs
 
 @app.patch("/jobs/{job_id}", response_model=Job)

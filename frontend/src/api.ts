@@ -122,8 +122,10 @@ export const api = {
         return res.data;
     },
 
-    getHistory: async () => {
-        const res = await axios.get<Job[]>(`${API_BASE_URL}/history`);
+    getHistory: async (limit: number = 50, offset: number = 0, status: string = 'all', search?: string) => {
+        const res = await axios.get<Job[]>(`${API_BASE_URL}/history`, {
+            params: { limit, offset, status: status === 'all' ? undefined : status, search }
+        });
         return res.data;
     },
 

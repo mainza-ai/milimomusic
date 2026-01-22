@@ -45,4 +45,5 @@ debug_instrumental.py
 backend/jobs.db
 backend/db.sqlite3
 backend/llm_config.json
+backend/llm_config.backup.json
 *.log

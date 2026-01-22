@@ -35,6 +35,17 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
     const [editingId, setEditingId] = useState<string | null>(null);
     const [tempTitle, setTempTitle] = useState("");
     const [progress, setProgress] = useState(0);
+    const [expandedLyrics, setExpandedLyrics] = useState<Set<string>>(new Set());
+
+    const toggleLyrics = (id: string) => {
+        const newSet = new Set(expandedLyrics);
+        if (newSet.has(id)) {
+            newSet.delete(id);
+        } else {
+            newSet.add(id);
+        }
+        setExpandedLyrics(newSet);
+    };
 
     // Real-time Progress (SSE)
     useEffect(() => {
@@ -266,8 +277,8 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                                     });
                                                                 }}
                                                                 className={`p-1 rounded-sm transition-colors ${job.is_favorite
-                                                                        ? "text-rose-500 hover:bg-rose-50"
-                                                                        : "text-slate-300 hover:text-rose-500 hover:bg-rose-50"
+                                                                    ? "text-rose-500 hover:bg-rose-50"
+                                                                    : "text-slate-300 hover:text-rose-500 hover:bg-rose-50"
                                                                     }`}
                                                                 title={job.is_favorite ? "Remove from favorites" : "Add to favorites"}
                                                             >
@@ -325,6 +336,28 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                 {job.status === 'completed' && job.audio_path && (
                                                     <div className="mt-3 bg-slate-50/50 rounded-sm p-1.5 border border-slate-100">
                                                         <AudioPlayer audioUrl={job.audio_path} title={job.title || job.prompt || "Untitled"} jobId={job.id} />
+                                                    </div>
+                                                )}
+
+                                                {/* Lyrics Dropdown */}
+                                                {job.lyrics && (
+                                                    <div className="mt-3 border-t border-slate-100 pt-2">
+                                                        <button
+                                                            onClick={(e) => {
+                                                                e.stopPropagation();
+                                                                toggleLyrics(job.id);
+                                                            }}
+                                                            className="text-[10px] bg-slate-50 hover:bg-slate-100 text-slate-500 hover:text-cyan-600 px-2 py-1 rounded-sm w-full text-left flex items-center justify-between transition-colors font-mono"
+                                                        >
+                                                            <span>Lyrics Data</span>
+                                                            <span className="opacity-70">{expandedLyrics.has(job.id) ? 'Hide' : 'Show'}</span>
+                                                        </button>
+
+                                                        {expandedLyrics.has(job.id) && (
+                                                            <div className="mt-2 bg-slate-50 rounded-sm p-3 border border-slate-100 text-[10px] font-mono text-slate-600 whitespace-pre-wrap max-h-48 overflow-y-auto">
+                                                                {job.lyrics}
+                                                            </div>
+                                                        )}
                                                     </div>
                                                 )}
 

@@ -143,6 +143,15 @@ function App() {
     setParentJob(undefined);
   };
 
+  const refreshModels = () => {
+    api.getLyricsModels()
+      .then(setLyricsModels)
+      .catch(e => {
+        console.error("Failed to refresh models", e);
+        setLyricsModels([]); // Clear to avoid showing stale models
+      });
+  };
+
   return (
     <div className="h-screen w-full bg-slate-50 flex flex-col md:flex-row overflow-hidden font-sans text-slate-900 selection:bg-indigo-100 selection:text-indigo-900">
 
@@ -163,6 +172,7 @@ function App() {
           onGenerate={handleGenerateMusic}
           isGenerating={isGenerating}
           lyricsModels={lyricsModels}
+          onRefreshModels={refreshModels}
           onGenerateLyrics={handleGenerateLyrics}
           isGeneratingLyrics={isGeneratingLyrics}
           currentJobId={currentJobId || undefined}

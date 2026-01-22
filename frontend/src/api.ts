@@ -144,5 +144,36 @@ export const api = {
         eventSource.addEventListener("job_progress", onMessage);
 
         return eventSource;
+    },
+
+    getLLMConfig: async () => {
+        const res = await axios.get<LLMConfig>(`${API_BASE_URL}/config/llm`);
+        return res.data;
+    },
+
+    updateLLMConfig: async (config: LLMConfig) => {
+        const res = await axios.post<LLMConfig>(`${API_BASE_URL}/config/llm`, config);
+        return res.data;
+    },
+
+    fetchModels: async (config: LLMConfig) => {
+        const res = await axios.post<{ models: string[] }>(`${API_BASE_URL}/config/fetch-models`, config);
+        return res.data.models;
     }
 };
+
+export interface ProviderConfig {
+    api_key?: string;
+    base_url?: string;
+    model?: string;
+}
+
+export interface LLMConfig {
+    provider?: string;
+    openai?: ProviderConfig;
+    gemini?: ProviderConfig;
+    openrouter?: ProviderConfig;
+    lmstudio?: ProviderConfig;
+    ollama?: ProviderConfig;
+    deepseek?: ProviderConfig;
+}

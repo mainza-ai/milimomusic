@@ -1,11 +1,25 @@
 import requests
 import logging
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 import json
+import random
+from abc import ABC, abstractmethod
+import os
+
+try:
+    from openai import OpenAI
+except ImportError:
+    OpenAI = None
+
+try:
+    from google import genai
+    from google.genai import types
+except ImportError:
+    genai = None
+
+from .config_manager import ConfigManager
 
 logger = logging.getLogger(__name__)
-
-import random
 
 MUSIC_STYLES_LIBRARY = [
     "Cinematic", "Lo-fi", "Synthwave", "Rock", "HipHop", "Orchestral", "Ambient", "Trap", "Techno",
@@ -21,13 +35,26 @@ MUSIC_STYLES_LIBRARY = [
     "Avant-Garde", "Musique Concrete", "Minimalism", "Baroque", "Renaissance", "Romantic", "Impressionist"
 ]
 
-class LLMService:
-    BASE_URL = "http://localhost:11434"
+class LLMProvider(ABC):
+    @abstractmethod
+    def generate_text(self, prompt: str, model: str, **kwargs) -> str:
+        pass
 
-    @staticmethod
-    def get_models() -> List[str]:
+    @abstractmethod
+    def generate_json(self, prompt: str, model: str, **kwargs) -> Dict:
+        pass
+    
+    @abstractmethod
+    def get_models(self) -> List[str]:
+        pass
+
+class OllamaProvider(LLMProvider):
+    def __init__(self, base_url: str):
+        self.base_url = base_url
+
+    def get_models(self) -> List[str]:
         try:
-            resp = requests.get(f"{LLMService.BASE_URL}/api/tags", timeout=2)
+            resp = requests.get(f"{self.base_url}/api/tags", timeout=2)
             if resp.status_code == 200:
                 data = resp.json()
                 return [model["name"] for model in data.get("models", [])]
@@ -35,11 +62,278 @@ class LLMService:
             logger.warning(f"Failed to fetch Ollama models: {e}")
         return []
 
+    def generate_text(self, prompt: str, model: str, **kwargs) -> str:
+        try:
+            resp = requests.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "options": kwargs.get("options", {})
+                },
+                timeout=kwargs.get("timeout", 30)
+            )
+            if resp.status_code == 200:
+                return resp.json().get("response", "")
+            else:
+                raise Exception(f"Ollama Error: {resp.text}")
+        except Exception as e:
+            logger.error(f"Ollama generation failed: {e}")
+            raise e
+
+    def generate_json(self, prompt: str, model: str, **kwargs) -> Dict:
+        try:
+            resp = requests.post(
+                f"{self.base_url}/api/generate",
+                json={
+                    "model": model,
+                    "prompt": prompt,
+                    "stream": False,
+                    "format": "json",
+                    "options": kwargs.get("options", {})
+                },
+                timeout=kwargs.get("timeout", 60)
+            )
+            if resp.status_code == 200:
+                raw_response = resp.json().get("response", "")
+                raw_response = self._clean_json(raw_response)
+                return json.loads(raw_response)
+            else:
+                raise Exception(f"Ollama Error: {resp.text}")
+        except Exception as e:
+            logger.error(f"Ollama JSON generation failed: {e}")
+            raise e
+
+    def _clean_json(self, raw_response: str) -> str:
+        raw_response = raw_response.strip()
+        if raw_response.startswith("```json"):
+            raw_response = raw_response.replace("```json", "").replace("```", "")
+        elif raw_response.startswith("```"):
+             raw_response = raw_response.replace("```", "")
+        return raw_response
+
+class OpenAIProvider(LLMProvider):
+    def __init__(self, api_key: str, base_url: Optional[str] = None):
+        if OpenAI is None:
+            raise ImportError("OpenAI library is not installed. Please run `pip install openai`.")
+        self.client = OpenAI(api_key=api_key, base_url=base_url)
+
+    def get_models(self) -> List[str]:
+        try:
+            # Iterate directly to handle pagination automatically
+            return [model.id for model in self.client.models.list()]
+        except Exception as e:
+            logger.warning(f"Failed to fetch OpenAI models: {e}")
+            return []
+
+    def generate_text(self, prompt: str, model: str, **kwargs) -> str:
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                temperature=kwargs.get("options", {}).get("temperature", 0.7),
+            )
+            return response.choices[0].message.content
+        except Exception as e:
+            # Check for OpenRouter invalid model error (400)
+            is_openrouter = self.client.base_url.host == "openrouter.ai" or "openrouter.ai" in str(self.client.base_url)
+            if is_openrouter and "400" in str(e):
+                logger.warning(f"OpenRouter model {model} failed (likely invalid/deprecated). Attempting fallback to free model.")
+                try:
+                    fallback_model = "google/gemini-2.0-flash-exp:free"
+                    response = self.client.chat.completions.create(
+                        model=fallback_model,
+                        messages=[{"role": "user", "content": prompt}],
+                        temperature=kwargs.get("options", {}).get("temperature", 0.7),
+                    )
+                    return response.choices[0].message.content
+                except Exception as fallback_e:
+                    logger.error(f"OpenRouter fallback failed: {fallback_e}")
+                    raise e # Raise original error if fallback fails
+            
+            logger.error(f"OpenAI generation failed: {e}")
+            raise e
+
+    def generate_json(self, prompt: str, model: str, **kwargs) -> Dict:
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=[{"role": "user", "content": prompt}],
+                response_format={"type": "json_object"},
+                temperature=kwargs.get("options", {}).get("temperature", 0.7),
+            )
+            return json.loads(response.choices[0].message.content)
+        except Exception as e:
+            # Check for OpenRouter invalid model error (400)
+            is_openrouter = self.client.base_url.host == "openrouter.ai" or "openrouter.ai" in str(self.client.base_url)
+            if is_openrouter and "400" in str(e):
+                logger.warning(f"OpenRouter model {model} failed (likely invalid/deprecated). Attempting fallback to free model.")
+                try:
+                    fallback_model = "google/gemini-2.0-flash-exp:free"
+                    response = self.client.chat.completions.create(
+                        model=fallback_model,
+                        messages=[{"role": "user", "content": prompt}],
+                        response_format={"type": "json_object"},
+                        temperature=kwargs.get("options", {}).get("temperature", 0.7),
+                    )
+                    return json.loads(response.choices[0].message.content)
+                except Exception as fallback_e:
+                    logger.error(f"OpenRouter fallback failed: {fallback_e}")
+                    raise e
+            
+            logger.error(f"OpenAI JSON generation failed: {e}")
+            raise e
+
+class GeminiProvider(LLMProvider):
+    def __init__(self, api_key: str):
+        if genai is None:
+             raise ImportError("Google GenAI library is not installed. Please run `pip install google-genai`.")
+        self.client = genai.Client(api_key=api_key)
+
+    def get_models(self) -> List[str]:
+        try:
+            # New SDK model listing
+            # Models are yielded. We extract the 'name' or use 'display_name'
+            # Usually names are like 'models/gemini-1.5-flash'
+            models = []
+            for m in self.client.models.list():
+                 # Filter somewhat if possible, but SDK might not expose 'supported_generation_methods' directly on the iterator object easily without inspection
+                 # For now, just list them. The name usually comes with 'models/' prefix, user might want short name?
+                 # Let's keep full name 'models/...' or strip it. Old logic kept name.
+                 models.append(m.name.replace('models/', '') if m.name.startswith('models/') else m.name)
+            return models
+        except Exception as e:
+             logger.warning(f"Failed to fetch Gemini models: {e}")
+             return ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]
+
+    def generate_text(self, prompt: str, model: str, **kwargs) -> str:
+        try:
+            # New SDK generation
+            response = self.client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    temperature=kwargs.get("options", {}).get("temperature", 0.7)
+                )
+            )
+            return response.text
+        except Exception as e:
+            logger.error(f"Gemini generation failed: {e}")
+            raise e
+
+    def generate_json(self, prompt: str, model: str, **kwargs) -> Dict:
+        try:
+            # New SDK JSON enforcement
+            response = self.client.models.generate_content(
+                model=model,
+                contents=prompt,
+                config=types.GenerateContentConfig(
+                    response_mime_type='application/json',
+                    temperature=kwargs.get("options", {}).get("temperature", 0.7)
+                )
+            )
+            return json.loads(response.text)
+        except Exception as e:
+             # Fallback manual clean if SDK fails to enforce pure JSON for some reason (unlikely with this config)
+            logger.error(f"Gemini JSON generation failed: {e}")
+            raise e
+
+
+
+class LLMService:
     @staticmethod
-    def generate_lyrics(topic: str, model: str = "llama3", seed_lyrics: Optional[str] = None) -> str:
+    def _get_provider(override_config: Optional[Dict] = None) -> LLMProvider:
+        """
+        Get provider instance. 
+        If override_config is provided (for testing credentials), use that. 
+        Otherwise use ConfigManager.
+        """
+        if override_config:
+            config = override_config
+            provider_name = config.get("provider", "ollama")
+            # For override, we expect structure like { "provider": "openai", "openai": { ... } }
+            # Or just flat if simpler, but let's stick to config structure
+        else:
+            config = ConfigManager().get_config()
+            provider_name = config.get("provider", "ollama")
         
+        if provider_name == "ollama":
+            base_url = config.get("ollama", {}).get("base_url", "http://localhost:11434")
+            return OllamaProvider(base_url=base_url)
+        elif provider_name == "openai":
+            api_key = config.get("openai", {}).get("api_key", "")
+            return OpenAIProvider(api_key=api_key)
+        elif provider_name == "deepseek":
+            api_key = config.get("deepseek", {}).get("api_key", "")
+            return OpenAIProvider(
+                api_key=api_key, 
+                base_url="https://api.deepseek.com"
+            )
+        elif provider_name == "openrouter":
+            api_key = config.get("openrouter", {}).get("api_key", "")
+            return OpenAIProvider(
+                api_key=api_key, 
+                base_url="https://openrouter.ai/api/v1"
+            )
+        elif provider_name == "lmstudio":
+            base_url = config.get("lmstudio", {}).get("base_url", "http://localhost:1234/v1")
+            return OpenAIProvider(
+                api_key="lm-studio", 
+                base_url=base_url
+            )
+        elif provider_name == "gemini":
+            api_key = config.get("gemini", {}).get("api_key", "")
+            return GeminiProvider(api_key=api_key)
+        else:
+            return OllamaProvider(base_url="http://localhost:11434")
+
+    @staticmethod
+    def fetch_available_models(provider_name: str, api_key: Optional[str] = None, base_url: Optional[str] = None) -> List[str]:
+        """
+        Fetch available models for a given provider using provided credentials.
+        This is used for the settings dropdown to test connection and list models.
+        """
+        try:
+            # Construct a temporary config to instantiate the provider
+            temp_config = {"provider": provider_name}
+            
+            # Map specific args to the config structure expected by _get_provider
+            if provider_name == "ollama":
+                temp_config["ollama"] = {"base_url": base_url or "http://localhost:11434"}
+            elif provider_name == "openai":
+                temp_config["openai"] = {"api_key": api_key}
+            elif provider_name == "deepseek":
+                temp_config["deepseek"] = {"api_key": api_key}
+            elif provider_name == "openrouter":
+                temp_config["openrouter"] = {"api_key": api_key} 
+            elif provider_name == "lmstudio":
+                temp_config["lmstudio"] = {"base_url": base_url or "http://localhost:1234/v1"}
+            elif provider_name == "gemini":
+                temp_config["gemini"] = {"api_key": api_key}
+                
+            provider = LLMService._get_provider(override_config=temp_config)
+            return provider.get_models()
+        except Exception as e:
+            logger.error(f"Failed to fetch models for {provider_name}: {e}")
+            raise e
+
+    @staticmethod
+    def get_models() -> List[str]:
+        return LLMService._get_provider().get_models()
+
+    @staticmethod
+    def _get_active_model() -> str:
+        config = ConfigManager().get_config()
+        provider = config.get("provider", "ollama")
+        return config.get(provider, {}).get("model", "llama3")
+
+    @staticmethod
+    def generate_lyrics(topic: str, model: Optional[str] = None, seed_lyrics: Optional[str] = None) -> str:
+        provider = LLMService._get_provider()
+        model = model or LLMService._get_active_model()
+
         if seed_lyrics and seed_lyrics.strip():
-            # EXPERIMENTAL: Expansion Prompt
             prompt = (
                 f"Continue and complete these song lyrics. Topic/Context: {topic}.\n"
                 f"EXISTING LYRICS (Keep these exactly as is, and append the rest):\n"
@@ -51,7 +345,6 @@ class LLMService:
                 "4. Do NOT output any conversational text, ONLY the lyrics.\n"
             )
         else:
-            # Standard Generation
             prompt = (
                 f"Write song lyrics about: {topic}. "
                 "IMPORTANT: Use the following format strictly:\n"
@@ -66,53 +359,25 @@ class LLMService:
                 "Do not include any conversational filler. Just the formatted lyrics."
             )
         
-        try:
-            resp = requests.post(
-                f"{LLMService.BASE_URL}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False
-                },
-                timeout=30
-            )
-            if resp.status_code == 200:
-                return resp.json().get("response", "")
-            else:
-                raise Exception(f"Ollama Error: {resp.text}")
-        except Exception as e:
-            logger.error(f"Lyrics generation failed: {e}")
-            raise e
+        return provider.generate_text(prompt, model)
 
     @staticmethod
-    def generate_title(context: str, model: str = "llama3") -> str:
+    def generate_title(context: str, model: Optional[str] = None) -> str:
+        provider = LLMService._get_provider()
+        model = model or LLMService._get_active_model()
+        
         prompt = f"Generate a short, creative, 2-5 word song title based on this concept/lyrics: '{context}'. Return ONLY the title, no quotes or prefix."
         
         try:
-            resp = requests.post(
-                f"{LLMService.BASE_URL}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False
-                },
-                timeout=30
-            )
-            if resp.status_code == 200:
-                return resp.json().get("response", "").strip().replace('"', '')
-            else:
-                logger.error(f"LLM Auto-Title Error: {resp.status_code} - {resp.text}")
-                return "Untitled Track"
-        except Exception as e:
-            logger.error(f"LLM Auto-Title Exception: {e}")
+            return provider.generate_text(prompt, model).strip().replace('"', '')
+        except Exception:
             return "Untitled Track"
             
     @staticmethod
-    def enhance_prompt(concept: str, model: str = "llama3") -> dict:
-        """
-        Takes a simple user concept (e.g. "sad song") and returns a rich JSON object
-        with detailed topic description and style tags.
-        """
+    def enhance_prompt(concept: str, model: Optional[str] = None) -> dict:
+        provider = LLMService._get_provider()
+        model = model or LLMService._get_active_model()
+
         prompt = (
             f"Act as a professional music producer. Transform this simple user concept into a detailed musical direction.\n"
             f"USER CONCEPT: '{concept}'\n\n"
@@ -125,41 +390,16 @@ class LLMService:
         )
 
         try:
-            resp = requests.post(
-                f"{LLMService.BASE_URL}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "format": "json" # Ollama supports JSON mode if model supports it, but we'll parse manually too
-                },
-                timeout=60
-            )
-            if resp.status_code == 200:
-                raw_response = resp.json().get("response", "")
-                # Clean response just in case
-                raw_response = raw_response.strip()
-                if raw_response.startswith("```json"):
-                    raw_response = raw_response.replace("```json", "").replace("```", "")
-                
-                try:
-                    return json.loads(raw_response)
-                except json.JSONDecodeError:
-                    # Fallback if LLM fails to json
-                    logger.warning(f"LLM failed JSON format: {raw_response}")
-                    return {"topic": concept, "tags": "Pop, Experimental"}
-            else:
-                raise Exception(f"Ollama Error: {resp.text}")
+            return provider.generate_json(prompt, model)
         except Exception as e:
-            logger.error(f"Prompt enhancement failed: {e}")
-            raise e
+            logger.warning(f"Enhance prompt failed: {e}")
+            return {"topic": concept, "tags": "Pop, Experimental"}
 
     @staticmethod
-    def generate_inspiration(model: str = "llama3") -> dict:
-        """
-        Generates a random, creative song concept and style.
-        """
-        # High creativity prompt
+    def generate_inspiration(model: Optional[str] = None) -> dict:
+        provider = LLMService._get_provider()
+        model = model or LLMService._get_active_model()
+
         prompt = (
             "Act as a professional music producer brainstorming new hit songs.\n"
             "INSTRUCTIONS:\n"
@@ -172,46 +412,27 @@ class LLMService:
         )
 
         try:
-            resp = requests.post(
-                f"{LLMService.BASE_URL}/api/generate",
-                json={
-                    "model": model,
-                    "prompt": prompt,
-                    "stream": False,
-                    "format": "json",
-                    "options": {
-                        "temperature": 0.9 # High creativity
-                    }
-                },
-                timeout=60
-            )
-            if resp.status_code == 200:
-                raw_response = resp.json().get("response", "")
-                # Clean response just in case
-                raw_response = raw_response.strip()
-                if raw_response.startswith("```json"):
-                    raw_response = raw_response.replace("```json", "").replace("```", "")
-                
-                try:
-                    return json.loads(raw_response)
-                except json.JSONDecodeError:
-                    logger.warning(f"LLM failed JSON format: {raw_response}")
-                    return {"topic": "A mysterious journey through time", "tags": "Orchestral, Epic, Cinematic"}
-            else:
-                raise Exception(f"Ollama Error: {resp.text}")
+             # High creativity handled by providers implicitly or via temperature in kwargs if exposed
+            return provider.generate_json(prompt, model, options={"temperature": 0.9})
         except Exception as e:
-            logger.error(f"Inspiration generation failed: {e}")
-            raise e
+            logger.warning(f"Inspiration generation failed: {e}")
+            return {"topic": "A mysterious journey through time", "tags": "Orchestral, Epic, Cinematic"}
 
     @staticmethod
-    def generate_styles_list(model: str = "llama3") -> List[str]:
-        """
-        Generates a list of diverse music genres/styles using a static library for instant results.
-        Returns 12 random styles.
-        """
+    def generate_styles_list(model: Optional[str] = None) -> List[str]:
         try:
             return random.sample(MUSIC_STYLES_LIBRARY, 12)
-        except Exception as e:
-            logger.error(f"Style generation failed: {e}")
-            # Fallback to a small slice if something goes wrong (unlikely)
+        except Exception:
             return MUSIC_STYLES_LIBRARY[:12]
+
+    @staticmethod
+    def update_config(provider_name: str, config_data: Dict[str, Any]):
+        ConfigManager().update_config({provider_name: config_data})
+
+    @staticmethod
+    def set_active_provider(provider_name: str):
+        ConfigManager().set_provider(provider_name)
+    
+    @staticmethod
+    def get_config() -> Dict[str, Any]:
+        return ConfigManager().get_config()

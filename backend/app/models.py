@@ -39,14 +39,29 @@ class GenerationRequest(SQLModel):
 class LyricsRequest(SQLModel):
     model_config = {"protected_namespaces": ()}
     topic: str
-    model_name: str = "llama3"
+    model_name: Optional[str] = None
     seed_lyrics: Optional[str] = None
 
 class EnhancePromptRequest(SQLModel):
     model_config = {"protected_namespaces": ()}
     concept: str
-    model_name: str = "llama3"
+    model_name: Optional[str] = None
 
 class InspirationRequest(SQLModel):
     model_config = {"protected_namespaces": ()}
-    model_name: str = "llama3"
+    model_name: Optional[str] = None
+
+class ProviderConfig(SQLModel):
+    api_key: Optional[str] = None
+    base_url: Optional[str] = None
+    model: Optional[str] = None
+
+class LLMConfigUpdate(SQLModel):
+    provider: Optional[str] = None
+    openai: Optional[ProviderConfig] = None
+    gemini: Optional[ProviderConfig] = None
+    openrouter: Optional[ProviderConfig] = None
+    lmstudio: Optional[ProviderConfig] = None
+    ollama: Optional[ProviderConfig] = None
+    deepseek: Optional[ProviderConfig] = None
+

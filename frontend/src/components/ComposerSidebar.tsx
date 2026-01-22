@@ -1,9 +1,10 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mic2, Music, ChevronDown, ChevronUp, Sparkles, Plus, Dices, Wand2, ArrowRightCircle, RefreshCw } from 'lucide-react';
+import { Mic2, Music, ChevronDown, ChevronUp, Sparkles, Plus, Dices, Wand2, ArrowRightCircle, RefreshCw, Settings } from 'lucide-react';
 import { GradientButton } from './ui/GradientButton';
 
-import { api, type Job } from '../api';
+import { api, type Job, type LLMConfig } from '../api';
+import { LLMSettingsModal } from './LLMSettingsModal';
 
 interface ComposerSidebarProps {
     onGenerate: (data: CompositionData) => void;
@@ -15,6 +16,7 @@ interface ComposerSidebarProps {
     onCancel?: (jobId: string) => void;
     parentJob?: Job; // Phase 9: For extension (Full Job Object)
     onClearParentJob?: () => void; // To clear extension mode
+    onRefreshModels?: () => void;
 }
 
 export interface CompositionData {
@@ -37,7 +39,8 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     currentJobId,
     onCancel,
     parentJob, // Phase 9: For extension
-    onClearParentJob // To clear extension mode
+    onClearParentJob, // To clear extension mode
+    onRefreshModels
 }) => {
     const [activeTab, setActiveTab] = useState<'sound' | 'lyrics'>('sound');
     const [topic, setTopic] = useState('');
@@ -46,6 +49,83 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [logs, setLogs] = useState<string[]>([]);
     const [isEnhancing, setIsEnhancing] = useState(false);
+
+    // LLM Config State
+    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [llmConfig, setLlmConfig] = useState<LLMConfig>({});
+
+    const loadLlmConfig = async () => {
+        try {
+            const cfg = await api.getLLMConfig();
+            setLlmConfig(cfg);
+            onRefreshModels?.();
+        } catch (e) {
+            console.error("Failed to load LLM config", e);
+        }
+    };
+
+    // Initial Startup Logic: auto-detect Ollama
+    useEffect(() => {
+        const init = async () => {
+            // 1. Load initial config
+            let cfg: LLMConfig = {};
+            try {
+                cfg = await api.getLLMConfig();
+                setLlmConfig(cfg);
+                onRefreshModels?.();
+            } catch (e) {
+                console.error("Failed to load initial config", e);
+                return;
+            }
+
+            // 2. Priority Check: If Ollama is running locally, we might want to default to it
+            // ONLY if the user hasn't arguably "set" something else? 
+            // The requirement was "automatically use an Ollama model by default if Ollama is running".
+            // Implementation: We check availability. If available, we switch to it. 
+            // Crucially, this ONLY happens on MOUNT (Refresh/App Start), not when user changes settings manually later.
+            try {
+                const ollamaModels = await api.fetchModels({ provider: 'ollama', ollama: cfg.ollama || { base_url: 'http://localhost:11434' } });
+
+                if (ollamaModels.length > 0) {
+                    console.log("Startup: Ollama detected running.");
+
+                    // Determine target model
+                    let targetModel = ollamaModels[0];
+                    if (cfg.provider === 'ollama' && cfg.ollama?.model && ollamaModels.includes(cfg.ollama.model)) {
+                        targetModel = cfg.ollama.model;
+                    }
+
+                    // We switch to Ollama IF:
+                    // 1. Provider is not set at all
+                    // 2. OR Provider is set to Ollama
+                    // 3. OR (Optionally) we act aggressive and always switch on startup. 
+                    // current implementation was aggressive. I will keep it aggressive FOR STARTUP only.
+
+                    const newConfig = {
+                        ...cfg,
+                        provider: 'ollama',
+                        ollama: {
+                            ...cfg.ollama,
+                            model: targetModel
+                        }
+                    };
+
+                    // Only update if different
+                    if (JSON.stringify(newConfig) !== JSON.stringify(cfg)) {
+                        console.log("Startup: switching default provider to Ollama");
+                        await api.updateLLMConfig(newConfig);
+                        setLlmConfig(newConfig);
+                        setLyricsModel(targetModel);
+                        onRefreshModels?.();
+                    }
+                }
+            } catch (e) {
+                console.log("Startup: Ollama not detected, skipping auto-switch.");
+            }
+        };
+
+        init();
+    }, []);
 
     useEffect(() => {
         const handleLog = (e: any) => {
@@ -83,10 +163,33 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
 
     // Auto-select first available model when they load (if not set)
     React.useEffect(() => {
+        // Prevent race condition: If the current selection matches our global config Intent, 
+        // DO NOT reset it just because the list is stale or loading.
+        const providerConfig = llmConfig.provider ? (llmConfig[llmConfig.provider as keyof LLMConfig] as any) : null;
+        const globalModel = providerConfig?.model;
+        if (globalModel && lyricsModel === globalModel) {
+            return;
+        }
+
+
+
         if (lyricsModels.length > 0 && !lyricsModels.includes(lyricsModel)) {
             setLyricsModel(lyricsModels[0]);
         }
-    }, [lyricsModels, lyricsModel]);
+    }, [lyricsModels, lyricsModel, llmConfig]);
+
+    // Sync local lyricsModel with global config when config updates (e.g. user changes provider in settings)
+    React.useEffect(() => {
+        if (!llmConfig.provider) return;
+        const providerConfig = llmConfig[llmConfig.provider as keyof LLMConfig] as any;
+        const globalModel = providerConfig?.model;
+
+        // If we have a configured model for the active provider, use it
+        if (globalModel) {
+            setLyricsModel(globalModel);
+        }
+    }, [llmConfig]);
+
 
     const handleInspire = async () => {
         setIsEnhancing(true);
@@ -214,8 +317,9 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                         <h2 className="text-xl font-bold text-slate-800 tracking-tighter font-display leading-none">
                             MILIMO MUSIC
                         </h2>
-                        <span className="text-[10px] font-mono text-cyan-600 uppercase tracking-widest bg-cyan-50 px-1.5 py-0.5 rounded-full border border-cyan-100/50 inline-block mt-1">v3.0</span>
-                        <div className="text-[9px] font-mono text-slate-400 mt-0.5">Powered by Ollama & HeartMuLa</div>
+                        <div className="flex items-center gap-2 mt-1">
+                            <span className="text-[10px] font-mono text-cyan-600 uppercase tracking-widest bg-cyan-50 px-1.5 py-0.5 rounded-full border border-cyan-100/50">v3.0</span>
+                        </div>
                     </div>
                 </div>
 
@@ -246,8 +350,22 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                     >
                         <Plus className="w-5 h-5" />
                     </button>
+                    <button
+                        onClick={() => setIsSettingsOpen(true)}
+                        className="p-2 rounded-full hover:bg-white/50 text-slate-400 hover:text-cyan-600 transition-colors border border-transparent hover:border-white/50 shadow-sm hover:shadow-md"
+                        title="LLM Settings"
+                    >
+                        <Settings className="w-5 h-5" />
+                    </button>
                 </div>
             </div>
+
+            <LLMSettingsModal
+                isOpen={isSettingsOpen}
+                onClose={() => setIsSettingsOpen(false)}
+                currentConfig={llmConfig}
+                onConfigUpdate={loadLlmConfig}
+            />
 
             {/* Tabs */}
             <div className="flex p-2 gap-2 border-b border-white/30 bg-slate-50/50">
@@ -422,6 +540,9 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                 onChange={(e) => setLyricsModel(e.target.value)}
                                 className="bg-white/60 border border-slate-200 rounded-sm px-2 py-1.5 text-xs font-mono text-slate-600 focus:outline-none focus:ring-1 focus:ring-cyan-500 w-full"
                             >
+                                {lyricsModel && !lyricsModels.includes(lyricsModel) && (
+                                    <option key={lyricsModel} value={lyricsModel}>{lyricsModel} (Legacy/Custom)</option>
+                                )}
                                 {lyricsModels.map(m => <option key={m} value={m}>{m}</option>)}
                             </select>
                             <button
@@ -471,7 +592,26 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
             </AnimatePresence>
 
             {/* Footer Actions */}
-            <div className="p-6 border-t border-white/30 bg-white/40 backdrop-blur-md">
+            <div className="p-6 border-t border-white/30 bg-white/40 backdrop-blur-md flex flex-col gap-3">
+
+                {/* Model Badge (Footer Priority) */}
+                {llmConfig.provider && (
+                    <div className="flex justify-center">
+                        <button
+                            onClick={() => setIsSettingsOpen(true)}
+                            className={`text-[10px] font-mono px-3 py-1 rounded-full border shadow-sm flex items-center gap-2 transition-transform hover:scale-105 ${llmConfig.provider === 'ollama' ? 'bg-white/80 text-orange-700 border-orange-200' :
+                                llmConfig.provider === 'openai' ? 'bg-white/80 text-green-700 border-green-200' :
+                                    'bg-white/80 text-slate-600 border-slate-200'
+                                }`}>
+                            <span>{llmConfig.provider === 'ollama' ? 'Using Ollama' : 'Using Cloud AI'}</span>
+                            <span className="w-1 h-1 rounded-full bg-current opacity-50"></span>
+                            <span className="font-bold">
+                                {llmConfig.provider === 'ollama' ? '🦙' : (llmConfig.provider === 'openai' ? '🤖' : '✨')}
+                                {(llmConfig[llmConfig.provider as keyof LLMConfig] as any)?.model || 'No Model'}
+                            </span>
+                        </button>
+                    </div>
+                )}
                 {isGenerating && currentJobId && onCancel ? (
                     <button
                         onClick={() => onCancel(currentJobId)}

@@ -188,6 +188,7 @@ class HeartMuLa(PreTrainedModel):
         cfg_scale: float,
         continuous_segments: torch.Tensor = None,
         starts=None,
+        use_audio_cond: torch.Tensor = None,
     ) -> torch.Tensor:
         b, s, _ = tokens.size()
 
@@ -209,6 +210,19 @@ class HeartMuLa(PreTrainedModel):
         h = masked_embeds.sum(dim=2, dtype=embeds.dtype)  # merge
         if continuous_segments is not None:
             continuous_segments = self.muq_linear(continuous_segments)
+            
+            # FIX: If no reference audio was provided (use_audio_cond=False), 
+            # we must use the learned unconditional embedding instead of the projected zero vector.
+            if use_audio_cond is not None:
+                uncond_embed_token = self.unconditional_text_embedding(
+                    torch.zeros(1, device=tokens.device, dtype=torch.long)
+                )
+                # use_audio_cond is [B], expand to [B, 1] to match continuous_segments [B, dim]
+                # Note: 'use_audio_cond' should be on the same device.
+                audio_mask = use_audio_cond.view(-1, 1).to(tokens.device)
+                continuous_segments = torch.where(audio_mask, continuous_segments, uncond_embed_token)
+
+            # Standard CFG Masking (Post-Fix)
             if uncond_mask is not None:
                 uncond_embed = self.unconditional_text_embedding(
                     torch.zeros(1, device=tokens.device, dtype=torch.long)

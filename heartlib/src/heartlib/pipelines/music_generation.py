@@ -76,14 +76,23 @@ class HeartMuLaGenPipeline(Pipeline):
 
         tags = tags.lower()
         # encapsulate with special <tag> and </tag> tokens
+        # FIX: Ensure spacing for BPE tokenization to see ' <tag>' and not '<tag>' if needed, 
+        # but importantly, ensure content is spaced from tags if that helps.
+        # More critically, we are fixing the Sequence Structure.
         if not tags.startswith("<tag>"):
-            tags = f"<tag>{tags}"
+            tags = f"<tag> {tags}"
         if not tags.endswith("</tag>"):
-            tags = f"{tags}</tag>"
+            tags = f"{tags} </tag>"
 
         tags_ids = self.text_tokenizer.encode(tags).ids
+        
+        # Structure: [BOS] [Tags...] [EOS] [Special_0] [Lyrics...] [EOS]
+        
+        # 1. Tags Preamble
         if tags_ids[0] != self.config.text_bos_id:
             tags_ids = [self.config.text_bos_id] + tags_ids
+        
+        # RESTORED: Delimit tags with EOS so model knows "Style Context" is finished.
         if tags_ids[-1] != self.config.text_eos_id:
             tags_ids = tags_ids + [self.config.text_eos_id]
 
@@ -92,7 +101,9 @@ class HeartMuLaGenPipeline(Pipeline):
         if ref_audio is not None:
             raise NotImplementedError("ref_audio is not supported yet.")
         muq_embed = torch.zeros([self._muq_dim], dtype=self.generation_dtype)
-        muq_idx = len(tags_ids)
+        muq_idx = len(tags_ids) 
+        # muq_idx is where the "separator" or "audio start" token is.
+        # In this architecture, it seems index `len(tags_ids)` will be the [0] spacer.
 
         # process lyrics
         lyrics = inputs["lyrics"]
@@ -105,16 +116,27 @@ class HeartMuLaGenPipeline(Pipeline):
         lyrics = lyrics.lower()
 
         lyrics_ids = self.text_tokenizer.encode(lyrics).ids
-        if lyrics_ids[0] != self.config.text_bos_id:
-            lyrics_ids = [self.config.text_bos_id] + lyrics_ids
+        
+        # FIX: The tokenizer automatically adds BOS (128000). 
+        # We must REMOVE it to ensure continuity from tags.
+        # Structure should be: [BOS] Tags [EOS] [Muq] Lyrics (No BOS) [EOS]
+        if lyrics_ids[0] == self.config.text_bos_id:
+            lyrics_ids = lyrics_ids[1:]
+        
+        # 2. Lyrics Postamble
         if lyrics_ids[-1] != self.config.text_eos_id:
             lyrics_ids = lyrics_ids + [self.config.text_eos_id]
 
-        # cat them together. tags, ref_audio, lyrics
+        # cat them together. tags, [0 placeholder for audio/muq], lyrics
         prompt_len = len(tags_ids) + 1 + len(lyrics_ids)
 
         tokens = torch.zeros([prompt_len, self._parallel_number], dtype=torch.long)
+        
+        # [0...len(tags)] = tags
         tokens[: len(tags_ids), -1] = torch.tensor(tags_ids)
+        
+        # [len(tags) + 1 ... end] = lyrics
+        # The token at len(tags_ids) is left as 0 (empty_id or special separator)
         tokens[len(tags_ids) + 1 :, -1] = torch.tensor(lyrics_ids)
 
         tokens_mask = torch.zeros_like(tokens, dtype=torch.bool)
@@ -127,6 +149,20 @@ class HeartMuLaGenPipeline(Pipeline):
             if cfg_scale != 1.0:
                 tensor = torch.cat([tensor, tensor], dim=0)
             return tensor
+            
+        # Audio Condition Flag
+        # If ref_audio is None, we are Unconditional (False).
+        # If ref_audio is Present, we are Conditional (True).
+        # We need a tensor [BS] of booleans/ints.
+        # Note: ref_audio is not in the scope of this method, it's in inputs.
+        # But 'muq_embed' was generated from it. 
+        # Actually, let's look at how muq_embed is made. 
+        # If ref_audio is None, muq_embed is Zeros.
+        # We can detect if muq_embed is all zeros? No, too risky.
+        # We should pass the flag from arguments or derive from inputs.
+        # inputs['ref_audio'] might be available?
+        has_audio = (inputs.get("ref_audio") is not None)
+        use_audio_cond = torch.tensor([has_audio] * bs_size, dtype=torch.bool)
 
         return {
             "tokens": _cfg_cat(tokens, cfg_scale),
@@ -134,6 +170,7 @@ class HeartMuLaGenPipeline(Pipeline):
             "muq_embed": _cfg_cat(muq_embed, cfg_scale),
             "muq_idx": [muq_idx] * bs_size,
             "pos": _cfg_cat(torch.arange(prompt_len, dtype=torch.long), cfg_scale),
+            "use_audio_cond": use_audio_cond,
         }
 
     def _forward(
@@ -155,7 +192,7 @@ class HeartMuLaGenPipeline(Pipeline):
         else:
             print("DEBUG: _forward received NO abort_event")
         if callback:
-             print(f"DEBUG: _forward received callback: {callback}")
+             # print(f"DEBUG: _forward received callback: {callback}")
              model_inputs["callback"] = callback
         else:
              print("DEBUG: _forward received NO callback")
@@ -165,6 +202,7 @@ class HeartMuLaGenPipeline(Pipeline):
         continuous_segment = model_inputs["muq_embed"]
         starts = model_inputs["muq_idx"]
         prompt_pos = model_inputs["pos"]
+        use_audio_cond = model_inputs.get("use_audio_cond", None)
 
         frames = []
 
@@ -180,6 +218,7 @@ class HeartMuLaGenPipeline(Pipeline):
                 cfg_scale=cfg_scale,
                 continuous_segments=continuous_segment,
                 starts=starts,
+                use_audio_cond=use_audio_cond,
             )
 
         # Context Injection (History)

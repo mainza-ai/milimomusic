@@ -91,22 +91,9 @@ class MusicService:
                 
                 auto_title = "Untitled Track"
                 try:
-                    # Logic: If no model is specified, find what's running locally
-                    model_to_use = request.llm_model
-                    if not model_to_use:
-                        try:
-                            models = LLMService.get_models()
-                            if models:
-                                model_to_use = models[0]
-                                logger.info(f"No specific LLM model requested. Using valid local model: {model_to_use}")
-                            else:
-                                model_to_use = "llama3"
-                                logger.warning("No specific LLM model requested and no local models found. Defaulting to 'llama3'.")
-                        except Exception as e:
-                             model_to_use = "llama3"
-                             logger.warning(f"Error fetching local models: {e}. Fallback to 'llama3'.")
-
-                    auto_title = LLMService.generate_title(context_source, model=model_to_use)
+                    # Logic: If no specific model requested, pass None.
+                    # LLMService.generate_title will resolve it to the active configured model.
+                    auto_title = LLMService.generate_title(context_source, model=request.llm_model)
                 except Exception as e:
                     logger.warning(f"Auto-title generation failed: {e}. Using default.")
                 

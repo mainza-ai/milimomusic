@@ -46,7 +46,7 @@ conda create -n milimo python=3.12
 conda activate milimo
 ```
 
-### 2. Ollama Setup (Required)
+### 2. Ollama Setup (Not Required if using other LLM providers)
 
 1.  Download and install [Ollama](https://ollama.com/) for your operating system.
 2.  Pull a compatible model (e.g., Llama 3.2):
@@ -55,10 +55,28 @@ conda activate milimo
     ```
 3.  Ensure Ollama is running in the background:
     ```bash
-    ollama run llama3.2:3b-instruct-fp16
+    ollama serve 
     ```
 
-### 3. HeartLib & Model Weights
+### 3. LLM Configuration & Providers
+
+Milimo Music supports multiple LLM providers for lyrics generation and creative prompting.
+
+**Supported Providers:**
+- **Ollama** (Local, Default): Uses your local models via `ollama serve`.
+- **OpenAI**: Connects to proper GPT models (requires API Key).
+- **Google Gemini**: Uses Gemini models (requires API Key).
+- **OpenRouter**: Access various models like Claude, Mistral, Llama via a unified API (requires API Key).
+- **DeepSeek**: Direct integration with DeepSeek API.
+- **LM Studio**: Connects to other local inference servers compatible with OpenAI API.
+
+**Configuration:**
+1. Click the **Settings (Gear)** icon in the sidebar.
+2. Select your desired provider tab.
+3. Enter your API Key or Base URL.
+4. Click "Save & Set Active". The app will automatically fetch available models for you.
+
+### 4. HeartLib & Model Weights
 
 **Crucial Step**: You must download the large model weights manually as they are excluded from the repository.
 
@@ -86,7 +104,7 @@ conda activate milimo
     └── tokenizer.json
     ```
 
-### 4. Backend
+### 5. Backend
 
 1.  Navigate to the `backend` directory:
     ```bash
@@ -104,7 +122,7 @@ conda activate milimo
     ```
     The backend will start at `http://localhost:8000`.
 
-### 5. Frontend
+### 6. Frontend
 
 1.  Navigate to the `frontend` directory:
     ```bash

@@ -1,0 +1,27 @@
+{
+    "provider": "ollama",
+    "ollama": {
+        "base_url": "http://localhost:11434",
+        "model": "llama3.2:3b-instruct-fp16"
+    },
+    "openai": {
+        "api_key": "",
+        "model": "gpt-4o"
+    },
+    "gemini": {
+        "api_key": "AIzaSyAHVQ9CXtVUgKP2oO0aMyYa6WNUAwruHO8",
+        "model": "gemini-3-flash-preview"
+    },
+    "openrouter": {
+        "api_key": "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",
+        "model": "xiaomi/mimo-v2-flash:free"
+    },
+    "lmstudio": {
+        "base_url": "http://localhost:1234/v1",
+        "model": "openai/gpt-oss-20b"
+    },
+    "deepseek": {
+        "api_key": "",
+        "model": "deepseek-chat"
+    }
+}

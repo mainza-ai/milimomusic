@@ -8,9 +8,11 @@ from sqlmodel import SQLModel, Session, create_engine, select
 from typing import List
 from uuid import UUID
 
-from app.models import Job, JobStatus, GenerationRequest, LyricsRequest, EnhancePromptRequest, InspirationRequest
 from app.services.music_service import music_service
 from app.services.llm_service import LLMService
+from app.models import Job, JobStatus, GenerationRequest, LyricsRequest, EnhancePromptRequest, InspirationRequest, LLMConfigUpdate, ProviderConfig
+
+
 
 # Database
 sqlite_file_name = "jobs.db"
@@ -58,6 +60,69 @@ def health_check():
 @app.get("/models/lyrics")
 def get_lyrics_models():
     return {"models": LLMService.get_models()}
+
+@app.get("/config/llm")
+def get_llm_config():
+    return LLMService.get_config()
+
+@app.post("/config/llm")
+def  update_llm_config(config: LLMConfigUpdate):
+    try:
+        # Update provider if specified
+        if config.provider:
+            LLMService.set_active_provider(config.provider)
+        
+        # Update specific provider settings
+        if config.openai:
+            LLMService.update_config("openai", config.openai.model_dump(exclude_unset=True))
+        if config.gemini:
+            LLMService.update_config("gemini", config.gemini.model_dump(exclude_unset=True))
+        if config.openrouter:
+            LLMService.update_config("openrouter", config.openrouter.model_dump(exclude_unset=True))
+        if config.lmstudio:
+            LLMService.update_config("lmstudio", config.lmstudio.model_dump(exclude_unset=True))
+        if config.ollama:
+            LLMService.update_config("ollama", config.ollama.model_dump(exclude_unset=True))
+        if config.deepseek:
+            LLMService.update_config("deepseek", config.deepseek.model_dump(exclude_unset=True))
+            
+        return LLMService.get_config()
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/config/fetch-models")
+def fetch_models(request: LLMConfigUpdate):
+    """
+    Fetch models for a specific provider using passed credentials/url.
+    Does NOT save the config.
+    """
+    try:
+        provider = request.provider
+        if not provider:
+            raise HTTPException(status_code=400, detail="Provider required")
+        
+        # Extract relevant credentials from the request body
+        api_key = None
+        base_url = None
+        
+        if provider == "openai" and request.openai:
+            api_key = request.openai.api_key
+        elif provider == "deepseek" and request.deepseek:
+            api_key = request.deepseek.api_key
+        elif provider == "gemini" and request.gemini:
+            api_key = request.gemini.api_key
+        elif provider == "openrouter" and request.openrouter:
+            api_key = request.openrouter.api_key
+        elif provider == "lmstudio" and request.lmstudio:
+            base_url = request.lmstudio.base_url
+        elif provider == "ollama" and request.ollama:
+            base_url = request.ollama.base_url
+
+        models = LLMService.fetch_available_models(provider, api_key, base_url)
+        return {"models": models}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to fetch models: {str(e)}")
+
 
 @app.post("/generate/enhance_prompt")
 def enhance_prompt(req: EnhancePromptRequest):

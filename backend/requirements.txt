@@ -1,8 +1,8 @@
-fastapi==0.109.2
-uvicorn==0.27.0
-sqlmodel==0.0.16
-requests==2.31.0
-pydantic==2.6.1
+fastapi>=0.109.2
+uvicorn>=0.27.0
+sqlmodel>=0.0.16
+requests>=2.31.0
+pydantic>=2.9.0
 boto3
 openai>=1.90.0
 google-genai>=0.6.0

@@ -356,6 +356,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                         </h2>
                         <div className="flex items-center gap-2 mt-1">
                             <span className="text-[10px] font-mono text-cyan-600 uppercase tracking-widest bg-cyan-50 px-1.5 py-0.5 rounded-full border border-cyan-100/50">v3.1</span>
+                            <span className="text-[10px] font-mono text-slate-400 italic">Powered by HeartMuLa</span>
                         </div>
                     </div>
                 </div>

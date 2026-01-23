@@ -101,21 +101,39 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         }
     }, [audioUrl]);
 
-    // Handle Global Pause Event
+    // Handle Global Pause Event & Play Command
     useEffect(() => {
-        const handleGlobalPlay = (e: CustomEvent) => {
-            // If another player starts (id !== my id), pause myself
-            if (e.detail.id !== jobId && isPlaying) {
-                if (wavesurfer.current) {
-                    wavesurfer.current.pause();
-                    setIsPlaying(false);
+        const handleGlobalEvent = (e: CustomEvent) => {
+            // PAUSE Check: If another player starts (id !== my id), pause myself
+            if (e.type === 'milimo_play_start') {
+                if (e.detail.id !== jobId && isPlaying) {
+                    if (wavesurfer.current) {
+                        wavesurfer.current.pause();
+                        setIsPlaying(false);
+                    }
+                }
+            }
+
+            // PLAY COMMAND: If parent tells ME specifically to play
+            if (e.type === 'milimo_play_command') {
+                if (e.detail.id === jobId) {
+                    if (wavesurfer.current) {
+                        wavesurfer.current.play();
+                        setIsPlaying(true);
+                        // Broadcast that I started
+                        const startEvent = new CustomEvent('milimo_play_start', { detail: { id: jobId } });
+                        window.dispatchEvent(startEvent);
+                    }
                 }
             }
         };
 
-        window.addEventListener('milimo_play_start' as any, handleGlobalPlay as any);
+        window.addEventListener('milimo_play_start' as any, handleGlobalEvent as any);
+        window.addEventListener('milimo_play_command' as any, handleGlobalEvent as any);
+
         return () => {
-            window.removeEventListener('milimo_play_start' as any, handleGlobalPlay as any);
+            window.removeEventListener('milimo_play_start' as any, handleGlobalEvent as any);
+            window.removeEventListener('milimo_play_command' as any, handleGlobalEvent as any);
         };
     }, [jobId, isPlaying]);
 

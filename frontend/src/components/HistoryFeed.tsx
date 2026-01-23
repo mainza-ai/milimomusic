@@ -131,6 +131,33 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
         return dateKey; // "Thu Jan 15 2026"
     };
 
+    // Flatten sorted groups into a single linear list for navigation
+    const flatHistory = useMemo(() => {
+        const flat: Job[] = [];
+        sortedGroupKeys.forEach(key => {
+            flat.push(...groupedHistory[key]);
+        });
+        return flat;
+    }, [sortedGroupKeys, groupedHistory]);
+
+    const handleNextTrack = (currentId: string) => {
+        const idx = flatHistory.findIndex(j => j.id === currentId);
+        if (idx > -1 && idx < flatHistory.length - 1) {
+            const nextJob = flatHistory[idx + 1];
+            // Dispatch event to play next
+            window.dispatchEvent(new CustomEvent('milimo_play_command', { detail: { id: nextJob.id } }));
+        }
+    };
+
+    const handlePrevTrack = (currentId: string) => {
+        const idx = flatHistory.findIndex(j => j.id === currentId);
+        if (idx > 0) {
+            const prevJob = flatHistory[idx - 1];
+            // Dispatch event to play prev
+            window.dispatchEvent(new CustomEvent('milimo_play_command', { detail: { id: prevJob.id } }));
+        }
+    };
+
     const [localSearch, setLocalSearch] = useState(searchQuery);
 
     // Sync local search when prop changes (e.g. clear)
@@ -344,10 +371,16 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                     </div>
                                                 )}
 
-                                                {/* Audio Player */}
+                                                {/* Audio Player (Enhanced with Nav) */}
                                                 {job.status === 'completed' && job.audio_path && (
                                                     <div className="mt-3 bg-slate-50/50 rounded-sm p-1.5 border border-slate-100">
-                                                        <AudioPlayer audioUrl={job.audio_path} title={job.title || job.prompt || "Untitled"} jobId={job.id} />
+                                                        <AudioPlayer
+                                                            audioUrl={job.audio_path}
+                                                            title={job.title || job.prompt || "Untitled"}
+                                                            jobId={job.id}
+                                                            onNext={() => handleNextTrack(job.id)}
+                                                            onPrev={() => handlePrevTrack(job.id)}
+                                                        />
                                                     </div>
                                                 )}
 

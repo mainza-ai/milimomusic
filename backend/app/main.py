@@ -210,7 +210,18 @@ async def generate_music(req: GenerationRequest, background_tasks: BackgroundTas
          import random
          seed_val = random.randint(0, 2**32 - 1)
          
-    job = Job(prompt=req.prompt, lyrics=req.lyrics, duration_ms=req.duration_ms, tags=req.tags, seed=seed_val)
+    job = Job(
+        prompt=req.prompt, 
+        lyrics=req.lyrics, 
+        duration_ms=req.duration_ms, 
+        tags=req.tags, 
+        seed=seed_val,
+        llm_model=req.llm_model,
+        parent_job_id=req.parent_job_id,
+        temperature=req.temperature,
+        cfg_scale=req.cfg_scale,
+        topk=req.topk
+    )
     with Session(engine) as session:
         session.add(job)
         session.commit()

@@ -22,7 +22,27 @@ def migrate():
             print("Adding 'is_favorite' column...")
             cursor.execute("ALTER TABLE job ADD COLUMN is_favorite BOOLEAN DEFAULT 0")
             conn.commit()
-            print("Migration successful.")
+            print("Added 'is_favorite'.")
+
+        # New fields migration
+        new_columns = {
+            "llm_model": "TEXT",
+            "parent_job_id": "TEXT",
+            "temperature": "FLOAT",
+            "cfg_scale": "FLOAT",
+            "topk": "INTEGER"
+        }
+
+        for col_name, col_type in new_columns.items():
+            if col_name in columns:
+                print(f"Column '{col_name}' already exists.")
+            else:
+                print(f"Adding '{col_name}' column...")
+                cursor.execute(f"ALTER TABLE job ADD COLUMN {col_name} {col_type}")
+                conn.commit()
+                print(f"Added '{col_name}'.")
+            
+        print("Migration successful.")
             
     except Exception as e:
         print(f"Migration failed: {e}")

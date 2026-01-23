@@ -231,6 +231,7 @@ RULES:
 3. NO HEADERS: NEVER include "[Verse 1]" inside new_content.
 4. NO STAGE DIRECTIONS: No "(guitar solo)", etc.
 5. MINIMAL changes: Only touch sections user explicitly asked to change
+6. REPEATED SECTIONS: If you update a section that repeats (e.g. Chorus), you MUST generate an UPDATE_SECTION operation for EACH occurrence (Chorus 1, Chorus 2, etc.) unless you specifically want them to differ. The system does *not* auto-update duplicates.
 
 {error_feedback}
 """

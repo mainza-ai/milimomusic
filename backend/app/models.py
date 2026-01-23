@@ -21,6 +21,15 @@ class Job(SQLModel, table=True):
     seed: Optional[int] = None # Added for Seed Consistency
     audio_path: Optional[str] = None
     duration_ms: int = 240000
+    
+    # New Fields for Better History & Retry
+    llm_model: Optional[str] = Field(default=None) # Track which model was used
+    parent_job_id: Optional[str] = Field(default=None) # For extensions
+    temperature: Optional[float] = Field(default=None) # Generation param
+    cfg_scale: Optional[float] = Field(default=None)   # Generation param
+    topk: Optional[int] = Field(default=None)          # Generation param
+
+    duration_ms: int = 240000
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_msg: Optional[str] = None
     is_favorite: bool = Field(default=False)
@@ -33,10 +42,19 @@ class GenerationRequest(SQLModel):
     temperature: float = 1.0
     cfg_scale: float = 1.5
     topk: int = 50
-    tags: Optional[str] = None
+    tags: Optional[Any] = None # Allow list or string, validator will fix
     seed: Optional[int] = None # Added for Seed Consistency
     llm_model: Optional[str] = None # specific LLM usage for title/lyrics
     parent_job_id: Optional[str] = None # For Track Extension (Phase 9)
+
+    @field_validator('tags', mode='before')
+    @classmethod
+    def normalize_tags(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return ", ".join(str(t) for t in v)
+        return str(v)
 
 class LyricsRequest(SQLModel):
     model_config = {"protected_namespaces": ()}

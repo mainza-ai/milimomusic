@@ -104,25 +104,30 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                     // We switch to Ollama IF:
                     // 1. Provider is not set at all
                     // 2. OR Provider is set to Ollama
-                    // 3. OR (Optionally) we act aggressive and always switch on startup. 
-                    // current implementation was aggressive. I will keep it aggressive FOR STARTUP only.
+                    // 3. BUT NOT if the user has explicitly set another provider (e.g. DeepSeek, OpenAI)
 
-                    const newConfig = {
-                        ...cfg,
-                        provider: 'ollama',
-                        ollama: {
-                            ...cfg.ollama,
-                            model: targetModel
+                    const shouldSwitch = !cfg.provider || cfg.provider === 'ollama';
+
+                    if (shouldSwitch) {
+                        const newConfig = {
+                            ...cfg,
+                            provider: 'ollama',
+                            ollama: {
+                                ...cfg.ollama,
+                                model: targetModel
+                            }
+                        };
+
+                        // Only update if different
+                        if (JSON.stringify(newConfig) !== JSON.stringify(cfg)) {
+                            console.log("Startup: switching/updating default provider to Ollama");
+                            await api.updateLLMConfig(newConfig);
+                            setLlmConfig(newConfig);
+                            setLyricsModel(targetModel);
+                            onRefreshModels?.();
                         }
-                    };
-
-                    // Only update if different
-                    if (JSON.stringify(newConfig) !== JSON.stringify(cfg)) {
-                        console.log("Startup: switching default provider to Ollama");
-                        await api.updateLLMConfig(newConfig);
-                        setLlmConfig(newConfig);
-                        setLyricsModel(targetModel);
-                        onRefreshModels?.();
+                    } else {
+                        console.log(`Startup: Keeping configured provider: ${cfg.provider}`);
                     }
                 }
             } catch (e) {

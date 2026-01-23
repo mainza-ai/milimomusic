@@ -2,6 +2,10 @@
 
 A music generation application powered by HeartMuLa models.
 
+> [!NOTE]
+> **Cross-Platform Support**: Optimized for both **macOS (Apple Silicon/MPS)** and **Windows (CUDA)**.
+
+
 ![Milimo Music Interface](assets/milimomusic.png)
 
 ### [🎵 Listen to a Sample Track generated with Milimo Music](https://www.youtube.com/watch?v=psmoiW1f6-I)

@@ -96,8 +96,6 @@ Milimo Music supports multiple LLM providers for lyrics generation and creative 
 
 **Crucial Step**: You must download the large model weights manually as they are excluded from the repository.
 
-**Crucial Step**: You must download the large model weights manually as they are excluded from the repository.
-
 1.  **Download Pretrained Models**:
     You need to download the checkpoints into the `heartlib/ckpt` directory. You can use Hugging Face or ModelScope.
 

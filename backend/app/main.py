@@ -1,5 +1,21 @@
 import asyncio
+import logging
 from contextlib import asynccontextmanager
+
+# Configure logging to suppress verbose debug output from dependencies
+# optimization: Configure BEFORE imports to catch everything
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - [%(levelname)s] %(name)s: %(message)s',
+    datefmt='%H:%M:%S'
+)
+# Silence specific noisy loggers
+logging.getLogger("multipart").setLevel(logging.WARNING)
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING) # Reduce access log spam if needed, or keep INFO
+logging.getLogger("uvicorn.error").setLevel(logging.INFO)
+logging.getLogger("httpcore").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
+
 from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
 from fastapi.responses import FileResponse
 from fastapi.middleware.cors import CORSMiddleware
@@ -10,9 +26,7 @@ from uuid import UUID
 
 from app.services.music_service import music_service
 from app.services.llm_service import LLMService
-from app.models import Job, JobStatus, GenerationRequest, LyricsRequest, EnhancePromptRequest, InspirationRequest, LLMConfigUpdate, ProviderConfig
-
-
+from app.models import Job, JobStatus, GenerationRequest, LyricsRequest, LyricsChatRequest, EnhancePromptRequest, InspirationRequest, LLMConfigUpdate, ProviderConfig
 
 # Database
 sqlite_file_name = "jobs.db"
@@ -45,6 +59,21 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+from fastapi.exceptions import RequestValidationError
+from fastapi.exception_handlers import request_validation_exception_handler
+from starlette.requests import Request
+
+@app.exception_handler(RequestValidationError)
+async def validation_exception_handler(request: Request, exc: RequestValidationError):
+    print(f"Validation error: {exc.errors()}")
+    # For debugging, also print the raw body if accessible
+    try:
+        body = await request.json()
+        print(f"Validation Body: {body}")
+    except:
+        pass
+    return await request_validation_exception_handler(request, exc)
 
 # Static Files (Audio Serving)
 import os
@@ -151,10 +180,25 @@ def generate_styles(req: InspirationRequest):
         return {"styles": ["Pop", "Rock", "Jazz"]} # Fallback
 
 @app.post("/generate/lyrics")
-def generate_lyrics(req: LyricsRequest):
+async def generate_lyrics(req: LyricsRequest):
     try:
-        lyrics = LLMService.generate_lyrics(req.topic, req.model_name, req.seed_lyrics)
+        lyrics = await LLMService.generate_lyrics_async(req.topic, req.model_name, req.seed_lyrics, req.tags)
         return {"lyrics": lyrics}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.post("/generate/lyrics-chat")
+async def chat_with_lyrics(req: LyricsChatRequest):
+    try:
+        result = await LLMService.chat_with_lyrics_async(
+            req.current_lyrics, 
+            req.user_message, 
+            req.model_name, 
+            req.chat_history, 
+            req.topic, 
+            req.get_tags_string()  # Normalize tags array to string
+        )
+        return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 

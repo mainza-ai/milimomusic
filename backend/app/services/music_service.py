@@ -27,20 +27,37 @@ class MusicService:
             return
 
         self.is_loading = True
-        logger.info(f"Loading Heartlib model from {model_path}...")
+        
+        # 1. Determine Device
+        device_str = "cpu"
+        if torch.cuda.is_available():
+            device_str = "cuda"
+        elif torch.backends.mps.is_available():
+            device_str = "mps"
+        
+        self.device = torch.device(device_str)
+        logger.info(f"Loading Heartlib model from {model_path} on {self.device}...")
+
         try:
             # Run blocking load in executor to avoid freezing async loop
             loop = asyncio.get_running_loop()
+            
+            # 2. Load Pipeline
+            
+            # MPS has better support for float16 than bfloat16 currently
+            target_dtype = torch.float16 if device_str == "mps" else torch.bfloat16
+            
             self.pipeline = await loop.run_in_executor(
                 None,
                 lambda: HeartMuLaGenPipeline.from_pretrained(
                     model_path,
-                    device=torch.device("cuda" if torch.cuda.is_available() else "mps" if torch.backends.mps.is_available() else "cpu"),
-                    dtype=torch.bfloat16,
+                    device=self.device,
+                    dtype=target_dtype,
                     version=version
                 )
             )
-            logger.info("Heartlib model loaded successfully.")
+            
+            logger.info(f"Heartlib model loaded successfully on {self.device}.")
         except Exception as e:
             logger.error(f"Failed to load Heartlib model: {e}")
             raise e
@@ -143,6 +160,24 @@ class MusicService:
                                 # Ensure correct shape/device if needed
                                 if history_tokens.device != self.device:
                                      history_tokens = history_tokens.to(self.device)
+                                
+                                # FIX: Ensure history_tokens is [Batch, Time, Codebooks] (3D)
+                                # Saved format is often [Codebooks, Time] (2D)
+                                if history_tokens.dim() == 2:
+                                    # [C, T] -> [T, C] -> [1, T, C]
+                                    history_tokens = history_tokens.transpose(0, 1).unsqueeze(0)
+                                    logger.info(f"Reshaped history tokens to {history_tokens.shape}")
+                                
+                                # FIX: Check for missing text column (e.g. 8 vs 9)
+                                # parallel_number is usually 9 (8 audio + 1 text)
+                                if self.pipeline and hasattr(self.pipeline, "_parallel_number"):
+                                    expected_dim = self.pipeline._parallel_number
+                                    if history_tokens.shape[-1] == expected_dim - 1:
+                                         # Pad with zeros (empty_id)
+                                         # [B, T, 8] -> [B, T, 9]
+                                         padding = torch.zeros((history_tokens.shape[0], history_tokens.shape[1], 1), dtype=history_tokens.dtype, device=history_tokens.device)
+                                         history_tokens = torch.cat([history_tokens, padding], dim=-1)
+                                         logger.info(f"Padded history tokens to {history_tokens.shape}")
                             else:
                                 logger.warning(f"Parent token file not found: {parent_token_path}")
                         except Exception as e:

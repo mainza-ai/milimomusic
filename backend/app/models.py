@@ -1,7 +1,8 @@
 from datetime import datetime, timezone
-from typing import Optional
+from typing import Optional, Any
 from uuid import UUID, uuid4
 from sqlmodel import Field, SQLModel
+from pydantic import field_validator
 from enum import Enum
 
 class JobStatus(str, Enum):
@@ -42,6 +43,33 @@ class LyricsRequest(SQLModel):
     topic: str
     model_name: Optional[str] = None
     seed_lyrics: Optional[str] = None
+    tags: Optional[Any] = None
+
+    @field_validator('tags', mode='before')
+    @classmethod
+    def normalize_tags(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return ", ".join(str(t) for t in v)
+        return str(v)
+
+class LyricsChatRequest(SQLModel):
+    model_config = {"protected_namespaces": ()}
+    current_lyrics: str
+    user_message: str
+    model_name: Optional[str] = None
+    topic: Optional[str] = None
+    tags: Optional[Any] = None  # Accept string or list, will be normalized
+    chat_history: Optional[list[dict[str, Any]]] = None 
+    
+    def get_tags_string(self) -> Optional[str]:
+        """Normalize tags to string format."""
+        if self.tags is None:
+            return None
+        if isinstance(self.tags, list):
+            return ", ".join(str(t) for t in self.tags)
+        return str(self.tags)
 
 class EnhancePromptRequest(SQLModel):
     model_config = {"protected_namespaces": ()}

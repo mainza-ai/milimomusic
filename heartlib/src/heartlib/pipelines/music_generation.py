@@ -37,7 +37,7 @@ class HeartMuLaGenPipeline(Pipeline):
         device: torch.device,
         dtype: torch.dtype,
     ):
-        super().__init__(model, dtype=dtype)
+        super().__init__(model, device=device, dtype=dtype)
         self.model = model
         self.generation_dtype = dtype
         self.audio_codec = audio_codec
@@ -45,7 +45,11 @@ class HeartMuLaGenPipeline(Pipeline):
         self.text_tokenizer = text_tokenizer
         self.config = config
 
-        self._parallel_number = audio_codec.config.num_quantizers + 1
+        self.config = config
+		
+        # Fix: Hardcode to 8+1 to match model architecture and gitmain.
+        # Codec config reports 7 quantizers which is incorrect/misleading for this model version.
+        self._parallel_number = 8 + 1
         self._muq_dim = model.config.muq_dim
 
     def _sanitize_parameters(self, **kwargs):
@@ -208,7 +212,10 @@ class HeartMuLaGenPipeline(Pipeline):
 
         bs_size = 2 if cfg_scale != 1.0 else 1
         self.model.setup_caches(bs_size)
-        with torch.autocast(device_type=self.device.type, dtype=self.generation_dtype):
+        
+        from contextlib import nullcontext
+        autocast_ctx = nullcontext() if self.device.type == "mps" else torch.autocast(device_type=self.device.type, dtype=self.generation_dtype)
+        with autocast_ctx:
             curr_token = self.model.generate_frame(
                 tokens=prompt_tokens,
                 tokens_mask=prompt_tokens_mask,
@@ -221,6 +228,9 @@ class HeartMuLaGenPipeline(Pipeline):
                 use_audio_cond=use_audio_cond,
             )
 
+
+        max_audio_frames = max_audio_length_ms // 80
+
         # Context Injection (History)
         if history_tokens is not None:
              # If history tokens are provided, we should use them as the preamble for the audio generation.
@@ -232,7 +242,9 @@ class HeartMuLaGenPipeline(Pipeline):
              # We need to run the model on history_tokens to warm up the cache.
              
              # Let's assume history_tokens is on correct device.
-             with torch.autocast(device_type=self.device.type, dtype=self.generation_dtype):
+             from contextlib import nullcontext
+             autocast_ctx = nullcontext() if self.device.type == "mps" else torch.autocast(device_type=self.device.type, dtype=self.generation_dtype)
+             with autocast_ctx:
                  # We need to feed history tokens into the model to populate KV cache
                  # For efficiency, we should do this in one go if possible, but generate_frame handles single steps?
                  # Actually HeartMuLa expects continuous segments.
@@ -316,31 +328,45 @@ class HeartMuLaGenPipeline(Pipeline):
                          # Then sets last column to False.
                          # So Audio columns are True.
                          
+                         # _pad_audio_token creates mask `torch.ones_like(..., dtype=bool)`.
+                         # So initially ALL TRUE. 
+                         # Then sets last column to False.
+                         # So Audio columns are True.
+                         
                          h_mask = torch.ones_like(h_token, dtype=torch.bool)
+                         # Fix: Mask out the text/padding column explicitly so the model doesn't embed '0' as text
                          h_mask[..., -1] = False
                          
                          # Feed to generate_frame to update caches
                          # We ignore output, just need side effects (cache update)
-                         self.model.generate_frame(
+                         # Fix: pass continuous_segments=None to avoid re-injecting MuQ at every step
+                         # Fix: Capture the OUTPUT (prediction) to use as the next seed token
+                         curr_token_prediction = self.model.generate_frame(
                             tokens=h_token,
                             tokens_mask=h_mask,
                             input_pos=prompt_pos[..., -1:] + j + 1,
                             temperature=temperature,
                             topk=topk,
-                            cfg_scale=cfg_scale
+                            cfg_scale=cfg_scale,
+                            continuous_segments=None,
+                            starts=None
                          )
                          
                          # Add to frames collection so result contains full audio
-                         frames.append(h_token[0:1,])
+                         # Fix: Must match shape of generated frames [1, 8] (Audio Only, No Time dim)
+                         # h_token is [B, 1, Parallel]. We want [1, Parallel-1] usually?
+                         # Error said generated was [1, 8].
+                         # So we take batch slice 0:1, remove time dim (0), remove text col (:-1)
+                         frames.append(h_token[0:1, 0, :-1])
 
                  # Advance prompt_pos by history length
                  prompt_pos = prompt_pos + hz_len
                  
-                 # The last token of history becomes the 'curr_token' for autoregression
-                 curr_token = history_tokens[:, -1:, :] # [B, 1, Parallel]
-
-                 # The last token of history becomes the 'curr_token' for autoregression
-                 curr_token = history_tokens[:, -1:, :] # [B, 1, Parallel]
+                 # FIX: Use the PREDICTION from the last history step as the seed.
+                 # curr_token_prediction is [B, Parallel] (8 channels, Audio Only)
+                 # We need [B, 8] (Audio channels only, no text)
+                 # Fix: Do NOT slice. It is already 8 channels.
+                 curr_token = curr_token_prediction
 
         else:
              # No history provided. We must append the initial predicted token.
@@ -364,7 +390,7 @@ class HeartMuLaGenPipeline(Pipeline):
             padded_token_mask[..., -1] = False
             return padded_token, padded_token_mask
 
-        max_audio_frames = max_audio_length_ms // 80
+
 
         for i in tqdm(range(max_audio_frames)):
             # Callback: Update Progress
@@ -386,7 +412,13 @@ class HeartMuLaGenPipeline(Pipeline):
                     raise InterruptedError("Generation cancelled by user")
 
             curr_token, curr_token_mask = _pad_audio_token(curr_token)
-            with torch.autocast(device_type=self.device.type, dtype=self.generation_dtype):
+
+            # MPS Autocast is often unstable or warns about dtype support. 
+            # Since we load in float16 for MPS, we can skip autocast or use a nullcontext.
+            from contextlib import nullcontext
+            autocast_ctx = nullcontext() if self.device.type == "mps" else torch.autocast(device_type=self.device.type, dtype=self.generation_dtype)
+            
+            with autocast_ctx:
                 curr_token = self.model.generate_frame(
                     tokens=curr_token,
                     tokens_mask=curr_token_mask,

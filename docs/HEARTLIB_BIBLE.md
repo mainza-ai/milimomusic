@@ -132,4 +132,38 @@ I've come to talk with you again...
 *   `callback` (Callable): `func(progress_int, msg_str)`.
 
 ---
+
+## 10. Architecture & Extension Deep Dive (Critical Engineering Notes)
+
+### 10.1 Parallel Codebooks (The "8+1" Rule)
+*   **Concept**: HeartMuLa operates on **9 parallel channels**:
+    *   **Channel 0-7**: Audio Codebooks (8 total).
+    *   **Channel 8**: Text/Control (1 total).
+*   **The Trap**: Some versions of `HeartCodec` configuration file report `num_quantizers = 7`. Trusting this config blindly leads to a pipeline configured for 8 channels (7+1), which causes `Tensor Size Mismatch [2, 7] vs [2, 8]`.
+*   **The Fix**: Always hardcode `parallel_number = 8 + 1` in the pipeline initialization to match the actual model architecture, regardless of the codec config file.
+
+### 10.2 Extension Logic (The "Double Injection" Stutter)
+When extending a track, **History Injection** must be handled with precision to avoid phase discontinuity (stutter/noise).
+*   **Incorrect Approach**: Injecting history frames, then taking the *last history frame* and re-feeding it as the *first generation seed*.
+    *   *Result*: The model sees the same frame twice (once at `t`, once at `t+1`). This breaks the audio waveform phase.
+*   **Correct Approach**:
+    1.  Inject history frames to warm up the KV Cache.
+    2.  Capture the model's **PREDICTION** from the final history step.
+    3.  Use this **PREDICTION** as the seed for the generation loop.
+    *   *Result*: Seamless continuation based on the model's autoregressive flow.
+
+### 10.3 Model Output Slicing
+*   **Inputs**: The model accepts [B, S, 9] (8 Audio + 1 Text).
+*   **Outputs (`generate_frame`)**: The model returns **[B, 8]** (8 Audio Channels ONLY).
+*   **The Trap**: Attempting to slice the output (e.g., `[:, :-1]`) thinking it contains a text column will destroy the last audio codebook (Channel 7), causing invalid tensor shapes.
+*   **Rule**: Use the model prediction **as-is**. It is already pure audio.
+
+### 10.4 Apple Silicon (MPS) Specifics
+*   **Precision**: MPS on macOS struggles with `bfloat16` and `autocast`.
+*   **Configuration**:
+    *   **Dtype**: Use `torch.float16`.
+    *   **Autocast**: **DISABLE** it. Use `contextlib.nullcontext()` instead.
+    *   Enable `os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"` for missing operators (like `aten::conv1d` on some versions).
+
+---
 *Maintained by the Milimo Music core engineering team.*

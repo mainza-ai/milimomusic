@@ -30,6 +30,14 @@ Milimo Music integrates state-of-the-art AI models to provide a seamless music c
     [![Track Extension Demo](https://img.youtube.com/vi/Yppfm86lgk0/0.jpg)](https://youtu.be/Yppfm86lgk0)
 4.  **Real-Time Progress**: Server-Sent Events (SSE) provide live feedback on the generation steps, from token inference to decoding.
 5.  **Smart History**: Automatically saves all generated tracks, lyrics, and metadata (seed, cfg, temperature) for easy retrieval and playback.
+6.  **AI Co-Writer (Multi-Agent System)**:
+    <br>
+    ![AI Co-Writer Interface](assets/milimomusic2.png)
+    -   **Agentic Workflow**: The Co-Writer is not a simple chatbot. It uses a graph of specialized Pydantic Agents working in tandem:
+        -   **Coordinator Agent**: Analyzes your request and routes it to the correct workflow (Creation vs. Editing).
+        -   **Lyricist Agent**: The creative engine that drafts content and executes complex editing operations (Update, Insert, Append).
+        -   **StructureGuard Agent**: A dedicated QA agent that validates every output against strict schemas. If the Lyricist makes a mistake, the Guard catches it and forces a retry automatically.
+    -   **Pydantic-Native**: By treating lyrics as code artifacts (Schemas), we eliminate hallucinated formatting and ensure the lyrics always fit the music generation engine perfectly.
 
 ## Prerequisites
 

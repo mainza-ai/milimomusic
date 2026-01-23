@@ -39,8 +39,11 @@ export const api = {
         lyrics?: string,
         tags?: string,
         cfg_scale: number = 1.5,
+        temperature: number = 1.0,
+        topk: number = 50,
+        llmModel?: string,
         parentJobId?: string,
-        seed?: number // Added field
+        seed?: number
     ) => {
         const res = await axios.post(`${API_BASE_URL}/generate/music`, {
             prompt,
@@ -48,19 +51,34 @@ export const api = {
             lyrics,
             tags,
             cfg_scale,
+            temperature,
+            topk,
+            llm_model: llmModel,
             parent_job_id: parentJobId,
             seed
         });
         return res.data;
     },
 
-    generateLyrics: async (topic: string, modelName: string, currentLyrics?: string) => {
+    generateLyrics: async (topic: string, modelName: string, currentLyrics?: string, tags?: string) => {
         const res = await axios.post(`${API_BASE_URL}/generate/lyrics`, {
             topic,
             model_name: modelName,
-            seed_lyrics: currentLyrics
+            seed_lyrics: currentLyrics,
+            tags: tags
         });
         return res.data.lyrics;
+    },
+
+    chatLyrics: async (currentLyrics: string, userMessage: string, modelName: string, topic?: string, tags?: string) => {
+        const res = await axios.post(`${API_BASE_URL}/generate/lyrics-chat`, {
+            current_lyrics: currentLyrics,
+            user_message: userMessage,
+            model_name: modelName,
+            topic: topic,
+            tags: tags
+        });
+        return res.data; // { message, lyrics }
     },
 
     enhancePrompt: async (concept: string, modelName: string) => {
@@ -93,7 +111,7 @@ export const api = {
         cfgScale: number = 1.5,
         topk: number = 50,
         prompt: string,
-        llmModel: string = "llama3"
+        llmModel: string = "llama3.2:3b-instruct-fp16"
     ) => {
         const res = await axios.post(`${API_BASE_URL}/generate/music`, {
             lyrics,

@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mic2, Music, ChevronDown, ChevronUp, Sparkles, Plus, Dices, Wand2, ArrowRightCircle, RefreshCw, Settings } from 'lucide-react';
+import { Mic2, Music, ChevronDown, ChevronUp, Sparkles, Plus, Dices, Wand2, ArrowRightCircle, RefreshCw, Settings, Send, MessageSquare } from 'lucide-react';
 import { GradientButton } from './ui/GradientButton';
 
 import { api, type Job, type LLMConfig } from '../api';
@@ -10,7 +10,7 @@ interface ComposerSidebarProps {
     onGenerate: (data: CompositionData) => void;
     isGenerating: boolean;
     lyricsModels: string[];
-    onGenerateLyrics: (topic: string, model: string, currentLyrics?: string) => Promise<string>;
+    onGenerateLyrics: (topic: string, model: string, currentLyrics?: string, tags?: string) => Promise<string>;
     isGeneratingLyrics: boolean;
     currentJobId?: string;
     onCancel?: (jobId: string) => void;
@@ -49,6 +49,12 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     const [showAdvanced, setShowAdvanced] = useState(false);
     const [logs, setLogs] = useState<string[]>([]);
     const [isEnhancing, setIsEnhancing] = useState(false);
+
+    // Lyrics Chat State
+    const [chatInput, setChatInput] = useState('');
+    const [chatMessages, setChatMessages] = useState<{ role: 'user' | 'ai'; content: string }[]>([]);
+    const [isChatting, setIsChatting] = useState(false);
+    const [showChat, setShowChat] = useState(false); // Toggle between full editor and split/chat mode
 
     // LLM Config State
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -150,7 +156,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     const [temperature, setTemperature] = useState(() => parseFloat(localStorage.getItem('milimo_temperature') || '1.0'));
     const [cfgScale, setCfgScale] = useState(() => parseFloat(localStorage.getItem('milimo_cfg') || '1.5'));
     const [topk, setTopk] = useState(() => parseInt(localStorage.getItem('milimo_topk') || '50'));
-    const [lyricsModel, setLyricsModel] = useState(() => localStorage.getItem('milimo_lyrics_model') || (lyricsModels[0] || 'llama3'));
+    const [lyricsModel, setLyricsModel] = useState(() => localStorage.getItem('milimo_lyrics_model') || (lyricsModels[0] || 'llama3.2:3b-instruct-fp16'));
 
     // Save settings on change
     React.useEffect(() => {
@@ -245,12 +251,34 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
         setStyle(prev => prev ? `${prev}, ${s} ` : s);
     };
 
+    const handleChatSubmit = async () => {
+        if (!chatInput.trim()) return;
+        const userMsg = chatInput;
+        setChatInput('');
+
+        // Optimistic UI
+        setChatMessages(prev => [...prev, { role: 'user', content: userMsg }]);
+        setIsChatting(true);
+
+        try {
+            const result = await api.chatLyrics(lyrics, userMsg, lyricsModel, topic, style);
+
+            setLyrics(result.lyrics); // Update editor
+            setChatMessages(prev => [...prev, { role: 'ai', content: result.message || "I've updated the lyrics for you." }]);
+        } catch (e: any) {
+            console.error(e);
+            setChatMessages(prev => [...prev, { role: 'ai', content: "Sorry, I encountered an error updating the lyrics." }]);
+        } finally {
+            setIsChatting(false);
+        }
+    };
+
     const handleLyricsGen = async () => {
         if (!topic) return;
         try {
             // Pass current lyrics as seed if they exist
             const seed = lyrics.trim();
-            const genLyrics = await onGenerateLyrics(topic, lyricsModel, seed);
+            const genLyrics = await onGenerateLyrics(topic, lyricsModel, seed, style);
             setLyrics(genLyrics);
             setActiveTab('lyrics');
         } catch (e: any) {
@@ -327,7 +355,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                             MILIMO MUSIC
                         </h2>
                         <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[10px] font-mono text-cyan-600 uppercase tracking-widest bg-cyan-50 px-1.5 py-0.5 rounded-full border border-cyan-100/50">v3.0</span>
+                            <span className="text-[10px] font-mono text-cyan-600 uppercase tracking-widest bg-cyan-50 px-1.5 py-0.5 rounded-full border border-cyan-100/50">v3.1</span>
                         </div>
                     </div>
                 </div>
@@ -353,6 +381,9 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                             setLyrics('');
                             setStyle('');
                             setDuration(30);
+                            setChatMessages([]);
+                            setChatInput('');
+                            setShowChat(false);
                         }}
                         className="p-2 rounded-full hover:bg-white/50 text-slate-400 hover:text-cyan-600 transition-colors border border-transparent hover:border-white/50 shadow-sm hover:shadow-md"
                         title="New Track (Reset Form)"
@@ -542,34 +573,101 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                 )}
 
                 {activeTab === 'lyrics' && (
-                    <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} className="space-y-4">
-                        <div className="flex flex-col gap-2 mb-2">
+                    <motion.div initial={{ opacity: 0, x: 10 }} animate={{ opacity: 1, x: 0 }} className="h-full flex flex-col gap-3">
+
+                        {/* Control Bar */}
+                        <div className="flex items-center gap-2 bg-slate-50 p-1 rounded-md border border-slate-200">
                             <select
                                 value={lyricsModel}
                                 onChange={(e) => setLyricsModel(e.target.value)}
-                                className="bg-white/60 border border-slate-200 rounded-sm px-2 py-1.5 text-xs font-mono text-slate-600 focus:outline-none focus:ring-1 focus:ring-cyan-500 w-full"
+                                className="flex-1 bg-transparent text-xs font-mono text-slate-600 focus:outline-none"
                             >
                                 {lyricsModel && !lyricsModels.includes(lyricsModel) && (
-                                    <option key={lyricsModel} value={lyricsModel}>{lyricsModel} (Legacy/Custom)</option>
+                                    <option key={lyricsModel} value={lyricsModel}>{lyricsModel} (Custom)</option>
                                 )}
                                 {lyricsModels.map(m => <option key={m} value={m}>{m}</option>)}
                             </select>
+
+                            <button
+                                onClick={() => setShowChat(!showChat)}
+                                className={`p-1.5 rounded transition-colors ${showChat ? 'bg-cyan-100 text-cyan-700' : 'hover:bg-slate-200 text-slate-400'}`}
+                                title={showChat ? "Hide Chat" : "Open AI Chat"}
+                            >
+                                <MessageSquare size={16} />
+                            </button>
+                        </div>
+
+                        {/* Chat Interface (Collapsible) */}
+                        <AnimatePresence>
+                            {showChat && (
+                                <motion.div
+                                    initial={{ height: 0, opacity: 0, marginBottom: 0 }}
+                                    animate={{ height: "auto", opacity: 1, marginBottom: 12 }}
+                                    exit={{ height: 0, opacity: 0, marginBottom: 0 }}
+                                    className="border border-cyan-100 bg-cyan-50/50 rounded-md overflow-hidden flex flex-col shadow-sm flex-shrink-0 max-h-[300px]"
+                                >
+                                    <div className="flex-1 overflow-y-auto p-3 space-y-3 min-h-[150px]">
+                                        {chatMessages.length === 0 && (
+                                            <div className="text-center py-4">
+                                                <p className="text-xs text-cyan-800 font-bold mb-1">AI Co-Writer Ready</p>
+                                                <p className="text-[10px] text-cyan-600/70">"Add a bridge", "Make it darker", "Rhyme with 'fire'"...</p>
+                                            </div>
+                                        )}
+                                        {chatMessages.map((m, i) => (
+                                            <div key={i} className={`text-xs p-2.5 rounded-lg max-w-[90%] leading-relaxed whitespace-pre-wrap ${m.role === 'user' ? 'bg-cyan-500 text-white ml-auto rounded-tr-none shadow-sm' : 'bg-white text-slate-700 mr-auto rounded-tl-none border border-slate-100 shadow-sm'}`}>
+                                                {m.content}
+                                            </div>
+                                        ))}
+                                        {isChatting && (
+                                            <div className="flex gap-1 ml-2 p-2">
+                                                <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }}></span>
+                                                <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }}></span>
+                                                <span className="w-1.5 h-1.5 bg-cyan-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }}></span>
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="p-2 bg-white border-t border-cyan-100 flex gap-2 items-center">
+                                        <input
+                                            value={chatInput}
+                                            onChange={(e) => setChatInput(e.target.value)}
+                                            onKeyDown={(e) => e.key === 'Enter' && !isChatting && handleChatSubmit()}
+                                            disabled={isChatting}
+                                            placeholder="Tell the AI what to change..."
+                                            className="flex-1 text-xs bg-transparent outline-none placeholder:text-slate-400 text-slate-700"
+                                        />
+                                        <button
+                                            onClick={handleChatSubmit}
+                                            disabled={isChatting || !chatInput.trim()}
+                                            className="bg-cyan-500 hover:bg-cyan-600 text-white p-1.5 rounded-md disabled:opacity-50 transition-colors"
+                                        >
+                                            <Send size={14} />
+                                        </button>
+                                    </div>
+                                </motion.div>
+                            )}
+                        </AnimatePresence>
+
+                        {/* Standard Controls (Hidden when chat is open to save space? No, keep them for "Generate New") */}
+                        {!showChat && (
                             <button
                                 onClick={handleLyricsGen}
                                 disabled={isGeneratingLyrics || !topic}
                                 className="w-full bg-cyan-100/80 hover:bg-cyan-200 text-cyan-800 text-xs font-mono font-bold rounded-sm px-3 py-1.5 transition-all shadow-md shadow-cyan-500/10 hover:shadow-cyan-500/20 flex items-center justify-center gap-1.5 disabled:opacity-50 disabled:shadow-none border border-cyan-200/50"
                             >
                                 {isGeneratingLyrics ? <span className="animate-spin">⌛</span> : <Sparkles className="w-3.5 h-3.5 text-cyan-600" />}
-                                GENERATE LYRICS
+                                GENERATE FROM SCRATCH
                             </button>
-                        </div>
+                        )}
+
                         <textarea
                             value={lyrics}
                             onChange={(e) => setLyrics(e.target.value)}
                             placeholder="Write your own lyrics from scratch, OR start typing a few lines and let the AI finish the song for you... otherwise, leave blank to use the generated lyrics."
-                            className="w-full h-96 bg-white/60 rounded-sm border border-slate-200/60 p-4 focus:ring-1 focus:ring-cyan-500/50 outline-none resize-none text-sm font-mono leading-relaxed placeholder:text-slate-400 shadow-inner text-slate-700"
+                            className={`w-full bg-white/60 rounded-sm border border-slate-200/60 p-4 focus:ring-1 focus:ring-cyan-500/50 outline-none resize-none text-sm font-mono leading-relaxed placeholder:text-slate-400 shadow-inner text-slate-700 ${showChat ? 'h-64' : 'h-96'}`}
                         />
-                        <p className="text-[10px] text-slate-400 text-center font-mono uppercase tracking-widest">Manual Override Enabled</p>
+                        <p className="text-[10px] text-slate-400 text-center font-mono uppercase tracking-widest">
+                            {showChat ? "AI Collaboration Active" : "Manual Override Enabled"}
+                        </p>
                     </motion.div>
                 )}
 

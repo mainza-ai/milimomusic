@@ -151,27 +151,40 @@ function App() {
       // optimistic update logic could go here, but for now we rely on polling
       console.log("Starting generation with data:", data);
       const { job_id } = await api.generateJob(
-        data.topic, // Fixed: CompositionData uses 'topic', not 'prompt'
+        data.topic,
         data.durationMs,
         data.lyrics,
         data.tags,
         data.cfgScale,
-        parentJob?.id, // Pass extension context
-        parentJob?.seed // Pass seed for consistency
+        data.temperature,
+        data.topk,
+        data.llmModel,
+        parentJob?.id,
+        parentJob?.seed
       );
       console.log("Generation started, Job ID:", job_id);
       setCurrentJobId(job_id);
       setParentJob(undefined); // Clear extension mode after starting
     } catch (e: any) {
-      alert("Generation failed: " + e.message);
+      console.error("Generation failed", e);
+      let errorMsg = e.message;
+      if (e.response && e.response.data && e.response.data.detail) {
+        // If detail is array (validation errors), stringify it
+        if (Array.isArray(e.response.data.detail)) {
+          errorMsg = "Validation Error: " + e.response.data.detail.map((err: any) => `${err.loc.join('.')} - ${err.msg}`).join(', ');
+        } else {
+          errorMsg = e.response.data.detail;
+        }
+      }
+      alert("Generation failed: " + errorMsg);
       setIsGenerating(false);
     }
   };
 
-  const handleGenerateLyrics = async (topic: string, model: string, currentLyrics?: string) => {
+  const handleGenerateLyrics = async (topic: string, model: string, currentLyrics?: string, tags?: string) => {
     setIsGeneratingLyrics(true);
     try {
-      return await api.generateLyrics(topic, model, currentLyrics);
+      return await api.generateLyrics(topic, model, currentLyrics, tags);
     } finally {
       setIsGeneratingLyrics(false);
     }

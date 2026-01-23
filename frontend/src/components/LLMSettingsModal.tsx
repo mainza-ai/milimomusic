@@ -57,7 +57,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
             if (models.length > 0) {
                 const isCurrentValid = models.includes(currentModel || '');
                 // If invalid (empty) OR (invalid AND matches know default placeholder), pick first. 
-                if (!currentModel || (!isCurrentValid && (currentModel === 'llama3' || currentModel === 'gpt-4o' || currentModel === 'gemini-1.5-flash'))) {
+                if (!currentModel || (!isCurrentValid && (currentModel === 'llama3' || currentModel === 'llama3.2:3b-instruct-fp16' || currentModel === 'gpt-4o' || currentModel === 'gemini-1.5-flash'))) {
                     handleChange(activeTab as keyof LLMConfig, 'model', models[0]);
                 }
             }

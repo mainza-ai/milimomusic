@@ -16,6 +16,7 @@ A music generation application powered by HeartMuLa models.
 Milimo Music integrates state-of-the-art AI models to provide a seamless music creation experience.
 
 -   **[HeartMuLa-3B Model](https://github.com/HeartMuLa/heartlib)**: The heart of the audio generation engine. HeartMuLa (Hear the Music Language) is a 3B parameter transformer model capable of generating high-fidelity music conditioned on lyrics and stylistic tags.
+    -   **Multilingual Support**: Capable of generating music with lyrics in multiple languages, including but not limited to **English, Chinese, Japanese, Korean, and Spanish**.
 -   **Audio Codec**: Uses `HeartCodec` (12.5 Hz) for efficient and high-quality audio reconstruction.
 -   **Ollama Integration**: Leverages local LLMs (like Llama 3) for:
     -   **Lyrics Generation**: Automatically writes structured lyrics (Verse, Chorus, Bridge) based on a topic.

@@ -388,7 +388,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                             MILIMO MUSIC
                         </h2>
                         <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[10px] font-mono text-cyan-600 uppercase tracking-widest bg-cyan-50 px-1.5 py-0.5 rounded-full border border-cyan-100/50">v4.0</span>
+                            <span className="text-[10px] font-mono text-cyan-600 uppercase tracking-widest bg-cyan-50 px-1.5 py-0.5 rounded-full border border-cyan-100/50">v4.1</span>
                         </div>
                     </div>
                 </div>

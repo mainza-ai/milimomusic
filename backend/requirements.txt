@@ -3,7 +3,7 @@ uvicorn>=0.27.0
 sqlmodel>=0.0.16
 requests>=2.31.0
 pydantic>=2.9.0
-boto3
+python-multipart
 openai>=1.90.0
 google-genai>=0.6.0
 -e ../heartlib

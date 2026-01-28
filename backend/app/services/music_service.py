@@ -3,6 +3,7 @@ import os
 import torch
 import logging
 from typing import Optional
+from uuid import UUID
 from app.models import GenerationRequest, Job, JobStatus
 from sqlmodel import Session, select
 from heartlib import HeartMuLaGenPipeline
@@ -76,7 +77,7 @@ class MusicService:
             try:
                 with Session(db_engine) as session:
                     # check if job still exists
-                    job = session.exec(select(Job).where(Job.id == job_id)).one_or_none()
+                    job = session.exec(select(Job).where(Job.id == UUID(job_id))).one_or_none()
                     if not job:
                         logger.warning(f"Job {job_id} was deleted before processing started. Aborting.")
                         return
@@ -237,7 +238,7 @@ class MusicService:
                 # 6. Update status to COMPLETED
                 with Session(db_engine) as session:
                     # Re-fetch to avoid stale object
-                    job = session.exec(select(Job).where(Job.id == job_id)).one_or_none()
+                    job = session.exec(select(Job).where(Job.id == UUID(job_id))).one_or_none()
                     if not job:
                          logger.warning(f"Job {job_id} was deleted during generation. Discarding result.")
                          return
@@ -259,7 +260,7 @@ class MusicService:
             except Exception as e:
                 logger.error(f"Job {job_id} failed: {e}")
                 with Session(db_engine) as session:
-                    job = session.exec(select(Job).where(Job.id == job_id)).one()
+                    job = session.exec(select(Job).where(Job.id == UUID(job_id))).one()
                     job.status = JobStatus.FAILED
                     job.error_msg = str(e)
                     session.add(job)

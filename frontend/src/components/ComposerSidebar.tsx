@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Mic2, Music, ChevronDown, ChevronUp, Sparkles, Plus, Dices, Wand2, ArrowRightCircle, RefreshCw, Settings, Send, MessageSquare } from 'lucide-react';
+import { Mic2, Music, ChevronDown, ChevronUp, Sparkles, Plus, Dices, Wand2, ArrowRightCircle, RefreshCw, Settings, Send, MessageSquare, FolderOpen } from 'lucide-react';
 import { GradientButton } from './ui/GradientButton';
 
-import { api, type Job, type LLMConfig } from '../api';
+import { api, styleApi, type Job, type LLMConfig, type Style } from '../api';
 import { LLMSettingsModal } from './LLMSettingsModal';
+import { StyleManagerModal } from './StyleManagerModal';
+import { PathsSettingsModal } from './PathsSettingsModal';
 
 interface ComposerSidebarProps {
     onGenerate: (data: CompositionData) => void;
@@ -17,6 +19,8 @@ interface ComposerSidebarProps {
     parentJob?: Job; // Phase 9: For extension (Full Job Object)
     onClearParentJob?: () => void; // To clear extension mode
     onRefreshModels?: () => void;
+    onOpenTraining?: () => void;
+    activeCheckpoint?: { name: string; id: string } | null;
 }
 
 export interface CompositionData {
@@ -40,7 +44,9 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     onCancel,
     parentJob, // Phase 9: For extension
     onClearParentJob, // To clear extension mode
-    onRefreshModels
+    onRefreshModels,
+    onOpenTraining,
+    activeCheckpoint
 }) => {
     const [activeTab, setActiveTab] = useState<'sound' | 'lyrics'>('sound');
     const [topic, setTopic] = useState('');
@@ -58,6 +64,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
 
     // LLM Config State
     const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+    const [isPathsOpen, setIsPathsOpen] = useState(false);
     const [llmConfig, setLlmConfig] = useState<LLMConfig>({});
 
     const loadLlmConfig = async () => {
@@ -235,20 +242,41 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     };
 
     const [stylePills, setStylePills] = useState<string[]>([]);
+    const [allStyles, setAllStyles] = useState<Style[]>([]);
     const [isLoadingStyles, setIsLoadingStyles] = useState(false);
+    const [isStyleManagerOpen, setIsStyleManagerOpen] = useState(false);
+
+    const loadStylesFromAPI = async () => {
+        setIsLoadingStyles(true);
+        try {
+            const styles = await styleApi.getStyles();
+            setAllStyles(styles);
+            const shuffled = [...styles].sort(() => 0.5 - Math.random());
+            setStylePills(shuffled.slice(0, 12).map(s => s.name));
+        } catch (e) {
+            console.error('Failed to load styles', e);
+            setStylePills(getRandomTags(12));
+        } finally {
+            setIsLoadingStyles(false);
+        }
+    };
 
     useEffect(() => {
-        // Initial load
-        setStylePills(getRandomTags(12));
+        loadStylesFromAPI();
     }, []);
 
-    const refreshStyles = () => {
+    const refreshStyles = async () => {
         setIsLoadingStyles(true);
-        // Simulate "loading" feel briefly
-        setTimeout(() => {
-            setStylePills(getRandomTags(12));
-            setIsLoadingStyles(false);
-        }, 300);
+        const shuffled = [...allStyles].sort(() => 0.5 - Math.random());
+        setStylePills(shuffled.slice(0, 12).map(s => s.name));
+        setTimeout(() => setIsLoadingStyles(false), 200);
+    };
+
+    const getStyleBadge = (styleName: string) => {
+        const st = allStyles.find(s => s.name === styleName);
+        if (st?.type === 'trained') return '🚀';
+        if (st?.type === 'custom') return '⚗️';
+        return null;
     };
 
     const addStyle = (s: string) => {
@@ -360,8 +388,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                             MILIMO MUSIC
                         </h2>
                         <div className="flex items-center gap-2 mt-1">
-                            <span className="text-[10px] font-mono text-cyan-600 uppercase tracking-widest bg-cyan-50 px-1.5 py-0.5 rounded-full border border-cyan-100/50">v3.1</span>
-                            <span className="text-[10px] font-mono text-slate-400 italic">Powered by HeartMuLa</span>
+                            <span className="text-[10px] font-mono text-cyan-600 uppercase tracking-widest bg-cyan-50 px-1.5 py-0.5 rounded-full border border-cyan-100/50">v4.0</span>
                         </div>
                     </div>
                 </div>
@@ -380,6 +407,13 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                         ) : (
                             <Dices className="w-5 h-5 group-hover:rotate-180 transition-transform duration-500" />
                         )}
+                    </button>
+                    <button
+                        onClick={onOpenTraining}
+                        className="p-2 rounded-full hover:bg-white/50 text-slate-400 hover:text-purple-600 transition-colors border border-transparent hover:border-white/50 shadow-sm hover:shadow-md"
+                        title="Open Training Studio"
+                    >
+                        <span className="text-lg">🎓</span>
                     </button>
                     <button
                         onClick={() => {
@@ -403,6 +437,13 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                     >
                         <Settings className="w-5 h-5" />
                     </button>
+                    <button
+                        onClick={() => setIsPathsOpen(true)}
+                        className="p-2 rounded-full hover:bg-white/50 text-slate-400 hover:text-cyan-600 transition-colors border border-transparent hover:border-white/50 shadow-sm hover:shadow-md"
+                        title="Path Settings"
+                    >
+                        <FolderOpen className="w-5 h-5" />
+                    </button>
                 </div>
             </div>
 
@@ -411,6 +452,11 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                 onClose={() => setIsSettingsOpen(false)}
                 currentConfig={llmConfig}
                 onConfigUpdate={loadLlmConfig}
+            />
+
+            <PathsSettingsModal
+                isOpen={isPathsOpen}
+                onClose={() => setIsPathsOpen(false)}
             />
 
             {/* Tabs */}
@@ -492,11 +538,17 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                     <button
                                         key={s}
                                         onClick={() => addStyle(s)}
-                                        className="text-[10px] font-mono bg-white/50 hover:bg-white border border-slate-200/50 hover:border-cyan-200 rounded-full px-2 py-0.5 text-slate-500 hover:text-cyan-600 transition-all"
+                                        className="text-[10px] font-mono bg-white/50 hover:bg-white border border-slate-200/50 hover:border-cyan-200 rounded-full px-2 py-0.5 text-slate-500 hover:text-cyan-600 transition-all flex items-center gap-1"
                                     >
-                                        + {s}
+                                        + {s}{getStyleBadge(s) && <span className="text-[8px]">{getStyleBadge(s)}</span>}
                                     </button>
                                 ))}
+                                <button
+                                    onClick={() => setIsStyleManagerOpen(true)}
+                                    className="text-[10px] font-mono bg-gradient-to-r from-fuchsia-50 to-cyan-50 hover:from-fuchsia-100 hover:to-cyan-100 border border-fuchsia-200/50 hover:border-fuchsia-300 rounded-full px-2 py-0.5 text-fuchsia-600 hover:text-fuchsia-700 transition-all flex items-center gap-1"
+                                >
+                                    <Settings className="w-3 h-3" /> Manage
+                                </button>
                             </div>
                         </div>
 
@@ -708,23 +760,39 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
             <div className="p-6 border-t border-white/30 bg-white/40 backdrop-blur-md flex flex-col gap-3">
 
                 {/* Model Badge (Footer Priority) */}
-                {llmConfig.provider && (
-                    <div className="flex justify-center">
+                <div className="flex flex-col gap-2 items-center justify-center">
+
+                    {/* 1. Active LoRA/Checkpoint Badge */}
+                    {activeCheckpoint && (
+                        <div className="flex items-center gap-2 animate-in fade-in slide-in-from-bottom-2">
+                            <span className="text-[10px] font-mono text-slate-400">Audio Model:</span>
+                            <button
+                                onClick={onOpenTraining}
+                                className="text-[10px] font-mono px-3 py-1 rounded-full border border-purple-200 bg-purple-50 text-purple-700 shadow-sm flex items-center gap-2 hover:bg-purple-100 transition-colors"
+                            >
+                                <span className="font-bold">⚡ {activeCheckpoint.name}</span>
+                                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                            </button>
+                        </div>
+                    )}
+
+                    {/* 2. LLM Provider Badge */}
+                    {llmConfig.provider && (
                         <button
                             onClick={() => setIsSettingsOpen(true)}
                             className={`text-[10px] font-mono px-3 py-1 rounded-full border shadow-sm flex items-center gap-2 transition-transform hover:scale-105 ${llmConfig.provider === 'ollama' ? 'bg-white/80 text-orange-700 border-orange-200' :
                                 llmConfig.provider === 'openai' ? 'bg-white/80 text-green-700 border-green-200' :
                                     'bg-white/80 text-slate-600 border-slate-200'
-                                }`}>
-                            <span>{llmConfig.provider === 'ollama' ? 'Using Ollama' : 'Using Cloud AI'}</span>
-                            <span className="w-1 h-1 rounded-full bg-current opacity-50"></span>
+                                }`}
+                        >
+                            <span>{llmConfig.provider === 'ollama' ? 'Lyrics: Ollama' : 'Lyrics: Cloud AI'}</span>
                             <span className="font-bold">
                                 {llmConfig.provider === 'ollama' ? '🦙' : (llmConfig.provider === 'openai' ? '🤖' : '✨')}
                                 {(llmConfig[llmConfig.provider as keyof LLMConfig] as any)?.model || 'No Model'}
                             </span>
                         </button>
-                    </div>
-                )}
+                    )}
+                </div>
                 {isGenerating && currentJobId && onCancel ? (
                     <button
                         onClick={() => onCancel(currentJobId)}
@@ -743,7 +811,21 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                         <Sparkles className="w-4 h-4 text-white" /> <span className="tracking-widest font-mono text-xs">GENERATE TRACK</span>
                     </GradientButton>
                 )}
+                <div className="text-center">
+                    <span className="text-[9px] font-mono text-slate-300 italic">Powered by HeartMuLa</span>
+                </div>
             </div>
+
+            {/* Style Manager Modal */}
+            <StyleManagerModal
+                isOpen={isStyleManagerOpen}
+                onClose={() => setIsStyleManagerOpen(false)}
+                onStylesChange={loadStylesFromAPI}
+                onOpenTraining={() => {
+                    setIsStyleManagerOpen(false); // Close manager to show training (optional, or stack them)
+                    onOpenTraining?.();
+                }}
+            />
         </div >
     );
 };

@@ -40,11 +40,14 @@ heartlib/assets/*.mp3
 heartlib/assets/*.wav
 backend/generated_audio/
 backend/generated_tokens/
+backend/data/
+dataset_samples/
 
 # Temporary/Debug
 debug_instrumental.py
 backend/jobs.db
 backend/db.sqlite3
+backend/jobs.db*
 backend/llm_config.json
 backend/llm_config.backup.json
 *.log

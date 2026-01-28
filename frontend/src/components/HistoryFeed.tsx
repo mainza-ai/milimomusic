@@ -107,10 +107,12 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
         const groups: { [key: string]: Job[] } = {};
 
         history.forEach(job => {
-            // Ensure UTC
+            // Ensure UTC parsing by appending Z if missing (Postgres/SQLite often store as 'YYYY-MM-DDTHH:MM:SS')
+            // Then creating new Date() converts it to Browser Local Time automatically.
             const timeStr = job.created_at.endsWith("Z") ? job.created_at : job.created_at + "Z";
             const date = new Date(timeStr);
-            const dateKey = date.toDateString(); // "Wed Jan 21 2026" (Local)
+            // dateKey uses local date string
+            const dateKey = date.toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
 
             if (!groups[dateKey]) groups[dateKey] = [];
             groups[dateKey].push(job);
@@ -124,11 +126,12 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
     });
 
     const getGroupLabel = (dateKey: string) => {
-        const today = new Date().toDateString();
-        const yesterday = new Date(Date.now() - 86400000).toDateString();
+        const today = new Date().toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+        const yesterday = new Date(Date.now() - 86400000).toLocaleDateString(undefined, { weekday: 'short', year: 'numeric', month: 'short', day: 'numeric' });
+
         if (dateKey === today) return "Today";
         if (dateKey === yesterday) return "Yesterday";
-        return dateKey; // "Thu Jan 15 2026"
+        return dateKey;
     };
 
     // Flatten sorted groups into a single linear list for navigation
@@ -430,7 +433,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
 
                                                 {/* Timestamp Footer */}
                                                 <div className="mt-2 text-[9px] text-slate-300 font-mono text-right">
-                                                    {new Date(job.created_at).toLocaleTimeString()}
+                                                    {new Date(job.created_at.endsWith("Z") ? job.created_at : job.created_at + "Z").toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                                 </div>
                                             </div>
                                         </div>

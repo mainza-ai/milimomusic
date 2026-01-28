@@ -32,6 +32,11 @@ DEFAULT_CONFIG = {
     "deepseek": {
         "api_key": "",
         "model": "deepseek-chat"
+    },
+    "paths": {
+        "model_directory": "../heartlib/ckpt",
+        "checkpoints_directory": "./data/checkpoints",
+        "datasets_directory": "./data/datasets"
     }
 }
 

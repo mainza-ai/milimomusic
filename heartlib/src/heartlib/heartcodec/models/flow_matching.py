@@ -64,6 +64,11 @@ class FlowMatching(nn.Module):
         num_steps=20,
         disable_progress=True,
         scenario="start_seg",
+        external_mask=None,
+        gradient_mask=None, # Explicit Solver Constraint Mask (Float)
+        seam_indices=[], # List of indices to apply Feature Smoothing
+        smoothing_width=0, # Width of the blur window
+        callback=None,
     ):
         device = true_latents.device
         dtype = true_latents.dtype
@@ -81,16 +86,65 @@ class FlowMatching(nn.Module):
             quantized_feature_emb.permute(0, 2, 1), scale_factor=2, mode="nearest"
         ).permute(0, 2, 1)
 
+        # Feature Embedding Smoothing (Neural Crossfade)
+        if smoothing_width > 0 and len(seam_indices) > 0:
+            # Apply moving average blur at seam indices along the time dimension
+            # quantized_feature_emb: [B, T, D]
+            T_len = quantized_feature_emb.shape[1]
+            for seam_idx in seam_indices:
+                s_start = max(0, seam_idx - smoothing_width)
+                s_end = min(T_len, seam_idx + smoothing_width)
+                
+                # We can't easily use conv1d on a slice in-place with variable width?
+                # Simple iterative approach for the window:
+                # Weighted average with neighbors
+                
+                # Iterative blur (3-tap) repeated `smoothing_width` times?
+                # Or just a simple window average?
+                # Let's do a simple weighted local average for the transition region.
+                
+                # To essentially "Crossfade", we want to obscure the hard cut.
+                # A 3-tap blur repeated a few times is effective.
+                
+                blur_region = quantized_feature_emb[:, s_start:s_end, :].clone()
+                # Apply 1 pass of [0.25, 0.5, 0.25] smoothing
+                # Padding for convolution
+                if blur_region.shape[1] >= 3:
+                     # Permute to [B, D, T] for conv1d
+                     blur_in = blur_region.permute(0, 2, 1)
+                     kernel = torch.tensor([0.25, 0.5, 0.25], device=device, dtype=dtype).view(1, 1, 3).repeat(blur_in.shape[1], 1, 1)
+                     
+                     # Grouped conv for independent channel smoothing
+                     blur_out = F.conv1d(blur_in, kernel, padding=1, groups=blur_in.shape[1])
+                     
+                     quantized_feature_emb[:, s_start:s_end, :] = blur_out.permute(0, 2, 1)
+            
+            # print(f"[FlowMatching] Applied Feature Smoothing at {seam_indices} (width {smoothing_width})")
+
         num_frames = quantized_feature_emb.shape[1]  #
         latents = torch.randn(
             (batch_size, num_frames, self.latent_dim), device=device, dtype=dtype
         )
+        
+        # 0: Ignore/Padding, 1: Fixed/In-Context, 2: Generate
         latent_masks = torch.zeros(
             latents.shape[0], latents.shape[1], dtype=torch.int64, device=latents.device
         )
-        latent_masks[:, 0:latent_length] = 2
-        if scenario == "other_seg":
-            latent_masks[:, 0:incontext_length] = 1
+        
+        if external_mask is not None:
+            # Custom In-Painting Mask
+            # external_mask should be tensor of shape [B, T] or [T] with values 0, 1, 2
+            if external_mask.dim() == 1:
+                external_mask = external_mask.unsqueeze(0).repeat(batch_size, 1)
+            
+            # Ensure proper length match
+            usable_len = min(external_mask.shape[1], latent_masks.shape[1])
+            latent_masks[:, :usable_len] = external_mask[:, :usable_len]
+        else:
+            # Standard Scenarios
+            latent_masks[:, 0:latent_length] = 2
+            if scenario == "other_seg":
+                latent_masks[:, 0:incontext_length] = 1
 
         quantized_feature_emb = (latent_masks > 0.5).unsqueeze(
             -1
@@ -100,11 +154,56 @@ class FlowMatching(nn.Module):
             0
         )
 
+        if external_mask is not None:
+            # Custom In-Painting Mask
+            # external_mask should be tensor of shape [B, T] or [T] with values 0, 1, 2
+            if external_mask.dim() == 1:
+                external_mask = external_mask.unsqueeze(0).repeat(batch_size, 1)
+            
+            # Ensure proper length match
+            usable_len = min(external_mask.shape[1], latent_masks.shape[1])
+            latent_masks[:, :usable_len] = external_mask[:, :usable_len]
+        else:
+            # Standard Scenarios
+            latent_masks[:, 0:latent_length] = 2
+            if scenario == "other_seg":
+                latent_masks[:, 0:incontext_length] = 1
+
+        quantized_feature_emb = (latent_masks > 0.5).unsqueeze(
+            -1
+        ) * quantized_feature_emb + (latent_masks < 0.5).unsqueeze(
+            -1
+        ) * self.zero_cond_embedding1.unsqueeze(
+            0
+        )
+
+        # Prepare Constraint Mask for Solver (1=Fixed/Constraint, 0=Free)
+        # Assuming latent_masks: 1=Fixed, 2=Generate
+        # So solve_mask = (latent_masks == 1).float()
+        solver_mask = None
+        if gradient_mask is not None:
+             # Explicit Gradient provided (Decoupled from Conditioning)
+             # Expected shape: [B, T] or [1, T] with values 0.0 to 1.0
+             if gradient_mask.dim() == 1:
+                 gradient_mask = gradient_mask.unsqueeze(0).repeat(batch_size, 1)
+             # Ensure length
+             usable = min(gradient_mask.shape[1], latents.shape[1])
+             
+             solver_mask = torch.zeros_like(latents[:, :, 0]) # [B, T]
+             solver_mask[:, :usable] = gradient_mask[:, :usable]
+             
+        elif external_mask is not None:
+             solver_mask = (latent_masks == 1).float()
+
         incontext_latents = (
             true_latents
             * ((latent_masks > 0.5) * (latent_masks < 1.5)).unsqueeze(-1).float()
         )
-        incontext_length = ((latent_masks > 0.5) * (latent_masks < 1.5)).sum(-1)[0]
+        # Note: incontext_length is only used for legacy prefix mode.
+        if external_mask is not None:
+            incontext_length = 0 
+        else:
+            incontext_length = ((latent_masks > 0.5) * (latent_masks < 1.5)).sum(-1)[0]
 
         additional_model_input = torch.cat([quantized_feature_emb], 1)
         temperature = 1.0
@@ -118,33 +217,66 @@ class FlowMatching(nn.Module):
             t_span,
             additional_model_input,
             guidance_scale,
+            mask=solver_mask,
+            callback=callback
         )
 
-        latents[:, 0:incontext_length, :] = incontext_latents[
-            :, 0:incontext_length, :
-        ]  # B, T, dim
+        if solver_mask is not None:
+             # Final Force Set? Not strictly needed if solver held it, but safe.
+             latents = (1 - solver_mask.unsqueeze(-1)) * latents + solver_mask.unsqueeze(-1) * incontext_latents
+        else:
+             latents[:, 0:incontext_length, :] = incontext_latents[
+                :, 0:incontext_length, :
+             ]  # B, T, dim
         return latents
 
-    def solve_euler(self, x, incontext_x, incontext_length, t_span, mu, guidance_scale):
+    def solve_euler(self, x, incontext_x, incontext_length, t_span, mu, guidance_scale, mask=None, callback=None):
         """
         Fixed euler solver for ODEs.
         Args:
-            x (torch.Tensor): random noise
-            t_span (torch.Tensor): n_timesteps interpolated
-                shape: (n_timesteps + 1,)
-            mu (torch.Tensor): output of encoder
-                shape: (batch_size, n_feats, mel_timesteps)
+            x (torch.Tensor): random noise (B, T, 256)
+            incontext_x (torch.Tensor): constraint latents (B, T, 256)
+            mask (torch.Tensor): 1.0 for fixed/constrained regions, 0.0 for free generation.
+            callback (callable): Function(progress: float) -> None
         """
         t, _, dt = t_span[0], t_span[-1], t_span[1] - t_span[0]
         noise = x.clone()
 
-        # I am storing this because I can later plot it by putting a debugger here and saving it to a file
-        # Or in future might add like a return_all_steps flag
+        # Ensure mask is broadcastable
+        if mask is not None:
+            if mask.dim() == 1:
+                mask = mask.view(1, -1, 1) # [1, T, 1]
+            elif mask.dim() == 2:
+                mask = mask.unsqueeze(-1) # [B, T, 1]
+            # If mask is provided, incontext_x must be valid at mask==1 locations
+        
         sol = []
+        total_steps = len(t_span) - 1
+        
         for step in tqdm(range(1, len(t_span))):
-            x[:, 0:incontext_length, :] = (1 - (1 - 1e-6) * t) * noise[
-                :, 0:incontext_length, :
-            ] + t * incontext_x[:, 0:incontext_length, :]
+            if callback:
+                # Progress 0.0 -> 1.0 (approx)
+                callback(step / total_steps)
+            # Apply Constraints / In-Context Fixing
+            if mask is not None:
+                # Interpolate constraint: (1 - t) * noise + t * data
+                # Actually, flow matching targets the data at t=1.
+                # The trajectory for fixed data 'x0' is 't * x0 + (1-t) * noise' ?
+                # Standard FM: x_t = (1 - (1 - sigma_min) * t) * x_0 + t * x_1 ?
+                # Code below uses: (1 - (1 - 1e-6) * t) * noise + t * context
+                # This assumes 'noise' is the source (Standard Gaussian) and 'context' is the target (Data).
+                # Yes, usually x1=data, x0=noise.
+                
+                # We apply this interpolation to the 'Fixed' regions
+                forced_path = (1 - (1 - 1e-6) * t) * noise + t * incontext_x
+                x = (1 - mask) * x + mask * forced_path
+            else:
+                # Legacy Prefix Mode
+                if incontext_length > 0:
+                    x[:, 0:incontext_length, :] = (1 - (1 - 1e-6) * t) * noise[
+                        :, 0:incontext_length, :
+                    ] + t * incontext_x[:, 0:incontext_length, :]
+
             if guidance_scale > 1.0:
                 dphi_dt = self.estimator(
                     torch.cat(

@@ -456,16 +456,17 @@ class HeartMuLaGenPipeline(Pipeline):
 
     def postprocess(self, model_outputs: Dict[str, Any], save_path: str):
         wav = model_outputs["wav"]
-        # Use 'soundfile' backend explicitly if available, or try default with format spec
-        try:
-             torchaudio.save(save_path, wav, 48000, backend="soundfile")
-        except Exception:
-             # Fallback
-             try:
-                 torchaudio.save(save_path, wav, 48000, format="mp3")
-             except Exception:
-                 # Last resort: save as wav and rename? No, just try default.
-                  torchaudio.save(save_path, wav, 48000)
+        if save_path:
+            # Use 'soundfile' backend explicitly if available, or try default with format spec
+            try:
+                 torchaudio.save(save_path, wav, 48000, backend="soundfile")
+            except Exception:
+                 # Fallback
+                 try:
+                     torchaudio.save(save_path, wav, 48000, format="mp3")
+                 except Exception:
+                     # Last resort: save as wav and rename? No, just try default.
+                      torchaudio.save(save_path, wav, 48000)
         return model_outputs
 
     @classmethod

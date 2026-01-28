@@ -23,16 +23,12 @@ from .config_manager import ConfigManager
 from .lyrics_schemas import LyricsResponse
 from .lyrics_engine import StructuredLyricsEngine
 from .lyrics_utils import LyricsDOM
+from .style_registry import StyleRegistry, OFFICIAL_STYLES
 
 logger = logging.getLogger(__name__)
 
-VALID_HEARTMULA_TAGS = [
-    "Warm", "Reflection", "Pop", "Cafe", "R&B", "Keyboard", "Regret", "Drum machine",
-    "Electric guitar", "Synthesizer", "Soft", "Energetic", "Electronic", "Self-discovery",
-    "Sad", "Ballad", "Longing", "Meditation", "Faith", "Acoustic", "Peaceful", "Wedding",
-    "Piano", "Strings", "Acoustic guitar", "Romantic", "Drums", "Emotional", "Walking",
-    "Hope", "Hopeful", "Powerful", "Epic", "Driving", "Rock"
-]
+# Legacy alias for backward compatibility
+VALID_HEARTMULA_TAGS = OFFICIAL_STYLES
 
 class LLMProvider(ABC):
     @abstractmethod
@@ -629,7 +625,10 @@ class LLMService:
         provider = LLMService._get_provider()
         model = model or LLMService._get_active_model()
 
-        valid_tags_str = ", ".join(VALID_HEARTMULA_TAGS)
+        # Dynamic style fetching
+        valid_tags = StyleRegistry().get_styles_for_prompt()
+        valid_tags_str = ", ".join(valid_tags)
+        
         prompt = (
             f"Act as a professional music producer. Transform this simple user concept into a detailed musical direction.\n"
             f"USER CONCEPT: '{concept}'\n\n"
@@ -653,7 +652,10 @@ class LLMService:
         provider = LLMService._get_provider()
         model = model or LLMService._get_active_model()
 
-        valid_tags_str = ", ".join(VALID_HEARTMULA_TAGS)
+        # Dynamic style fetching
+        valid_tags = StyleRegistry().get_styles_for_prompt()
+        valid_tags_str = ", ".join(valid_tags)
+
         prompt = (
             "Act as a professional music producer brainstorming new hit songs.\n"
             "INSTRUCTIONS:\n"
@@ -676,7 +678,10 @@ class LLMService:
                     # Split tags by comma or comma-space
                     raw_tags = [t.strip() for t in tags_str.replace(", ", ",").split(",")]
                     # Filter to only valid tags (case-insensitive matching)
-                    valid_lower = {t.lower(): t for t in VALID_HEARTMULA_TAGS}
+                    # Use dynamic list for validation
+                    all_styles = StyleRegistry().get_styles_for_prompt()
+                    valid_lower = {t.lower(): t for t in all_styles}
+                    
                     valid_tags = [valid_lower.get(t.lower(), None) for t in raw_tags]
                     valid_tags = [t for t in valid_tags if t is not None]
                     
@@ -693,10 +698,13 @@ class LLMService:
 
     @staticmethod
     def generate_styles_list(model: Optional[str] = None) -> List[str]:
+        """Get a random sample of available styles from the registry."""
         try:
-            return random.sample(VALID_HEARTMULA_TAGS, 12)
+            registry = StyleRegistry()
+            all_styles = registry.get_styles_for_prompt()
+            return random.sample(all_styles, min(12, len(all_styles)))
         except Exception:
-            return VALID_HEARTMULA_TAGS[:12]
+            return OFFICIAL_STYLES[:12]
 
     @staticmethod
     def update_config(provider_name: str, config_data: Dict[str, Any]):

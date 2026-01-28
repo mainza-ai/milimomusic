@@ -1,9 +1,12 @@
 import { useState, useEffect } from 'react';
-import { api } from './api';
+import { api, trainingApi } from './api';
 import type { Job } from './api';
 import { ComposerSidebar } from './components/ComposerSidebar';
 import type { CompositionData } from './components/ComposerSidebar';
 import { HistoryFeed } from './components/HistoryFeed';
+
+import { TrainingStudio } from './components/TrainingStudio';
+import { useTrainingMonitor } from './hooks/useTrainingMonitor'; // Imported in Step 1956
 
 function App() {
   const [lyricsModels, setLyricsModels] = useState<string[]>([]);
@@ -12,6 +15,26 @@ function App() {
   const [parentJob, setParentJob] = useState<Job | undefined>(undefined);
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingLyrics, setIsGeneratingLyrics] = useState(false);
+
+  // Training Global State
+  const [isTrainingOpen, setIsTrainingOpen] = useState(false);
+  const [activeCheckpoint, setActiveCheckpoint] = useState<{ name: string, id: string } | null>(null);
+  const { activeJob } = useTrainingMonitor();
+
+  // Refresh active checkpoint
+  const refreshActiveCheckpoint = async () => {
+    try {
+      const checkpoints = await trainingApi.listCheckpoints();
+      const active = checkpoints.find((c: { is_active: boolean }) => c.is_active);
+      setActiveCheckpoint(active ? { name: active.name, id: active.id } : null);
+    } catch (e) {
+      console.error("Failed to load active checkpoint", e);
+    }
+  };
+
+  useEffect(() => {
+    refreshActiveCheckpoint();
+  }, []);
 
   // Pagination State
   const [historyOffset, setHistoryOffset] = useState(0);
@@ -262,8 +285,72 @@ function App() {
           onCancel={handleCancelJob}
           parentJob={parentJob}
           onClearParentJob={handleClearParentJob}
+          onOpenTraining={() => setIsTrainingOpen(true)}
+          activeCheckpoint={activeCheckpoint}
         />
       </aside>
+
+      {/* Global Training Modal */}
+      <TrainingStudio
+        isOpen={isTrainingOpen}
+        onClose={() => setIsTrainingOpen(false)}
+        onCheckpointsChange={refreshActiveCheckpoint}
+      />
+
+      {/* Persistent Training Status Widget (When Modal Closed) */}
+      {!isTrainingOpen && activeJob && (() => {
+        // Time calculations for widget
+        const getElapsed = () => {
+          if (!activeJob.started_at) return '';
+          const start = new Date(activeJob.started_at).getTime();
+          const elapsed = Math.floor((Date.now() - start) / 1000);
+          const h = Math.floor(elapsed / 3600);
+          const m = Math.floor((elapsed % 3600) / 60);
+          return h > 0 ? `${h}h ${m}m` : `${m}m`;
+        };
+        const getETA = () => {
+          if (!activeJob.started_at || activeJob.progress <= 0) return '';
+          const start = new Date(activeJob.started_at).getTime();
+          const elapsed = Date.now() - start;
+          const total = elapsed / (activeJob.progress / 100);
+          const remaining = Math.floor((total - elapsed) / 1000);
+          const h = Math.floor(remaining / 3600);
+          const m = Math.floor((remaining % 3600) / 60);
+          return h > 0 ? `~${h}h ${m}m` : m > 0 ? `~${m}m` : '<1m';
+        };
+        const elapsed = getElapsed();
+        const eta = getETA();
+
+        return (
+          <div
+            onClick={() => setIsTrainingOpen(true)}
+            className="fixed bottom-6 right-6 z-50 bg-white/90 backdrop-blur-md shadow-lg border border-cyan-200 rounded-2xl px-4 py-3 flex items-center gap-3 cursor-pointer hover:scale-105 transition-transform animate-in slide-in-from-bottom-4 group"
+          >
+            <div className="relative">
+              <div className="w-2.5 h-2.5 bg-cyan-500 rounded-full animate-pulse" />
+              <div className="absolute inset-0 bg-cyan-400 rounded-full animate-ping opacity-50" />
+            </div>
+            <div className="flex flex-col">
+              <span className="text-[10px] font-bold uppercase tracking-wider text-cyan-600">Training Active</span>
+              <span className="text-xs font-mono text-slate-700">
+                {activeJob.status === 'preprocessing'
+                  ? 'Preprocessing...'
+                  : `Epoch ${activeJob.current_epoch}/${activeJob.total_epochs}${activeJob.current_loss ? ` • Loss: ${activeJob.current_loss.toFixed(4)}` : ''}`
+                }
+              </span>
+              {/* Time metrics row */}
+              {elapsed && (
+                <span className="text-[10px] text-slate-400 mt-0.5">
+                  ⏱ {elapsed} {eta && activeJob.progress > 0 && activeJob.progress < 100 && <span className="text-cyan-600 font-medium ml-1">ETA: {eta}</span>}
+                </span>
+              )}
+            </div>
+            <div className="w-16 h-1.5 bg-slate-100 rounded-full overflow-hidden ml-2">
+              <div className="h-full bg-gradient-to-r from-cyan-500 to-purple-500 transition-all duration-500" style={{ width: `${activeJob.progress}%` }} />
+            </div>
+          </div>
+        );
+      })()}
 
     </div>
   );

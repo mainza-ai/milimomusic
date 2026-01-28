@@ -22,11 +22,19 @@ class MusicService:
         return cls._instance
         return cls._instance
 
-    async def initialize(self, model_path: str = "../heartlib/ckpt", version: str = "3B"):
+    async def initialize(self, model_path: str = None, version: str = "3B"):
         if self.pipeline is not None or self.is_loading:
             return
 
         self.is_loading = True
+        
+        # Get model path from config if not provided
+        if model_path is None:
+            from app.services.config_manager import ConfigManager
+            config = ConfigManager().get_config()
+            model_path = os.path.expanduser(
+                config.get("paths", {}).get("model_directory", "../heartlib/ckpt")
+            )
         
         # 1. Determine Device
         device_str = "cpu"
@@ -57,12 +65,89 @@ class MusicService:
                 )
             )
             
+            # Track active LoRA adapter
+            self.active_lora_path = None
+            
             logger.info(f"Heartlib model loaded successfully on {self.device}.")
+
+            # 3. Load Active Safe LoRA
+            try:
+                from app.services.fine_tuning_service import fine_tuning_service
+                active_ckpt = fine_tuning_service.get_active_checkpoint()
+                if active_ckpt:
+                    logger.info(f"Found active checkpoint {active_ckpt.name} ({active_ckpt.id}). Loading...")
+                    # Construct path: checkpoints_dir / id
+                    ckpt_path = fine_tuning_service.checkpoints_dir / active_ckpt.id
+                    success = self.load_lora_checkpoint(str(ckpt_path))
+                    if success:
+                        logger.info(f"Automatically loaded active LoRA: {active_ckpt.name}")
+                    else:
+                        logger.warning(f"Failed to load active LoRA: {active_ckpt.name}")
+            except Exception as e:
+                logger.warning(f"Error checking active checkpoint: {e}")
+
         except Exception as e:
             logger.error(f"Failed to load Heartlib model: {e}")
             raise e
         finally:
             self.is_loading = False
+    
+    def load_lora_checkpoint(self, checkpoint_path: str) -> bool:
+        """
+        Load a LoRA checkpoint into the model.
+        
+        Args:
+            checkpoint_path: Path to checkpoint directory containing lora_weights.pt
+            
+        Returns:
+            True if successful, False otherwise
+        """
+        if self.pipeline is None:
+            logger.error("Pipeline not initialized, cannot load LoRA")
+            return False
+        
+        from pathlib import Path
+        checkpoint_path = Path(checkpoint_path)
+        
+        if not (checkpoint_path / "lora_weights.pt").exists():
+            logger.error(f"No lora_weights.pt found in {checkpoint_path}")
+            return False
+        
+        try:
+            from app.services.training.lora_trainer import HeartMuLaLoRATrainer
+            
+            logger.info(f"Loading LoRA checkpoint from {checkpoint_path}")
+            
+            # Apply LoRA weights to the model
+            HeartMuLaLoRATrainer.load_lora_checkpoint(
+                self.pipeline.model,
+                checkpoint_path,
+                device=str(self.device)
+            )
+            
+            self.active_lora_path = str(checkpoint_path)
+            logger.info(f"LoRA checkpoint loaded successfully")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Failed to load LoRA checkpoint: {e}")
+            return False
+    
+    def unload_lora(self) -> bool:
+        """
+        Unload current LoRA adapter by reloading the base model.
+        This is a heavy operation as it requires full model reload.
+        """
+        if self.active_lora_path is None:
+            return True  # No LoRA loaded
+        
+        # Need to reload the pipeline to remove LoRA weights
+        # This is expensive but necessary since LoRA modifies weights in-place
+        logger.info("Unloading LoRA (requires model reload)")
+        self.pipeline = None
+        self.active_lora_path = None
+        # Caller should re-initialize the pipeline
+        return True
 
     async def generate_task(self, job_id: str, request: GenerationRequest, db_engine):
         """Background task to generate music."""

@@ -165,5 +165,153 @@ When extending a track, **History Injection** must be handled with precision to 
     *   **Autocast**: **DISABLE** it. Use `contextlib.nullcontext()` instead.
     *   Enable `os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"` for missing operators (like `aten::conv1d` on some versions).
 
+### 10.5 Audio Reference & Conditioning (Status Report 2026)
+HeartMuLa technically supports two forms of audio conditioning, but only one is fully functional in the OSS release:
+
+1.  **Continuation (Audio-to-Audio Extension)**: **Fully Supported**.
+    *   **Mechanism**: You can extend an existing audio track by feeding its encoded tokens as `history_tokens`.
+    *   **Uploads**: To extend an uploaded external file (MP3/WAV), you must first run it through `HeartCodec.encode()` to generate the compatible 8-codebook token sequence.
+    
+2.  **Style Conditioning (Audio-to-Style)**: **Not Supported (Missing Encoder)**.
+    *   **Mechanism**: The model has a `muq_embed` projection layer intended to take embeddings from a separate audio encoder (like MuLan or CLAP) to guide style.
+    *   **Status**: The necessary `muq_mulan` encoder weights and preprocessing code are **not included** in the open-source release. Providing `ref_audio` to the pipeline will raise a `NotImplementedError`. Style must be controlled via text tags.
+
+---
+
+## 11. Additional Capabilities (Unused Gems)
+Audit 2026 revealed valuable components included in the library but not currently utilized in the standard pipeline.
+
+### 11.1 Lyrics Transcription (`HeartTranscriptor`)
+A complete automatic speech recognition (ASR) pipeline based on Whisper.
+*   **Pipeline**: `heartlib.pipelines.HeartTranscriptorPipeline`.
+*   **Capabilities**:
+    *   High-accuracy lyrics transcription from raw audio.
+    *   Timestamp generation (word-level or segment-level).
+*   **Potential Use Cases**:
+    *   "Lyrics from Audio": Auto-generate lyrics for uploaded files.
+    *   "Karaoke Mode": Synchronize lyrics display with playback.
+    *   "Style Extraction": Analyze lyrical themes from existing songs to auto-prompt generation.
+
+### 11.2 Standalone Neural Compression (`HeartCodec`)
+The codec can be used independently of the generative model (`HeartMuLa`) as a powerful compression tool.
+*   **Model**: `heartlib.heartcodec.HeartCodec.detokenize(codes, ...)`
+*   **Performance**: Compresses 48kHz audio into 8 discrete codebooks at 12.5 Hz.
+*   **Capabilities**:
+    *   **Extreme Compression**: Store hours of audio in mere megabytes of token data (~1.5 kbps effective bitrate).
+    *   **Neural Remixing**: By manipulating the token sequences directly (e.g., shuffling codebooks, repeating token segments) before decoding, you can achieve unique "glitch" or "granular" synthesis effects impossible with traditional DSP.
+
+---
+---
+
+## 12. Advanced Architecture Internals (Deep Dive 2026)
+
+### 12.1 Audio In-Painting (LM-Guided Repair)
+
+> [!IMPORTANT]
+> `HeartCodec.inpaint()` is for **acoustic reconstruction only**. It cannot generate new semantic content. For true in-painting (filling gaps with fresh lyrics/music), you must use **LM-Guided Repair** (two-stage pipeline).
+
+#### The Problem with Codec-Only In-Painting
+| Mask Mode | Result | Why |
+|-----------|--------|-----|
+| `mask=0` | Silence | Codec treats null tokens as "no signal" |
+| `mask=2` + copy tokens | Repetition | Copied tokens = repeated audio |
+
+#### LM-Guided Repair Architecture
+```
+Stage 1: HeartMuLa (Semantic Generation)
+  → Generate NEW tokens for the gap
+  → Input: history_tokens (8s context) + lyrics + tags
+
+Stage 2: HeartCodec (Acoustic Reconstruction)  
+  → Decode [context + new tokens + context]
+  → Output: Phase-aligned audio with crossfade
+```
+
+#### Possible Optimal Parameters for Style Consistency (still testing)
+When generating repair tokens, use "Audio Dominance Mode" to force the model to continue based on what it hears rather than text guidance:
+
+| Parameter | Value | Purpose |
+|-----------|-------|---------|
+| `temperature` | **0.2** | Near-deterministic sampling (stable vocals) |
+| `topk` | **30** | Narrow beam search |
+| `cfg_scale` | **1.0** | Disable text guidance; rely on audio history |
+
+#### Tensor Shape Gotchas
+`HeartMuLa` returns tokens in inconsistent shapes. Always normalize:
+```python
+# Normalize to [1, C, T] before splicing
+if generated_tokens.dim() == 2:
+    generated_tokens = generated_tokens.unsqueeze(0)  # [C,T] → [1,C,T]
+elif generated_tokens.dim() == 3 and generated_tokens.shape[-1] == 8:
+    generated_tokens = generated_tokens.transpose(1, 2)  # [B,T,C] → [B,C,T]
+```
+
+*   **Implementation**: See `backend/app/services/inpainting_service.py`
+*   **Debug Log**: See `INPAINTING_DEBUG.md` for full history
+
+### 12.2 Fine-Tuning Capabilities (Training Studio 2026 Update)
+The HeartMuLa framework now includes a dedicated **Training Studio** for user-friendly fine-tuning.
+
+#### 12.2.1 Core Training Architecture
+We support two primary methods for adapting the model to new styles:
+
+1.  **LoRA (Low-Rank Adaptation)**:
+    *   **Mechanism**: Injects low-rank decomposition matrices (`A` and `B`) into the attention projections (`q_proj`, `v_proj`, etc.) of the backbone.
+    *   **Efficiency**: Trains only ~0.1% of parameters. Requires ~16GB VRAM for the 3B model.
+    *   **Device Handling (Crucial)**: LoRA adapters must be initialized on the **same device** as the model to avoid CPU/GPU conflicts. This is now handled automatically in `HeartMuLaLoRATrainer`.
+    *   **Use Case**: User-specific style cloning, quick experiments.
+
+2.  **Full Fine-Tuning**:
+    *   **Mechanism**: Updates all weights of the global and local transformers.
+    *   **Efficiency**: Extremely resource intensive. Requires ~24GB+ VRAM with gradient checkpointing and mixed precision.
+    *   **Use Case**: Fundamental genre expansion, distinct language adaptability.
+
+#### 12.2.2 Style Expansion Workflow (How to Add New Genres)
+Since generation is a language modeling task, "styles" are just tokens. You can add new styles (e.g., "Samba", "Chiptune") without code changes:
+1.  **Dataset Prep**: Collect audio files for the target genre.
+2.  **Labeling**: Create text captions containing the new tag: `<tag> Samba, Rhythmic </tag>`.
+3.  **Training**: Fine-tune the model (via Training Studio) to map the *Samba text tokens* to the *Samba audio tokens*.
+4.  **Result**: The model learns the statistical correlation. When prompted with "Samba", it will now produce the associated audio patterns.
+
+### 12.3 The "9th Channel" (Time-Aligned Control)
+The pipeline hardcodes `parallel_number = 8 + 1`. This 9th channel is theoretically capable of holding **Time-Aligned Text Tokens**.
+*   **Current State**: Currently used mostly for global conditioning padding.
+*   **Future Potential**: By injecting specific text tokens at specific timestamps in Channel 8, it is theoretically possible to force the model to sing a specific word at a specific second, enabling precise "Lyrics Timing Control" rather than the current autoregressive "free flow."
+
+---
+---
+
+## 13. UI Architecture & Design System (2026 Audit)
+
+### 13.1 Glassmorphism Standard
+The Milimo UI (including **Style Manager** and **Training Studio**) now follows a strict **Glassmorphism** design system to ensure visual premium quality:
+*   **Panels**: `bg-white/80 backdrop-blur-2xl border-white/50`. Never use solid opaque backgrounds for modals.
+*   **Gradients**: Use **Cyan-to-Fuchsia** (`from-cyan-500 to-fuchsia-500`) for primary actions and accents. Avoid generic primary blue.
+*   **Typography**: Use generic sans-serif for UI, `font-mono` for metrics (Loss, Epochs).
+*   **Feedback**: Real-time metrics (like Training Loss) must be displayed directly in the card UI, not hidden in logs.
+
+### 13.2 Real-Time Progress Architecture
+*   **State Tracking**: Training progress is dual-tracked by `current_epoch` (rough) and `percent` (precise step-based).
+*   **Metric Stream**: The backend parses stdout JSON lines from training subprocesses to extract `loss` and `lr` in real-time, feeding them to the frontend via polling endpoints.
+
+---
+
+## 14. Low-Level Optimizations & Inductive Biases (2026 Audit)
+
+### 14.1 The "Snake" Activation (Periodic Inductive Bias)
+The codec uses a specialized activation function called **Snake1d** (`x + sin^2(x)/a`).
+*   **Purpose**: Induces a periodic inductive bias, making the model exceptionally good at capturing waveform frequencies (pitch, harmonics) compared to standard ReLU/SiLU.
+*   **Performance**: The implementation supports `torch.jit.script`. Enabling JIT for the Snake activation can yield a **~1.4x speedup** in decoding.
+
+### 14.2 Multi-Band Decomposition (Neural EQ)
+The `ScalarModel` component of `HeartCodec` processes audio in multiple frequency bands (`num_bands`).
+*   **Implication**: Latent dimensions are likely spatially mapped to frequency sub-bands.
+*   **Potential**: This structure hints at the possibility of **Neural EQ**—chemically altering the mix (e.g., bass boost, treble cut) by scaling specific codebook channels before decoding, without standard DSP filters.
+
+### 14.3 Transformer Acceleration
+The `HeartMuLa` backbone includes modern Transformer optimizations:
+*   **RoPE (Rotary Embeddings)**: improving long-context coherence.
+*   **FlashAttention**: The `LlamaAttention` module explicitly checks for `F.scaled_dot_product_attention`. Running on PyTorch 2.0+ (and compatible hardware) will automatically trigger optimized kernels for significantly faster generation.
+
 ---
 *Maintained by the Milimo Music core engineering team.*

@@ -1,9 +1,10 @@
 import React, { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
-import { Play, Pause, Download, SkipBack, SkipForward, Volume2, VolumeX } from 'lucide-react';
+import { Play, Pause, Download, SkipBack, SkipForward, Volume2, VolumeX, Wand2 } from 'lucide-react';
 import { GlassCard } from './ui/GlassCard';
 import { api } from '../api';
 import { AudioVisualizer } from './ui/AudioVisualizer';
+import { InpaintModal } from './InpaintModal';
 
 interface AudioPlayerProps {
     audioUrl: string;
@@ -37,6 +38,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         return saved ? parseFloat(saved) : 0.7;
     });
     const [isMuted, setIsMuted] = useState(false);
+    const [isInpaintOpen, setIsInpaintOpen] = useState(false);
 
     // ... formatTime ...
     const formatTime = (seconds: number) => {
@@ -85,10 +87,17 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         });
 
         return () => {
-            try {
-                wavesurfer.current?.destroy();
-            } catch (e) {
-                // Ignore AbortError during cleanup
+            const ws = wavesurfer.current;
+            wavesurfer.current = null;
+
+            if (ws) {
+                try {
+                    ws.unAll();
+                    ws.stop();  // Stop playback to abort any pending operations
+                    ws.destroy();
+                } catch {
+                    // Ignore errors during cleanup (AbortError is suppressed globally)
+                }
             }
         };
     }, []);
@@ -239,11 +248,28 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
                             <button onClick={downloadAudio} className="p-2 rounded-full hover:bg-slate-100/50 transition-colors text-slate-600">
                                 <Download className="w-4 h-4" />
                             </button>
+
+                            <button
+                                onClick={() => setIsInpaintOpen(true)}
+                                className="p-2 rounded-full hover:bg-indigo-100/50 transition-colors text-indigo-600"
+                                title="Repair Segment"
+                            >
+                                <Wand2 className="w-4 h-4" />
+                            </button>
+
                             <div className="w-12 text-right text-xs font-mono text-slate-500">{duration}</div>
                         </div>
                     </div>
                 </div>
             </GlassCard>
+
+            <InpaintModal
+                isOpen={isInpaintOpen}
+                onClose={() => setIsInpaintOpen(false)}
+                jobId={jobId}
+                duration={wavesurfer.current?.getDuration() || 0}
+                title={title}
+            />
         </div>
     );
 };

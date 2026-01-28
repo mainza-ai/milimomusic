@@ -33,9 +33,14 @@ Milimo Music integrates state-of-the-art AI models to provide a seamless music c
 3.  **Track Extension**: Continue generating from where a previous track left off, allowing for the creation of longer compositions segment by segment.
     <br>
     [![Track Extension Demo](https://img.youtube.com/vi/Yppfm86lgk0/0.jpg)](https://youtu.be/Yppfm86lgk0)
-4.  **Real-Time Progress**: Server-Sent Events (SSE) provide live feedback on the generation steps, from token inference to decoding.
-5.  **Smart History**: Automatically saves all generated tracks, lyrics, and metadata (seed, cfg, temperature) for easy retrieval and playback.
-6.  **AI Co-Writer (Multi-Agent System)**:
+4.  **Repair Segment (Beta)**: Fix specific parts of your generated track without regenerating the entire song. Select a time range and let the AI rewrite just that segment while preserving the surrounding context.
+5.  **Training Studio (Beta)**: Fine-tune the HeartMuLa model on your own audio datasets directly within the app.
+    -   **Custom Styles**: Train the model to understand specific genres or artist styles (e.g., 'Afrobeat', 'MyVoice').
+    -   **LoRA Training**: Efficient low-rank adaptation training that runs locally.
+    -   **Global Monitoring**: Track training progress from anywhere in the app with the floating status widget.
+6.  **Real-Time Progress**: Server-Sent Events (SSE) provide live feedback on the generation steps, from token inference to decoding.
+7.  **Smart History**: Automatically saves all generated tracks, lyrics, and metadata (seed, cfg, temperature) for easy retrieval and playback.
+8.  **AI Co-Writer (Multi-Agent System)**:
     <br>
     ![AI Co-Writer Interface](assets/milimomusic2.png)
     -   **Agentic Workflow**: The Co-Writer is not a simple chatbot. It uses a graph of specialized Pydantic Agents working in tandem:

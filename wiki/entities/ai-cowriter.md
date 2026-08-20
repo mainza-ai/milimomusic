@@ -36,10 +36,11 @@ formatting and ensures lyrics always fit the music-generation engine (`lyrics_sc
   `style_registry.py` (`StyleRegistry`), `config_manager.py` — supporting services.
 - `ai_debug.log` — debug logging used by the graph.
 
-## In v2
-- When [MiniMax Music 3](minimax-music3.md) is active, the Lyricist emits **Structured
-  Captions** (section tags) and StructureGuard validates a MiniMax schema alongside the
-  HeartMuLa one — see [roadmap](../roadmap.md).
+## Reasoning & Think Tag Sanitization
+To support reasoning/thinking models (e.g. DeepSeek-R1, Qwen-QwQ, Gemini Flash Thinking), the Co-Writer enforces strict sanitization via `_strip_thinking()` and `sanitize_lyrics()`:
+- **Thinking Envelopes**: Strips all matched and orphaned `<think>`, `<thinking>`, `<reasoning>`, `<thought>`, `<reflection>`, `<deliberation>`, `<scratchpad>` tags.
+- **Section Anchoring**: Automatically strips scratchpad brainstorm notes, rhyme bullet lists, and conversational preambles that occur prior to the first valid song section header (`[Intro]`, `[Verse]`, etc.).
+- **Code Fence & Postamble Stripping**: Removes markdown blocks (```` ``` ````) and model chatter (`Final output ready.`).
 
 ## Related pages
 - [Co-Writer graph](../concepts/co-writer-graph.md) | [LLM Service](llm-service.md)

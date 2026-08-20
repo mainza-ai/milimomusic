@@ -32,33 +32,65 @@ logger = logging.getLogger(__name__)
 VALID_HEARTMULA_TAGS = OFFICIAL_STYLES
 
 
-def _strip_thinking(text):
+def _strip_thinking(text: str) -> str:
     """Remove model reasoning/thinking tokens so only the final answer remains.
 
-    Handles common CoT envelopes used by OpenAI/OpenCode/DeepSeek/OMLX/Ollama:
-    <thinking>...</thinking>, <reasoning>...</reasoning>,  a ` response`
-    delimiter (thinking precedes it), and `::` delimited blocks.
+    Handles all common CoT / reasoning envelopes used by DeepSeek R1, Qwen,
+    Ollama, Anthropic, Gemini, OpenAI, and local LLMs:
+    - <think>...</think>, <thinking>...</thinking>, <reasoning>...</reasoning>
+    - Orphaned closing tags (e.g. `...notes...</think>`)
+    - Orphaned opening tags (e.g. `<think>...unclosed`)
+    - Markdown scratchpad headers: `### Thinking Process`, `**Analysis:**`, `##### reasoning #####`
+    - `::` delimited thinking blocks
     """
     if not text:
         return ""
     if not isinstance(text, str):
         return text
     out = text
-    out = re.sub(r"<(?:\s*thinking|reasoning|analysis|thought)[^>]*>.*?</(?:\s*thinking|reasoning|analysis|thought)>",
-                 "", out, flags=re.DOTALL | re.IGNORECASE)
-    # A bare <thinking>...</thinking> style without matching close
-    out = re.sub(r"<\s*thinking[^>]*>.*", "", out, flags=re.DOTALL | re.IGNORECASE)
-    out = re.sub(r"<\s*reasoning[^>]*>.*", "", out, flags=re.DOTALL | re.IGNORECASE)
-    # OpenAI-compatible reasoning: "content< deliberation>answer" or "content< response>answer"
+
+    # 1. Standard matched pairs of thinking/reasoning tags
+    tag_names = r"think|thinking|reasoning|analysis|thought|reflection|deliberation|scratchpad|internal_thought"
+    out = re.sub(
+        rf"<(?:\s*{tag_names})[^>]*>.*?</(?:\s*{tag_names})>",
+        "",
+        out,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+
+    # 2. Orphaned closing tags: if a closing </think> appears with content before it,
+    # drop everything up to and including the closing tag
+    out = re.sub(
+        rf"^.*?</(?:\s*{tag_names})>\s*",
+        "",
+        out,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+
+    # 3. Unmatched/unclosed opening tags: e.g. <think> at the start before a section
+    out = re.sub(
+        rf"<\s*(?:{tag_names})[^>]*>.*?(?=\n\s*\[|\Z)",
+        "",
+        out,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+
+    # 4. OpenAI/Anthropic/Custom delimiters
     out = re.sub(r"<[^>]*response[^>]*>", "\n", out, flags=re.IGNORECASE)
     out = re.sub(r"<[^>]*deliberation[^>]*>", "\n", out, flags=re.IGNORECASE)
-    # DeepSeek ##### reasoning##### blocks
+
+    # 5. Markdown reasoning headers & blocks
     out = re.sub(r"#####\s*reasoning\s*#####.*?(?=\n|$)", "", out, flags=re.DOTALL | re.IGNORECASE)
-    # :: delimited thinking blocks (":: emotion ...\n\n answer")
+    out = re.sub(r"(?i)###\s*(?:thinking|thought|scratchpad|reasoning|analysis).*?(?=\n\s*\[|\Z)", "", out, flags=re.DOTALL)
+    out = re.sub(r"(?i)\*\*(?:thinking|thought process|analysis|reasoning):\*\*.*?(?=\n\s*\[|\Z)", "", out, flags=re.DOTALL)
+
+    # 6. :: delimited thinking blocks (":: emotion ...\n\n answer")
     out = re.sub(r"^\s*::.*?(\n|$)", "", out, flags=re.MULTILINE)
-    # Leading prose like "Here are your lyrics:" — only safe to drop if followed by a section marker later
-    stripped = out.strip()
-    return stripped
+
+    # 7. Stray closing tags remaining anywhere
+    out = re.sub(rf"</(?:\s*{tag_names})>", "", out, flags=re.IGNORECASE)
+
+    return out.strip()
 
 class LLMProvider(ABC):
     @abstractmethod
@@ -444,16 +476,18 @@ class LLMService:
             )
         
         response = provider.generate_text(prompt, model)
+        from .lyrics_graph import sanitize_lyrics
+        clean_response = sanitize_lyrics(response)
         
         try:
             with open("ai_debug.log", "a") as f:
                 f.write(f"\n\n--- INITIAL GENERATION ({datetime.now().isoformat()}) ---\n")
                 f.write(f"PROMPT:\n{prompt}\n")
-                f.write(f"RESPONSE:\n{response}\n")
+                f.write(f"RESPONSE:\n{clean_response}\n")
         except Exception as e:
             print(f"Failed to write to debug log: {e}")
             
-        return response
+        return clean_response
 
     @staticmethod
     async def generate_lyrics_async(topic: str, model: Optional[str] = None, seed_lyrics: Optional[str] = None, tags: Optional[str] = None) -> str:
@@ -461,7 +495,7 @@ class LLMService:
         Async version of generate_lyrics that uses the pydantic-graph.
         Mode = CREATION
         """
-        from .lyrics_graph import run_lyrics_graph
+        from .lyrics_graph import run_lyrics_graph, sanitize_lyrics
         
         provider = LLMService._get_provider()
         model = model or LLMService._get_active_model()
@@ -478,9 +512,9 @@ class LLMService:
             )
             
             if result and result.get("lyrics"):
-                return result["lyrics"]
+                return sanitize_lyrics(result["lyrics"])
             else:
-                return seed_lyrics or "Generation failed."
+                return sanitize_lyrics(seed_lyrics or "Generation failed.")
                 
         except Exception as e:
             logger.error(f"Generate lyrics async failed: {e}")
@@ -588,7 +622,8 @@ class LLMService:
             except: pass
             
             engine = StructuredLyricsEngine()
-            new_lyrics = engine.apply_edits(current_lyrics, result.operations)
+            from .lyrics_graph import sanitize_lyrics
+            new_lyrics = sanitize_lyrics(engine.apply_edits(current_lyrics, result.operations))
             
             return {
                 "message": result.thought_process,

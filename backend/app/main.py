@@ -747,8 +747,9 @@ async def deactivate_checkpoint():
 @app.post("/generate/lyrics")
 async def generate_lyrics(req: LyricsRequest):
     try:
+        from app.services.lyrics_graph import sanitize_lyrics
         lyrics = await LLMService.generate_lyrics_async(req.topic, req.model_name, req.seed_lyrics, req.tags)
-        return {"lyrics": lyrics}
+        return {"lyrics": sanitize_lyrics(lyrics)}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -756,6 +757,7 @@ async def generate_lyrics(req: LyricsRequest):
 @app.post("/generate/lyrics-chat")
 async def chat_with_lyrics(req: LyricsChatRequest):
     try:
+        from app.services.lyrics_graph import sanitize_lyrics
         result = await LLMService.chat_with_lyrics_async(
             req.current_lyrics, 
             req.user_message, 
@@ -764,6 +766,8 @@ async def chat_with_lyrics(req: LyricsChatRequest):
             req.topic, 
             req.get_tags_string()
         )
+        if result and "lyrics" in result:
+            result["lyrics"] = sanitize_lyrics(result["lyrics"])
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))

@@ -290,3 +290,89 @@ Wide production pass fixing real-inference regressions and DAW correctness:
   instrument-aware tones; edits persist via `/workspace/{id}/notes`.
 
 README updated (self-healing producer, dual-engine stems, dynamic piano roll, accurate notation).
+
+## [2026-08-20] fix | SessionWorkspace — Web Audio multitrack transport refactor complete & sound
+
+Continued the v2 SessionWorkspace playback refactor from the prior session
+(`frontend/src/components/workspace/SessionWorkspace.tsx`) and closed it out:
+
+**Root cause of the blank-DAW-screen bugs (all from the same refactor splice):**
+When the old `<audio>`-element block was removed during the refactor, its declaration
+block was deleted too, leaving the component referencing now-undefined identifiers:
+- `hasLoadedStems is not defined` (mix-effect dependency, SessionWorkspace.tsx:391)
+- `notes is not defined` (MIDI-note count, :566)
+- `timedLyrics` (lyrics views)
+- `getMasterUrl is not defined` (play-time master URL resolution in `decodeMissing`)
+
+Each undefined reference threw a `ReferenceError` on mount → React unmounted the
+subtree → blank DAW screen on entry. Restored all four declarations and wired the
+play-time decode path to the restored `getMasterUrl` helper.
+
+**Verification gap found:** plain `npx tsc --noEmit` in this repo does NOT actually
+type-check `src` — the root `tsconfig.json` is just `files: []` + project `references`,
+so it silently passed despite the undefined identifiers. The authoritative check is
+`tsc --build --force` (fresh, clears the `.tmp` tsbuildinfo), which genuinely runs
+`tsconfig.app.json` over `src` and catches "Cannot find name". That fresh run surfaced
+three unreported `noUnusedLocals` errors, now fixed:
+- Two unused `prev` params in `setLoadedStemIds(prev => …)` callbacks (SessionWorkspace)
+- Unused `FLAT_NAMES` constant (NotationViewer.tsx) — `PITCH_CLASS` is what's used
+
+**Final state:** fresh `tsc --build --force` across all of `src` exits 0; the Vite dev
+server (`127.0.0.1:5173`) serves the corrected module (all declarations present, all
+removed `<audio>` identifiers absent). Backend healthy (`/health` 200), 23 completed
+jobs in history for entering the DAW. Committed as `dd1ed7c`.
+
+Wiki updated: `session-workspace.md` — "Multitrack playback engine" section rewritten
+from the obsolete `<audio>`/drift-correction description to the Web Audio AudioBuffer
+transport (sample-locked `AudioContext.currentTime` scheduling, audio-thread mixing via
+Gain→StereoPanner, master-fallback gating, clean teardown).
+
+## [2026-08-20] fix | SessionWorkspace solo/mute/volume/pan not applied on first play — DONE
+
+Reported: the solo track button "was not working." Root-caused it properly:
+
+**Root cause (a real transport gap, not a symptom patch):** the per-stem `Gain/Panner`
+nodes are created **lazily** by `ensureStemNodes()` inside `scheduleAll()`, and a freshly
+created `GainNode` defaults to `gain = 1`. `applyMixParams()` previously only ran from the
+`[stemChannels, masterVolume, isMasterMuted, hasLoadedStems]` effect. So changing
+solo/mute/volume/pan **while paused** (nodes not yet created) ran `applyMixParams` which
+hit `if (!gain) return` for every stem and set nothing; the nodes were then created at
+**full gain** on the next play with no re-apply → the UI mix state was silently ignored.
+This affected **solo, mute, per-channel volume, and pan** — all of them, whenever changed
+before the first playback. (The master gain is created eagerly in `buildGraph` on mount, so
+it never had this problem; only the lazy per-stem nodes did.)
+
+**Fix:** re-apply the full mix state — `applyMixParams()` — at the end of `scheduleAll()`,
+i.e. immediately after `ensureStemNodes()` guarantees every channel's nodes exist. This
+establishes the invariant: *any node that exists reflects the current UI mix state* (nodes
+are only ever created in `scheduleAll` → re-apply runs there; every UI change re-applies via
+the existing effect). It is idempotent `setTargetAtTime` fading → no clicks, no drift, no
+doubling.
+
+**Verified:** fresh `tsc --build --force` over all of `src` exits 0; Vite dev server serves
+the module with both `applyMixParams` call sites (effect + post-schedule re-apply). Committed
+as `c34f614`. Also audited every `createGain`/`createStereoPanner`/gain-assignment site: no
+other path can clobber a stem gain. Wiki updated: `session-workspace.md` — added the
+"Mix state is authoritative" bullet.
+
+## [2026-08-20] fix | NotationViewer note positioning, vertical coordinates, and grand staff engraving
+Fixed distorted and inverted sheet music note rendering in DAW `NotationViewer.tsx`:
+1. Corrected vertical diatonic coordinate mapping formulas:
+   - Treble clef: `y = staffTop + (10 - pos) * HALF` (where F5 = 10 is at top line, E4 = 2 is at bottom line).
+   - Bass clef: `y = staffTop + (-2 - pos) * HALF` (where A3 = -2 is at top line, G2 = -10 is at bottom line).
+2. Fixed ledger lines for notes above and below the 5-line staff boundary and Middle C (`C4`).
+3. Fixed stem direction standard: notes below mid-line have stems pointing UP on the right; notes on/above mid-line have stems pointing DOWN on the left.
+4. Added authentic curved vector flags for eighth notes and classical Grand Staff brace brackets.
+5. Added live playhead tracking line during playback.
+
+## [2026-08-20] fix | DAW Transport & Playhead Clock Synchronization
+Audited and resolved playhead freeze and desynchronization after pause/reset:
+1. Converted `playAll` in `SessionWorkspace.tsx` to asynchronous and properly awaited `AudioContext.resume()` before reading hardware clocks, eliminating the suspended clock jump bug.
+2. Fixed edge case where starting playback at track end caused immediate termination by adding automatic restart reset.
+3. Hardened RAF ticker loop against trailing ticks overwriting reset position `currentTimeRef.current`.
+4. Verified with clean production build and full 31-test backend suite.
+
+
+
+
+

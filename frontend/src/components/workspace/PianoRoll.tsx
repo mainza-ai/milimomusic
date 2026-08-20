@@ -506,16 +506,17 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
             {/* Main Piano Roll Canvas: Synchronized Scroll Container */}
             <div className="flex-1 overflow-auto relative flex bg-[#ebebf0] dark:bg-[#0a0c12]">
                 {/* 1. Left Piano Keys Keyboard (Sticky on Left X, Scrolling on Y) */}
-                <div className="sticky left-0 z-20 flex-shrink-0 w-28 bg-[#1a1c24] border-r-4 border-r-rose-700 shadow-2xl flex flex-col pt-7 select-none">
+                <div className="sticky left-0 z-20 flex-shrink-0 w-36 bg-[#1a1c24] border-r-4 border-r-teal-600 shadow-2xl flex flex-col pt-8 select-none">
                     {/* Top Fallboard Label */}
-                    <div className="absolute top-0 left-0 right-0 h-7 bg-gradient-to-b from-[#242733] to-[#151720] border-b border-black/40 flex items-center justify-between px-2 text-[9px] font-mono text-slate-400 font-bold">
-                        <span>KEY</span>
-                        <span className="text-rose-400 font-serif italic text-[10px]">Steinway</span>
+                    <div className="absolute top-0 left-0 right-0 h-8 bg-gradient-to-b from-[#252836] via-[#1c1e28] to-[#12131b] border-b border-black/60 flex items-center justify-between px-3 text-[10px] font-mono text-slate-400 font-bold shadow-sm">
+                        <span className="tracking-wider">KEY · MIDI</span>
+                        <span className="text-teal-400 font-serif italic text-[11px] font-bold">Studio Grand</span>
                     </div>
 
                     {pitchRange.map(p => {
                         const isBlack = p.isBlack;
                         const isC = p.isC;
+                        const isMiddleC = p.num === 60;
                         const isKeyActive = activePitches.has(p.num);
 
                         return (
@@ -524,39 +525,46 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                                 onClick={() => playSynthesizerTone(p.num, selectedTrack)}
                                 title={`Click to play ${p.name} (MIDI Note ${p.num})`}
                                 aria-label={`Piano Key ${p.name}`}
-                                className={`h-6 text-[10px] font-mono font-bold flex items-center justify-between px-2.5 transition-all duration-75 relative group ${
+                                className={`h-6 text-[10px] font-mono font-bold flex items-center justify-between px-3 transition-all duration-75 relative group ${
                                     isBlack
-                                        ? `bg-gradient-to-r from-[#181920] via-[#2c2e3a] to-[#14151a] text-slate-200 border-t border-b border-black/80 shadow-[inset_0_1px_1px_rgba(255,255,255,0.1),0_2px_4px_rgba(0,0,0,0.6)] ${
+                                        ? `bg-gradient-to-r from-[#121318] via-[#242633] to-[#15161f] text-slate-200 border-t border-b border-black/90 shadow-[inset_0_1px_1px_rgba(255,255,255,0.12),0_2px_4px_rgba(0,0,0,0.8)] pr-4 ${
                                               isKeyActive
                                                   ? 'brightness-150 translate-x-1 !bg-teal-500 !text-slate-950 font-black shadow-teal-500/50'
                                                   : 'hover:brightness-125'
                                           }`
-                                        : `bg-gradient-to-r from-[#faf8f5] via-[#f3efe8] to-[#e4ded3] dark:from-[#2a2d3d] dark:via-[#222533] dark:to-[#1a1c28] text-slate-800 dark:text-slate-200 border-b border-[#c8c0b2] dark:border-[#12141c] shadow-[inset_0_1px_0_rgba(255,255,255,0.6)] ${
+                                        : `bg-gradient-to-r from-[#ffffff] via-[#f7f5f0] to-[#eae4d8] dark:from-[#2a2d3d] dark:via-[#222533] dark:to-[#1a1c28] text-slate-900 dark:text-slate-100 border-b border-[#cfc7b8] dark:border-[#12141c] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] ${
                                               isKeyActive
                                                   ? 'brightness-125 translate-x-1 !bg-teal-400 !text-slate-950 font-black shadow-teal-500/50'
                                                   : 'hover:brightness-105'
                                           }`
-                                }`}
+                                }`
+                                }
                             >
                                 {/* Key Name with Root C Highlighting */}
-                                <div className="flex items-center gap-1">
+                                <div className="flex items-center gap-1.5 min-w-0">
                                     <span
-                                        className={`${
-                                            isC
+                                        className={`tracking-tight ${
+                                            isMiddleC
                                                 ? 'text-teal-600 dark:text-teal-400 font-extrabold text-[11px] underline decoration-teal-500 decoration-2'
+                                                : isC
+                                                ? 'text-teal-600 dark:text-teal-400 font-bold text-[11px]'
                                                 : isBlack
-                                                ? 'text-slate-400'
-                                                : 'text-slate-700 dark:text-slate-300'
+                                                ? 'text-slate-300'
+                                                : 'text-slate-800 dark:text-slate-200'
                                         }`}
                                     >
-                                        {p.name.replace(' (Mid)', '')}
+                                        {p.name}
                                     </span>
-                                    {isC && (
+                                    {isMiddleC ? (
+                                        <span className="text-[8px] font-mono font-bold px-1 rounded bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/30">
+                                            MID
+                                        </span>
+                                    ) : isC ? (
                                         <span className="w-1.5 h-1.5 rounded-full bg-teal-500 shadow-[0_0_6px_rgba(20,184,166,0.8)]" />
-                                    )}
+                                    ) : null}
                                 </div>
 
-                                <span className="text-[8px] font-mono opacity-40 group-hover:opacity-100">
+                                <span className="text-[9px] font-mono tabular-nums opacity-45 group-hover:opacity-100 text-slate-600 dark:text-slate-400">
                                     {p.num}
                                 </span>
                             </button>
@@ -570,7 +578,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                     className="flex-1 min-w-[1200px] relative cursor-crosshair flex flex-col"
                 >
                     {/* Top Measure Ruler Bar */}
-                    <div className="sticky top-0 h-7 bg-white/90 dark:bg-[#141622]/95 border-b border-black/[0.08] dark:border-white/10 flex items-center z-10 backdrop-blur-md shadow-sm">
+                    <div className="sticky top-0 h-8 bg-white/95 dark:bg-[#141622]/95 border-b border-black/[0.08] dark:border-white/10 flex items-center z-10 backdrop-blur-md shadow-sm">
                         <div className="w-full relative h-full">
                             {measuresArray.map(bar => {
                                 const barStart = (bar - 1) * measureDuration;
@@ -579,7 +587,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                                 return (
                                     <div
                                         key={bar}
-                                        className="absolute top-0 bottom-0 border-l-2 border-slate-400 dark:border-slate-600 pl-1.5 flex items-center font-mono text-[10px] text-slate-500 dark:text-slate-400"
+                                        className="absolute top-0 bottom-0 border-l-2 border-slate-400 dark:border-slate-500 pl-1.5 flex items-center font-mono text-[10px] text-slate-500 dark:text-slate-400"
                                         style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                                     >
                                         <span className="font-extrabold text-teal-600 dark:text-teal-400">
@@ -591,11 +599,28 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                         </div>
                     </div>
 
-                    {/* Pitch Rows Grid */}
+                    {/* Pitch Rows Grid + Vertical Beat Overlay */}
                     <div className="relative">
+                        {/* Background Vertical Bar & Beat Division Lines */}
+                        <div className="absolute inset-0 pointer-events-none z-0">
+                            {measuresArray.map(bar => {
+                                const barStart = (bar - 1) * measureDuration;
+                                const leftPct = (barStart / timeScale) * 100;
+                                return (
+                                    <div
+                                        key={bar}
+                                        className="absolute top-0 bottom-0 border-l border-slate-300/80 dark:border-white/15"
+                                        style={{ left: `${leftPct}%` }}
+                                    />
+                                );
+                            })}
+                        </div>
+
+                        {/* Horizontal Pitch Rows */}
                         {pitchRange.map(p => {
                             const isBlack = p.isBlack;
                             const isC = p.isC;
+                            const isMiddleC = p.num === 60;
 
                             return (
                                 <div
@@ -607,18 +632,20 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                                         const time = (clickX / rect.width) * timeScale;
                                         handleAddNoteAt(p.num, time);
                                     }}
-                                    className={`h-6 border-b w-full transition-colors flex items-center ${
-                                        isC
-                                            ? 'bg-teal-500/[0.08] dark:bg-teal-500/[0.12] border-teal-500/30'
+                                    className={`h-6 border-b w-full transition-colors flex items-center relative ${
+                                        isMiddleC
+                                            ? 'bg-teal-500/[0.12] dark:bg-teal-500/[0.18] border-teal-500/40'
+                                            : isC
+                                            ? 'bg-teal-500/[0.06] dark:bg-teal-500/[0.10] border-teal-500/30'
                                             : isBlack
-                                            ? 'bg-black/[0.05] dark:bg-black/40 border-black/[0.04] dark:border-white/[0.04]'
-                                            : 'bg-white/60 dark:bg-[#12141e]/50 border-black/[0.03] dark:border-white/[0.02]'
+                                            ? 'bg-black/[0.04] dark:bg-black/35 border-black/[0.04] dark:border-white/[0.04]'
+                                            : 'bg-white/50 dark:bg-[#12141e]/50 border-black/[0.03] dark:border-white/[0.02]'
                                     }`}
                                 >
                                     {/* Octave Guide Label */}
                                     {isC && (
-                                        <span className="ml-3 text-[9px] font-mono font-bold text-teal-600/70 dark:text-teal-400/70 pointer-events-none">
-                                            {p.name} Root Octave
+                                        <span className="ml-3 text-[9px] font-mono font-bold text-teal-600/70 dark:text-teal-400/70 pointer-events-none select-none">
+                                            {p.name} {isMiddleC ? '· Middle C' : '· Root Octave'}
                                         </span>
                                     )}
                                 </div>
@@ -627,9 +654,6 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
 
                         {/* Note Blocks (Color-Coded by Instrument with Apple Gloss Effect) */}
                         {filteredNotes.map((note, idx) => {
-                            // The dynamic pitch range already covers every note's MIDI
-                            // pitch (built from the min/max of the transcription), so
-                            // each note maps to its own row — no clamping, no dropping.
                             const pitchIndex = pitchIndexFor(note.pitch);
                             const top = pitchIndex * ROW_H;
                             const noteDur = note.duration || (note.end_time ? note.end_time - note.start_time : 0.5);
@@ -638,6 +662,36 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                             const widthPercent = Math.max(0.6, (noteDur / timeScale) * 100);
                             const isSelected = selectedNoteIndex === idx;
                             const noteStyle = getNoteStyle(note.instrument);
+                            const isDrum = note.instrument?.toLowerCase().includes('drum') || note.instrument?.toLowerCase().includes('percussion');
+                            const displayPitch = note.note_name || pitchName(note.pitch).name;
+
+                            // Render Drum triggers as compact punch dots to eliminate horizontal pileups
+                            if (isDrum) {
+                                return (
+                                    <div
+                                        key={idx}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            playSynthesizerTone(note.pitch, note.instrument);
+                                            setSelectedNoteIndex(isSelected ? null : idx);
+                                        }}
+                                        className={`absolute h-[20px] min-w-[20px] max-w-[28px] rounded-full border shadow-sm flex items-center justify-center cursor-pointer transition-all z-10 ${
+                                            noteStyle.bg
+                                        } ${noteStyle.border} ${noteStyle.shadow} ${
+                                            isSelected
+                                                ? 'ring-2 ring-white scale-125 z-30 shadow-lg'
+                                                : 'hover:scale-110 hover:brightness-110'
+                                        }`}
+                                        style={{
+                                            top: `${top + 2}px`,
+                                            left: `${leftPercent}%`,
+                                        }}
+                                        title={`Drum Hit [${note.start_time.toFixed(2)}s] · Velocity: ${note.velocity || 85}`}
+                                    >
+                                        <span className="text-[9px] text-white select-none">🥁</span>
+                                    </div>
+                                );
+                            }
 
                             return (
                                 <div
@@ -647,30 +701,32 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                                         playSynthesizerTone(note.pitch, note.instrument);
                                         setSelectedNoteIndex(isSelected ? null : idx);
                                     }}
-                                    className={`absolute h-[22px] rounded-lg border shadow-sm flex items-center justify-between px-2 text-[9px] font-mono font-bold cursor-pointer transition-all z-10 ${
+                                    className={`absolute h-[22px] rounded-lg border shadow-sm flex items-center justify-between px-2 text-[9px] font-mono font-bold cursor-pointer transition-all z-10 overflow-hidden ${
                                         noteStyle.bg
                                     } ${noteStyle.border} ${noteStyle.text} ${noteStyle.shadow} ${
                                         isSelected
-                                            ? 'ring-2 ring-white scale-[1.03] z-30 shadow-lg'
+                                            ? 'ring-2 ring-white scale-[1.02] z-30 shadow-lg'
                                             : 'hover:scale-[1.01] hover:brightness-110'
                                     }`}
                                     style={{
                                         top: `${top + 1}px`,
                                         left: `${leftPercent}%`,
                                         width: `${widthPercent}%`,
-                                        minWidth: '22px'
+                                        minWidth: '24px'
                                     }}
-                                    title={`${note.note_name || note.pitch} (${note.instrument}) [${note.start_time.toFixed(2)}s - ${noteEnd.toFixed(2)}s] · Velocity: ${note.velocity || 85}`}
+                                    title={`${displayPitch} (${note.instrument}) [${note.start_time.toFixed(2)}s - ${noteEnd.toFixed(2)}s] · Velocity: ${note.velocity || 85}`}
                                 >
                                     {/* Left Note Name Badge */}
-                                    <span className="truncate">{note.note_name || note.pitch}</span>
+                                    <span className="truncate">{displayPitch}</span>
 
                                     {/* Right Instrument Tag Pill (Visible on wider note events) */}
-                                    <span
-                                        className={`hidden sm:inline-block text-[8px] font-mono px-1 py-0.2 rounded-md ${noteStyle.badge}`}
-                                    >
-                                        {noteStyle.label}
-                                    </span>
+                                    {widthPercent > 2.5 && (
+                                        <span
+                                            className={`hidden sm:inline-block text-[8px] font-mono px-1 py-0.2 rounded-md ${noteStyle.badge}`}
+                                        >
+                                            {noteStyle.label}
+                                        </span>
+                                    )}
                                 </div>
                             );
                         })}

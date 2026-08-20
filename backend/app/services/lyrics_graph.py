@@ -37,50 +37,86 @@ def debug_log(message: str, data: Any = None):
 
 def sanitize_lyrics(raw_lyrics: str) -> str:
     """
-    Post-process lyrics to ensure they comply with the expected format.
+    Post-process lyrics to ensure clean, structured song lyrics without
+    reasoning tokens, scratchpad outlines, bullet lists, or conversational filler.
 
     Fixes:
-    1. Convert "Intro:" or "Verse 1:" to "[Intro]" or "[Verse 1]"
-    2. Remove instrumental directions like "(Soft piano melody)"
-    3. Remove stage directions like "(repeat chorus)"
-    4. Remove model reasoning/thinking envelopes and any prose preamble before the
-       first section marker, so only final song-structure lyrics remain.
+    1. Strip all model thinking/reasoning tags (<think>...</think>, orphaned </think>, etc.)
+    2. Strip markdown code fences (```markdown, ```lyrics, ```)
+    3. Drop all scratchpad brainstorms/bullet points prior to the first song section ([Intro], [Verse], etc.)
+    4. Convert "Intro:" or "Verse 1:" to "[Intro]" or "[Verse 1]"
+    5. Remove instrumental directions like "(Soft piano melody)" or "(guitar solo)"
+    6. Strip conversational postambles ("Hope you enjoy!", "Final output ready.")
     """
     if not raw_lyrics:
         return ""
 
     text = raw_lyrics
-    # --- reasoning / thinking envelope removal (defense-in-depth) ---
-    text = re.sub(r"<(?:\s*thinking|reasoning|analysis|thought|response|deliberation)[^>]*>.*?(?:</(?:\s*thinking|reasoning|analysis|thought|response|deliberation)>|$)",
-                  "", text, flags=re.DOTALL | re.IGNORECASE)
+
+    # --- 1. Strip all reasoning / thinking envelopes & scratchpads ---
+    tag_names = r"think|thinking|reasoning|analysis|thought|reflection|deliberation|scratchpad|internal_thought"
+    
+    # Matched tags
+    text = re.sub(
+        rf"<(?:\s*{tag_names})[^>]*>.*?</(?:\s*{tag_names})>",
+        "",
+        text,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+    # Orphaned closing tag (drop everything up to </think>)
+    text = re.sub(
+        rf"^.*?</(?:\s*{tag_names})>\s*",
+        "",
+        text,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+    # Unclosed opening tag
+    text = re.sub(
+        rf"<\s*(?:{tag_names})[^>]*>.*?(?=\n\s*\[|\Z)",
+        "",
+        text,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+    # Markdown reasoning blocks
     text = re.sub(r"#####\s*reasoning\s*#####.*?(?=\n|$)", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"(?i)###\s*(?:thinking|thought|scratchpad|reasoning|analysis).*?(?=\n\s*\[|\Z)", "", text, flags=re.DOTALL)
+    text = re.sub(r"(?i)\*\*(?:thinking|thought process|analysis|reasoning):\*\*.*?(?=\n\s*\[|\Z)", "", text, flags=re.DOTALL)
     text = re.sub(r"^\s*::.*?(\n|$)", "", text, flags=re.MULTILINE)
-    # --- drop leading prose preamble before the first section marker ---
+    text = re.sub(rf"</(?:\s*{tag_names})>", "", text, flags=re.IGNORECASE)
+
+    # --- 2. Remove markdown code fences ---
+    text = re.sub(r"^```[a-zA-Z0-9_-]*\s*$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^```\s*$", "", text, flags=re.MULTILINE)
+
+    # --- 3. Anchor to first section header and drop pre-section thoughts ---
     lines = text.split('\n')
-    # Find first line that is a section header like [Verse] or a converted header line
+    section_pattern = re.compile(
+        r'^\s*(\[[^\]]+\]|(Intro|Verse|Chorus|Bridge|Outro|Pre-Chorus|Hook|Drop|Build|Refrain)(\s*\d*):?)\s*$',
+        re.IGNORECASE
+    )
+    
     section_idx = None
-    section_pattern = re.compile(r'^\s*(\[[^\]]+\]|(Intro|Verse|Chorus|Bridge|Outro|Pre-Chorus|Hook)(\s*\d*):)\s*$', re.IGNORECASE)
     for i, ln in enumerate(lines):
-        if section_pattern.match(ln.strip()) or ln.strip().startswith('['):
+        clean_ln = ln.strip()
+        if clean_ln.startswith('[') and clean_ln.endswith(']'):
             section_idx = i
             break
+        if section_pattern.match(clean_ln):
+            section_idx = i
+            break
+
     if section_idx is not None and section_idx > 0:
-        # Drop leading prose/intro lines up to the first section marker
+        # We found an official song section header ([Intro], [Verse 1], etc.)
+        # Check if the preamble contains scratchpad bullets, thoughts, or chat
         preamble = lines[:section_idx]
-        # Only drop if there is no real lyric-like content in the preamble (safe guard):
-        # keep any preamble lines that look like actual lyric lines (short text) unless
-        # they're obvious model talk.
-        keep = []
-        for pl in preamble:
-            p = pl.strip()
-            if not p:
-                continue
-            if re.match(r'^(here (are|is)|sure|okay|certainly|of course|absolutely|given|to (generate|create|write|provide)|let me|i\'ll|this is|the (lyrics|song)|here\'s)', p, re.IGNORECASE):
-                continue
-            keep.append(pl)
-        if keep and all(len(k.strip()) < 80 for k in keep):
-            lines = keep + lines[section_idx:]
-        else:
+        has_scratchpad_or_bullets = any(
+            re.match(r'^\s*[-*•\d.]+\s+', pl) or 
+            re.match(r'^(here (are|is)|sure|okay|certainly|let me|i\'ll|final output|yes,|notes?:)', pl.strip(), re.IGNORECASE) or
+            'brief' in pl.lower() or 'rhyme' in pl.lower() or 'theme' in pl.lower()
+            for pl in preamble if pl.strip()
+        )
+        if has_scratchpad_or_bullets or True:
+            # When an explicit song section header exists, anchor strictly to the song sections
             lines = lines[section_idx:]
 
     cleaned_lines = []

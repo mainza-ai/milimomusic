@@ -59,7 +59,7 @@ def test_minimax_section_tag_sanitization():
 @pytest.mark.asyncio
 async def test_muscriptor_transcription():
     result = await muscriptor_provider.transcribe(
-        audio_file_path="generated_audio/test.wav",
+        audio_file_path="generated_audio/test_rhythmic_song.wav",
         job_id="test_job_123"
     )
     assert result.midi_path.endswith(".mid")

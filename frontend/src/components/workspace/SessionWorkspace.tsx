@@ -334,7 +334,8 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     const getPosition = (): number => {
         const ctx = audioCtxRef.current;
         if (!ctx || !isPlayingRef.current) return currentTimeRef.current;
-        return playStartPosRef.current + (ctx.currentTime - playStartClockRef.current);
+        const elapsed = ctx.currentTime - playStartClockRef.current;
+        return Math.max(0, playStartPosRef.current + elapsed);
     };
 
     // Stop + drop every currently scheduled source.
@@ -355,14 +356,14 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         if (!ctx || !masterGainRef.current) return;
         stopSources();
         const startAt = ctx.currentTime;
-        const pos = currentTimeRef.current;
+        const pos = Math.max(0, Math.min(durationRef.current, currentTimeRef.current));
 
         const masterBuf = bufCacheRef.current['__master__'];
         if (masterBuf && pos < masterBuf.duration) {
             const src = ctx.createBufferSource();
             src.buffer = masterBuf;
             src.connect(masterMixGainRef.current!);
-            const offset = Math.min(Math.max(pos, 0), Math.max(0, masterBuf.duration - 0.05));
+            const offset = Math.min(Math.max(pos, 0), Math.max(0, masterBuf.duration - 0.02));
             src.start(startAt, offset, Math.max(0, masterBuf.duration - offset));
             activeSourcesRef.current.add(src);
         }
@@ -374,7 +375,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             const src = ctx.createBufferSource();
             src.buffer = buf;
             src.connect(gain);
-            const offset = Math.min(Math.max(pos, 0), Math.max(0, buf.duration - 0.05));
+            const offset = Math.min(Math.max(pos, 0), Math.max(0, buf.duration - 0.02));
             src.start(startAt, offset, Math.max(0, buf.duration - offset));
             activeSourcesRef.current.add(src);
         });
@@ -383,11 +384,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         playStartPosRef.current = pos;
 
         // The stems' gain/panner nodes are created lazily by ensureStemNodes above.
-        // A freshly-created GainNode defaults to full gain (1) and would otherwise
-        // ignore any solo/mute/volume/pan set in the UI *before* first play. Re-apply
-        // the current mix state now that every channel's nodes exist so the graph
-        // always reflects the UI — this is what makes solo/mute/volume/pan authoritative
-        // regardless of whether they were changed while paused or during playback.
+        // Re-apply the current mix state so the graph always reflects the UI.
         applyMixParams();
     };
 
@@ -395,11 +392,15 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     const startPlayheadLoop = () => {
         if (rafRef.current) cancelAnimationFrame(rafRef.current);
         const tick = () => {
-            if (!isPlayingRef.current) { rafRef.current = 0; return; }
+            if (!isPlayingRef.current) {
+                rafRef.current = 0;
+                return;
+            }
             const pos = getPosition();
             const dur = durationRef.current;
             if (pos >= dur) {
                 pauseAll();
+                currentTimeRef.current = dur;
                 setCurrentTime(dur);
                 return;
             }
@@ -426,9 +427,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     }, [duration]);
 
     // Build the graph and pre-decode the master + active stems so first play is
-    // instant. Runs on mount and again whenever the stem source changes so the
-    // newly-selected source's buffers are cached. `decodeStartedRef` guards
-    // StrictMode's dev double-mount from doing the work twice.
+    // instant.
     useEffect(() => {
         ensureAudioContext();
         if (decodeStartedRef.current) return;
@@ -456,8 +455,6 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             }
             stemGainRefs.current = {};
             stemPanRefs.current = {};
-            // Reset one-shot init flags so a remount (incl. StrictMode's dev
-            // double-mount) re-prepares buffers on the fresh AudioContext.
             decodeStartedRef.current = false;
             preparedIdsRef.current = new Set();
         };
@@ -471,15 +468,27 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         }
     };
 
-    const playAll = () => {
+    const playAll = async () => {
         const ctx = audioCtxRef.current || ensureAudioContext();
         if (!ctx) return;
-        // Autoplay policy: resume/create within the user gesture.
-        if (ctx.state === 'suspended') ctx.resume().catch(console.error);
+        
+        // 1. Ensure AudioContext is actively running (browser autoplay / resume policy)
+        if (ctx.state === 'suspended') {
+            try {
+                await ctx.resume();
+            } catch (e) {
+                console.error('AudioContext resume failed:', e);
+            }
+        }
 
-        // Decode any buffer that isn't cached yet (e.g. play pressed before the
-        // eager pre-decode finished), then schedule everything sample-locked.
-        const decodeMissing = async () => {
+        // 2. Auto-reset to 0 if starting playback at or past track duration
+        if (currentTimeRef.current >= durationRef.current - 0.05) {
+            currentTimeRef.current = 0;
+            setCurrentTime(0);
+        }
+
+        // 3. Decode any buffer that isn't cached yet
+        try {
             const jobs: { id: string; url: string }[] = [];
             const mUrl = getMasterUrl();
             if (mUrl && !bufCacheRef.current['__master__']) jobs.push({ id: '__master__', url: mUrl });
@@ -501,28 +510,32 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                 const m = bufCacheRef.current['__master__'];
                 if (m) setDuration(m.duration);
             }
+
+            // 4. Schedule sources on hardware master clock
             await scheduleAll();
             isPlayingRef.current = true;
             setIsPlaying(true);
+            lastUiTickRef.current = 0;
             startPlayheadLoop();
-        };
-        decodeMissing().catch(console.error);
+        } catch (err) {
+            console.error('Playback initialization error:', err);
+        }
     };
 
     const pauseAll = () => {
-        // Freeze position at the master clock, then stop all scheduled sources.
-        currentTimeRef.current = getPosition();
+        const finalPos = Math.max(0, Math.min(durationRef.current, getPosition()));
+        currentTimeRef.current = finalPos;
+        setCurrentTime(finalPos);
         stopSources();
         isPlayingRef.current = false;
         setIsPlaying(false);
     };
 
     const handleSeek = (time: number) => {
-        const clamped = Math.max(0, Math.min(duration, time));
+        const clamped = Math.max(0, Math.min(durationRef.current || duration, time));
         currentTimeRef.current = clamped;
         setCurrentTime(clamped);
         if (isPlayingRef.current) {
-            // Live seek: stop + reschedule all sources at the new position.
             scheduleAll().catch(console.error);
         }
     };

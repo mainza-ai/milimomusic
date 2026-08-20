@@ -381,6 +381,14 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
 
         playStartClockRef.current = startAt;
         playStartPosRef.current = pos;
+
+        // The stems' gain/panner nodes are created lazily by ensureStemNodes above.
+        // A freshly-created GainNode defaults to full gain (1) and would otherwise
+        // ignore any solo/mute/volume/pan set in the UI *before* first play. Re-apply
+        // the current mix state now that every channel's nodes exist so the graph
+        // always reflects the UI — this is what makes solo/mute/volume/pan authoritative
+        // regardless of whether they were changed while paused or during playback.
+        applyMixParams();
     };
 
     // Throttled playhead loop derived from the master clock, decoupled from re-renders.

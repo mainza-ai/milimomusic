@@ -132,13 +132,25 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
 
     const switchStemSource = (source: 'htdemucs' | 'muscriptor') => {
         setStemSource(source);
-        // Pause any currently-playing audio and drop stale refs from the other
-        // source so only the newly-selected source can ever be heard.
-        Object.keys(stemAudioRefs.current).forEach(id => {
-            const el = stemAudioRefs.current[id];
-            if (el) { try { el.pause(); } catch { /* ignore */ } }
-            delete stemAudioRefs.current[id];
+        // Stop any in-flight playback and tear down the old source's graph nodes
+        // so only the newly-selected source can ever be heard.
+        stopSources();
+        isPlayingRef.current = false;
+        setIsPlaying(false);
+        Object.keys(stemGainRefs.current).forEach(id => {
+            try { stemGainRefs.current[id].disconnect(); } catch { /* ignore */ }
+            delete stemGainRefs.current[id];
         });
+        Object.keys(stemPanRefs.current).forEach(id => {
+            try { stemPanRefs.current[id].disconnect(); } catch { /* ignore */ }
+            delete stemPanRefs.current[id];
+        });
+        // Drop the decoded stem buffers of the deactivated source and let the
+        // [stemSource] effect re-decode the newly-selected channels.
+        Object.keys(bufCacheRef.current).forEach(id => {
+            if (id !== '__master__') delete bufCacheRef.current[id];
+        });
+        decodeStartedRef.current = false;
         setLoadedStemIds({});
         // Rebuild the channel set for the new source and reset all mute/solo state.
         if (source === 'muscriptor' && partChannels.length > 0) {
@@ -151,17 +163,37 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
 
     const hasDualSources = partChannels.length > 0 && (parsedStems.vocals || parsedStems.drums || parsedStems.bass || parsedStems.other);
 
-    // Master Audio Player (Master Mix / Clock)
-    const masterAudioRef = useRef<HTMLAudioElement | null>(null);
+    // ── Production-grade Web Audio multitrack TRANSPORT ─────────────────────
+    // Unlike mixed <audio> elements (each with its own independent clock, which
+    // drift and need glitch-prone seeks to resync), every stem and the master are
+    // decoded into AudioBuffers and played through AudioBufferSourceNodes, all
+    // scheduled against the SINGLE AudioContext.currentTime master clock. Every
+    // source is started with the same (when, offset) so the whole transport is
+    // sample-accurate and can NEVER drift — there is no seek-correction loop at
+    // all. Mixing is done on the audio thread via gain/panner nodes (no DOM
+    // writes → no clicks). Reading `currentTime` of the decode/scheduler is O(1).
+    const audioCtxRef = useRef<AudioContext | null>(null);
+    const masterGainRef = useRef<GainNode | null>(null);        // global fader (master volume + mute)
+    const masterMixGainRef = useRef<GainNode | null>(null);     // master-mix channel (0 when stems active)
+    const stemGainRefs = useRef<Record<string, GainNode>>({});
+    const stemPanRefs = useRef<Record<string, StereoPannerNode>>({});
+    const bufCacheRef = useRef<Record<string, AudioBuffer>>({}); // decoded buffers by id/url
+    const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+    const playStartClockRef = useRef(0);  // ctx.currentTime at last (re)schedule
+    const playStartPosRef = useRef(0);    // track position (s) at last (re)schedule
+    const rafRef = useRef(0);
+    const preparedIdsRef = useRef<Set<string>>(new Set()); // buffers that have a URL to load
+    const decodeStartedRef = useRef(false);   // avoid double decode under StrictMode
+    const isPlayingRef = useRef(false);       // mirror of isPlaying for clock reads
+    const currentTimeRef = useRef(0);         // authoritative transport position (s)
+    const durationRef = useRef(job.duration_ms ? job.duration_ms / 1000 : 60);
+    const UI_TICK_MS = 80;                    // min gap between playhead re-renders (~12Hz)
+    const lastUiTickRef = useRef(0);
 
-    // Stem Audio Players for Multitrack Sync
-    const stemAudioRefs = useRef<Record<string, HTMLAudioElement>>({});
-
-    // Track which stem audio elements actually loaded. If a stem 404s / fails, we fall
-    // back to the master mix instead of muting the master for a dead stem.
+    // Track which stems actually decoded/loaded. If a stem 404s / fails to decode,
+    // we fall back to the master mix instead of running a dead-stem multitrack.
     const [loadedStemIds, setLoadedStemIds] = useState<Record<string, boolean>>({});
     const hasLoadedStems = Object.values(loadedStemIds).some(Boolean);
-    const onStemLoaded = (id: string) => setLoadedStemIds(prev => ({ ...prev, [id]: true }));
 
     const timedLyrics: TimedLine[] = job.timed_lyrics_json
         ? typeof job.timed_lyrics_json === 'string'
@@ -175,38 +207,253 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             : job.notes_json
         : [];
 
-    // Sync volume & true isolated solo/mute across stem players
-    useEffect(() => {
-        const hasSolo = stemChannels.some(s => s.isSolo);
+    const ensureAudioContext = (): AudioContext | null => {
+        if (!audioCtxRef.current) {
+            const Ctor: typeof AudioContext =
+                window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+            if (!Ctor) return null;
+            audioCtxRef.current = new Ctor();
+        }
+        buildGraph();
+        return audioCtxRef.current;
+    };
 
+    // Build (once) the routing graph: per-channel Gain→Panner into a master gain.
+    const buildGraph = () => {
+        const ctx = audioCtxRef.current;
+        if (!ctx) return;
+        if (!masterGainRef.current) {
+            const master = ctx.createGain();
+            master.gain.value = 1;
+            master.connect(ctx.destination);
+            masterGainRef.current = master;
+        }
+        if (!masterMixGainRef.current) {
+            const g = ctx.createGain();
+            g.gain.value = 1;
+            g.connect(masterGainRef.current);
+            masterMixGainRef.current = g;
+        }
+    };
+
+    // Compute + apply the full mix state to all nodes (smooth ramps → no zipper).
+    const applyMixParams = () => {
+        const ctx = audioCtxRef.current;
+        if (!ctx || !masterGainRef.current) return;
+        const hasSolo = stemChannels.some(s => s.isSolo);
         stemChannels.forEach(stem => {
-            const el = stemAudioRefs.current[stem.id];
-            if (el) {
-                let effectiveVolume = 0;
-                if (isMasterMuted) {
-                    effectiveVolume = 0;
-                } else if (hasSolo) {
-                    // Only soloed tracks that are not muted emit sound
-                    effectiveVolume = stem.isSolo && !stem.isMuted ? (stem.volume / 100) * masterVolume : 0;
-                } else {
-                    // Muted tracks are completely silent (0)
-                    effectiveVolume = !stem.isMuted ? (stem.volume / 100) * masterVolume : 0;
-                }
-                el.volume = Math.max(0, Math.min(1, effectiveVolume));
+            const gain = stemGainRefs.current[stem.id];
+            const pan = stemPanRefs.current[stem.id];
+            if (!gain) return;
+            let perStem = 0;
+            if (hasSolo) perStem = stem.isSolo && !stem.isMuted ? stem.volume / 100 : 0;
+            else perStem = !stem.isMuted ? stem.volume / 100 : 0;
+            gain.gain.setTargetAtTime(Math.max(0, Math.min(1, perStem)), ctx.currentTime, 0.015);
+            if (pan) pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, stem.pan / 50)), ctx.currentTime, 0.015);
+        });
+        // Global fader + master-mix fallback.
+        masterGainRef.current.gain.setTargetAtTime(
+            isMasterMuted ? 0 : Math.max(0, Math.min(1, masterVolume)), ctx.currentTime, 0.015
+        );
+        if (masterMixGainRef.current) {
+            masterMixGainRef.current.gain.setTargetAtTime(hasLoadedStems ? 0 : 1, ctx.currentTime, 0.015);
+        }
+    };
+
+    // Ensure a per-stem routing (gain + panner) exists for the given channel.
+    const ensureStemNodes = (id: string): GainNode | null => {
+        const ctx = audioCtxRef.current;
+        if (!ctx) { ensureAudioContext(); }
+        if (!audioCtxRef.current || !masterGainRef.current) return null;
+        if (!stemGainRefs.current[id]) {
+            const gain = audioCtxRef.current.createGain();
+            const pan = audioCtxRef.current.createStereoPanner();
+            gain.connect(pan);
+            pan.connect(masterGainRef.current);
+            stemGainRefs.current[id] = gain;
+            stemPanRefs.current[id] = pan;
+        }
+        return stemGainRefs.current[id];
+    };
+
+    // ── Decoding ────────────────────────────────────────────────────────────
+    const getMasterUrl = (): string | null => job.audio_path
+        ? (job.audio_path.startsWith('http') ? job.audio_path : `${API_BASE_URL}${job.audio_path}`)
+        : null;
+
+    const fetchAudio = (url: string): Promise<ArrayBuffer> =>
+        fetch(url).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); });
+
+    // Decode one track to an AudioBuffer and cache it. Resolves null on failure.
+    const decodeToBuffer = async (key: string, url: string): Promise<AudioBuffer | null> => {
+        const ctx = audioCtxRef.current || ensureAudioContext();
+        if (!ctx) return null;
+        if (bufCacheRef.current[key]) return bufCacheRef.current[key];
+        try {
+            const data = await fetchAudio(url);
+            const buf = await ctx.decodeAudioData(data);
+            bufCacheRef.current[key] = buf;
+            return buf;
+        } catch (e) {
+            console.warn('Failed to decode audio:', key, e);
+            return null;
+        }
+    };
+
+    // Pre-decode the master + all active stems so first play is instant. Runs once
+    // (guarded) and records which ids succeeded / which have URLs to prepare.
+    const prepareBuffers = async () => {
+        const ctx = audioCtxRef.current || ensureAudioContext();
+        if (!ctx) return;
+        const jobs: { id: string; url: string }[] = [];
+        if (job.audio_path) {
+            const url = job.audio_path.startsWith('http') ? job.audio_path : `${API_BASE_URL}${job.audio_path}`;
+            jobs.push({ id: '__master__', url });
+        }
+        stemChannels.forEach(stem => {
+            if (stem.audioUrl) {
+                jobs.push({ id: stem.id, url: stem.audioUrl });
+                preparedIdsRef.current.add(stem.id);
             }
         });
+        const results = await Promise.all(jobs.map(j => decodeToBuffer(j.id, j.url).then(b => ({ id: j.id, b }))));
+        // Track which stems loaded so the UI shows multitrack vs master-fallback.
+        const loaded: Record<string, boolean> = {};
+        results.forEach(r => { if (r.b) loaded[r.id] = true; });
+        const masterLen = bufCacheRef.current['__master__']?.duration;
+        if (masterLen) setDuration(masterLen);
+        setLoadedStemIds(() => {
+            // Only clear ids that are no longer prepared; keep failure markers.
+            const next: Record<string, boolean> = {};
+            preparedIdsRef.current.forEach(id => { next[id] = !!loaded[id]; });
+            return next;
+        });
+    };
 
-        // CRITICAL: In multitrack mode the master is muted so the stems are heard exclusively.
-        // We only mute it when at least one stem actually LOADED; if every stem failed
-        // (404/missing), fall back to the master mix so playback is never dead-silent.
-        if (masterAudioRef.current) {
-            if (hasLoadedStems) {
-                masterAudioRef.current.volume = 0; // Stems carry 100% of the multitrack audio
-            } else {
-                masterAudioRef.current.volume = isMasterMuted ? 0 : masterVolume;
-            }
+    // The current transport position, derived from the master clock (sample-accurate).
+    const getPosition = (): number => {
+        const ctx = audioCtxRef.current;
+        if (!ctx || !isPlayingRef.current) return currentTimeRef.current;
+        return playStartPosRef.current + (ctx.currentTime - playStartClockRef.current);
+    };
+
+    // Stop + drop every currently scheduled source.
+    const stopSources = () => {
+        activeSourcesRef.current.forEach(src => {
+            try { src.stop(); } catch { /* already stopped */ }
+            try { src.disconnect(); } catch { /* ignore */ }
+        });
+        activeSourcesRef.current.clear();
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        rafRef.current = 0;
+    };
+
+    // Schedule the master + every loaded stem at the current transport position.
+    // ALL sources are started with the same (when, offset), so they are sample-locked.
+    const scheduleAll = async () => {
+        const ctx = audioCtxRef.current || ensureAudioContext();
+        if (!ctx || !masterGainRef.current) return;
+        stopSources();
+        const startAt = ctx.currentTime;
+        const pos = currentTimeRef.current;
+
+        const masterBuf = bufCacheRef.current['__master__'];
+        if (masterBuf && pos < masterBuf.duration) {
+            const src = ctx.createBufferSource();
+            src.buffer = masterBuf;
+            src.connect(masterMixGainRef.current!);
+            const offset = Math.min(Math.max(pos, 0), Math.max(0, masterBuf.duration - 0.05));
+            src.start(startAt, offset, Math.max(0, masterBuf.duration - offset));
+            activeSourcesRef.current.add(src);
         }
-    }, [stemChannels, masterVolume, isMasterMuted, hasLoadedStems]);
+        stemChannels.forEach(stem => {
+            const buf = bufCacheRef.current[stem.id];
+            if (!buf || pos >= buf.duration) return;
+            const gain = ensureStemNodes(stem.id);
+            if (!gain) return;
+            const src = ctx.createBufferSource();
+            src.buffer = buf;
+            src.connect(gain);
+            const offset = Math.min(Math.max(pos, 0), Math.max(0, buf.duration - 0.05));
+            src.start(startAt, offset, Math.max(0, buf.duration - offset));
+            activeSourcesRef.current.add(src);
+        });
+
+        playStartClockRef.current = startAt;
+        playStartPosRef.current = pos;
+    };
+
+    // Throttled playhead loop derived from the master clock, decoupled from re-renders.
+    const startPlayheadLoop = () => {
+        if (rafRef.current) cancelAnimationFrame(rafRef.current);
+        const tick = () => {
+            if (!isPlayingRef.current) { rafRef.current = 0; return; }
+            const pos = getPosition();
+            const dur = durationRef.current;
+            if (pos >= dur) {
+                pauseAll();
+                setCurrentTime(dur);
+                return;
+            }
+            const now = performance.now();
+            if (now - lastUiTickRef.current >= UI_TICK_MS) {
+                lastUiTickRef.current = now;
+                currentTimeRef.current = pos;
+                setCurrentTime(pos);
+            }
+            rafRef.current = requestAnimationFrame(tick);
+        };
+        rafRef.current = requestAnimationFrame(tick);
+    };
+
+    // Push mix state (vol/mute/solo/pan/master) into the graph nodes.
+    useEffect(() => {
+        applyMixParams();
+    }, [stemChannels, masterVolume, isMasterMuted, hasLoadedStems]); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Keep the playback-scheduler's duration mirror in sync with the UI duration
+    // (which becomes exact once the master buffer decodes).
+    useEffect(() => {
+        durationRef.current = duration;
+    }, [duration]);
+
+    // Build the graph and pre-decode the master + active stems so first play is
+    // instant. Runs on mount and again whenever the stem source changes so the
+    // newly-selected source's buffers are cached. `decodeStartedRef` guards
+    // StrictMode's dev double-mount from doing the work twice.
+    useEffect(() => {
+        ensureAudioContext();
+        if (decodeStartedRef.current) return;
+        decodeStartedRef.current = true;
+        prepareBuffers();
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [stemSource]);
+
+    // Close the shared AudioContext and tear down all nodes + sources on unmount
+    // so nothing leaks if the workspace is closed.
+    useEffect(() => {
+        return () => {
+            stopSources();
+            Object.keys(stemGainRefs.current).forEach(id => {
+                try { stemGainRefs.current[id].disconnect(); } catch { /* ignore */ }
+            });
+            Object.keys(stemPanRefs.current).forEach(id => {
+                try { stemPanRefs.current[id].disconnect(); } catch { /* ignore */ }
+            });
+            if (audioCtxRef.current) {
+                audioCtxRef.current.close().catch(console.error);
+                audioCtxRef.current = null;
+                masterGainRef.current = null;
+                masterMixGainRef.current = null;
+            }
+            stemGainRefs.current = {};
+            stemPanRefs.current = {};
+            // Reset one-shot init flags so a remount (incl. StrictMode's dev
+            // double-mount) re-prepares buffers on the fresh AudioContext.
+            decodeStartedRef.current = false;
+            preparedIdsRef.current = new Set();
+        };
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
     const togglePlay = () => {
         if (isPlaying) {
@@ -217,66 +464,59 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     };
 
     const playAll = () => {
-        // Only play the ACTIVE source's channels (never stale refs from the other
-        // stem source). The master acts purely as the transport clock.
-        stemChannels.forEach(stem => {
-            const el = stemAudioRefs.current[stem.id];
-            if (el) {
-                el.currentTime = masterAudioRef.current?.currentTime || currentTime;
-                el.play().catch(console.error);
+        const ctx = audioCtxRef.current || ensureAudioContext();
+        if (!ctx) return;
+        // Autoplay policy: resume/create within the user gesture.
+        if (ctx.state === 'suspended') ctx.resume().catch(console.error);
+
+        // Decode any buffer that isn't cached yet (e.g. play pressed before the
+        // eager pre-decode finished), then schedule everything sample-locked.
+        const decodeMissing = async () => {
+            const jobs: { id: string; url: string }[] = [];
+            const mUrl = getMasterUrl();
+            if (mUrl && !bufCacheRef.current['__master__']) jobs.push({ id: '__master__', url: mUrl });
+            stemChannels.forEach(stem => {
+                if (stem.audioUrl && !bufCacheRef.current[stem.id]) {
+                    jobs.push({ id: stem.id, url: stem.audioUrl });
+                    preparedIdsRef.current.add(stem.id);
+                }
+            });
+            if (jobs.length) {
+                const results = await Promise.all(jobs.map(j => decodeToBuffer(j.id, j.url).then(b => ({ id: j.id, b }))));
+                const loaded: Record<string, boolean> = {};
+                results.forEach(r => { if (r.b) loaded[r.id] = true; });
+                setLoadedStemIds(() => {
+                    const next: Record<string, boolean> = {};
+                    preparedIdsRef.current.forEach(id => { next[id] = loaded[id] || !!bufCacheRef.current[id]; });
+                    return next;
+                });
+                const m = bufCacheRef.current['__master__'];
+                if (m) setDuration(m.duration);
             }
-        });
-        if (masterAudioRef.current) {
-            masterAudioRef.current.currentTime = stemChannels.length ? (stemAudioRefs.current[stemChannels[0].id]?.currentTime ?? currentTime) : currentTime;
-            // Master is muted by the volume-sync effect when stems are active; play it
-            // only so the clock/transport runs.
-            masterAudioRef.current.play().catch(console.error);
-        }
-        setIsPlaying(true);
+            await scheduleAll();
+            isPlayingRef.current = true;
+            setIsPlaying(true);
+            startPlayheadLoop();
+        };
+        decodeMissing().catch(console.error);
     };
 
     const pauseAll = () => {
-        if (masterAudioRef.current) {
-            masterAudioRef.current.pause();
-        }
-        // Pause ALL known refs (covers any cleanup gap) — safe to iterate the map.
-        Object.keys(stemAudioRefs.current).forEach(id => {
-            const el = stemAudioRefs.current[id];
-            if (el) el.pause();
-        });
+        // Freeze position at the master clock, then stop all scheduled sources.
+        currentTimeRef.current = getPosition();
+        stopSources();
+        isPlayingRef.current = false;
         setIsPlaying(false);
-    };
-
-    const handleTimeUpdate = () => {
-        if (masterAudioRef.current) {
-            const time = masterAudioRef.current.currentTime;
-            setCurrentTime(time);
-
-            // Sync only the ACTIVE source's stem audio elements if drift exceeds 50ms.
-            stemChannels.forEach(stem => {
-                const el = stemAudioRefs.current[stem.id];
-                if (el && Math.abs(el.currentTime - time) > 0.05) {
-                    el.currentTime = time;
-                }
-            });
-        }
-    };
-
-    const handleLoadedMetadata = () => {
-        if (masterAudioRef.current && masterAudioRef.current.duration) {
-            setDuration(masterAudioRef.current.duration);
-        }
     };
 
     const handleSeek = (time: number) => {
         const clamped = Math.max(0, Math.min(duration, time));
-        if (masterAudioRef.current) {
-            masterAudioRef.current.currentTime = clamped;
-        }
-        Object.values(stemAudioRefs.current).forEach(el => {
-            if (el) el.currentTime = clamped;
-        });
+        currentTimeRef.current = clamped;
         setCurrentTime(clamped);
+        if (isPlayingRef.current) {
+            // Live seek: stop + reschedule all sources at the new position.
+            scheduleAll().catch(console.error);
+        }
     };
 
     const handleRewind = (seconds: number = 5) => {
@@ -315,37 +555,9 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
 
     return (
         <div className="flex flex-col h-full bg-[#fbfbfd] dark:bg-[#090b10] text-slate-900 dark:text-slate-100 overflow-hidden select-none transition-colors duration-200">
-            {/* Master Audio Element (Used as Clock / Transport Master) */}
-            {job.audio_path && (
-                <audio
-                    ref={masterAudioRef}
-                    src={job.audio_path.startsWith('http') ? job.audio_path : `${API_BASE_URL}${job.audio_path}`}
-                    onTimeUpdate={handleTimeUpdate}
-                    onLoadedMetadata={handleLoadedMetadata}
-                    onEnded={() => setIsPlaying(false)}
-                />
-            )}
-
-            {/* Individual Stem Audio Elements for Isolated Multitrack Playback */}
-            {stemChannels.map(stem => (
-                stem.audioUrl ? (
-                    <audio
-                        key={stem.id}
-                        ref={el => {
-                            if (el) {
-                                stemAudioRefs.current[stem.id] = el;
-                            } else {
-                                // Element unmounted (e.g. source switch) — drop the
-                                // stale ref so it never plays alongside the active set.
-                                delete stemAudioRefs.current[stem.id];
-                            }
-                        }}
-                        src={stem.audioUrl}
-                        onLoadedMetadata={() => onStemLoaded(stem.id)}
-                        onError={() => setLoadedStemIds(prev => ({ ...prev, [stem.id]: false }))}
-                    />
-                ) : null
-            ))}
+            {/* No <audio> elements here: every stem and the master AI decode into
+                AudioBuffers and play through Web Audio (AudioBufferSourceNode), all
+                scheduled against one AudioContext.currentTime master clock. */}
 
             {/* Top Workspace Header Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-3 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/70 dark:bg-[#12141c]/80 backdrop-blur-2xl flex-shrink-0 z-20 shadow-apple-sm">

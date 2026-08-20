@@ -22,7 +22,6 @@ interface NotationViewerProps {
 
 const PITCH_CLASS = ['C', 'C#', 'D', 'D#', 'E', 'F', 'F#', 'G', 'G#', 'A', 'A#', 'B'];
 const LETTERS: Record<string, number> = { C: 0, D: 1, E: 2, F: 3, G: 4, A: 5, B: 6 };
-const FLAT_NAMES  = ['C', 'Db', 'D', 'Eb', 'E', 'F', 'Gb', 'G', 'Ab', 'A', 'Bb', 'B'];
 const SHARP_PCS = new Set([1, 3, 6, 8, 10]);
 
 function midiToPos(midi: number): { pos: number; accidental: '#' | 'b' | ''; name: string } {

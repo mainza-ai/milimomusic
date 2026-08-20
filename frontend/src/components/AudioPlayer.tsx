@@ -1,275 +1,394 @@
 import React, { useEffect, useRef, useState } from 'react';
 import WaveSurfer from 'wavesurfer.js';
-import { Play, Pause, Download, SkipBack, SkipForward, Volume2, VolumeX, Wand2 } from 'lucide-react';
+import { API_BASE_URL } from '../api';
+import {
+  Play,
+  Pause,
+  Download,
+  SkipBack,
+  SkipForward,
+  RotateCcw,
+  RotateCw,
+  Repeat,
+  Repeat1,
+  Volume2,
+  VolumeX,
+  Wand2,
+  Gauge
+} from 'lucide-react';
 import { GlassCard } from './ui/GlassCard';
-import { api } from '../api';
 import { AudioVisualizer } from './ui/AudioVisualizer';
 import { InpaintModal } from './InpaintModal';
 
 interface AudioPlayerProps {
-    audioUrl: string;
-    jobId: string; // Added for download link
-    className?: string;
-    onNext?: () => void;
-    onPrev?: () => void;
-    title?: string;
+  audioUrl: string;
+  jobId: string;
+  className?: string;
+  onNext?: () => void;
+  onPrev?: () => void;
+  title?: string;
 }
 
 export const AudioPlayer: React.FC<AudioPlayerProps> = ({
-    audioUrl,
-    jobId,
-    className,
-    onNext,
-    onPrev,
-    title
+  audioUrl,
+  jobId,
+  className,
+  onNext,
+  onPrev,
+  title
 }) => {
-    // ... refs and state ...
-    const containerRef = useRef<HTMLDivElement>(null);
-    const wavesurfer = useRef<WaveSurfer | null>(null);
-    const [mediaEl, setMediaEl] = useState<HTMLMediaElement | null>(null);
-    const [isPlaying, setIsPlaying] = useState(false);
-    const [duration, setDuration] = useState('0:00');
-    const [currentTime, setCurrentTime] = useState('0:00');
+  const containerRef = useRef<HTMLDivElement>(null);
+  const wavesurfer = useRef<WaveSurfer | null>(null);
+  const [mediaEl, setMediaEl] = useState<HTMLMediaElement | null>(null);
+  const [isPlaying, setIsPlaying] = useState(false);
+  const [duration, setDuration] = useState('0:00');
+  const [currentTime, setCurrentTime] = useState('0:00');
 
-    // ... volume state ...
-    // Volume Persistence
-    const [volume, setVolume] = useState(() => {
-        const saved = localStorage.getItem('milimo_volume');
-        return saved ? parseFloat(saved) : 0.7;
+  // Playback Features
+  const [repeatMode, setRepeatMode] = useState<'off' | 'one'>('off');
+  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
+  const [isSpeedOpen, setIsSpeedOpen] = useState(false);
+
+  // Volume Persistence
+  const [volume, setVolume] = useState(() => {
+    const saved = localStorage.getItem('milimo_volume');
+    return saved ? parseFloat(saved) : 0.7;
+  });
+  const [isMuted, setIsMuted] = useState(false);
+  const [isInpaintOpen, setIsInpaintOpen] = useState(false);
+
+  const formatTime = (seconds: number) => {
+    if (isNaN(seconds) || seconds < 0) return '0:00';
+    const mins = Math.floor(seconds / 60);
+    const secs = Math.floor(seconds % 60);
+    return `${mins}:${secs.toString().padStart(2, '0')}`;
+  };
+
+  useEffect(() => {
+    if (!containerRef.current) return;
+
+    // Create Canvas Waveform Gradient
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d');
+    let progressGrad: string | CanvasGradient = '#14b8a6';
+    let waveGrad: string | CanvasGradient = 'rgba(20, 184, 166, 0.3)';
+
+    if (ctx) {
+      const g = ctx.createLinearGradient(0, 0, 400, 0);
+      g.addColorStop(0, '#00f2fe');
+      g.addColorStop(0.5, '#14b8a6');
+      g.addColorStop(1, '#0284c7');
+      progressGrad = g;
+
+      const wg = ctx.createLinearGradient(0, 0, 400, 0);
+      wg.addColorStop(0, 'rgba(0, 242, 254, 0.3)');
+      wg.addColorStop(1, 'rgba(14, 165, 233, 0.25)');
+      waveGrad = wg;
+    }
+
+    wavesurfer.current = WaveSurfer.create({
+      container: containerRef.current,
+      waveColor: waveGrad,
+      progressColor: progressGrad,
+      cursorColor: '#00f2fe',
+      cursorWidth: 2,
+      barWidth: 3,
+      barGap: 2,
+      barRadius: 3,
+      height: 56,
+      normalize: true,
+      backend: 'MediaElement'
     });
-    const [isMuted, setIsMuted] = useState(false);
-    const [isInpaintOpen, setIsInpaintOpen] = useState(false);
 
-    // ... formatTime ...
-    const formatTime = (seconds: number) => {
-        const mins = Math.floor(seconds / 60);
-        const secs = Math.floor(seconds % 60);
-        return `${mins}:${secs.toString().padStart(2, '0')}`;
+    wavesurfer.current.on('ready', () => {
+      setDuration(formatTime(wavesurfer.current?.getDuration() || 0));
+      wavesurfer.current?.setVolume(isMuted ? 0 : volume);
+
+      const media = wavesurfer.current?.getMediaElement();
+      if (media) {
+        setMediaEl(media);
+      }
+    });
+
+    wavesurfer.current.on('audioprocess', () => {
+      setCurrentTime(formatTime(wavesurfer.current?.getCurrentTime() || 0));
+    });
+
+    wavesurfer.current.on('finish', () => {
+      if (repeatMode === 'one') {
+        wavesurfer.current?.play();
+      } else {
+        setIsPlaying(false);
+        if (onNext) onNext();
+      }
+    });
+
+    return () => {
+      const ws = wavesurfer.current;
+      wavesurfer.current = null;
+      if (ws) {
+        try {
+          ws.unAll();
+          ws.stop();
+          ws.destroy();
+        } catch {}
+      }
     };
+  }, []);
 
-    // ... useEffects ...
-    useEffect(() => {
-        if (!containerRef.current) return;
+  // Load Audio URL
+  useEffect(() => {
+    if (wavesurfer.current && audioUrl) {
+      const fullUrl = audioUrl.startsWith('http') ? audioUrl : `${API_BASE_URL}${audioUrl}`;
+      wavesurfer.current.load(fullUrl);
+    }
+  }, [audioUrl]);
 
-        wavesurfer.current = WaveSurfer.create({
-            container: containerRef.current,
-            waveColor: 'rgba(99, 102, 241, 0.4)',
-            progressColor: '#6366f1',
-            cursorColor: '#ff0000',
-            barWidth: 3,
-            barGap: 2,
-            barRadius: 3,
-            height: 60,
-            normalize: true,
-            backend: 'MediaElement',
-        });
+  // Handle Play/Pause
+  const togglePlay = () => {
+    if (wavesurfer.current) {
+      wavesurfer.current.playPause();
+      setIsPlaying(wavesurfer.current.isPlaying());
+    }
+  };
 
-        wavesurfer.current.on('ready', () => {
-            setDuration(formatTime(wavesurfer.current?.getDuration() || 0));
-            wavesurfer.current?.setVolume(isMuted ? 0 : volume);
+  const handleRewind10 = () => {
+    if (wavesurfer.current) {
+      const cur = wavesurfer.current.getCurrentTime();
+      wavesurfer.current.setTime(Math.max(0, cur - 10));
+    }
+  };
 
-            // Extract media element for visualizer
-            const media = wavesurfer.current?.getMediaElement();
-            if (media) {
-                // Use a proxy needed? Wavesurfer 7 exposes it directly.
-                // But we need to make sure we don't break WS's internal connections.
-                // We'll pass it to visualizer but let visualizer try-catch the createSource.
-                setMediaEl(media);
-            }
-        });
+  const handleAdvance10 = () => {
+    if (wavesurfer.current) {
+      const cur = wavesurfer.current.getCurrentTime();
+      const dur = wavesurfer.current.getDuration() || 300;
+      wavesurfer.current.setTime(Math.min(dur, cur + 10));
+    }
+  };
 
-        wavesurfer.current.on('audioprocess', () => {
-            setCurrentTime(formatTime(wavesurfer.current?.getCurrentTime() || 0));
-        });
+  const handleSpeedChange = (speed: number) => {
+    setPlaybackSpeed(speed);
+    setIsSpeedOpen(false);
+    if (wavesurfer.current) {
+      const media = wavesurfer.current.getMediaElement();
+      if (media) media.playbackRate = speed;
+    }
+  };
 
-        wavesurfer.current.on('finish', () => {
-            setIsPlaying(false);
-        });
+  const downloadAudio = () => {
+    const fullUrl = audioUrl.startsWith('http') ? audioUrl : `${API_BASE_URL}${audioUrl}`;
+    const a = document.createElement('a');
+    a.href = fullUrl;
+    a.download = `milimo-track-${jobId}.wav`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+  };
 
-        return () => {
-            const ws = wavesurfer.current;
-            wavesurfer.current = null;
-
-            if (ws) {
-                try {
-                    ws.unAll();
-                    ws.stop();  // Stop playback to abort any pending operations
-                    ws.destroy();
-                } catch {
-                    // Ignore errors during cleanup (AbortError is suppressed globally)
-                }
-            }
-        };
-    }, []);
-
-    useEffect(() => {
-        if (wavesurfer.current && audioUrl) {
-            const fullUrl = api.getAudioUrl(audioUrl);
-            wavesurfer.current.load(fullUrl);
-            setIsPlaying(false);
-        }
-    }, [audioUrl]);
-
-    // Handle Global Pause Event & Play Command
-    useEffect(() => {
-        const handleGlobalEvent = (e: CustomEvent) => {
-            // PAUSE Check: If another player starts (id !== my id), pause myself
-            if (e.type === 'milimo_play_start') {
-                if (e.detail.id !== jobId && isPlaying) {
-                    if (wavesurfer.current) {
-                        wavesurfer.current.pause();
-                        setIsPlaying(false);
-                    }
-                }
-            }
-
-            // PLAY COMMAND: If parent tells ME specifically to play
-            if (e.type === 'milimo_play_command') {
-                if (e.detail.id === jobId) {
-                    if (wavesurfer.current) {
-                        wavesurfer.current.play();
-                        setIsPlaying(true);
-                        // Broadcast that I started
-                        const startEvent = new CustomEvent('milimo_play_start', { detail: { id: jobId } });
-                        window.dispatchEvent(startEvent);
-                    }
-                }
-            }
-        };
-
-        window.addEventListener('milimo_play_start' as any, handleGlobalEvent as any);
-        window.addEventListener('milimo_play_command' as any, handleGlobalEvent as any);
-
-        return () => {
-            window.removeEventListener('milimo_play_start' as any, handleGlobalEvent as any);
-            window.removeEventListener('milimo_play_command' as any, handleGlobalEvent as any);
-        };
-    }, [jobId, isPlaying]);
-
-    const togglePlay = () => {
-        if (wavesurfer.current) {
-            wavesurfer.current.playPause();
-            const newIsPlaying = !isPlaying;
-            setIsPlaying(newIsPlaying);
-
-            if (newIsPlaying) {
-                // Broadcast I am playing
-                const event = new CustomEvent('milimo_play_start', { detail: { id: jobId } });
-                window.dispatchEvent(event);
-            }
-        }
-    };
-
-    const downloadAudio = () => {
-        // Direct Server Download (Fixes Safari Blob Issues)
-        const downloadUrl = api.getDownloadUrl(jobId);
-        window.location.href = downloadUrl;
-    };
-
-    return (
-        <div className={className}>
-            <GlassCard className="py-4 px-6 !bg-white/60 !backdrop-blur-2xl">
-                <div className="flex flex-col gap-4">
-                    {title && <h3 className="text-sm font-medium text-slate-500 uppercase tracking-widest">{title}</h3>}
-
-                    {/* Visualizer Overlay or Parallel */}
-                    <div className="relative">
-                        <div ref={containerRef} className="w-full cursor-pointer opacity-80 hover:opacity-100 transition-opacity" />
-                        {/* Visualizer positioned absolutly or effectively blended? 
-                             Let's put it BEHIND or blended. 
-                             Actually, let's put it on top as a subtle overlay or below.
-                             Putting it below standard waveform for now.
-                          */}
-                        {isPlaying && (
-                            <div className="absolute top-0 left-0 w-full h-full pointer-events-none mix-blend-overlay opacity-50 flex items-center justify-center">
-                                <AudioVisualizer
-                                    mediaElement={mediaEl}
-                                    isPlaying={isPlaying}
-                                    className="w-full h-full"
-                                    barColor="rgb(255, 255, 255)"
-                                />
-                            </div>
-                        )}
-                    </div>
-
-                    <div className="flex items-center justify-between mt-2">
-                        <span className="text-xs font-mono text-slate-500 w-12">{currentTime}</span>
-
-                        <div className="flex items-center gap-4">
-                            <button onClick={onPrev} className="p-2 rounded-full hover:bg-slate-100/50 transition-colors text-slate-600">
-                                <SkipBack className="w-5 h-5" />
-                            </button>
-
-                            <button
-                                onClick={togglePlay}
-                                className="p-4 rounded-full bg-slate-900 text-white shadow-lg hover:scale-105 transition-transform active:scale-95"
-                            >
-                                {isPlaying ? <Pause className="fill-current w-6 h-6" /> : <Play className="fill-current w-6 h-6 pl-1" />}
-                            </button>
-
-                            <button onClick={onNext} className="p-2 rounded-full hover:bg-slate-100/50 transition-colors text-slate-600">
-                                <SkipForward className="w-5 h-5" />
-                            </button>
-                        </div>
-
-                        <div className="flex items-center gap-3">
-                            <div className="flex items-center gap-2 group/volume">
-                                <button
-                                    onClick={() => {
-                                        const newMuted = !isMuted;
-                                        setIsMuted(newMuted);
-                                        if (wavesurfer.current) {
-                                            wavesurfer.current.setVolume(newMuted ? 0 : volume);
-                                        }
-                                    }}
-                                    className="text-slate-400 hover:text-slate-600 transition-colors"
-                                >
-                                    {isMuted || volume === 0 ? <VolumeX className="w-4 h-4" /> : <Volume2 className="w-4 h-4" />}
-                                </button>
-                                <div className="w-0 overflow-hidden group-hover/volume:w-20 transition-all duration-300">
-                                    <input
-                                        type="range"
-                                        min="0"
-                                        max="1"
-                                        step="0.05"
-                                        value={isMuted ? 0 : volume}
-                                        onChange={(e) => {
-                                            const val = parseFloat(e.target.value);
-                                            setVolume(val);
-                                            setIsMuted(val === 0);
-                                            if (wavesurfer.current) wavesurfer.current.setVolume(val);
-                                            localStorage.setItem('milimo_volume', val.toString());
-                                        }}
-                                        className="w-20 h-1 bg-slate-200 rounded-lg appearance-none cursor-pointer accent-slate-500"
-                                    />
-                                </div>
-                            </div>
-
-                            <button onClick={downloadAudio} className="p-2 rounded-full hover:bg-slate-100/50 transition-colors text-slate-600">
-                                <Download className="w-4 h-4" />
-                            </button>
-
-                            <button
-                                onClick={() => setIsInpaintOpen(true)}
-                                className="p-2 rounded-full hover:bg-indigo-100/50 transition-colors text-indigo-600"
-                                title="Repair Segment"
-                            >
-                                <Wand2 className="w-4 h-4" />
-                            </button>
-
-                            <div className="w-12 text-right text-xs font-mono text-slate-500">{duration}</div>
-                        </div>
-                    </div>
-                </div>
-            </GlassCard>
-
-            <InpaintModal
-                isOpen={isInpaintOpen}
-                onClose={() => setIsInpaintOpen(false)}
-                jobId={jobId}
-                duration={wavesurfer.current?.getDuration() || 0}
-                title={title}
-            />
+  return (
+    <GlassCard className={`p-4 md:p-5 ${className || ''} space-y-3`}>
+      {title && (
+        <div className="flex items-center justify-between">
+          <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate max-w-xs">
+            {title}
+          </span>
+          <span className="text-[10px] font-mono text-teal-600 dark:text-teal-400 font-bold">
+            48kHz Stereo Master
+          </span>
         </div>
-    );
+      )}
+
+      {/* Waveform Area with Overlay Spectrum */}
+      <div className="relative w-full rounded-2xl overflow-hidden bg-black/[0.03] dark:bg-white/[0.03] p-3 border border-black/[0.06] dark:border-white/10 shadow-inner">
+        <div ref={containerRef} className="w-full cursor-pointer" />
+
+        {isPlaying && (
+          <div className="absolute inset-0 pointer-events-none mix-blend-screen opacity-50 flex items-center justify-center p-2">
+            <AudioVisualizer
+              mediaElement={mediaEl}
+              isPlaying={isPlaying}
+              className="w-full h-full"
+              mode="mirror"
+              accentGradient="cyberpunk"
+            />
+          </div>
+        )}
+      </div>
+
+      {/* Player Controls Strip */}
+      <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
+        <span className="text-xs font-mono font-semibold text-slate-500 dark:text-slate-400 w-12">
+          {currentTime}
+        </span>
+
+        {/* Center Transport Buttons */}
+        <div className="flex items-center gap-1.5 sm:gap-2">
+          {onPrev && (
+            <button
+              onClick={onPrev}
+              className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-slate-600 dark:text-slate-400"
+              title="Previous Track"
+            >
+              <SkipBack className="w-4 h-4" />
+            </button>
+          )}
+
+          {/* Rewind 10s */}
+          <button
+            onClick={handleRewind10}
+            className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-slate-600 dark:text-slate-400"
+            title="Rewind 10 seconds"
+          >
+            <RotateCcw className="w-4 h-4" />
+          </button>
+
+          {/* Glowing Play/Pause */}
+          <button
+            onClick={togglePlay}
+            className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-teal-500 via-cyan-400 to-sky-500 hover:from-teal-400 hover:to-cyan-300 text-slate-950 shadow-md shadow-teal-500/25 hover:scale-105 transition-transform active:scale-95 flex items-center justify-center font-bold"
+          >
+            {isPlaying ? (
+              <Pause className="w-4 h-4" />
+            ) : (
+              <Play className="w-4 h-4 ml-0.5" />
+            )}
+          </button>
+
+          {/* Advance 10s */}
+          <button
+            onClick={handleAdvance10}
+            className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-slate-600 dark:text-slate-400"
+            title="Advance 10 seconds"
+          >
+            <RotateCw className="w-4 h-4" />
+          </button>
+
+          {onNext && (
+            <button
+              onClick={onNext}
+              className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-slate-600 dark:text-slate-400"
+              title="Next Track"
+            >
+              <SkipForward className="w-4 h-4" />
+            </button>
+          )}
+        </div>
+
+        {/* Right Tools (Speed, Loop, Volume, Inpaint, Download) */}
+        <div className="flex items-center gap-2">
+          {/* Speed Selector */}
+          <div className="relative">
+            <button
+              onClick={() => setIsSpeedOpen(!isSpeedOpen)}
+              className="px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1 transition-colors"
+              title="Playback Speed"
+            >
+              <Gauge size={12} className="text-teal-500" />
+              <span>{playbackSpeed}x</span>
+            </button>
+
+            {isSpeedOpen && (
+              <div className="absolute bottom-full mb-2 right-0 bg-white dark:bg-[#181a24] border border-black/[0.08] dark:border-white/10 rounded-xl shadow-apple-lg p-1 space-y-1 z-50 animate-fade-in">
+                {[0.75, 1.0, 1.25, 1.5, 2.0].map((s) => (
+                  <button
+                    key={s}
+                    onClick={() => handleSpeedChange(s)}
+                    className={`w-full px-3 py-1 text-left text-xs font-mono rounded-lg transition-colors ${
+                      playbackSpeed === s
+                        ? 'bg-teal-500/15 text-teal-700 dark:text-teal-300 font-bold'
+                        : 'text-slate-600 dark:text-slate-400 hover:bg-black/5 dark:hover:bg-white/5'
+                    }`}
+                  >
+                    {s}x
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+
+          {/* Repeat Toggle */}
+          <button
+            onClick={() => setRepeatMode(repeatMode === 'off' ? 'one' : 'off')}
+            className={`p-1.5 rounded-xl transition-colors ${
+              repeatMode === 'one'
+                ? 'text-teal-600 dark:text-teal-400 bg-teal-500/10'
+                : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+            }`}
+            title={`Loop Track: ${repeatMode}`}
+          >
+            {repeatMode === 'one' ? <Repeat1 size={15} /> : <Repeat size={15} />}
+          </button>
+
+          {/* Volume Control */}
+          <div className="flex items-center gap-1 group/volume">
+            <button
+              onClick={() => {
+                const newMuted = !isMuted;
+                setIsMuted(newMuted);
+                if (wavesurfer.current) {
+                  wavesurfer.current.setVolume(newMuted ? 0 : volume);
+                }
+              }}
+              className="p-1 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+            >
+              {isMuted || volume === 0 ? (
+                <VolumeX className="w-4 h-4" />
+              ) : (
+                <Volume2 className="w-4 h-4" />
+              )}
+            </button>
+            <div className="w-0 overflow-hidden group-hover/volume:w-16 transition-all duration-300">
+              <input
+                type="range"
+                min="0"
+                max="1"
+                step="0.05"
+                value={isMuted ? 0 : volume}
+                onChange={(e) => {
+                  const val = parseFloat(e.target.value);
+                  setVolume(val);
+                  setIsMuted(val === 0);
+                  if (wavesurfer.current) wavesurfer.current.setVolume(val);
+                  localStorage.setItem('milimo_volume', val.toString());
+                }}
+                className="w-16 h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-teal-500"
+              />
+            </div>
+          </div>
+
+          {/* Inpaint Button */}
+          <button
+            onClick={() => setIsInpaintOpen(true)}
+            className="p-1.5 rounded-lg bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950 transition-colors font-bold text-xs"
+            title="Repair Audio Segment"
+          >
+            <Wand2 className="w-4 h-4" />
+          </button>
+
+          {/* Download Audio */}
+          <button
+            onClick={downloadAudio}
+            className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200"
+            title="Download Audio"
+          >
+            <Download className="w-4 h-4" />
+          </button>
+
+          <div className="w-12 text-right text-xs font-mono text-slate-500 dark:text-slate-400">
+            {duration}
+          </div>
+        </div>
+      </div>
+
+      {/* Inpaint Modal */}
+      <InpaintModal
+        isOpen={isInpaintOpen}
+        onClose={() => setIsInpaintOpen(false)}
+        jobId={jobId}
+        duration={wavesurfer.current?.getDuration() || 0}
+        title={title}
+      />
+    </GlassCard>
+  );
 };

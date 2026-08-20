@@ -5,7 +5,6 @@ import torch
 import logging
 from app.models import Job, JobStatus
 from sqlmodel import Session, select
-from heartlib import HeartMuLaGenPipeline
 from app.services.music_service import music_service, event_manager # Share loaded pipeline
 
 logger = logging.getLogger(__name__)

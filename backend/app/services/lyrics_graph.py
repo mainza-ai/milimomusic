@@ -38,13 +38,51 @@ def debug_log(message: str, data: Any = None):
 def sanitize_lyrics(raw_lyrics: str) -> str:
     """
     Post-process lyrics to ensure they comply with the expected format.
-    
+
     Fixes:
     1. Convert "Intro:" or "Verse 1:" to "[Intro]" or "[Verse 1]"
     2. Remove instrumental directions like "(Soft piano melody)"
     3. Remove stage directions like "(repeat chorus)"
+    4. Remove model reasoning/thinking envelopes and any prose preamble before the
+       first section marker, so only final song-structure lyrics remain.
     """
-    lines = raw_lyrics.split('\n')
+    if not raw_lyrics:
+        return ""
+
+    text = raw_lyrics
+    # --- reasoning / thinking envelope removal (defense-in-depth) ---
+    text = re.sub(r"<(?:\s*thinking|reasoning|analysis|thought|response|deliberation)[^>]*>.*?(?:</(?:\s*thinking|reasoning|analysis|thought|response|deliberation)>|$)",
+                  "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"#####\s*reasoning\s*#####.*?(?=\n|$)", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"^\s*::.*?(\n|$)", "", text, flags=re.MULTILINE)
+    # --- drop leading prose preamble before the first section marker ---
+    lines = text.split('\n')
+    # Find first line that is a section header like [Verse] or a converted header line
+    section_idx = None
+    section_pattern = re.compile(r'^\s*(\[[^\]]+\]|(Intro|Verse|Chorus|Bridge|Outro|Pre-Chorus|Hook)(\s*\d*):)\s*$', re.IGNORECASE)
+    for i, ln in enumerate(lines):
+        if section_pattern.match(ln.strip()) or ln.strip().startswith('['):
+            section_idx = i
+            break
+    if section_idx is not None and section_idx > 0:
+        # Drop leading prose/intro lines up to the first section marker
+        preamble = lines[:section_idx]
+        # Only drop if there is no real lyric-like content in the preamble (safe guard):
+        # keep any preamble lines that look like actual lyric lines (short text) unless
+        # they're obvious model talk.
+        keep = []
+        for pl in preamble:
+            p = pl.strip()
+            if not p:
+                continue
+            if re.match(r'^(here (are|is)|sure|okay|certainly|of course|absolutely|given|to (generate|create|write|provide)|let me|i\'ll|this is|the (lyrics|song)|here\'s)', p, re.IGNORECASE):
+                continue
+            keep.append(pl)
+        if keep and all(len(k.strip()) < 80 for k in keep):
+            lines = keep + lines[section_idx:]
+        else:
+            lines = lines[section_idx:]
+
     cleaned_lines = []
     
     # Pattern for wrong header format: "Intro:" or "Verse 1:" etc

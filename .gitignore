@@ -48,6 +48,17 @@ debug_instrumental.py
 backend/jobs.db
 backend/db.sqlite3
 backend/jobs.db*
+backend/database.db
 backend/llm_config.json
 backend/llm_config.backup.json
 *.log
+
+# Secrets / environment — never commit real keys
+.env
+.env.local
+backend/.env
+frontend/.env.local
+
+# Internal Developer Docs
+devs/
+devs/**

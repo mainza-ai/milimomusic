@@ -1,166 +1,95 @@
 # Milimo Music
 
-A music generation application powered by HeartMuLa models.
+An open-source AI music generation, neural transcription, and multitrack production platform created by [Mainza Kangombe](https://www.linkedin.com/in/mainza-kangombe-6214295).
 
-> [!NOTE]
-> **Cross-Platform Support**: Optimized for both **macOS (Apple Silicon/MPS)** and **Windows (CUDA)**.
+Milimo Music pairs state-of-the-art music generation models with digital audio workstation (DAW) editing, note-level transcription (MIDI and MusicXML), stem separation, and offline voice cloning.
 
+---
 
-![Milimo Music Interface](assets/milimomusic.png)
+## Key Capabilities
 
-### [🎵 Listen to a Sample Track generated with Milimo Music](https://www.youtube.com/watch?v=psmoiW1f6-I)
+### Generative Audio Engine
+- **Pluggable Providers**: **MiniMax Music 3** is the primary engine — structured multi-section captions `[Verse]`, `[Chorus]`, `[Solo]`, lyric + style-tag conditioning. On Apple Silicon it runs **real native MLX weight inference**; on Windows/Linux it auto-detects the platform and falls back gracefully (no crash). **HeartMuLa-3B** + **HeartCodec** remains available as legacy/local, but is **optional** — it is *not* a hard dependency.
+- **Self-Healing Producer**: a weak prompt (e.g. *"A smash hit pop song"*) with little or no lyrics is **intelligently enhanced by the real LLM producer** — it expands the concept into a detailed musical direction and writes genuine, structured lyrics via the AI Co-Writer — so real inference always runs well-conditioned and never degrades to a synthetic placeholder.
+- **Inpainting & Continuation**: Extend existing tracks or re-generate specific measures with seamless acoustic transitions.
+- **Precision Signal & Sampling Controls**: Configurable duration (5s–300s), CFG scale, temperature, top-k/top-p filtering, DiT diffusion steps, and seed locking.
 
-## Features & Architecture Deep Dive
+### Multi-Platform by Design
+- Runs on **macOS (Apple Silicon)**, **Windows**, and **Linux**.
+- Genuine MiniMax Music 3 MLX inference on Apple; graceful CPU/CUDA fallback elsewhere.
+- HeartMuLa/Heartlib is HeartMuLa-only and never required to boot; all its imports are lazy/guarded.
+- Dynamic per-instrument stem rendering uses only portable numpy + soundfile.
 
-### Core Technology
-Milimo Music integrates state-of-the-art AI models to provide a seamless music creation experience.
+### MuScriptor Neural Transcription & Engraving
+- **Multi-Instrument Polyphonic Transcription**: Extracts individual instrument parts (Piano, Bass, Drums, Vocal melody).
+- **Multi-Track MIDI (`.mid`)**: Compatible with Logic Pro, Ableton Live, FL Studio, and Pro Tools.
+- **W3C MusicXML 3.1 Sheet Music (`.musicxml`)**: Automatic Grand Staff engraving with standard Treble (𝄞) and Bass (𝄢) clefs.
+- **Beat & Tempo Tracking**: Downbeat grid alignment and BPM detection via `beat-this`.
 
--   **[HeartMuLa-3B Model](https://github.com/HeartMuLa/heartlib)**: The heart of the audio generation engine. HeartMuLa (Hear the Music Language) is a 3B parameter transformer model capable of generating high-fidelity music conditioned on lyrics and stylistic tags.
-    -   **Multilingual Support**: Capable of generating music with lyrics in multiple languages, including but not limited to **English, Chinese, Japanese, Korean, and Spanish**.
--   **Audio Codec**: Uses `HeartCodec` (12.5 Hz) for efficient and high-quality audio reconstruction.
--   **Ollama Integration**: Leverages local LLMs (like Llama 3) for:
-    -   **Lyrics Generation**: Automatically writes structured lyrics (Verse, Chorus, Bridge) based on a topic.
-    -   **Prompt Enhancement**: Expands simple concepts into detailed musical descriptors.
-    -   **Auto-Titling**: Generates creative titles based on the song content.
-    -   **Inspiration Mode**: Brainstorms unique song concepts and style combinations for you.
+### Web Audio DAW Workspace
+- **Dual-Engine Stems**: the DAW exposes **two genuine stem sources you can switch between** — **Per-Instrument** (dynamic, one channel per real instrument in the transcription, labeled with its GM program) and **4 Master Stems** (HTDemucs, real neural source-separation of the master into vocals/drums/bass/other). The dynamic per-instrument view is the default.
+- **Arrangement Timeline**: per-instrument (or 4-master) lanes with interactive Solo (`S`) / Mute (`M`) matrix, waveform rendering, and measure navigation. Isolated parts sync to the transcription's real BPM.
+- **Piano Roll MIDI Editor**: **dynamic auto-fitting range** built from the transcribed notes (no clamping, no dropped pitches ever), interactive note manipulation/add/delete, live polyphonic Web Audio synthesizer (instrument-aware), and MIDI export.
+- **Score Notation Viewer**: **accurate SVG grand-staff engraving** — real pitch-to-staff placement, ledger lines, accidentals, duration-correct note heads, measure bar lines from the track's true beat grid — plus zoom, print, and MusicXML export.
+- **Multitrack Console Mixer**: Gain staging, stereo pan sliders, GM-program badges on per-instrument channels, animated LED peak meters, and Matchering reference mastering (-14.0 LUFS broadcast target).
 
-### Key Capabilities
+### Studio Workflow & AI Co-Writer
+- **Project Folders**: Organize sessions into dedicated projects conditioned on BPM, musical key signature, and tags.
+- **Multi-Provider LLM Integration**: Connects to OpenCode Go API, local OMLX Apple Silicon server, Ollama, OpenAI, Google Gemini, and DeepSeek.
+- **Agentic Lyrics Engine**: Multi-agent orchestration ensuring structured, rhyme-conscious, and musically aligned lyrics.
+- **Voice Training Studio**: Offline singing voice conversion (SVC) and vocal timbre fine-tuning with strict user consent enforcement.
 
-1.  **Text-to-Music Generation**: Create full 48kHz stereo tracks by simply describing a mood and style.
-    > **Note**: Music style integration is currently in beta. To get the best results, use only the following supported tags (HeartMuLa-3B):  
-    > *Warm, Reflection, Pop, Cafe, R&B, Keyboard, Regret, Drum machine, Electric guitar, Synthesizer, Soft, Energetic, Electronic, Self-discovery, Sad, Ballad, Longing, Meditation, Faith, Acoustic, Peaceful, Wedding, Piano, Strings, Acoustic guitar, Romantic, Drums, Emotional, Walking, Hope, Hopeful, Powerful, Epic, Driving, Rock.*
-2.  **Lyrics-Conditioned Synthesis**: The model aligns generated audio with provided lyrics, respecting prosody and structure.
-3.  **Track Extension**: Continue generating from where a previous track left off, allowing for the creation of longer compositions segment by segment.
-    <br>
-    [![Track Extension Demo](https://img.youtube.com/vi/Yppfm86lgk0/0.jpg)](https://youtu.be/Yppfm86lgk0)
-4.  **Repair Segment (Beta)**: Fix specific parts of your generated track without regenerating the entire song. Select a time range and let the AI rewrite just that segment while preserving the surrounding context.
-5.  **Training Studio (Beta)**: Fine-tune the HeartMuLa model on your own audio datasets directly within the app.
-    -   **Custom Styles**: Train the model to understand specific genres or artist styles (e.g., 'Afrobeat', 'MyVoice').
-    -   **LoRA Training**: Efficient low-rank adaptation training that runs locally.
-    -   **Global Monitoring**: Track training progress from anywhere in the app with the floating status widget.
-6.  **Real-Time Progress**: Server-Sent Events (SSE) provide live feedback on the generation steps, from token inference to decoding.
-7.  **Smart History**: Automatically saves all generated tracks, lyrics, and metadata (seed, cfg, temperature) for easy retrieval and playback.
-8.  **AI Co-Writer (Multi-Agent System)**:
-    <br>
-    ![AI Co-Writer Interface](assets/milimomusic2.png)
-    -   **Agentic Workflow**: The Co-Writer is not a simple chatbot. It uses a graph of specialized Pydantic Agents working in tandem:
-        -   **Coordinator Agent**: Analyzes your request and routes it to the correct workflow (Creation vs. Editing).
-        -   **Lyricist Agent**: The creative engine that drafts content and executes complex editing operations (Update, Insert, Append).
-        -   **StructureGuard Agent**: A dedicated QA agent that validates every output against strict schemas. If the Lyricist makes a mistake, the Guard catches it and forces a retry automatically.
-    -   **Pydantic-Native**: By treating lyrics as code artifacts (Schemas), we eliminate hallucinated formatting and ensure the lyrics always fit the music generation engine perfectly.
+---
 
-## Prerequisites
+## Quickstart
 
-- **Conda** (Anaconda or Miniconda)
-- Python 3.10+
-- Node.js 18+
-- npm or yarn
-- **Ollama** (Required for lyrics generation)
+### Prerequisites
+- **Python 3.10+** (Recommended: Python 3.12 via Conda)
+- **Node.js 18+** & npm
+- **Hardware**: macOS with Apple Silicon (MPS / MLX) or Linux / Windows with NVIDIA GPU (CUDA)
 
-## Setup Instructions
-
-### 1. Environment Setup
-
-It is highly recommended to use a Conda environment to manage dependencies.
+### 1. Clone & Environment
 
 ```bash
-conda create -n milimo python=3.12
-conda activate milimo
+git clone --recurse-submodules https://github.com/mainza-ai/milimomusic.git
+cd milimomusic
+
+conda create -n milimomusic python=3.12
+conda activate milimomusic
 ```
 
-### 2. Ollama Setup
+### 2. Backend Setup
 
-1.  Download and install [Ollama](https://ollama.com/) for your operating system.
-2.  Pull a compatible model (e.g., Llama 3.2):
-    ```bash
-    ollama pull llama3.2:3b-instruct-fp16
-    ```
-3.  Ensure Ollama is running in the background:
-    ```bash
-    ollama serve 
-    ```
+```bash
+cd backend
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+*API docs available at `http://localhost:8000/docs`.*
 
-### 3. LLM Configuration & Providers
+**Optional — real MiniMax Music 3 inference on Apple Silicon (recommended on M-series Macs):**
+Install the native MLX runtime to run the actual model weights instead of the fallback:
+```bash
+# from the repo root, set the model snapshot path used by the provider
+echo 'MINIMAX_MODEL_PATH=/path/to/mlx-community/MiniMax-Music3-bf16' >> .env
+pip install mlx
+pip install "mlx-audio @ git+https://github.com/Blaizzy/mlx-audio.git@784b29e2691a93ca7483147d86f61859dfaa6296"
+```
+On Windows/Linux no extra step is needed — the provider auto-detects the platform and uses CPU/CUDA/fallback, so the app always runs. HeartMuLa/Heartlib is optional and never required to start.
 
-Milimo Music supports multiple LLM providers for lyrics generation and creative prompting.
+### 3. Frontend Setup
 
-**Supported Providers:**
-- **Ollama** (Local, Default): Uses your local models via `ollama serve`.
-- **OpenAI**: Connects to proper GPT models (requires API Key).
-- **Google Gemini**: Uses Gemini models (requires API Key).
-- **OpenRouter**: Access various models like Claude, Mistral, Llama via a unified API (requires API Key).
-- **DeepSeek**: Direct integration with DeepSeek API.
-- **LM Studio**: Connects to other local inference servers compatible with OpenAI API.
+In a separate terminal:
 
-**Configuration:**
-1. Click the **Settings (Gear)** icon in the sidebar.
-2. Select your desired provider tab.
-3. Enter your API Key or Base URL.
-4. Click "Save & Set Active". The app will automatically fetch available models for you.
+```bash
+cd frontend
+npm install
+npm run dev
+```
+*Application available at `http://localhost:5173`.*
 
-### 4. HeartLib & Model Weights
+---
 
-**Crucial Step**: You must download the large model weights manually as they are excluded from the repository.
+## License
 
-1.  **Download Pretrained Models**:
-    You need to download the checkpoints into the `heartlib/ckpt` directory. You can use Hugging Face or ModelScope.
-
-    **Using Hugging Face CLI:**
-    ```bash
-    # Install hf-hub if not present: pip install huggingface_hub[cli]
-
-    hf download --local-dir './ckpt' 'HeartMuLa/HeartMuLaGen'
-    hf download --local-dir './ckpt/HeartMuLa-oss-3B' 'HeartMuLa/HeartMuLa-oss-3B'
-    hf download --local-dir './ckpt/HeartCodec-oss' 'HeartMuLa/HeartCodec-oss'
-    ```
-
-    **Directory Structure Verification**:
-    After downloading, ensure your `heartlib/ckpt` folder looks like this:
-    ```
-    heartlib/ckpt/
-    ├── HeartCodec-oss/
-    ├── HeartMuLa-oss-3B/
-    ├── gen_config.json
-    └── tokenizer.json
-    ```
-
-### 5. Backend
-
-1.  Navigate to the `backend` directory:
-    ```bash
-    cd ../backend
-    ```
-
-2.  Install dependencies (this will automatically install `heartlib`):
-    ```bash
-    pip install -r requirements.txt
-    ```
-
-3.  Run the server:
-    ```bash
-    python -m app.main
-    ```
-    The backend will start at `http://localhost:8000`.
-
-### 6. Frontend
-
-1.  Navigate to the `frontend` directory:
-    ```bash
-    cd ../frontend
-    ```
-
-2.  Install dependencies:
-    ```bash
-    npm install
-    ```
-
-3.  Start the development server:
-    ```bash
-    npm run dev
-    ```
-    The frontend will be available at `http://localhost:5173`.
-
-## Author
-
-**Mainza Kangombe**  
-[LinkedIn Profile](https://www.linkedin.com/in/mainza-kangombe-6214295)
+Open-source and non-commercial. Created by [Mainza Kangombe](https://www.linkedin.com/in/mainza-kangombe-6214295).

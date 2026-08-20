@@ -27,7 +27,7 @@ const HelpTooltip: React.FC<{ text: string }> = ({ text }) => {
                 onMouseEnter={() => setIsVisible(true)}
                 onMouseLeave={() => setIsVisible(false)}
                 onClick={(e) => { e.preventDefault(); setIsVisible(!isVisible); }}
-                className="text-slate-400 hover:text-purple-500 transition-colors"
+                className="text-slate-400 hover:text-teal-500 transition-colors"
             >
                 <HelpCircle className="w-3.5 h-3.5" />
             </button>
@@ -471,48 +471,46 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
     return createPortal(
         <AnimatePresence>
             {isOpen && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 dark:bg-black/80 backdrop-blur-md p-4 animate-fade-in">
                     <motion.div
                         initial={{ opacity: 0, scale: 0.95, y: 20 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}
                         exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                        className="bg-white/80 backdrop-blur-2xl rounded-xl border border-white/50 shadow-2xl w-full max-w-5xl overflow-hidden flex flex-col min-h-[85vh] max-h-[98vh] glass-panel"
+                        className="bg-white/95 dark:bg-[#141620]/95 backdrop-blur-2xl rounded-3xl border border-black/[0.08] dark:border-white/10 shadow-apple-lg w-full max-w-5xl overflow-hidden flex flex-col min-h-[85vh] max-h-[95vh]"
                     >
                         {/* Header */}
-                        <div className="flex items-center justify-between p-6 border-b border-white/20 bg-gradient-to-r from-cyan-50/80 to-fuchsia-50/80">
-                            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-3 tracking-tight">
-                                <span className="p-2 bg-white/50 rounded-lg shadow-sm text-lg">🎓</span>
-                                <span className="bg-clip-text text-transparent bg-gradient-to-r from-slate-800 to-slate-600">
-                                    Training Studio
-                                </span>
+                        <div className="flex items-center justify-between p-5 border-b border-black/[0.06] dark:border-white/10 bg-black/[0.02] dark:bg-[#181a24]">
+                            <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-3 tracking-tight">
+                                <span className="p-1.5 bg-teal-500/10 dark:bg-teal-500/20 text-teal-700 dark:text-teal-300 rounded-xl text-base">🎓</span>
+                                <span>Training Studio (LoRA & Full Fine-Tune)</span>
                             </h2>
                             <button
                                 onClick={onClose}
-                                className="p-2 rounded-full hover:bg-white/50 text-slate-400 hover:text-red-500 transition-colors"
+                                className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
                             >
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
 
                         {/* Tabs */}
-                        <div className="flex border-b border-white/20 bg-white/30 p-2 gap-2">
+                        <div className="flex border-b border-black/[0.06] dark:border-white/10 bg-black/[0.01] dark:bg-[#12141c] p-2 gap-2">
                             {tabs.map(tab => (
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id)}
-                                    className={`flex-1 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center justify-center gap-2 ${activeTab === tab.id
-                                        ? 'bg-white shadow-sm text-cyan-700 ring-1 ring-black/5'
-                                        : 'text-slate-500 hover:text-slate-700 hover:bg-white/40'
+                                    className={`flex-1 py-2 text-xs font-semibold rounded-xl transition-all flex items-center justify-center gap-2 ${activeTab === tab.id
+                                        ? 'bg-white dark:bg-white/15 shadow-apple-sm text-teal-700 dark:text-teal-300 font-bold'
+                                        : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-black/[0.03] dark:hover:bg-white/5'
                                         } `}
                                 >
                                     {tab.icon}
-                                    {tab.label}
+                                    <span>{tab.label}</span>
                                 </button>
                             ))}
                         </div>
 
                         {/* Content */}
-                        <div className="flex-1 overflow-y-auto p-6">
+                        <div className="flex-1 overflow-y-auto p-6 bg-white dark:bg-[#161824] text-slate-800 dark:text-slate-200">
                             {error && (
                                 <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
                                     <AlertCircle className="w-4 h-4" />
@@ -524,8 +522,8 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
                             {activeTab === 'dataset' && (
                                 <div className="space-y-6">
                                     {/* Create Dataset */}
-                                    <div className="bg-gradient-to-r from-purple-50 to-cyan-50 rounded-lg p-4 border border-purple-100">
-                                        <h4 className="text-sm font-bold text-purple-800 mb-3 flex items-center gap-2">
+                                    <div className="bg-gradient-to-r from-teal-50 to-cyan-50 rounded-lg p-4 border border-teal-100">
+                                        <h4 className="text-sm font-bold text-teal-800 mb-3 flex items-center gap-2">
                                             <FolderPlus className="w-4 h-4" />
                                             Create New Dataset
                                         </h4>
@@ -535,20 +533,20 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
                                                 value={newDatasetName}
                                                 onChange={(e) => setNewDatasetName(e.target.value)}
                                                 placeholder="Dataset name (e.g., Afrobeat Collection)"
-                                                className="px-3 py-2 border border-purple-200 rounded-md focus:ring-2 focus:ring-purple-400 focus:outline-none text-sm bg-white"
+                                                className="px-3 py-2 border border-teal-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none text-sm bg-white"
                                             />
                                             <input
                                                 type="text"
                                                 value={newDatasetStyles}
                                                 onChange={(e) => setNewDatasetStyles(e.target.value)}
                                                 placeholder="Target styles (comma-separated)"
-                                                className="px-3 py-2 border border-purple-200 rounded-md focus:ring-2 focus:ring-purple-400 focus:outline-none text-sm bg-white"
+                                                className="px-3 py-2 border border-teal-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none text-sm bg-white"
                                             />
                                         </div>
                                         <button
                                             onClick={handleCreateDataset}
                                             disabled={isCreatingDataset || !newDatasetName.trim()}
-                                            className="mt-3 px-4 py-2 bg-purple-500 hover:bg-purple-600 text-white rounded-md font-bold text-sm transition-all disabled:opacity-50 flex items-center gap-2"
+                                            className="mt-3 px-4 py-2 bg-teal-500 hover:bg-teal-600 text-slate-950 font-bold text-sm rounded-md transition-all disabled:opacity-50 flex items-center gap-2"
                                         >
                                             {isCreatingDataset ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderPlus className="w-4 h-4" />}
                                             Create Dataset
@@ -566,14 +564,14 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
                                                         value={editName}
                                                         onChange={(e) => setEditName(e.target.value)}
                                                         placeholder="Dataset name"
-                                                        className="w-full px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-purple-400 focus:outline-none"
+                                                        className="w-full px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none"
                                                     />
                                                     <input
                                                         type="text"
                                                         value={editStyles}
                                                         onChange={(e) => setEditStyles(e.target.value)}
                                                         placeholder="Styles (comma-separated)"
-                                                        className="w-full px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-purple-400 focus:outline-none"
+                                                        className="w-full px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none"
                                                     />
                                                 </div>
                                                 <div className="flex justify-end gap-2 mt-4">
@@ -611,7 +609,7 @@ Example lyrics here...
 [Chorus]
 More lyrics..."
                                                     rows={10}
-                                                    className="w-full px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-purple-400 focus:outline-none font-mono text-sm"
+                                                    className="w-full px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none font-mono text-sm"
                                                 />
                                                 <p className="text-xs text-slate-400 mt-2">
                                                     Tip: Use [Verse], [Chorus], [Bridge] sections for best results
@@ -691,7 +689,7 @@ More lyrics..."
 
                                             {/* Upload Zone */}
                                             <div
-                                                className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center hover:border-purple-300 transition-colors cursor-pointer bg-slate-50"
+                                                className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center hover:border-teal-400 transition-colors cursor-pointer bg-slate-50"
                                                 onDragOver={(e) => e.preventDefault()}
                                                 onDrop={(e) => {
                                                     e.preventDefault();
@@ -711,7 +709,7 @@ More lyrics..."
                                                     onChange={(e) => handleFileUpload(e.target.files)}
                                                 />
                                                 {Object.keys(uploadProgress).length > 0 && (
-                                                    <div className="mt-2 flex items-center gap-2 text-purple-600 text-xs">
+                                                    <div className="mt-2 flex items-center gap-2 text-teal-600 text-xs">
                                                         <Loader2 className="w-3 h-3 animate-spin" />
                                                         Uploading {Object.keys(uploadProgress).length} file(s)...
                                                     </div>
@@ -724,7 +722,7 @@ More lyrics..."
                                                     <div key={i} className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded text-sm group">
                                                         <span className="text-slate-700 truncate flex-1">{af.filename}</span>
                                                         <span
-                                                            className="text-xs text-slate-400 mr-2 truncate max-w-[150px] cursor-pointer hover:text-purple-500"
+                                                            className="text-xs text-slate-400 mr-2 truncate max-w-[150px] cursor-pointer hover:text-teal-500"
                                                             onClick={() => setEditingLyrics({ filename: af.filename, caption: af.caption })}
                                                             title="Click to edit lyrics"
                                                         >
@@ -740,7 +738,7 @@ More lyrics..."
                                                             </button>
                                                             <button
                                                                 onClick={() => setEditingLyrics({ filename: af.filename, caption: af.caption })}
-                                                                className="p-1 text-slate-300 hover:text-purple-500 hover:bg-purple-50 rounded"
+                                                                className="p-1 text-slate-300 hover:text-teal-500 hover:bg-teal-50 rounded"
                                                                 title="Edit lyrics"
                                                             >
                                                                 <Edit2 className="w-3.5 h-3.5" />
@@ -847,7 +845,7 @@ More lyrics..."
                                                         onChange={(e) => setEpochs(Number(e.target.value))}
                                                         min={1}
                                                         max={10}
-                                                        className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-purple-400 focus:outline-none"
+                                                        className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none"
                                                     />
                                                 </div>
                                                 <div>
@@ -860,7 +858,7 @@ More lyrics..."
                                                         value={learningRate}
                                                         onChange={(e) => setLearningRate(Number(e.target.value))}
                                                         step={0.00001}
-                                                        className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-purple-400 focus:outline-none"
+                                                        className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none"
                                                     />
                                                 </div>
                                                 {trainingMethod === 'lora' && (
@@ -875,7 +873,7 @@ More lyrics..."
                                                             onChange={(e) => setLoraRank(Number(e.target.value))}
                                                             min={4}
                                                             max={32}
-                                                            className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-purple-400 focus:outline-none"
+                                                            className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none"
                                                         />
                                                     </div>
                                                 )}
@@ -885,7 +883,7 @@ More lyrics..."
                                             <button
                                                 onClick={handleStartTraining}
                                                 disabled={selectedDataset.audio_files.length < 5}
-                                                className="w-full py-3 bg-gradient-to-r from-purple-500 to-cyan-500 hover:from-purple-600 hover:to-cyan-600 text-white rounded-lg font-bold text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2"
+                                                className="w-full py-3 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-600 hover:to-cyan-600 text-slate-950 font-bold rounded-lg text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md shadow-teal-500/20"
                                             >
                                                 <Play className="w-4 h-4" />
                                                 Start Training on "{selectedDataset.name}"
@@ -900,7 +898,7 @@ More lyrics..."
                                 <div className="space-y-4">
                                     {isLoadingJobs ? (
                                         <div className="flex items-center justify-center py-12">
-                                            <Loader2 className="w-6 h-6 animate-spin text-purple-500" />
+                                            <Loader2 className="w-6 h-6 animate-spin text-teal-500" />
                                         </div>
                                     ) : jobs.length === 0 ? (
                                         <div className="text-center py-12 text-slate-400">
@@ -925,7 +923,7 @@ More lyrics..."
                                                             {dataset?.styles && dataset.styles.length > 0 && (
                                                                 <div className="flex flex-wrap gap-1 mt-1">
                                                                     {dataset.styles.slice(0, 3).map((style, i) => (
-                                                                        <span key={i} className="text-[10px] bg-purple-50 text-purple-600 px-1.5 py-0.5 rounded-full border border-purple-100">
+                                                                        <span key={i} className="text-[10px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full border border-teal-100 font-medium">
                                                                             {style}
                                                                         </span>
                                                                     ))}
@@ -972,11 +970,11 @@ More lyrics..."
                                                         <div className="mt-3">
                                                             <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
                                                                 <div
-                                                                    className={`h - full transition - all ${job.status === 'preprocessing'
+                                                                    className={`h-full transition-all ${job.status === 'preprocessing'
                                                                         ? 'bg-gradient-to-r from-cyan-400 to-blue-400'
-                                                                        : 'bg-gradient-to-r from-purple-500 to-cyan-500'
-                                                                        } `}
-                                                                    style={{ width: `${job.progress}% ` }}
+                                                                        : 'bg-gradient-to-r from-teal-500 to-cyan-500'
+                                                                        }`}
+                                                                    style={{ width: `${job.progress}%` }}
                                                                 />
                                                             </div>
                                                             <div className="flex justify-between items-center mt-1">
@@ -1081,7 +1079,7 @@ More lyrics..."
                                         </div>
                                     ) : (
                                         checkpoints.map(ckpt => (
-                                            <div key={ckpt.id} className={`p-4 bg-white border rounded-lg flex items-center justify-between ${ckpt.is_active ? 'border-purple-300 ring-2 ring-purple-100' : 'border-slate-200'}`}>
+                                            <div key={ckpt.id} className={`p-4 bg-white border rounded-lg flex items-center justify-between ${ckpt.is_active ? 'border-teal-300 ring-2 ring-teal-100' : 'border-slate-200'}`}>
                                                 <div>
                                                     <h5 className="font-medium text-slate-800 flex items-center gap-2">
                                                         {ckpt.name}

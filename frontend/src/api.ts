@@ -1,6 +1,52 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8000';
+// API base is configurable via Vite env; defaults to local backend for development.
+const API_BASE_URL: string = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
+export { API_BASE_URL };
+
+export interface NoteEvent {
+    pitch: number;
+    start_time: number;
+    duration?: number;
+    end_time?: number;
+    velocity: number;
+    instrument: string;
+    channel?: number;
+    note_name?: string;
+}
+
+export interface BeatGrid {
+    bpm: number;
+    beats_per_bar: number;
+    first_downbeat: number;
+    onset_delay: number;
+}
+
+export interface StemsMap {
+    vocals?: string;
+    drums?: string;
+    bass?: string;
+    other?: string;
+    instrumental?: string;
+    /** Dynamic per-instrument stems keyed by instrument name (from transcription). */
+    instrumental_parts?: Record<string, string>;
+    /** General MIDI program (instrument) number per instrument name. */
+    instrument_programs?: Record<string, number>;
+}
+
+export interface TimedWord {
+    word: string;
+    start: number;
+    end: number;
+}
+
+export interface TimedLine {
+    text: string;
+    start: number;
+    end: number;
+    words: TimedWord[];
+}
 
 export interface Job {
     id: string;
@@ -8,13 +54,125 @@ export interface Job {
     title?: string;
     prompt: string;
     lyrics?: string;
-    tags?: string; // Added field
+    tags?: string;
     audio_path?: string;
     error_msg?: string;
     created_at: string;
     duration_ms?: number;
-    seed?: number; // Added field
+    seed?: number;
     is_favorite?: boolean;
+
+    // v2 Generation & Provider
+    model_provider?: string;
+    llm_model?: string;
+    parent_job_id?: string;
+    temperature?: number;
+    cfg_scale?: number;
+    topk?: number;
+
+    // v2 DAW Multitrack & MuScriptor Transcription Assets
+    midi_path?: string;
+    musicxml_path?: string;
+    notes_json?: string;
+    stems_json?: string;
+    beat_grid_json?: string;
+    timed_lyrics_json?: string;
+    structured_caption_json?: string;
+    voice_profile_id?: string;
+    project_id?: string;
+}
+
+export interface Project {
+    id: string;
+    name: string;
+    description?: string;
+    tags?: string;
+    bpm?: number;
+    key_signature?: string;
+    color?: string; // 'teal' | 'cyan' | 'amber' | 'emerald' | 'sky'
+    icon?: string;
+    created_at: string;
+    updated_at: string;
+    track_count?: number;
+    total_duration_s?: number;
+    stems_count?: number;
+    midi_count?: number;
+    jobs?: Job[];
+}
+
+export interface ProjectCreate {
+    name: string;
+    description?: string;
+    tags?: string;
+    bpm?: number;
+    key_signature?: string;
+    color?: string;
+    icon?: string;
+}
+
+export interface ProjectUpdate {
+    name?: string;
+    description?: string;
+    tags?: string;
+    bpm?: number;
+    key_signature?: string;
+    color?: string;
+    icon?: string;
+}
+
+export interface ModelVariant {
+    id: string;
+    name: string;
+    architecture: string;
+    quantization: string;
+    size_gb: number;
+    is_installed: boolean;
+    local_path?: string;
+    license: string;
+    recommended_hardware: string;
+    is_default: boolean;
+}
+
+export interface HardwareProfile {
+    os_name: string;
+    architecture: string;
+    processor: string;
+    has_cuda: boolean;
+    has_mps: boolean;
+    hardware_tier: string;
+    tier_description: string;
+    can_run_minimax_full: boolean;
+    can_run_heartmula: boolean;
+}
+
+export interface GenerationCapabilities {
+    provider_id: string;
+    display_name: string;
+    description: string;
+    version: string;
+    max_duration_sec: number;
+    supports_structured_caption: boolean;
+    supports_section_tags: boolean;
+    supports_lora: boolean;
+    supports_voice_conversion: boolean;
+    supports_track_extension: boolean;
+    supports_segment_repair: boolean;
+    recommended_hardware: string;
+    license_class: string;
+    default_sample_rate: number;
+}
+
+export interface VoiceProfile {
+    id: string;
+    name: string;
+    description: string;
+    sample_audio_path?: string;
+    status: 'ready' | 'training' | 'failed';
+    created_at: string;
+    consent_confirmed: boolean;
+    f0_method: string;
+    sample_rate: number;
+    is_default?: boolean;
 }
 
 export const api = {
@@ -43,7 +201,11 @@ export const api = {
         topk: number = 50,
         llmModel?: string,
         parentJobId?: string,
-        seed?: number
+        seed?: number,
+        modelProvider: string = 'minimax_music3',
+        voiceProfileId?: string,
+        structuredCaption?: Record<string, string>,
+        projectId?: string
     ) => {
         const res = await axios.post(`${API_BASE_URL}/generate/music`, {
             prompt,
@@ -55,7 +217,11 @@ export const api = {
             topk,
             llm_model: llmModel,
             parent_job_id: parentJobId,
-            seed
+            seed,
+            model_provider: modelProvider,
+            voice_profile_id: voiceProfileId,
+            structured_caption: structuredCaption,
+            project_id: projectId
         });
         return res.data;
     },
@@ -78,7 +244,7 @@ export const api = {
             topic: topic,
             tags: tags
         });
-        return res.data; // { message, lyrics }
+        return res.data;
     },
 
     enhancePrompt: async (concept: string, modelName: string) => {
@@ -86,44 +252,29 @@ export const api = {
             concept,
             model_name: modelName
         });
-        return res.data; // { topic, tags }
+        return res.data;
+    },
+
+    producerCompose: async (prompt: string, modelName?: string) => {
+        const res = await axios.post(`${API_BASE_URL}/producer/compose`, {
+            prompt,
+            model_name: modelName
+        });
+        return res.data;
     },
 
     getInspiration: async (modelName: string) => {
         const res = await axios.post(`${API_BASE_URL}/generate/evaluate_inspiration`, {
             model_name: modelName
         });
-        return res.data; // { topic, tags }
+        return res.data;
     },
 
     getStylePresets: async (modelName: string) => {
         const res = await axios.post(`${API_BASE_URL}/generate/styles`, {
             model_name: modelName
         });
-        return res.data.styles; // string[]
-    },
-
-    generateMusic: async (
-        tags: string,
-        lyrics: string,
-        durationMs: number = 240000,
-        temperature: number = 1.0,
-        cfgScale: number = 1.5,
-        topk: number = 50,
-        prompt: string,
-        llmModel: string = "llama3.2:3b-instruct-fp16"
-    ) => {
-        const res = await axios.post(`${API_BASE_URL}/generate/music`, {
-            lyrics,
-            tags,
-            duration_ms: durationMs,
-            temperature,
-            cfg_scale: cfgScale,
-            topk,
-            prompt,
-            llm_model: llmModel
-        });
-        return res.data; // { job_id, status }
+        return res.data.styles;
     },
 
     renameJob: async (jobId: string, title: string) => {
@@ -162,6 +313,8 @@ export const api = {
     },
 
     getAudioUrl: (path: string) => {
+        if (!path) return '';
+        if (path.startsWith('http')) return path;
         return `${API_BASE_URL}${path}`;
     },
 
@@ -172,11 +325,8 @@ export const api = {
     connectToEvents: (onMessage: (event: MessageEvent) => void) => {
         const eventSource = new EventSource(`${API_BASE_URL}/events`);
         eventSource.onmessage = onMessage;
-
-        // Custom event listeners
         eventSource.addEventListener("job_update", onMessage);
         eventSource.addEventListener("job_progress", onMessage);
-
         return eventSource;
     },
 
@@ -200,6 +350,68 @@ export const api = {
     }
 };
 
+export const modelsApi = {
+    getModelTree: async (): Promise<ModelVariant[]> => {
+        const res = await axios.get(`${API_BASE_URL}/models/tree`);
+        return res.data.models;
+    },
+    getCapabilities: async (): Promise<GenerationCapabilities[]> => {
+        const res = await axios.get(`${API_BASE_URL}/models/capabilities`);
+        return res.data.capabilities;
+    },
+    getHardwareProfile: async (): Promise<HardwareProfile> => {
+        const res = await axios.get(`${API_BASE_URL}/models/hardware`);
+        return res.data.hardware;
+    },
+    checkDependencies: async (modelId: string): Promise<{ missing: boolean; model_id: string; name: string; size_gb: number; message: string }> => {
+        const res = await axios.get(`${API_BASE_URL}/models/check/${encodeURIComponent(modelId)}`);
+        return res.data;
+    },
+    setActiveProvider: async (providerId: string) => {
+        const res = await axios.post(`${API_BASE_URL}/models/active/${encodeURIComponent(providerId)}`);
+        return res.data;
+    }
+};
+
+export const voiceApi = {
+    listProfiles: async (): Promise<VoiceProfile[]> => {
+        const res = await axios.get(`${API_BASE_URL}/voice/profiles`);
+        return res.data.profiles;
+    },
+    createProfile: async (data: { name: string; description: string; consent_confirmed: boolean; f0_method?: string; audio_file?: File | null }): Promise<VoiceProfile> => {
+        const formData = new FormData();
+        formData.append('name', data.name);
+        formData.append('description', data.description);
+        formData.append('consent_confirmed', String(data.consent_confirmed));
+        if (data.f0_method) formData.append('f0_method', data.f0_method);
+        if (data.audio_file) formData.append('audio_file', data.audio_file);
+        const res = await axios.post(`${API_BASE_URL}/voice/profiles`, formData);
+        return res.data.profile;
+    },
+    deleteProfile: async (profileId: string): Promise<void> => {
+        await axios.delete(`${API_BASE_URL}/voice/profiles/${encodeURIComponent(profileId)}`);
+    }
+};
+
+export const workspaceApi = {
+    uploadAndTranscribe: async (file: File): Promise<{ job_id: string; job: Job }> => {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await axios.post(`${API_BASE_URL}/transcribe/upload`, formData);
+        return res.data;
+    },
+    getExportUrl: (jobId: string, format: 'midi' | 'musicxml' | 'ableton' | 'lrc' | 'srt') => {
+        return `${API_BASE_URL}/transcribe/export/${jobId}/${format}`;
+    },
+    applyMastering: async (jobId: string, targetLufs: number = -14.0): Promise<{ status: string; audio_path: string; lufs: number }> => {
+        const res = await axios.post(`${API_BASE_URL}/mastering/match/${jobId}`, { target_lufs: targetLufs });
+        return res.data;
+    },
+    saveNotes: async (jobId: string, notes: NoteEvent[]): Promise<void> => {
+        await axios.post(`${API_BASE_URL}/workspace/${jobId}/notes`, notes);
+    }
+};
+
 export interface ProviderConfig {
     api_key?: string;
     base_url?: string;
@@ -214,9 +426,10 @@ export interface LLMConfig {
     lmstudio?: ProviderConfig;
     ollama?: ProviderConfig;
     deepseek?: ProviderConfig;
+    opencode?: ProviderConfig;
+    omlx?: ProviderConfig;
 }
 
-// Style Management Types
 export interface Style {
     name: string;
     type: 'official' | 'custom' | 'trained';
@@ -242,7 +455,7 @@ export interface Dataset {
 export interface TrainingJob {
     id: string;
     dataset_id: string;
-    dataset_name?: string;  // Persists even if dataset is deleted
+    dataset_name?: string;
     config: {
         method: string;
         epochs: number;
@@ -253,15 +466,15 @@ export interface TrainingJob {
     progress: number;
     current_epoch: number;
     current_loss?: number;
-    initial_loss?: number;   // First loss value at start of training
-    final_loss?: number;     // Final loss when training completes
+    initial_loss?: number;
+    final_loss?: number;
     total_epochs: number;
     checkpoint_id?: string;
     error?: string;
     message?: string;
-    started_at?: string;     // ISO timestamp when training started
-    completed_at?: string;   // ISO timestamp when training finished
-    created_at?: string;     // ISO timestamp when job was created
+    started_at?: string;
+    completed_at?: string;
+    created_at?: string;
 }
 
 export interface Checkpoint {
@@ -274,7 +487,6 @@ export interface Checkpoint {
     is_active: boolean;
 }
 
-// Extended API
 export const styleApi = {
     getStyles: async (): Promise<Style[]> => {
         const res = await axios.get(`${API_BASE_URL}/styles`);
@@ -305,7 +517,6 @@ export const pathsApi = {
 };
 
 export const trainingApi = {
-    // Datasets
     createDataset: async (name: string, styles: string[]): Promise<Dataset> => {
         const res = await axios.post(`${API_BASE_URL}/training/datasets`, { name, styles });
         return res.data.dataset;
@@ -345,8 +556,6 @@ export const trainingApi = {
         const res = await axios.post(`${API_BASE_URL}/training/datasets/${datasetId}/preprocess`, { force });
         return res.data;
     },
-
-    // Jobs
     startJob: async (config: { dataset_id: string; method: string; epochs: number; learning_rate: number; lora_rank: number }): Promise<TrainingJob> => {
         const res = await axios.post(`${API_BASE_URL}/training/jobs`, config);
         return res.data.job;
@@ -369,8 +578,6 @@ export const trainingApi = {
     deleteJob: async (id: string): Promise<void> => {
         await axios.delete(`${API_BASE_URL}/training/jobs/${id}`);
     },
-
-    // Checkpoints
     listCheckpoints: async (): Promise<Checkpoint[]> => {
         const res = await axios.get(`${API_BASE_URL}/training/checkpoints`);
         return res.data.checkpoints;
@@ -383,5 +590,33 @@ export const trainingApi = {
     },
     deleteCheckpoint: async (id: string): Promise<void> => {
         await axios.delete(`${API_BASE_URL}/training/checkpoints/${id}`);
+    }
+};
+
+export const projectApi = {
+    listProjects: async (): Promise<Project[]> => {
+        const res = await axios.get(`${API_BASE_URL}/projects`);
+        return res.data;
+    },
+    getProject: async (id: string): Promise<Project> => {
+        const res = await axios.get(`${API_BASE_URL}/projects/${id}`);
+        return res.data;
+    },
+    createProject: async (data: ProjectCreate): Promise<Project> => {
+        const res = await axios.post(`${API_BASE_URL}/projects`, data);
+        return res.data;
+    },
+    updateProject: async (id: string, data: ProjectUpdate): Promise<Project> => {
+        const res = await axios.put(`${API_BASE_URL}/projects/${id}`, data);
+        return res.data;
+    },
+    deleteProject: async (id: string): Promise<void> => {
+        await axios.delete(`${API_BASE_URL}/projects/${id}`);
+    },
+    addTrackToProject: async (projectId: string, jobId: string): Promise<void> => {
+        await axios.post(`${API_BASE_URL}/projects/${projectId}/tracks`, { job_id: jobId });
+    },
+    removeTrackFromProject: async (projectId: string, jobId: string): Promise<void> => {
+        await axios.delete(`${API_BASE_URL}/projects/${projectId}/tracks/${jobId}`);
     }
 };

@@ -2,6 +2,7 @@ import requests
 import logging
 from typing import List, Optional, Dict, Any, Type
 import json
+import re
 import random
 from abc import ABC, abstractmethod
 import os
@@ -29,6 +30,35 @@ logger = logging.getLogger(__name__)
 
 # Legacy alias for backward compatibility
 VALID_HEARTMULA_TAGS = OFFICIAL_STYLES
+
+
+def _strip_thinking(text):
+    """Remove model reasoning/thinking tokens so only the final answer remains.
+
+    Handles common CoT envelopes used by OpenAI/OpenCode/DeepSeek/OMLX/Ollama:
+    <thinking>...</thinking>, <reasoning>...</reasoning>,  a ` response`
+    delimiter (thinking precedes it), and `::` delimited blocks.
+    """
+    if not text:
+        return ""
+    if not isinstance(text, str):
+        return text
+    out = text
+    out = re.sub(r"<(?:\s*thinking|reasoning|analysis|thought)[^>]*>.*?</(?:\s*thinking|reasoning|analysis|thought)>",
+                 "", out, flags=re.DOTALL | re.IGNORECASE)
+    # A bare <thinking>...</thinking> style without matching close
+    out = re.sub(r"<\s*thinking[^>]*>.*", "", out, flags=re.DOTALL | re.IGNORECASE)
+    out = re.sub(r"<\s*reasoning[^>]*>.*", "", out, flags=re.DOTALL | re.IGNORECASE)
+    # OpenAI-compatible reasoning: "content< deliberation>answer" or "content< response>answer"
+    out = re.sub(r"<[^>]*response[^>]*>", "\n", out, flags=re.IGNORECASE)
+    out = re.sub(r"<[^>]*deliberation[^>]*>", "\n", out, flags=re.IGNORECASE)
+    # DeepSeek ##### reasoning##### blocks
+    out = re.sub(r"#####\s*reasoning\s*#####.*?(?=\n|$)", "", out, flags=re.DOTALL | re.IGNORECASE)
+    # :: delimited thinking blocks (":: emotion ...\n\n answer")
+    out = re.sub(r"^\s*::.*?(\n|$)", "", out, flags=re.MULTILINE)
+    # Leading prose like "Here are your lyrics:" — only safe to drop if followed by a section marker later
+    stripped = out.strip()
+    return stripped
 
 class LLMProvider(ABC):
     @abstractmethod
@@ -75,7 +105,7 @@ class OllamaProvider(LLMProvider):
                 timeout=kwargs.get("timeout", 300)
             )
             if resp.status_code == 200:
-                return resp.json().get("response", "")
+                return _strip_thinking(resp.json().get("response", ""))
             else:
                 raise Exception(f"Ollama Error: {resp.text}")
         except Exception as e:
@@ -96,7 +126,12 @@ class OllamaProvider(LLMProvider):
                 timeout=kwargs.get("timeout", 300)
             )
             if resp.status_code == 200:
-                raw_response = resp.json().get("response", "")
+                raw_response = _strip_thinking(resp.json().get("response", ""))
+                # Extract the outermost JSON object if prose/thinking preceded it
+                start = raw_response.find("{")
+                end = raw_response.rfind("}")
+                if start != -1 and end != -1 and end > start:
+                    raw_response = raw_response[start:end + 1]
                 raw_response = self._clean_json(raw_response)
                 return json.loads(raw_response)
             else:
@@ -140,7 +175,9 @@ class OpenAIProvider(LLMProvider):
                 messages=[{"role": "user", "content": prompt}],
                 temperature=kwargs.get("options", {}).get("temperature", 0.7),
             )
-            return response.choices[0].message.content
+            content = getattr(response.choices[0].message, "content", "") or ""
+            # Only `content` is used (never reasoning_content); strip any inline thinking.
+            return _strip_thinking(content)
         except Exception as e:
             self._handle_error(e, model)
             raise e
@@ -153,7 +190,14 @@ class OpenAIProvider(LLMProvider):
                 response_format={"type": "json_object"},
                 temperature=kwargs.get("options", {}).get("temperature", 0.7),
             )
-            return json.loads(response.choices[0].message.content)
+            content = getattr(response.choices[0].message, "content", "") or ""
+            content = _strip_thinking(content)
+            # Extract the outermost JSON object so prose/thinking never breaks parsing.
+            start = content.find("{")
+            end = content.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                content = content[start:end + 1]
+            return json.loads(content)
         except Exception as e:
             self._handle_error(e, model)
             raise e
@@ -212,7 +256,7 @@ class GeminiProvider(LLMProvider):
                     temperature=kwargs.get("options", {}).get("temperature", 0.7)
                 )
             )
-            return response.text
+            return _strip_thinking(response.text)
         except Exception as e:
             logger.error(f"Gemini generation failed: {e}")
             raise e
@@ -227,7 +271,12 @@ class GeminiProvider(LLMProvider):
                     temperature=kwargs.get("options", {}).get("temperature", 0.7)
                 )
             )
-            return json.loads(response.text)
+            content = _strip_thinking(response.text)
+            start = content.find("{")
+            end = content.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                content = content[start:end + 1]
+            return json.loads(content)
         except Exception as e:
             logger.error(f"Gemini JSON generation failed: {e}")
             raise e
@@ -282,6 +331,20 @@ class LLMService:
         elif provider_name == "gemini":
             api_key = config.get("gemini", {}).get("api_key", "")
             return GeminiProvider(api_key=api_key)
+        elif provider_name == "opencode":
+            api_key = config.get("opencode", {}).get("api_key", "") or os.environ.get("OPENCODE_API_KEY", "")
+            base_url = config.get("opencode", {}).get("base_url", "https://opencode.ai/zen/go/v1")
+            return OpenAIProvider(
+                api_key=api_key,
+                base_url=base_url
+            )
+        elif provider_name == "omlx":
+            base_url = config.get("omlx", {}).get("base_url", "http://localhost:8787/v1")
+            api_key = config.get("omlx", {}).get("api_key", "omlx")
+            return OpenAIProvider(
+                api_key=api_key or "omlx",
+                base_url=base_url
+            )
         else:
             return OllamaProvider(base_url="http://localhost:11434")
 
@@ -301,6 +364,16 @@ class LLMService:
                 temp_config["lmstudio"] = {"base_url": base_url or "http://localhost:1234/v1"}
             elif provider_name == "gemini":
                 temp_config["gemini"] = {"api_key": api_key}
+            elif provider_name == "opencode":
+                temp_config["opencode"] = {
+                    "api_key": api_key or os.environ.get("OPENCODE_API_KEY", ""),
+                    "base_url": base_url or "https://opencode.ai/zen/go/v1"
+                }
+            elif provider_name == "omlx":
+                temp_config["omlx"] = {
+                    "base_url": base_url or "http://localhost:8787/v1",
+                    "api_key": api_key or "omlx"
+                }
                 
             provider = LLMService._get_provider(override_config=temp_config)
             return provider.get_models()
@@ -310,31 +383,30 @@ class LLMService:
 
     @staticmethod
     def get_models() -> List[str]:
-        return LLMService._get_provider().get_models()
+        try:
+            return LLMService._get_provider().get_models()
+        except Exception as e:
+            logger.warning(f"Failed to get models from active provider: {e}")
+            return ["minimax-m3", "Llama-3.2-3B-Instruct-bf16", "llama3.2:3b-instruct-fp16"]
 
     @staticmethod
     def _get_active_model() -> str:
         config = ConfigManager().get_config()
-        provider_name = config.get("provider", "ollama")
+        provider_name = config.get("provider", "opencode")
         model = config.get(provider_name, {}).get("model")
 
-        # Smart fallback for Ollama: If configured model is missing/default, pick distinct available one
-        if provider_name == "ollama":
-            try:
-                base_url = config.get("ollama", {}).get("base_url", "http://localhost:11434")
-                # Quick check without massive overhead (timeout is 2s in get_models)
-                provider = OllamaProvider(base_url=base_url)
-                available = provider.get_models()
-                
-                if available:
-                    # If no model configured, or configured default is NOT in available, pick first available
-                    if not model or model not in available:
-                        logger.info(f"Auto-switching Ollama model from '{model}' to '{available[0]}'")
-                        return available[0]
-            except Exception as e:
-                logger.warning(f"Failed to auto-detect Ollama model: {e}")
+        # Smart fallback: If configured model is missing, fetch first available
+        try:
+            provider = LLMService._get_provider()
+            available = provider.get_models()
+            if available:
+                if not model or model not in available:
+                    logger.info(f"Auto-switching {provider_name} model from '{model}' to '{available[0]}'")
+                    return available[0]
+        except Exception as e:
+            logger.warning(f"Failed to auto-detect model: {e}")
 
-        return model or "llama3.2:3b-instruct-fp16"
+        return model or "minimax-m3"
 
     @staticmethod
     def generate_lyrics(topic: str, model: Optional[str] = None, seed_lyrics: Optional[str] = None) -> str:

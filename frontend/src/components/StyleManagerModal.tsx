@@ -76,15 +76,15 @@ export const StyleManagerModal: React.FC<StyleManagerModalProps> = ({
     };
 
     const getStyleIcon = (style: Style) => {
-        if (style.type === 'trained') return <Rocket className="w-3.5 h-3.5 text-purple-500" />;
+        if (style.type === 'trained') return <Rocket className="w-3.5 h-3.5 text-teal-500" />;
         if (style.type === 'custom') return <Beaker className="w-3.5 h-3.5 text-amber-500" />;
         return <Music className="w-3.5 h-3.5 text-cyan-500" />;
     };
 
     const getStyleBadge = (style: Style) => {
         if (style.type === 'trained') return (
-            <span className="text-[10px] bg-purple-100 text-purple-700 px-1.5 py-0.5 rounded-full font-bold">
-                🚀 Trained
+            <span className="text-[10px] bg-teal-100 text-teal-700 px-1.5 py-0.5 rounded-full font-bold">
+                Trained
             </span>
         );
         if (style.type === 'custom') return (
@@ -115,7 +115,7 @@ export const StyleManagerModal: React.FC<StyleManagerModalProps> = ({
                                 className="bg-white/90 backdrop-blur-2xl rounded-xl border border-white/50 shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[80vh] glass-panel"
                             >
                                 {/* Header */}
-                                <div className="flex items-center justify-between p-6 border-b border-white/20 bg-gradient-to-r from-cyan-50/80 to-purple-50/80">
+                                <div className="flex items-center justify-between p-6 border-b border-white/20 bg-gradient-to-r from-cyan-50/80 to-teal-50/80">
                                     <h2 className="text-xl font-bold text-slate-800 flex items-center gap-3 tracking-tight">
                                         <span className="p-2 bg-white/50 rounded-lg shadow-sm text-lg">🎨</span>
                                         <span className="bg-clip-text text-transparent bg-gradient-to-r from-slate-800 to-slate-600">

@@ -62,6 +62,15 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [LM-guided inpainting](concepts/lm-guided-inpainting.md) — the two-stage repair strategy.
 - [LoRA fine-tuning](concepts/lora-finetuning.md) — low-rank adaptation in the Training Studio.
 - [AI Co-Writer graph](concepts/co-writer-graph.md) — the pydantic-graph workflow for lyrics editing.
+- [AI Agent Foundation](concepts/agent-foundation.md) — LLM layer investigation + AgentRuntime proposal for multi-agent support.
+- [Artist Profiles & Album Agents](concepts/artist-profiles-vision.md) — the ultimate vision: per-project artist identities with assigned agent crews producing full albums.
+
+## Reports
+
+- [Production Readiness Audit](production-readiness-audit.md) — security/reliability/frontend/ops findings with file:line refs and fix status.
+- [Production Readiness Plan](production-readiness-plan.md) — phased remediation (secrets → security → make-it-real → job engine → CI → packaging) with locked decisions.
+- [UI/UX & Design Audit](ui-ux-audit.md) — honesty failures, logic bugs, design-system state, DAW interaction gaps vs pro standards.
+- [UI/UX Plan Progress](ui-ux-plan.md) — delivered wave (truth pass, disciplined glass, full piano-roll editor, perf pass, peaks library) + deferred list.
 
 ## Sources
 

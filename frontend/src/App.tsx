@@ -1318,6 +1318,7 @@ function App() {
         {currentNav === 'workspace' && activeWorkspaceJob ? (
           <div className="flex-1 overflow-hidden flex flex-col min-w-0">
             <SessionWorkspace
+              key={activeWorkspaceJob.id}
               job={activeWorkspaceJob}
               onClose={() => setCurrentNav(previousNav || 'explore')}
             />

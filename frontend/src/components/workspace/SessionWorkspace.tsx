@@ -215,8 +215,9 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     };
 
     // ── Per-track session persistence ────────────────────────────────────────
-    // Mixer levels, mode, stem source and loop region survive refresh —
-    // session recall is table stakes in every commercial DAW.
+    // Mixer levels, stem source and loop region survive refresh — session
+    // recall is table stakes in every commercial DAW. The active MODE is
+    // deliberately excluded: the workspace always opens on its home (Listen).
     const wsKey = `milimo_ws_${job.id}`;
     const wsHydratedRef = useRef(false);
 
@@ -229,7 +230,10 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             const s = JSON.parse(raw);
             if (typeof s.masterVolume === 'number') setMasterVolume(s.masterVolume);
             if (typeof s.isMasterMuted === 'boolean') setIsMasterMuted(s.isMasterMuted);
-            if (['listen', 'arrange', 'pianoroll', 'notation', 'mix', 'lyrics'].includes(s.mode)) setMode(s.mode);
+            // NOTE: `mode` is intentionally NOT restored — entering the DAW must
+            // always land on its home (Listen) view, never teleport into an
+            // editor because a previous visit ended elsewhere. Mix levels,
+            // stem source and loop region still recall per track.
             if ((s.stemSource === 'neural' || s.stemSource === 'muscriptor') && Array.isArray(s.channels?.[s.stemSource])) {
                 setStemSource(s.stemSource);
                 setStemChannels((s.channels[s.stemSource] as StemChannel[]).map(c => ({ ...c })));
@@ -246,7 +250,6 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         const t = window.setTimeout(() => {
             try {
                 localStorage.setItem(wsKey, JSON.stringify({
-                    mode,
                     masterVolume,
                     isMasterMuted,
                     stemSource,
@@ -257,7 +260,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             } catch { /* storage quota — non-fatal */ }
         }, 400);
         return () => window.clearTimeout(t);
-    }, [mode, masterVolume, isMasterMuted, stemSource, stemChannels, loopStart, loopEnd, wsKey]);
+    }, [masterVolume, isMasterMuted, stemSource, stemChannels, loopStart, loopEnd, wsKey]);
 
     const hasDualSources = partChannels.length > 0 && (parsedStems.vocals || parsedStems.drums || parsedStems.bass || parsedStems.other);
 
@@ -282,6 +285,12 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
     const isPlayingRef = useRef(false);
     const isLoopingRef = useRef(false);
+    // Keep the scheduler-facing mirror in sync with the toggle state.
+    // (This sync was missing entirely — the loop flag stayed false forever,
+    // so neither full-track nor A-B looping ever engaged.)
+    useEffect(() => {
+        isLoopingRef.current = isLooping;
+    }, [isLooping]);
     const currentTimeRef = useRef(0);
     const durationRef = useRef(duration);
     const playStartClockRef = useRef(0);
@@ -500,14 +509,17 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     }, []);
 
     // Stop + drop every currently scheduled source.
+    // NOTE: this deliberately does NOT touch rafRef. The UI playhead loop is a
+    // SEPARATE lifecycle from audio nodes — cancelling it here froze the
+    // playhead forever on every seek-while-playing (audio kept playing).
+    // Loop termination happens via isPlayingRef=false (tick self-exits) or
+    // startPlayheadLoop's own re-schedule.
     const stopSources = () => {
         activeSourcesRef.current.forEach(src => {
             try { src.stop(); } catch { /* already stopped */ }
             try { src.disconnect(); } catch { /* ignore */ }
         });
         activeSourcesRef.current.clear();
-        if (rafRef.current) cancelAnimationFrame(rafRef.current);
-        rafRef.current = 0;
     };
 
     // Schedule the master + every loaded stem at the current transport position.
@@ -550,6 +562,9 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     };
 
     // Throttled playhead loop derived from the master clock, decoupled from re-renders.
+    // CRITICAL: every branch MUST re-queue the next frame except a true stop.
+    // (A wrap used to `return` without rescheduling — killing the loop on the
+    // first A-B/end wrap: audio kept playing but the playhead froze forever.)
     const startPlayheadLoop = () => {
         if (rafRef.current) cancelAnimationFrame(rafRef.current);
         const tick = () => {
@@ -559,33 +574,35 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             }
             const pos = getPosition();
             const dur = durationRef.current;
-            // A-B loop: wrap inside the region when looping is armed and both
-            // markers exist; plain loop wraps at the end.
             const lStart = loopRef.current.start;
             const lEnd = loopRef.current.end;
+
             if (isLoopingRef.current && lStart !== null && lEnd !== null && lEnd > lStart && pos >= lEnd) {
+                // A-B wrap
                 currentTimeRef.current = lStart;
                 setCurrentTime(lStart);
-                scheduleAll();
-                return;
-            }
-            if (pos >= dur) {
+                void scheduleAll();
+            } else if (pos >= dur) {
                 if (isLoopingRef.current) {
+                    // Full-track wrap
                     currentTimeRef.current = 0;
                     setCurrentTime(0);
-                    scheduleAll();
+                    void scheduleAll();
+                } else {
+                    // Terminal end-of-track: the ONLY branch allowed to stop.
+                    pauseAll();
+                    currentTimeRef.current = dur;
+                    setCurrentTime(dur);
+                    rafRef.current = 0;
                     return;
                 }
-                pauseAll();
-                currentTimeRef.current = dur;
-                setCurrentTime(dur);
-                return;
-            }
-            const now = performance.now();
-            if (now - lastUiTickRef.current >= UI_TICK_MS) {
-                lastUiTickRef.current = now;
-                currentTimeRef.current = pos;
-                setCurrentTime(pos);
+            } else {
+                const now = performance.now();
+                if (now - lastUiTickRef.current >= UI_TICK_MS) {
+                    lastUiTickRef.current = now;
+                    currentTimeRef.current = pos;
+                    setCurrentTime(pos);
+                }
             }
             rafRef.current = requestAnimationFrame(tick);
         };
@@ -618,6 +635,11 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     // so nothing leaks if the workspace is closed.
     useEffect(() => {
         return () => {
+            // Halt the UI playhead loop FIRST — it must not fire after unmount
+            // (stopSources no longer cancels it; see note there).
+            isPlayingRef.current = false;
+            if (rafRef.current) cancelAnimationFrame(rafRef.current);
+            rafRef.current = 0;
             stopSources();
             Object.keys(stemGainRefs.current).forEach(id => {
                 try { stemGainRefs.current[id].disconnect(); } catch { /* ignore */ }
@@ -1305,6 +1327,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                         <button
                             onClick={() => setIsLooping(!isLooping)}
                             aria-pressed={isLooping}
+                            aria-label="Toggle loop"
                             title={loopStart !== null && loopEnd !== null ? `Loop A–B (${formatTime(loopStart)}–${formatTime(loopEnd)})` : 'Loop entire track'}
                             className={`p-1.5 transition-colors ${
                                 isLooping

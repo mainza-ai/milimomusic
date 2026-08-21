@@ -627,3 +627,34 @@ Implemented end-to-end neural acoustic lyric alignment on the backend and 60fps 
 
 
 
+
+## [2026-08-21] create | Production Readiness Audit + Plan
+Full-codebase production audit (security/reliability/frontend/ops, file:line refs) and
+the phased remediation plan with owner-locked decisions (open-source self-host; nothing
+cut; RVC+Matchering real). Code-side quick wins landed same day; rotation/history-purge
+flagged as owner actions. Creates: production-readiness-audit.md, production-readiness-plan.md.
+
+## [2026-08-21] create | UI/UX Audit + Plan
+Four-track UI investigation (flows/IA, design system, DAW interactions, a11y) plus the
+implementation plan. Same-day delivery wave recorded: truth pass (real meters/waveforms/
+solo-mute/health pill), disciplined-glass foundations (tokens/keyframes/primitives),
+full piano-roll editor (undo/multi-select/drag/snap/quantize/zoom), transport+mixer
+upgrades, per-track session persistence, deep links, completion hand-off, advanced param
+exposure, perf pass (node teardown, sorted scheduler, memoized layers), peaks-based
+HistoryFeed rebuild (wavesurfer.js removed). Creates: ui-ux-audit.md, ui-ux-plan.md.
+
+## [2026-08-21] create | AI Agent Foundation investigation
+LLM layer audit for multi-agent support: provider matrix (9 providers / 3 adapters),
+config resolution flow, Co-Writer graph precedent, four missing pillars (messages/tools/
+memory/streaming) + G1-G11 gap list, framework decision (Option C thin AgentRuntime,
+pydantic-ai-compatible later), proposed backend/app/agents runtime layout. Creates:
+concepts/agent-foundation.md.
+
+## [2026-08-21] create | Artist Profiles & Album Agents vision
+Owner's ultimate vision captured: Projects contain unlimited Artist Profiles; agents are
+ASSIGNED per profile (world builder, experiencers, songwriter…); "create an album"
+triggers an orchestrated multi-agent run producing 10+ tracks grounded in that artist's
+lore/memory. Includes hierarchy model, album production flow, data-model gap analysis
+(ArtistProfile/AgentAssignment/Release/agent_runs/world_state all missing today),
+runtime demands, creative-flywheel thesis, open questions for the owner. Creates:
+concepts/artist-profiles-vision.md.

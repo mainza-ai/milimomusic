@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Layers, ZoomIn, ZoomOut } from 'lucide-react';
-import type { Job } from '../../api';
+import type { Job, NoteEvent } from '../../api';
 import type { StemChannel } from './SessionWorkspace';
 
 interface ArrangeTimelineProps {
@@ -45,6 +45,12 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
     const barDuration = (60 / bpm) * beatsPerBar;
     const totalBars = Math.max(1, Math.ceil(totalDuration / barDuration));
     const barsArray = Array.from({ length: totalBars }, (_, i) => i + 1);
+
+    const notes: NoteEvent[] = job.notes_json
+        ? typeof job.notes_json === 'string'
+            ? JSON.parse(job.notes_json)
+            : job.notes_json
+        : [];
 
     return (
         <div className="flex flex-col h-full bg-[#f5f5f7] dark:bg-[#10121a] text-slate-800 dark:text-slate-200 select-none overflow-hidden transition-colors duration-200">
@@ -100,29 +106,26 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
                                 </span>
                             </div>
 
-                            {/* Solo & Mute Buttons */}
-                            <div className="flex items-center space-x-1.5 flex-shrink-0">
-                                <button
-                                    onClick={() => onToggleSolo(track.id)}
-                                    className={`w-6 h-6 rounded-md text-[10px] font-extrabold transition-all ${
-                                        track.isSolo
-                                            ? 'bg-amber-500 text-slate-950 shadow-sm font-black'
-                                            : 'bg-black/5 dark:bg-white/5 text-slate-400 hover:text-amber-500'
-                                    }`}
-                                    title="Solo Track"
-                                >
-                                    S
-                                </button>
+                            <div className="flex items-center space-x-1">
                                 <button
                                     onClick={() => onToggleMute(track.id)}
-                                    className={`w-6 h-6 rounded-md text-[10px] font-extrabold transition-all ${
+                                    className={`w-6 h-6 rounded-lg text-[10px] font-bold transition-colors ${
                                         track.isMuted
-                                            ? 'bg-rose-500 text-white shadow-sm font-black'
-                                            : 'bg-black/5 dark:bg-white/5 text-slate-400 hover:text-rose-500'
+                                            ? 'bg-rose-500 text-white'
+                                            : 'bg-black/[0.04] dark:bg-white/5 text-slate-400 hover:text-slate-700'
                                     }`}
-                                    title="Mute Track"
                                 >
                                     M
+                                </button>
+                                <button
+                                    onClick={() => onToggleSolo(track.id)}
+                                    className={`w-6 h-6 rounded-lg text-[10px] font-bold transition-colors ${
+                                        track.isSolo
+                                            ? 'bg-amber-500 text-slate-950 font-extrabold'
+                                            : 'bg-black/[0.04] dark:bg-white/5 text-slate-400 hover:text-slate-700'
+                                    }`}
+                                >
+                                    S
                                 </button>
                             </div>
                         </div>
@@ -151,40 +154,75 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
                         className="flex-1 relative cursor-pointer"
                         style={{ minWidth: `${100 * zoom}%` }}
                     >
-                        {stemChannels.map((track) => (
-                            <div
-                                key={track.id}
-                                className="h-20 border-b border-black/[0.04] dark:border-white/5 p-2 flex items-center relative"
-                            >
-                                {/* Audio Stem Block with Waveform */}
-                                <div
-                                    className={`h-16 w-full rounded-xl bg-gradient-to-r ${track.color} p-2 flex items-center justify-between shadow-sm relative overflow-hidden transition-opacity ${
-                                        track.isMuted ? 'opacity-30' : 'opacity-90'
-                                    }`}
-                                >
-                                    {/* Waveform Bars Simulation */}
-                                    <div className="absolute inset-0 flex items-center justify-around opacity-30 pointer-events-none px-2">
-                                        {Array.from({ length: 64 }).map((_, i) => {
-                                            const height = 20 + Math.sin(i * 0.4) * 15 + (i % 3) * 10;
-                                            return (
-                                                <div
-                                                    key={i}
-                                                    className="w-1 bg-white rounded-full"
-                                                    style={{ height: `${height}%` }}
-                                                />
-                                            );
-                                        })}
-                                    </div>
+                        {stemChannels.map((track) => {
+                            const trackNotes = notes.filter(n => {
+                                const inst = (n.instrument || '').toLowerCase();
+                                const tName = track.name.toLowerCase();
+                                if (tName.includes('bass')) return inst.includes('bass');
+                                if (tName.includes('drum')) return inst.includes('drum') || inst.includes('percussion');
+                                if (tName.includes('vocal')) return inst.includes('vocal') || inst.includes('lead');
+                                return !inst.includes('bass') && !inst.includes('drum');
+                            });
 
-                                    <span className="text-xs font-bold text-white relative z-10 drop-shadow-sm">
-                                        {track.name} Isolated Stem
-                                    </span>
-                                    <span className="text-[10px] font-mono text-white/80 relative z-10">
-                                        48kHz 24-bit
-                                    </span>
+                            return (
+                                <div
+                                    key={track.id}
+                                    className="h-20 border-b border-black/[0.04] dark:border-white/5 p-2 flex items-center relative"
+                                >
+                                    {/* Audio Stem Block with Waveform */}
+                                    <div
+                                        className={`h-16 w-full rounded-xl bg-gradient-to-r ${track.color} p-2 flex items-center justify-between shadow-sm relative overflow-hidden transition-opacity ${
+                                            track.isMuted ? 'opacity-30' : 'opacity-90'
+                                        }`}
+                                    >
+                                        {/* Real Note Blocks Overlay */}
+                                        {trackNotes.length > 0 ? (
+                                            <div className="absolute inset-0 pointer-events-none p-1">
+                                                {trackNotes.map((n, idx) => {
+                                                    const leftPct = (n.start_time / totalDuration) * 100;
+                                                    const noteDur = n.duration !== undefined ? n.duration : (n.end_time ? n.end_time - n.start_time : 0.5);
+                                                    const widthPct = Math.max(0.4, (noteDur / totalDuration) * 100);
+                                                    const topPct = 10 + ((n.pitch % 12) / 12) * 60;
+                                                    return (
+                                                        <div
+                                                            key={idx}
+                                                            className="absolute bg-white/70 rounded-sm shadow-sm"
+                                                            style={{
+                                                                left: `${leftPct}%`,
+                                                                width: `${widthPct}%`,
+                                                                top: `${topPct}%`,
+                                                                height: '6px'
+                                                            }}
+                                                        />
+                                                    );
+                                                })}
+                                            </div>
+                                        ) : (
+                                            /* Waveform Bars Simulation Fallback */
+                                            <div className="absolute inset-0 flex items-center justify-around opacity-30 pointer-events-none px-2">
+                                                {Array.from({ length: 64 }).map((_, i) => {
+                                                    const height = 20 + Math.sin(i * 0.4) * 15 + (i % 3) * 10;
+                                                    return (
+                                                        <div
+                                                            key={i}
+                                                            className="w-1 bg-white rounded-full"
+                                                            style={{ height: `${height}%` }}
+                                                        />
+                                                    );
+                                                })}
+                                            </div>
+                                        )}
+
+                                        <span className="text-xs font-bold text-white relative z-10 drop-shadow-sm">
+                                            {track.name} {trackNotes.length > 0 ? `(${trackNotes.length} notes)` : 'Isolated Stem'}
+                                        </span>
+                                        <span className="text-[10px] font-mono text-white/80 relative z-10">
+                                            48kHz 24-bit
+                                        </span>
+                                    </div>
                                 </div>
-                            </div>
-                        ))}
+                            );
+                        })}
 
                         {/* Interactive Playhead Line */}
                         <div

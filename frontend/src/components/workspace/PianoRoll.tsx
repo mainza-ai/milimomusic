@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { Download, Trash2, Volume2, Maximize2 } from 'lucide-react';
-import { API_BASE_URL, workspaceApi } from '../../api';
+import { Download, Trash2, Volume2, Maximize2, Save, Check, RefreshCw } from 'lucide-react';
+import { API_BASE_URL, trackApi } from '../../api';
 import type { Job, NoteEvent } from '../../api';
 
 interface PianoRollProps {
@@ -61,6 +61,8 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
     const [selectedTrack, setSelectedTrack] = useState('all');
     const [isMidiSynthEnabled, setIsMidiSynthEnabled] = useState(true);
     const [activePitches, setActivePitches] = useState<Set<number>>(new Set());
+    const [isSaving, setIsSaving] = useState(false);
+    const [saveSuccess, setSaveSuccess] = useState(false);
     const playedNotesRef = useRef<Set<number>>(new Set());
     const audioCtxRef = useRef<AudioContext | null>(null);
 
@@ -318,11 +320,20 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
         onSeek(newTime);
     };
 
-    // Persist note changes to the backend so edits survive a reload (not just local state).
-    const persistNotes = (next: NoteEvent[]) => {
+    // Persist note changes to the backend and re-engrave MusicXML and MIDI score
+    const persistNotes = async (next: NoteEvent[]) => {
         setNotesList(next);
         if (job.id) {
-            workspaceApi.saveNotes(job.id, next).catch(err => console.error('Failed to save notes', err));
+            setIsSaving(true);
+            try {
+                await trackApi.updateMidiNotes(job.id, next);
+                setSaveSuccess(true);
+                setTimeout(() => setSaveSuccess(false), 2500);
+            } catch (err) {
+                console.error('Failed to sync MIDI/MusicXML notes with backend:', err);
+            } finally {
+                setIsSaving(false);
+            }
         }
     };
 
@@ -490,6 +501,27 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                             <span>Delete Note</span>
                         </button>
                     )}
+
+                    <button
+                        onClick={() => persistNotes(notesList)}
+                        disabled={isSaving}
+                        title="Save edited notes and sync with MusicXML Score"
+                        aria-label="Save and Engrave Score"
+                        className={`px-3 py-1.5 rounded-xl text-xs font-bold flex items-center space-x-1.5 shadow-sm transition-all ${
+                            saveSuccess
+                                ? 'bg-emerald-500 text-slate-950'
+                                : 'bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-200'
+                        }`}
+                    >
+                        {isSaving ? (
+                            <RefreshCw size={13} className="animate-spin text-teal-500" />
+                        ) : saveSuccess ? (
+                            <Check size={13} />
+                        ) : (
+                            <Save size={13} className="text-teal-600 dark:text-teal-400" />
+                        )}
+                        <span>{isSaving ? 'Syncing...' : saveSuccess ? 'Score Synced' : 'Sync Score'}</span>
+                    </button>
 
                     <button
                         onClick={() => window.open(`${API_BASE_URL}/transcribe/export/${job.id}/midi`, '_blank')}

@@ -466,3 +466,31 @@ Architected a centralized audio playback engine and eliminated dual-player colli
 4. **Zero-Error Verification**:
    - 100% Pytest pass rate (59/59) and clean Vite production build (1.49s).
 
+## [2026-08-21] create | Floating Harbor Player Overhaul & Full MuScriptor Engine Integration
+Executed production-grade overhaul of the Floating Harbor Audio Player and complete MuScriptor multi-instrument neural transcription across the DAW Workspace:
+1. **Floating Harbor Audio Player Overhaul**:
+   - Upgraded `AudioEngineContext.tsx` with WebAudio `AudioContext` & shared `AnalyserNode` with `crossOrigin="anonymous"`.
+   - Wired live FFT spectrum data into `AudioVisualizer.tsx` and `GlobalAudioPlayer.tsx`.
+   - Fixed cover artwork rendering with dynamic URL prefixing and vinyl disc animation.
+   - Built interactive slide-up **"Up Next / Queue"** drawer with track thumbnails, duration, jump to song, reorder, remove, and clear queue actions.
+   - Integrated `navigator.mediaSession` metadata and actions with global keyboard hotkeys (`Space`, arrows, `M`).
+2. **MuScriptor Neural Multi-Instrument Provider & Engraving**:
+   - Upgraded `muscriptor_provider.py` with complete General MIDI & MT3 Instrument Program Map across 30+ instrument classes.
+   - Built multi-part W3C MusicXML 3.1 generator creating distinct `<score-part>` staves with proper clefs and measures.
+   - Integrated MuseScore 4 PDF & Tablature engraving (`write_sheets`) with fallback to MusicXML.
+   - Added `GET /api/tracks/{id}/sheets` and `POST /api/tracks/{id}/midi` in `backend/app/main.py`.
+3. **DAW Workspace Deep Integration**:
+   - `NotationViewer.tsx`: Added multi-instrument part filter pills (Grand Score, Piano, Electric Guitar, Bass, Drums, Strings), and "Download Engraved Scores & PDFs" dialog.
+   - `PianoRoll.tsx`: Connected `persistNotes` to `trackApi.updateMidiNotes` with live "Sync Score" visual status.
+## [2026-08-21] fix | Universal Media Player Standardization & Zero-Overlap Architecture
+Completely eliminated all visual collisions and standardized the pro-grade transport suite across every media player:
+1. **Zero-Overlap 3-Zone Flex Layout & Background Bleed Fix**:
+   - `GlobalAudioPlayer.tsx`: Built strict 3-zone flexbox with fixed-width centered transport cluster and responsive right tools container, guaranteeing zero overlap across all screen dimensions. Removed background visualizer canvas.
+   - `AudioPlayer.tsx`: Removed the absolute `mix-blend-screen` visualizer canvas that rendered behind playhead buttons in history cards.
+2. **Standardized 16-Point Control Suite Across All 4 Players**:
+   - `GlobalAudioPlayer.tsx`: Full suite (Shuffle, Return to Zero `|<<`, Rewind 10s, Hero Play/Pause, Advance 10s, Next Track `>>|`, Repeat modes, Scrubber with timecode modes, Speed menu, Volume fader + Mute, Queue & Lyrics drawers, DAW shortcut, Download).
+   - `TrackDetailView.tsx`: Full suite (Shuffle, Return to Zero `|<<`, Rewind 10s, Hero Play/Pause, Advance 10s, Next Track `>>|`, Repeat modes, Speed selector, Volume + Mute, Timecode toggle, Waveform scrubber).
+   - `SessionWorkspace.tsx`: Full DAW suite (Return to Zero `|<<`, Step -1 Bar, Rewind 10s, Hero Play/Pause, Advance 10s, Step +1 Bar, Repeat/Loop mode, Scrubber, Volume + Mute, BPM meter badge).
+   - `AudioPlayer.tsx`: History card suite (Return to Start/Previous `|<<`, Rewind 10s, Hero Play/Pause, Advance 10s, Next Track `>>|`, Repeat, Speed, Volume, Inpaint, Download, Scrubber).
+3. **Verification**:
+   - 100% Pytest pass rate (59/59 in 5.47s) and clean Vite production build (1.68s).

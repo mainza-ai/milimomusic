@@ -1,6 +1,6 @@
 import React, { useMemo, useState } from 'react';
-import { FileText, Download, ZoomIn, ZoomOut, Printer } from 'lucide-react';
-import { API_BASE_URL } from '../../api';
+import { FileText, Download, ZoomIn, ZoomOut, Printer, FileDown, X } from 'lucide-react';
+import { API_BASE_URL, trackApi, type SheetScoreItem } from '../../api';
 import type { Job, NoteEvent } from '../../api';
 
 interface NotationViewerProps {
@@ -96,11 +96,28 @@ interface Measure {
 
 export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime = 0, onSeek }) => {
     const [zoom, setZoom] = useState(100);
+    const [selectedInstrument, setSelectedInstrument] = useState<string>('all');
+    const [isSheetsModalOpen, setIsSheetsModalOpen] = useState(false);
+    const [availableSheets, setAvailableSheets] = useState<SheetScoreItem[]>([]);
+    const [isLoadingSheets, setIsLoadingSheets] = useState(false);
 
-    const notes: NoteEvent[] = useMemo(
+    const rawNotes: NoteEvent[] = useMemo(
         () => (job.notes_json ? (typeof job.notes_json === 'string' ? JSON.parse(job.notes_json) : job.notes_json) : []),
         [job.notes_json]
     );
+
+    const availableInstruments = useMemo(() => {
+        const set = new Set<string>();
+        rawNotes.forEach(n => {
+            if (n.instrument) set.add(n.instrument);
+        });
+        return Array.from(set);
+    }, [rawNotes]);
+
+    const notes = useMemo(() => {
+        if (selectedInstrument === 'all') return rawNotes;
+        return rawNotes.filter(n => n.instrument === selectedInstrument);
+    }, [rawNotes, selectedInstrument]);
 
     const beatGrid = useMemo(
         () => (job.beat_grid_json ? (typeof job.beat_grid_json === 'string' ? JSON.parse(job.beat_grid_json) : job.beat_grid_json) : {}),
@@ -128,6 +145,19 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
         }
         return out;
     }, [notes, totalMeasures, measureDuration]);
+
+    const loadSheets = async () => {
+        setIsLoadingSheets(true);
+        setIsSheetsModalOpen(true);
+        try {
+            const res = await trackApi.getSheets(job.id);
+            setAvailableSheets(res.sheets || []);
+        } catch (e) {
+            console.error('Failed to load sheets:', e);
+        } finally {
+            setIsLoadingSheets(false);
+        }
+    };
 
     function xInBar(ms: Measure, t: number): number {
         const dur = Math.max(0.001, ms.end - ms.start);
@@ -499,18 +529,48 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
     return (
         <div className="flex flex-col h-full bg-[#f5f5f7] dark:bg-[#0c0e14] text-slate-900 dark:text-slate-200 select-none overflow-hidden transition-colors duration-200">
             {/* Top Toolbar */}
-            <div className="flex items-center justify-between px-6 py-3 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/70 dark:bg-[#12141c]/80 backdrop-blur-xl z-10 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-3 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/70 dark:bg-[#12141c]/80 backdrop-blur-xl z-10 shadow-sm">
                 <div className="flex items-center space-x-3">
                     <FileText size={16} className="text-teal-600 dark:text-teal-400" />
                     <div>
                         <h2 className="text-xs font-bold text-slate-900 dark:text-slate-100 uppercase tracking-wider">
-                            MusicXML Score Notation & Sheet Music
+                            MusicXML Score Notation & Engraving
                         </h2>
                         <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono">
-                            Accurate grand-staff engraving · MuScriptor · {notes.length} notes in {totalMeasures} bars @ ♩={bpm}
+                            Multi-Instrument Engraving · MuScriptor · {notes.length} notes in {totalMeasures} bars @ ♩={bpm}
                         </p>
                     </div>
                 </div>
+
+                {/* Instrument Part Filter Pills */}
+                {availableInstruments.length > 0 && (
+                    <div className="flex items-center space-x-1 bg-black/[0.04] dark:bg-[#181a24] border border-black/[0.06] dark:border-white/10 rounded-xl p-1">
+                        <button
+                            onClick={() => setSelectedInstrument('all')}
+                            className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors ${
+                                selectedInstrument === 'all'
+                                    ? 'bg-teal-500 text-slate-950 shadow-sm'
+                                    : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                            }`}
+                        >
+                            All Parts
+                        </button>
+                        {availableInstruments.map(inst => (
+                            <button
+                                key={inst}
+                                onClick={() => setSelectedInstrument(inst)}
+                                className={`px-2.5 py-1 text-[11px] font-bold rounded-lg transition-colors ${
+                                    selectedInstrument === inst
+                                        ? 'bg-teal-500 text-slate-950 shadow-sm'
+                                        : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                }`}
+                            >
+                                {inst}
+                            </button>
+                        ))}
+                    </div>
+                )}
+
                 <div className="flex items-center space-x-2">
                     <div className="flex items-center bg-black/[0.04] dark:bg-[#181a24] border border-black/[0.06] dark:border-white/10 rounded-xl p-1 space-x-1 shadow-sm">
                         <button
@@ -529,6 +589,16 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
                             <ZoomIn size={13} />
                         </button>
                     </div>
+
+                    <button
+                        onClick={loadSheets}
+                        title="Download Engraved PDF Scores and Tablatures"
+                        className="px-3 py-1.5 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition-all shadow-sm"
+                    >
+                        <FileDown size={13} className="text-teal-600 dark:text-teal-400" />
+                        <span>Scores & PDFs</span>
+                    </button>
+
                     <button
                         onClick={handlePrint}
                         title="Print or Save Sheet Music Score as PDF"
@@ -538,6 +608,7 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
                         <Printer size={13} />
                         <span>Print</span>
                     </button>
+
                     <button
                         onClick={handleExport}
                         title="Export and Download W3C MusicXML 3.1 Sheet Music Score"
@@ -549,6 +620,76 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
                     </button>
                 </div>
             </div>
+
+            {/* Engraved Sheets & PDFs Modal */}
+            {isSheetsModalOpen && (
+                <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in">
+                    <div className="w-full max-w-lg bg-white dark:bg-[#151722] border border-black/10 dark:border-white/10 rounded-3xl shadow-apple-2xl p-6 flex flex-col space-y-4">
+                        <div className="flex items-center justify-between border-b border-black/10 dark:border-white/10 pb-3">
+                            <div className="flex items-center space-x-2">
+                                <FileDown size={18} className="text-teal-500" />
+                                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                                    Engraved Scores & Tablatures
+                                </h3>
+                            </div>
+                            <button
+                                onClick={() => setIsSheetsModalOpen(false)}
+                                className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
+                            >
+                                <X size={16} />
+                            </button>
+                        </div>
+
+                        <div className="space-y-2 max-h-72 overflow-y-auto custom-scrollbar">
+                            {isLoadingSheets ? (
+                                <div className="py-8 text-center text-xs text-slate-400">
+                                    Scanning engraved sheets...
+                                </div>
+                            ) : availableSheets.length > 0 ? (
+                                availableSheets.map((sheet, idx) => (
+                                    <div
+                                        key={idx}
+                                        className="p-3 rounded-2xl bg-black/[0.03] dark:bg-white/5 border border-black/[0.06] dark:border-white/5 flex items-center justify-between hover:border-teal-500/30 transition-colors"
+                                    >
+                                        <div className="min-w-0 pr-2">
+                                            <div className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate">
+                                                {sheet.name}
+                                            </div>
+                                            <div className="text-[10px] font-mono text-slate-400 uppercase">
+                                                {sheet.type} • {sheet.filename}
+                                            </div>
+                                        </div>
+                                        <a
+                                            href={sheet.url.startsWith('http') ? sheet.url : `${API_BASE_URL}${sheet.url}`}
+                                            download={sheet.filename}
+                                            target="_blank"
+                                            rel="noopener noreferrer"
+                                            className="px-3 py-1 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1 shadow-sm"
+                                        >
+                                            <Download size={12} />
+                                            <span>Download</span>
+                                        </a>
+                                    </div>
+                                ))
+                            ) : (
+                                <div className="space-y-2 text-center py-4">
+                                    <p className="text-xs text-slate-500">
+                                        Primary W3C MusicXML 3.1 score is ready for instant download.
+                                    </p>
+                                    <a
+                                        href={`${API_BASE_URL}/audio/${job.id}.musicxml`}
+                                        download={`${job.title || 'milimo_score'}.musicxml`}
+                                        className="inline-flex items-center space-x-1.5 px-4 py-2 bg-teal-500 text-slate-950 font-bold text-xs rounded-xl shadow-sm hover:bg-teal-400"
+                                    >
+                                        <Download size={13} />
+                                        <span>Download MusicXML Score</span>
+                                    </a>
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            )}
 
             {/* Score Page Canvas */}
             <div className="flex-1 overflow-auto p-6 md:p-10 flex items-start justify-center bg-[#eaeaf0] dark:bg-[#0a0c12]">
@@ -563,7 +704,7 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
                         </h1>
                         <div className="flex items-center justify-between text-xs text-slate-600 font-serif italic pt-2">
                             <span>Tempo: ♩ = {bpm}</span>
-                            <span>{beatsPerBar}/4 · Engraved & Transcribed with MuScriptor</span>
+                            <span>{beatsPerBar}/4 · {selectedInstrument === 'all' ? 'Conductor Full Score' : `${selectedInstrument} Part`} · MuScriptor</span>
                         </div>
                     </div>
 

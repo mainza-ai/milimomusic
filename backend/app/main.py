@@ -447,6 +447,42 @@ async def apply_reference_mastering(job_id: UUID, req: MasteringRequest = Master
         return {"status": "mastered", "audio_path": job.audio_path, "lufs": result.target_lufs}
 
 
+@app.get("/tracks/{job_id}/sheets")
+def get_track_sheets(job_id: str):
+    """List available engraved sheet music scores and PDFs for a track."""
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+        clean_id = str(job.id).replace("-", "")
+        sheets = muscriptor_provider.get_available_sheets(clean_id)
+        return {"job_id": str(job.id), "sheets": sheets}
+
+
+@app.post("/tracks/{job_id}/midi")
+async def update_track_midi(job_id: str, notes: List[Dict[str, Any]] = Body(...)):
+    """Save edited note events from the DAW Piano Roll and re-generate MIDI and MusicXML."""
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+
+        clean_id = str(job.id).replace("-", "")
+        bg = json.loads(job.beat_grid_json) if job.beat_grid_json else {}
+        bpm = float(bg.get("bpm", 120.0))
+
+        result = await muscriptor_provider.update_midi_notes(clean_id, notes, bpm=bpm)
+        job.notes_json = result.notes_json
+        job.midi_path = result.midi_path
+        job.musicxml_path = result.musicxml_path
+
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+        return {"status": "saved", "job": job}
+
+
 @app.post("/workspace/{job_id}/notes")
 def save_workspace_notes(job_id: UUID, notes: List[Dict[str, Any]] = Body(...)):
     """Save edited note events from the Piano Roll editor."""

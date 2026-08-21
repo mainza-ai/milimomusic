@@ -3,6 +3,7 @@ import { getAudioContext } from '../../utils/audioContext';
 
 interface AudioVisualizerProps {
     mediaElement?: HTMLMediaElement | null;
+    analyserNode?: AnalyserNode | null;
     isPlaying: boolean;
     className?: string;
     mode?: 'bars' | 'wave' | 'mirror';
@@ -13,6 +14,7 @@ const sourceCache = new WeakMap<HTMLMediaElement, MediaElementAudioSourceNode>()
 
 export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
     mediaElement,
+    analyserNode,
     isPlaying,
     className,
     mode = 'mirror',
@@ -25,8 +27,15 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
     const peakBarsRef = useRef<number[]>([]);
     const frameCountRef = useRef(0);
 
+    // Sync direct analyserNode if provided
     useEffect(() => {
-        if (!mediaElement) return;
+        if (analyserNode) {
+            analyserRef.current = analyserNode;
+        }
+    }, [analyserNode]);
+
+    useEffect(() => {
+        if (analyserNode || !mediaElement) return;
 
         const ctx = getAudioContext();
         contextRef.current = ctx;
@@ -60,7 +69,7 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
             } catch {}
             if (animationRef.current) cancelAnimationFrame(animationRef.current);
         };
-    }, [mediaElement]);
+    }, [mediaElement, analyserNode]);
 
     const draw = () => {
         if (!canvasRef.current) return;

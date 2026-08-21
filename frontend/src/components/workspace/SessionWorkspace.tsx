@@ -15,7 +15,9 @@ import {
     Layers,
     CheckCircle2,
     Mic2,
-    Copy
+    Copy,
+    SkipBack,
+    Repeat
 } from 'lucide-react';
 import { API_BASE_URL } from '../../api';
 import type { Job, TimedLine, StemsMap, NoteEvent } from '../../api';
@@ -47,10 +49,20 @@ interface SessionWorkspaceProps {
 export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose }) => {
     const [mode, setMode] = useState<WorkspaceMode>('listen');
     const [isPlaying, setIsPlaying] = useState(false);
+    const [isLooping, setIsLooping] = useState(false);
     const [currentTime, setCurrentTime] = useState(0);
     const [duration, setDuration] = useState(job.duration_ms ? job.duration_ms / 1000 : 60);
     const [masterVolume, setMasterVolume] = useState(0.9);
     const [isMasterMuted, setIsMasterMuted] = useState(false);
+
+    // Beat Grid & Meter
+    const beatGrid = job.beat_grid_json
+        ? typeof job.beat_grid_json === 'string'
+            ? JSON.parse(job.beat_grid_json)
+            : job.beat_grid_json
+        : {};
+    const bpm = beatGrid.bpm || 120;
+    const barDuration = (60 / bpm) * (beatGrid.beats_per_bar || 4);
 
     // Multitrack Stem Channels
     const parsedStems: StemsMap = job.stems_json
@@ -179,14 +191,15 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     const stemPanRefs = useRef<Record<string, StereoPannerNode>>({});
     const bufCacheRef = useRef<Record<string, AudioBuffer>>({}); // decoded buffers by id/url
     const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
-    const playStartClockRef = useRef(0);  // ctx.currentTime at last (re)schedule
-    const playStartPosRef = useRef(0);    // track position (s) at last (re)schedule
+    const isPlayingRef = useRef(false);
+    const isLoopingRef = useRef(false);
+    const currentTimeRef = useRef(0);
+    const durationRef = useRef(duration);
+    const playStartClockRef = useRef(0);
+    const playStartPosRef = useRef(0);
     const rafRef = useRef(0);
     const preparedIdsRef = useRef<Set<string>>(new Set()); // buffers that have a URL to load
     const decodeStartedRef = useRef(false);   // avoid double decode under StrictMode
-    const isPlayingRef = useRef(false);       // mirror of isPlaying for clock reads
-    const currentTimeRef = useRef(0);         // authoritative transport position (s)
-    const durationRef = useRef(job.duration_ms ? job.duration_ms / 1000 : 60);
     const UI_TICK_MS = 80;                    // min gap between playhead re-renders (~12Hz)
     const lastUiTickRef = useRef(0);
 
@@ -399,6 +412,12 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             const pos = getPosition();
             const dur = durationRef.current;
             if (pos >= dur) {
+                if (isLoopingRef.current) {
+                    currentTimeRef.current = 0;
+                    setCurrentTime(0);
+                    scheduleAll();
+                    return;
+                }
                 pauseAll();
                 currentTimeRef.current = dur;
                 setCurrentTime(dur);
@@ -902,37 +921,85 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             {/* Bottom Transport Control Bar */}
             <div className="px-6 py-3 border-t border-black/[0.06] dark:border-white/[0.08] bg-white/80 dark:bg-[#12141c]/90 backdrop-blur-2xl flex flex-wrap items-center justify-between gap-4 z-20 shadow-apple-md">
                 {/* Transport Buttons */}
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-1 sm:space-x-1.5 flex-shrink-0">
+                    {/* Return to Zero / Start */}
                     <button
-                        onClick={() => handleRewind(5)}
+                        onClick={() => handleSeek(0)}
                         className="p-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 transition-transform active:scale-95"
-                        title="Rewind 5s"
+                        title="Return to Zero / Start (|<<) (Home)"
+                        aria-label="Return to Zero"
                     >
-                        <RotateCcw size={16} />
+                        <SkipBack size={15} />
                     </button>
 
+                    {/* Rewind 1 Bar */}
+                    <button
+                        onClick={() => handleSeek(currentTime - barDuration)}
+                        className="px-2 py-1.5 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-[11px] font-mono font-bold text-slate-700 dark:text-slate-300 transition-transform active:scale-95"
+                        title="Step Back 1 Measure / Bar"
+                    >
+                        -1 Bar
+                    </button>
+
+                    {/* Rewind 10s */}
+                    <button
+                        onClick={() => handleRewind(10)}
+                        className="p-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 transition-transform active:scale-95"
+                        title="Rewind 10s (J)"
+                    >
+                        <RotateCcw size={15} />
+                    </button>
+
+                    {/* Play / Pause Hero Button */}
                     <button
                         onClick={togglePlay}
                         className="w-10 h-10 rounded-2xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold flex items-center justify-center shadow-apple-md active:scale-95 transition-transform"
-                        title={isPlaying ? "Pause" : "Play"}
+                        title={isPlaying ? "Pause (Space / K)" : "Play (Space / K)"}
                     >
                         {isPlaying ? <Pause size={18} /> : <Play size={18} className="ml-0.5" />}
                     </button>
 
+                    {/* Advance 10s */}
                     <button
-                        onClick={() => handleAdvance(5)}
+                        onClick={() => handleAdvance(10)}
                         className="p-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 transition-transform active:scale-95"
-                        title="Advance 5s"
+                        title="Advance 10s (L)"
                     >
-                        <RotateCw size={16} />
+                        <RotateCw size={15} />
+                    </button>
+
+                    {/* Advance 1 Bar */}
+                    <button
+                        onClick={() => handleSeek(currentTime + barDuration)}
+                        className="px-2 py-1.5 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-[11px] font-mono font-bold text-slate-700 dark:text-slate-300 transition-transform active:scale-95"
+                        title="Step Forward 1 Measure / Bar"
+                    >
+                        +1 Bar
                     </button>
 
                     {/* Timecode */}
                     <div className="flex items-center space-x-1 font-mono text-xs text-slate-700 dark:text-slate-300 ml-2">
-                        <span className="font-bold">{formatTime(currentTime)}</span>
+                        <span className="font-bold text-teal-600 dark:text-teal-400">{formatTime(currentTime)}</span>
                         <span className="text-slate-400">/</span>
                         <span className="text-slate-500">{formatTime(duration)}</span>
                     </div>
+
+                    {/* Loop Toggle Button */}
+                    <button
+                        onClick={() => setIsLooping(!isLooping)}
+                        className={`p-1.5 rounded-xl transition-colors ml-1 ${
+                            isLooping
+                                ? 'text-teal-600 dark:text-teal-400 bg-teal-500/10'
+                                : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                        }`}
+                        title={`Loop Playback: ${isLooping ? 'On' : 'Off'}`}
+                    >
+                        <Repeat size={14} />
+                    </button>
+
+                    <span className="hidden sm:inline text-[10px] font-mono px-2 py-0.5 rounded-md bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20 font-bold ml-1">
+                        {Math.round(bpm)} BPM
+                    </span>
                 </div>
 
                 {/* Timeline Scrubber */}
@@ -951,7 +1018,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                 </div>
 
                 {/* Master Volume */}
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center space-x-2 flex-shrink-0">
                     <button
                         onClick={() => setIsMasterMuted(!isMasterMuted)}
                         title={isMasterMuted ? "Unmute Master Volume" : "Mute Master Volume"}
@@ -972,7 +1039,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                         }}
                         title={`Master Volume: ${Math.round(masterVolume * 100)}%`}
                         aria-label="Master Volume Slider"
-                        className="w-24 h-1.5 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-teal-500"
+                        className="w-20 sm:w-24 h-1.5 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-teal-500"
                     />
                     <span className="text-[10px] font-mono text-slate-400 w-8">
                         {isMasterMuted ? '0%' : `${Math.round(masterVolume * 100)}%`}

@@ -736,6 +736,13 @@ export const coverApi = {
     }
 };
 
+export interface SheetScoreItem {
+    name: string;
+    filename: string;
+    type: 'musicxml' | 'pdf';
+    url: string;
+}
+
 export const trackApi = {
     updateTrackMetadata: async (jobId: string, updates: Partial<Job>): Promise<Job> => {
         const res = await axios.patch(`${API_BASE_URL}/jobs/${jobId}`, updates);
@@ -748,6 +755,14 @@ export const trackApi = {
         const res = await axios.post(`${API_BASE_URL}/jobs/${jobId}/voice-convert`, {
             voice_profile_id: voiceProfileId
         });
+        return res.data;
+    },
+    getSheets: async (jobId: string): Promise<{ job_id: string; sheets: SheetScoreItem[] }> => {
+        const res = await axios.get(`${API_BASE_URL}/tracks/${jobId}/sheets`);
+        return res.data;
+    },
+    updateMidiNotes: async (jobId: string, notes: NoteEvent[]): Promise<{ status: string; job: Job }> => {
+        const res = await axios.post(`${API_BASE_URL}/tracks/${jobId}/midi`, notes);
         return res.data;
     }
 };

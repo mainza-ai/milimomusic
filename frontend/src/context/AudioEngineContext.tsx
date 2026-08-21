@@ -1,6 +1,7 @@
 import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react';
 import type { Job } from '../api';
 import { API_BASE_URL } from '../api';
+import { getAudioContext } from '../utils/audioContext';
 
 export interface AudioEngineContextValue {
     currentTrack: Job | null;
@@ -13,11 +14,14 @@ export interface AudioEngineContextValue {
     repeatMode: 'off' | 'all' | 'one';
     isShuffle: boolean;
     playlist: Job[];
+    analyserNode: AnalyserNode | null;
     playTrack: (track: Job, customPlaylist?: Job[]) => Promise<void>;
     pause: () => void;
     resume: () => Promise<void>;
     togglePlay: (track?: Job) => void;
     seek: (timeInSeconds: number) => void;
+    returnToStart: () => void;
+    prevTrackOrRestart: () => void;
     setVolume: (vol: number) => void;
     toggleMute: () => void;
     setPlaybackRate: (rate: number) => void;
@@ -27,6 +31,10 @@ export interface AudioEngineContextValue {
     prevTrack: () => void;
     stop: () => void;
     setPlaylist: (list: Job[]) => void;
+    addToQueue: (track: Job) => void;
+    removeFromQueue: (trackId: string) => void;
+    clearQueue: () => void;
+    reorderQueue: (fromIndex: number, toIndex: number) => void;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextValue | null>(null);
@@ -46,15 +54,40 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('off');
     const [isShuffle, setIsShuffle] = useState(false);
     const [playlist, setPlaylist] = useState<Job[]>([]);
+    const [analyserNode, setAnalyserNode] = useState<AnalyserNode | null>(null);
 
-    // Get full absolute URL for audio
+    // Audio node connectivity tracker
+    const isSourceConnected = useRef(false);
+
+    // Full absolute URL resolver
     const getAudioUrl = useCallback((path?: string | null): string => {
         if (!path) return '';
         if (path.startsWith('http://') || path.startsWith('https://')) return path;
         return `${API_BASE_URL}${path}`;
     }, []);
 
-    // Set Volume Helper
+    // Connect WebAudio graph for AnalyserNode
+    const ensureAudioGraph = useCallback(() => {
+        if (isSourceConnected.current || !audioRef.current) return;
+        try {
+            const ctx = getAudioContext();
+            if (ctx.state === 'suspended') {
+                ctx.resume().catch(() => {});
+            }
+            const source = ctx.createMediaElementSource(audioRef.current);
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 256;
+            analyser.smoothingTimeConstant = 0.82;
+            source.connect(analyser);
+            analyser.connect(ctx.destination);
+            setAnalyserNode(analyser);
+            isSourceConnected.current = true;
+        } catch (e) {
+            console.warn('WebAudio Analyser initialization note:', e);
+        }
+    }, []);
+
+    // Set Volume
     const setVolume = useCallback((val: number) => {
         const clamped = Math.max(0, Math.min(1, val));
         setVolumeState(clamped);
@@ -64,7 +97,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     }, [isMuted]);
 
-    // Toggle Mute Helper
+    // Toggle Mute
     const toggleMute = useCallback(() => {
         setIsMuted((prev) => {
             const next = !prev;
@@ -75,92 +108,109 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         });
     }, [volume]);
 
-    // Set Playback Speed Helper
+    // Set Playback Speed
     const setPlaybackRate = useCallback((rate: number) => {
-        setPlaybackRateState(rate);
+        const clamped = Math.max(0.25, Math.min(3.0, rate));
+        setPlaybackRateState(clamped);
         if (audioRef.current) {
-            audioRef.current.playbackRate = rate;
+            audioRef.current.playbackRate = clamped;
         }
     }, []);
 
+    // Seek to specific time
+    const seek = useCallback((time: number) => {
+        if (audioRef.current) {
+            const clamped = Math.max(0, Math.min(duration || 1000, time));
+            audioRef.current.currentTime = clamped;
+            setCurrentTime(clamped);
+        }
+    }, [duration]);
+
+    // Return to start (0:00)
+    const returnToStart = useCallback(() => {
+        seek(0);
+    }, [seek]);
+
     // Play specific track
     const playTrack = useCallback(async (track: Job, customPlaylist?: Job[]) => {
-        if (!track.audio_path) return;
+        if (!track?.audio_path) return;
 
         if (customPlaylist && customPlaylist.length > 0) {
             setPlaylist(customPlaylist);
+        } else {
+            setPlaylist((prev) => {
+                if (!prev.some((s) => s.id === track.id)) {
+                    return [track, ...prev];
+                }
+                return prev;
+            });
         }
 
-        const audio = audioRef.current;
-        if (!audio) return;
+        setCurrentTrack(track);
+        setCurrentTime(0);
 
-        const targetUrl = getAudioUrl(track.audio_path);
+        if (audioRef.current) {
+            ensureAudioGraph();
+            const fullUrl = getAudioUrl(track.audio_path);
+            if (audioRef.current.src !== fullUrl) {
+                audioRef.current.src = fullUrl;
+                audioRef.current.load();
+            }
 
-        // If selecting a new track
-        if (currentTrack?.id !== track.id || audio.src !== targetUrl) {
-            setCurrentTrack(track);
-            setCurrentTime(0);
-            setDuration(track.duration_ms ? track.duration_ms / 1000 : 0);
-            audio.src = targetUrl;
-            audio.playbackRate = playbackRate;
-            audio.volume = isMuted ? 0 : volume;
-        }
-
-        try {
-            await audio.play();
-            setIsPlaying(true);
-        } catch (err: any) {
-            if (err.name !== 'AbortError') {
-                console.warn('Audio playback error:', err);
+            try {
+                await audioRef.current.play();
+                setIsPlaying(true);
+            } catch (err: any) {
+                if (err.name !== 'AbortError') {
+                    console.warn('Playback start postponed/blocked:', err);
+                }
+                setIsPlaying(false);
             }
         }
-    }, [currentTrack?.id, getAudioUrl, playbackRate, isMuted, volume]);
+    }, [ensureAudioGraph, getAudioUrl]);
 
     // Pause
     const pause = useCallback(() => {
         if (audioRef.current) {
             audioRef.current.pause();
+            setIsPlaying(false);
         }
-        setIsPlaying(false);
     }, []);
 
     // Resume
     const resume = useCallback(async () => {
-        const audio = audioRef.current;
-        if (!audio || !currentTrack) return;
-        try {
-            await audio.play();
-            setIsPlaying(true);
-        } catch (err: any) {
-            if (err.name !== 'AbortError') {
-                console.warn('Audio resume error:', err);
+        if (audioRef.current) {
+            ensureAudioGraph();
+            try {
+                await audioRef.current.play();
+                setIsPlaying(true);
+            } catch (err: any) {
+                if (err.name !== 'AbortError') {
+                    console.warn('Resume error:', err);
+                }
             }
         }
-    }, [currentTrack]);
+    }, [ensureAudioGraph]);
 
     // Toggle Play
-    const togglePlay = useCallback((track?: Job) => {
-        if (track && track.id !== currentTrack?.id) {
-            playTrack(track);
+    const togglePlay = useCallback((trackToPlay?: Job) => {
+        if (trackToPlay && trackToPlay.id !== currentTrack?.id) {
+            playTrack(trackToPlay);
             return;
         }
 
         if (isPlaying) {
             pause();
         } else {
-            resume();
+            if (currentTrack) {
+                resume();
+            } else if (playlist.length > 0) {
+                playTrack(playlist[0]);
+            }
         }
-    }, [currentTrack?.id, isPlaying, pause, playTrack, resume]);
+    }, [currentTrack, isPlaying, pause, playTrack, playlist, resume]);
 
-    // Seek
-    const seek = useCallback((timeInSeconds: number) => {
-        if (audioRef.current) {
-            audioRef.current.currentTime = timeInSeconds;
-            setCurrentTime(timeInSeconds);
-        }
-    }, []);
-
-    // Stop
+    // Stop playback
     const stop = useCallback(() => {
         if (audioRef.current) {
             audioRef.current.pause();
@@ -192,9 +242,43 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         playTrack(playlist[prevIdx]);
     }, [playlist, currentTrack?.id, playTrack]);
 
+    // Smart Prev or Restart (if time > 3s restarts current track, else jumps to prev)
+    const prevTrackOrRestart = useCallback(() => {
+        if (currentTime > 3.0) {
+            seek(0);
+        } else {
+            prevTrack();
+        }
+    }, [currentTime, seek, prevTrack]);
+
     // Shuffle Toggle
     const toggleShuffle = useCallback(() => {
         setIsShuffle((prev) => !prev);
+    }, []);
+
+    // Queue Management Methods
+    const addToQueue = useCallback((track: Job) => {
+        setPlaylist((prev) => {
+            if (prev.some((p) => p.id === track.id)) return prev;
+            return [...prev, track];
+        });
+    }, []);
+
+    const removeFromQueue = useCallback((trackId: string) => {
+        setPlaylist((prev) => prev.filter((p) => p.id !== trackId));
+    }, []);
+
+    const clearQueue = useCallback(() => {
+        setPlaylist(currentTrack ? [currentTrack] : []);
+    }, [currentTrack]);
+
+    const reorderQueue = useCallback((fromIndex: number, toIndex: number) => {
+        setPlaylist((prev) => {
+            const copy = [...prev];
+            const [moved] = copy.splice(fromIndex, 1);
+            copy.splice(toIndex, 0, moved);
+            return copy;
+        });
     }, []);
 
     // Track ended handler
@@ -231,12 +315,98 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     }, []);
 
-    // Sync volume when changed
+    // OS MediaSession API Integration
     useEffect(() => {
-        if (audioRef.current) {
-            audioRef.current.volume = isMuted ? 0 : volume;
-        }
-    }, [volume, isMuted]);
+        if (!('mediaSession' in navigator) || !currentTrack) return;
+
+        const artworkUrl = currentTrack.cover_image_path
+            ? currentTrack.cover_image_path.startsWith('http')
+                ? currentTrack.cover_image_path
+                : `${API_BASE_URL}${currentTrack.cover_image_path}`
+            : `${window.location.origin}/milimo_logo.png`;
+
+        navigator.mediaSession.metadata = new MediaMetadata({
+            title: currentTrack.title || 'Milimo Track',
+            artist: currentTrack.prompt ? currentTrack.prompt.slice(0, 40) : 'Milimo Music AI',
+            album: 'Milimo Studio Productions',
+            artwork: [
+                { src: artworkUrl, sizes: '96x96', type: 'image/png' },
+                { src: artworkUrl, sizes: '256x256', type: 'image/png' },
+                { src: artworkUrl, sizes: '512x512', type: 'image/png' }
+            ]
+        });
+
+        navigator.mediaSession.playbackState = isPlaying ? 'playing' : 'paused';
+
+        navigator.mediaSession.setActionHandler('play', () => resume());
+        navigator.mediaSession.setActionHandler('pause', () => pause());
+        navigator.mediaSession.setActionHandler('previoustrack', () => prevTrackOrRestart());
+        navigator.mediaSession.setActionHandler('nexttrack', () => nextTrack());
+        navigator.mediaSession.setActionHandler('seekto', (details) => {
+            if (details.seekTime !== undefined) seek(details.seekTime);
+        });
+        navigator.mediaSession.setActionHandler('seekbackward', (details) => {
+            seek(Math.max(0, currentTime - (details.seekOffset || 10)));
+        });
+        navigator.mediaSession.setActionHandler('seekforward', (details) => {
+            seek(Math.min(duration, currentTime + (details.seekOffset || 10)));
+        });
+
+        return () => {
+            if ('mediaSession' in navigator) {
+                navigator.mediaSession.setActionHandler('play', null);
+                navigator.mediaSession.setActionHandler('pause', null);
+                navigator.mediaSession.setActionHandler('previoustrack', null);
+                navigator.mediaSession.setActionHandler('nexttrack', null);
+                navigator.mediaSession.setActionHandler('seekto', null);
+                navigator.mediaSession.setActionHandler('seekbackward', null);
+                navigator.mediaSession.setActionHandler('seekforward', null);
+            }
+        };
+    }, [currentTrack, isPlaying, currentTime, duration, resume, pause, prevTrackOrRestart, nextTrack, seek]);
+
+    // Global Keyboard Hotkeys Listener
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            // Ignore keystrokes when typing into text inputs, textarea, or content editable
+            const target = e.target as HTMLElement | null;
+            if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
+                return;
+            }
+
+            if (e.code === 'Space' || e.code === 'KeyK') {
+                e.preventDefault();
+                togglePlay();
+            } else if (e.code === 'ArrowLeft' || e.code === 'KeyJ') {
+                e.preventDefault();
+                seek(Math.max(0, currentTime - (e.shiftKey ? 10 : 5)));
+            } else if (e.code === 'ArrowRight' || e.code === 'KeyL') {
+                e.preventDefault();
+                seek(Math.min(duration, currentTime + (e.shiftKey ? 10 : 5)));
+            } else if (e.code === 'Home' || e.code === 'Digit0') {
+                e.preventDefault();
+                returnToStart();
+            } else if (e.code === 'BracketLeft') {
+                e.preventDefault();
+                prevTrackOrRestart();
+            } else if (e.code === 'BracketRight') {
+                e.preventDefault();
+                nextTrack();
+            } else if (e.code === 'ArrowUp') {
+                e.preventDefault();
+                setVolume(volume + 0.05);
+            } else if (e.code === 'ArrowDown') {
+                e.preventDefault();
+                setVolume(volume - 0.05);
+            } else if (e.code === 'KeyM') {
+                e.preventDefault();
+                toggleMute();
+            }
+        };
+
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [togglePlay, seek, currentTime, duration, returnToStart, prevTrackOrRestart, nextTrack, setVolume, volume, toggleMute]);
 
     return (
         <AudioEngineContext.Provider
@@ -251,11 +421,14 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 repeatMode,
                 isShuffle,
                 playlist,
+                analyserNode,
                 playTrack,
-                pause,
                 resume,
+                pause,
                 togglePlay,
                 seek,
+                returnToStart,
+                prevTrackOrRestart,
                 setVolume,
                 toggleMute,
                 setPlaybackRate,
@@ -264,12 +437,17 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 nextTrack,
                 prevTrack,
                 stop,
-                setPlaylist
+                setPlaylist,
+                addToQueue,
+                removeFromQueue,
+                clearQueue,
+                reorderQueue
             }}
         >
-            {/* Single Root Master Audio Node */}
+            {/* Single Root Master <audio> element */}
             <audio
                 ref={audioRef}
+                crossOrigin="anonymous"
                 onTimeUpdate={handleTimeUpdate}
                 onLoadedMetadata={handleLoadedMetadata}
                 onEnded={handleEnded}
@@ -280,10 +458,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     );
 };
 
-export const useAudioEngine = (): AudioEngineContextValue => {
-    const context = useContext(AudioEngineContext);
-    if (!context) {
+export const useAudioEngine = () => {
+    const ctx = useContext(AudioEngineContext);
+    if (!ctx) {
         throw new Error('useAudioEngine must be used within an AudioEngineProvider');
     }
-    return context;
+    return ctx;
 };

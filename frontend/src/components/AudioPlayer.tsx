@@ -17,7 +17,6 @@ import {
   Gauge
 } from 'lucide-react';
 import { GlassCard } from './ui/GlassCard';
-import { AudioVisualizer } from './ui/AudioVisualizer';
 import { InpaintModal } from './InpaintModal';
 
 interface AudioPlayerProps {
@@ -39,7 +38,6 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
   const wavesurfer = useRef<WaveSurfer | null>(null);
-  const [mediaEl, setMediaEl] = useState<HTMLMediaElement | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [duration, setDuration] = useState('0:00');
   const [currentTime, setCurrentTime] = useState('0:00');
@@ -103,11 +101,6 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
     wavesurfer.current.on('ready', () => {
       setDuration(formatTime(wavesurfer.current?.getDuration() || 0));
       wavesurfer.current?.setVolume(isMuted ? 0 : volume);
-
-      const media = wavesurfer.current?.getMediaElement();
-      if (media) {
-        setMediaEl(media);
-      }
     });
 
     wavesurfer.current.on('audioprocess', () => {
@@ -199,45 +192,43 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         </div>
       )}
 
-      {/* Waveform Area with Overlay Spectrum */}
+      {/* Waveform Area */}
       <div className="relative w-full rounded-2xl overflow-hidden bg-black/[0.03] dark:bg-white/[0.03] p-3 border border-black/[0.06] dark:border-white/10 shadow-inner">
         <div ref={containerRef} className="w-full cursor-pointer" />
-
-        {isPlaying && (
-          <div className="absolute inset-0 pointer-events-none mix-blend-screen opacity-50 flex items-center justify-center p-2">
-            <AudioVisualizer
-              mediaElement={mediaEl}
-              isPlaying={isPlaying}
-              className="w-full h-full"
-              mode="mirror"
-              accentGradient="cyberpunk"
-            />
-          </div>
-        )}
       </div>
 
       {/* Player Controls Strip */}
       <div className="flex flex-wrap items-center justify-between gap-3 pt-1">
-        <span className="text-xs font-mono font-semibold text-slate-500 dark:text-slate-400 w-12">
+        <span className="text-xs font-mono font-semibold text-slate-500 dark:text-slate-400 w-12 flex-shrink-0">
           {currentTime}
         </span>
 
         {/* Center Transport Buttons */}
-        <div className="flex items-center gap-1.5 sm:gap-2">
-          {onPrev && (
-            <button
-              onClick={onPrev}
-              className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-slate-600 dark:text-slate-400"
-              title="Previous Track"
-            >
-              <SkipBack className="w-4 h-4" />
-            </button>
-          )}
+        <div className="flex items-center gap-1 sm:gap-1.5 flex-shrink-0">
+          {/* Return to Start / Zero */}
+          <button
+            onClick={() => {
+              if (wavesurfer.current) {
+                const cur = wavesurfer.current.getCurrentTime();
+                if (cur > 3 || !onPrev) {
+                  wavesurfer.current.setTime(0);
+                } else {
+                  onPrev();
+                }
+              } else if (onPrev) {
+                onPrev();
+              }
+            }}
+            className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-slate-600 dark:text-slate-400 flex-shrink-0"
+            title="Return to Start / Previous (|<<)"
+          >
+            <SkipBack className="w-4 h-4" />
+          </button>
 
           {/* Rewind 10s */}
           <button
             onClick={handleRewind10}
-            className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-slate-600 dark:text-slate-400"
+            className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-slate-600 dark:text-slate-400 flex-shrink-0"
             title="Rewind 10 seconds"
           >
             <RotateCcw className="w-4 h-4" />
@@ -246,7 +237,8 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
           {/* Glowing Play/Pause */}
           <button
             onClick={togglePlay}
-            className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-teal-500 via-cyan-400 to-sky-500 hover:from-teal-400 hover:to-cyan-300 text-slate-950 shadow-md shadow-teal-500/25 hover:scale-105 transition-transform active:scale-95 flex items-center justify-center font-bold"
+            className="w-10 h-10 rounded-2xl bg-gradient-to-tr from-teal-500 via-cyan-400 to-sky-500 hover:from-teal-400 hover:to-cyan-300 text-slate-950 shadow-md shadow-teal-500/25 hover:scale-105 transition-transform active:scale-95 flex items-center justify-center font-bold flex-shrink-0"
+            title={isPlaying ? "Pause" : "Play"}
           >
             {isPlaying ? (
               <Pause className="w-4 h-4" />
@@ -258,7 +250,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
           {/* Advance 10s */}
           <button
             onClick={handleAdvance10}
-            className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-slate-600 dark:text-slate-400"
+            className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-slate-600 dark:text-slate-400 flex-shrink-0"
             title="Advance 10 seconds"
           >
             <RotateCw className="w-4 h-4" />
@@ -267,7 +259,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
           {onNext && (
             <button
               onClick={onNext}
-              className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-slate-600 dark:text-slate-400"
+              className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors text-slate-600 dark:text-slate-400 flex-shrink-0"
               title="Next Track"
             >
               <SkipForward className="w-4 h-4" />
@@ -276,7 +268,7 @@ export const AudioPlayer: React.FC<AudioPlayerProps> = ({
         </div>
 
         {/* Right Tools (Speed, Loop, Volume, Inpaint, Download) */}
-        <div className="flex items-center gap-2">
+        <div className="flex items-center gap-2 flex-shrink-0">
           {/* Speed Selector */}
           <div className="relative">
             <button

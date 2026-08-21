@@ -29,7 +29,15 @@ import {
     Cpu,
     FileCode,
     Volume2,
-    VolumeX
+    VolumeX,
+    RotateCcw,
+    RotateCw,
+    SkipBack,
+    SkipForward,
+    Shuffle,
+    Repeat,
+    Repeat1,
+    Gauge
 } from 'lucide-react';
 
 interface TrackDetailViewProps {
@@ -68,10 +76,20 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
         togglePlay: engineTogglePlay,
         playTrack: enginePlayTrack,
         seek: engineSeek,
+        prevTrackOrRestart: enginePrevTrackOrRestart,
+        nextTrack: engineNextTrack,
+        isShuffle: engineIsShuffle,
+        toggleShuffle: engineToggleShuffle,
+        repeatMode: engineRepeatMode,
+        setRepeatMode: engineSetRepeatMode,
+        playbackRate: enginePlaybackRate,
+        setPlaybackRate: engineSetPlaybackRate,
         setVolume: engineSetVolume,
         toggleMute: engineToggleMute
     } = useAudioEngine();
 
+    const [timeMode, setTimeMode] = useState<'elapsed' | 'remaining'>('elapsed');
+    const [isSpeedOpen, setIsSpeedOpen] = useState(false);
     const [track, setTrack] = useState<Job>(initialTrack);
     const [activeTab, setActiveTab] = useState<'stems' | 'score' | 'lyrics' | 'provenance' | 'lineage'>('stems');
     const [isEditingTitle, setIsEditingTitle] = useState(false);
@@ -414,21 +432,119 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                     </div>
                 </div>
 
-                {/* Master Audio Waveform & Transport Scrubber */}
-                <div className="pt-4 border-t border-black/[0.06] dark:border-white/10 space-y-2">
-                    <div className="flex items-center justify-between text-xs font-mono">
-                        <div className="flex items-center gap-2">
-                            <span className="font-bold text-teal-600 dark:text-teal-400">
-                                {formatTime(currentTime)}
-                            </span>
-                            <span className="text-slate-400">/</span>
-                            <span className="text-slate-500 dark:text-slate-400">
-                                {formatTime(duration || (track.duration_ms || 60000) / 1000)}
-                            </span>
+                {/* Master Audio Waveform & Transport Controls */}
+                <div className="pt-4 border-t border-black/[0.06] dark:border-white/10 space-y-3">
+                    <div className="flex flex-wrap items-center justify-between gap-3 text-xs font-mono">
+                        {/* Transport Buttons & Timecode */}
+                        <div className="flex items-center space-x-1 sm:space-x-1.5 flex-shrink-0">
+                            {/* Shuffle */}
+                            <button
+                                onClick={engineToggleShuffle}
+                                className={`p-1.5 rounded-xl transition-colors hidden sm:block ${
+                                    engineIsShuffle
+                                        ? 'text-teal-600 dark:text-teal-400 bg-teal-500/10'
+                                        : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                                }`}
+                                title={`Shuffle: ${engineIsShuffle ? 'On' : 'Off'}`}
+                            >
+                                <Shuffle size={14} />
+                            </button>
+
+                            {/* Return to Start / Previous Track Button */}
+                            <button
+                                onClick={() => {
+                                    if (engineTrack?.id === track.id) {
+                                        enginePrevTrackOrRestart();
+                                    } else {
+                                        enginePlayTrack(track);
+                                    }
+                                }}
+                                className="p-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                                title="Return to Start / Previous Track (|<<)"
+                            >
+                                <SkipBack size={15} />
+                            </button>
+
+                            {/* Rewind 10s */}
+                            <button
+                                onClick={() => {
+                                    if (engineTrack?.id === track.id) {
+                                        engineSeek(Math.max(0, currentTime - 10));
+                                    }
+                                }}
+                                className="p-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                                title="Rewind 10s (J)"
+                            >
+                                <RotateCcw size={14} />
+                            </button>
+
+                            {/* Play/Pause Hero Button */}
+                            <button
+                                onClick={handleToggleMasterPlay}
+                                className="w-8 h-8 sm:w-9 sm:h-9 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold flex items-center justify-center shadow-sm shadow-teal-500/20 active:scale-95 transition-transform"
+                                title={isCurrentPlaying ? 'Pause Master (Space / K)' : 'Play Master (Space / K)'}
+                            >
+                                {isCurrentPlaying ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
+                            </button>
+
+                            {/* Advance 10s */}
+                            <button
+                                onClick={() => {
+                                    if (engineTrack?.id === track.id) {
+                                        engineSeek(Math.min(duration, currentTime + 10));
+                                    }
+                                }}
+                                className="p-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                                title="Advance 10s (L)"
+                            >
+                                <RotateCw size={14} />
+                            </button>
+
+                            {/* Next Track */}
+                            <button
+                                onClick={engineNextTrack}
+                                className="p-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                                title="Next Track (>>|)"
+                            >
+                                <SkipForward size={15} />
+                            </button>
+
+                            {/* Repeat / Loop */}
+                            <button
+                                onClick={() => {
+                                    const next = engineRepeatMode === 'off' ? 'all' : engineRepeatMode === 'all' ? 'one' : 'off';
+                                    engineSetRepeatMode(next);
+                                }}
+                                className={`p-1.5 rounded-xl transition-colors hidden sm:block ${
+                                    engineRepeatMode !== 'off'
+                                        ? 'text-teal-600 dark:text-teal-400 bg-teal-500/10'
+                                        : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                                }`}
+                                title={`Repeat Mode: ${engineRepeatMode}`}
+                            >
+                                {engineRepeatMode === 'one' ? <Repeat1 size={14} /> : <Repeat size={14} />}
+                            </button>
+
+                            {/* Timecode Toggle */}
+                            <button
+                                onClick={() => setTimeMode(timeMode === 'elapsed' ? 'remaining' : 'elapsed')}
+                                className="flex items-center gap-1.5 pl-2 select-none hover:opacity-80 transition-opacity"
+                                title="Toggle Elapsed / Remaining Time"
+                            >
+                                <span className="font-bold text-teal-600 dark:text-teal-400">
+                                    {timeMode === 'elapsed'
+                                        ? formatTime(currentTime)
+                                        : `-${formatTime(Math.max(0, duration - currentTime))}`}
+                                </span>
+                                <span className="text-slate-400">/</span>
+                                <span className="text-slate-500 dark:text-slate-400">
+                                    {formatTime(duration || (track.duration_ms || 60000) / 1000)}
+                                </span>
+                            </button>
                         </div>
 
                         {/* Animated Equalizer Waves */}
-                        <div className="flex items-center gap-0.5 h-4 px-2">
+                        <div className="hidden lg:flex items-center gap-0.5 h-4 px-2">
                             {Array.from({ length: 16 }).map((_, i) => (
                                 <div
                                     key={i}
@@ -444,8 +560,42 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                             ))}
                         </div>
 
-                        {/* Volume Slider */}
-                        <div className="flex items-center gap-2">
+                        {/* Right Controls: Speed & Volume Slider */}
+                        <div className="flex items-center gap-2 flex-shrink-0">
+                            {/* Speed Selector */}
+                            <div className="relative">
+                                <button
+                                    onClick={() => setIsSpeedOpen(!isSpeedOpen)}
+                                    className="px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-[10px] font-mono font-bold text-slate-700 dark:text-slate-300 flex items-center gap-1 transition-colors"
+                                    title="Playback Speed"
+                                >
+                                    <Gauge size={11} className="text-teal-500" />
+                                    <span>{enginePlaybackRate}x</span>
+                                </button>
+
+                                {isSpeedOpen && (
+                                    <div className="absolute bottom-full mb-2 right-0 bg-white dark:bg-[#181a24] border border-black/[0.08] dark:border-white/10 rounded-xl shadow-apple-lg p-1 space-y-1 z-50 animate-fade-in">
+                                        {[0.75, 1.0, 1.25, 1.5, 2.0].map((s) => (
+                                            <button
+                                                key={s}
+                                                onClick={() => {
+                                                    engineSetPlaybackRate(s);
+                                                    setIsSpeedOpen(false);
+                                                }}
+                                                className={`w-full px-3 py-1 text-left text-xs font-mono rounded-lg transition-colors ${
+                                                    enginePlaybackRate === s
+                                                        ? 'bg-teal-500/15 text-teal-700 dark:text-teal-300 font-bold'
+                                                        : 'text-slate-600 dark:text-slate-400 hover:bg-black/5 dark:hover:bg-white/5'
+                                                }`}
+                                            >
+                                                {s}x
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            {/* Volume */}
                             <button
                                 onClick={engineToggleMute}
                                 className="text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"

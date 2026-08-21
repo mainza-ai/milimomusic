@@ -192,6 +192,39 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
         try { return JSON.parse(track.structured_caption_json); } catch { return {}; }
     })() : {};
 
+    const [isRealigningLyrics, setIsRealigningLyrics] = useState(false);
+    const [lyricsDisplayMode, setLyricsDisplayMode] = useState<'karaoke' | 'raw'>('karaoke');
+
+    const activeLineIndex = (() => {
+        if (timedLyrics.length === 0) return -1;
+        for (let i = 0; i < timedLyrics.length; i++) {
+            const line = timedLyrics[i];
+            const nextLine = timedLyrics[i + 1];
+            const lineStart = line.start;
+            const lineEnd = nextLine ? nextLine.start : (line.end || line.start + 6);
+            if (currentTime >= lineStart && currentTime < lineEnd) {
+                return i;
+            }
+        }
+        if (currentTime >= timedLyrics[timedLyrics.length - 1].start) {
+            return timedLyrics.length - 1;
+        }
+        return -1;
+    })();
+
+    const handleRealignLyrics = async () => {
+        setIsRealigningLyrics(true);
+        try {
+            const res = await trackApi.realignLyrics(track.id, track.lyrics);
+            setTrack(res.job);
+            onTrackUpdated?.(res.job);
+        } catch (e: any) {
+            console.error('Failed to realign lyrics', e);
+        } finally {
+            setIsRealigningLyrics(false);
+        }
+    };
+
     const handleSaveTitle = async () => {
         if (!titleInput.trim()) return;
         try {
@@ -921,27 +954,142 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                     <div className="space-y-4 animate-fade-in">
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                             {/* Karaoke / Lyrics Viewer */}
-                            <div className="lg:col-span-2 p-5 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/10 shadow-apple-sm space-y-3">
-                                <div className="flex items-center justify-between pb-2 border-b border-black/[0.04] dark:border-white/5">
-                                    <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
-                                        <Mic size={14} className="text-teal-500" />
-                                        <span>Timed Karaoke Lyrics</span>
-                                    </h4>
-                                    <button
-                                        onClick={handleCopyLyrics}
-                                        className="text-[11px] font-bold text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
-                                    >
-                                        {copiedLyrics ? <Check size={12} /> : <Copy size={12} />}
-                                        <span>{copiedLyrics ? 'Copied' : 'Copy Plaintext'}</span>
-                                    </button>
+                            <div className="lg:col-span-2 p-5 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/10 shadow-apple-sm space-y-4">
+                                <div className="flex flex-wrap items-center justify-between gap-2 pb-3 border-b border-black/[0.04] dark:border-white/5">
+                                    <div className="flex items-center gap-2">
+                                        <Mic size={16} className="text-teal-500" />
+                                        <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
+                                            Synchronized Karaoke & Lyrics
+                                        </h4>
+                                        {timedLyrics.length > 0 && (
+                                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 font-semibold border border-teal-500/20">
+                                                Acoustic Timed
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    <div className="flex items-center gap-2">
+                                        {/* View Mode Toggle */}
+                                        {timedLyrics.length > 0 && (
+                                            <div className="flex items-center bg-black/[0.04] dark:bg-white/5 p-0.5 rounded-lg text-[10px] font-bold">
+                                                <button
+                                                    onClick={() => setLyricsDisplayMode('karaoke')}
+                                                    className={`px-2 py-1 rounded-md transition-all ${
+                                                        lyricsDisplayMode === 'karaoke'
+                                                            ? 'bg-white dark:bg-white/20 text-teal-700 dark:text-teal-300 shadow-sm'
+                                                            : 'text-slate-400'
+                                                    }`}
+                                                >
+                                                    Karaoke
+                                                </button>
+                                                <button
+                                                    onClick={() => setLyricsDisplayMode('raw')}
+                                                    className={`px-2 py-1 rounded-md transition-all ${
+                                                        lyricsDisplayMode === 'raw'
+                                                            ? 'bg-white dark:bg-white/20 text-teal-700 dark:text-teal-300 shadow-sm'
+                                                            : 'text-slate-400'
+                                                    }`}
+                                                >
+                                                    Text
+                                                </button>
+                                            </div>
+                                        )}
+
+                                        {/* Realign Acoustics Button */}
+                                        <button
+                                            onClick={handleRealignLyrics}
+                                            disabled={isRealigningLyrics || !track.lyrics}
+                                            className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-teal-500/10 text-slate-600 dark:text-slate-300 hover:text-teal-600 dark:hover:text-teal-400 text-xs font-semibold rounded-xl flex items-center gap-1 transition-all disabled:opacity-40"
+                                            title="Recompute acoustic forced alignment on vocal stem"
+                                        >
+                                            <RefreshCw size={12} className={isRealigningLyrics ? 'animate-spin text-teal-500' : ''} />
+                                            <span>{isRealigningLyrics ? 'Aligning...' : 'Re-Align'}</span>
+                                        </button>
+
+                                        {/* Download LRC */}
+                                        <a
+                                            href={`${API_BASE_URL}/tracks/${track.id}/lrc`}
+                                            download={`${track.title || 'lyrics'}.lrc`}
+                                            className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-xl flex items-center gap-1 transition-all"
+                                            title="Download Synchronized LRC File"
+                                        >
+                                            <FileText size={12} className="text-teal-500" />
+                                            <span>.LRC</span>
+                                        </a>
+
+                                        {/* Copy Text */}
+                                        <button
+                                            onClick={handleCopyLyrics}
+                                            className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-xl flex items-center gap-1 transition-all"
+                                        >
+                                            {copiedLyrics ? <Check size={12} className="text-teal-500" /> : <Copy size={12} />}
+                                            <span>{copiedLyrics ? 'Copied' : 'Copy'}</span>
+                                        </button>
+                                    </div>
                                 </div>
 
-                                {track.lyrics ? (
-                                    <div className="font-mono text-xs leading-loose whitespace-pre-wrap max-h-72 overflow-y-auto p-3 rounded-xl bg-black/[0.02] dark:bg-white/[0.02] border border-black/[0.04] dark:border-white/5">
+                                {timedLyrics.length > 0 && lyricsDisplayMode === 'karaoke' ? (
+                                    <div className="space-y-3 max-h-80 overflow-y-auto pr-2 custom-scrollbar text-center py-2">
+                                        {timedLyrics.map((line: any, idx: number) => {
+                                            const isActive = idx === activeLineIndex;
+                                            const isSection = line.is_section || (line.text.startsWith('[') && line.text.endsWith(']'));
+
+                                            if (isSection) {
+                                                return (
+                                                    <div key={idx} className="py-2">
+                                                        <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-teal-600 dark:text-teal-400 bg-teal-500/10 px-3 py-1 rounded-full border border-teal-500/20">
+                                                            {line.text}
+                                                        </span>
+                                                    </div>
+                                                );
+                                            }
+
+                                            return (
+                                                <div
+                                                    key={idx}
+                                                    onClick={() => engineSeek(line.start)}
+                                                    className={`cursor-pointer transition-all duration-300 px-4 py-2 rounded-2xl ${
+                                                        isActive
+                                                            ? 'bg-teal-500/15 dark:bg-teal-500/20 text-teal-900 dark:text-teal-200 font-black text-base sm:text-lg scale-[1.01] shadow-apple-sm'
+                                                            : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-sm font-medium'
+                                                    }`}
+                                                >
+                                                    {isActive && line.words && line.words.length > 0 ? (
+                                                        <span className="inline-flex flex-wrap justify-center gap-1.5">
+                                                            {line.words.map((w: any, wIdx: number) => {
+                                                                const isWordSung = currentTime >= w.start;
+                                                                return (
+                                                                    <span
+                                                                        key={wIdx}
+                                                                        className={`transition-colors duration-150 ${
+                                                                            isWordSung
+                                                                                ? 'text-teal-700 dark:text-teal-300 font-black'
+                                                                                : 'text-slate-400 dark:text-slate-500 opacity-60'
+                                                                        }`}
+                                                                    >
+                                                                        {w.word}
+                                                                    </span>
+                                                                );
+                                                            })}
+                                                        </span>
+                                                    ) : (
+                                                        <span>{line.text}</span>
+                                                    )}
+                                                    {isActive && (
+                                                        <span className="text-[10px] font-mono block opacity-60 mt-0.5">
+                                                            {formatTime(line.start)}
+                                                        </span>
+                                                    )}
+                                                </div>
+                                            );
+                                        })}
+                                    </div>
+                                ) : track.lyrics ? (
+                                    <div className="font-mono text-xs leading-loose whitespace-pre-wrap max-h-80 overflow-y-auto p-4 rounded-2xl bg-black/[0.02] dark:bg-white/[0.02] border border-black/[0.04] dark:border-white/5">
                                         {track.lyrics}
                                     </div>
                                 ) : (
-                                    <div className="text-center py-10 text-slate-400 text-xs">
+                                    <div className="text-center py-12 text-slate-400 text-xs">
                                         Instrumental Track (No vocal lyrics generated)
                                     </div>
                                 )}

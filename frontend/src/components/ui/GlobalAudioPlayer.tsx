@@ -22,7 +22,8 @@ import {
   Copy,
   Check,
   ListMusic,
-  Trash2
+  Trash2,
+  FileText
 } from 'lucide-react';
 
 interface GlobalAudioPlayerProps {
@@ -77,9 +78,23 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
 
   const rawLyrics = currentSong?.lyrics || '';
 
-  const activeLineIndex = timedLyrics.findIndex(
-    (l) => currentTime >= l.start && currentTime <= l.end
-  );
+  // Continuous Active Line finder with proximity smoothing
+  const activeLineIndex = (() => {
+    if (timedLyrics.length === 0) return -1;
+    for (let i = 0; i < timedLyrics.length; i++) {
+      const line = timedLyrics[i];
+      const nextLine = timedLyrics[i + 1];
+      const lineStart = line.start;
+      const lineEnd = nextLine ? nextLine.start : (line.end || line.start + 6);
+      if (currentTime >= lineStart && currentTime < lineEnd) {
+        return i;
+      }
+    }
+    if (currentTime >= timedLyrics[timedLyrics.length - 1].start) {
+      return timedLyrics.length - 1;
+    }
+    return -1;
+  })();
 
   // Auto-scroll active lyric line into center view
   useEffect(() => {
@@ -298,6 +313,17 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
             </div>
 
             <div className="flex items-center space-x-2">
+              {currentSong && (
+                <a
+                  href={`${API_BASE_URL}/tracks/${currentSong.id}/lrc`}
+                  download={`${currentSong.title || 'lyrics'}.lrc`}
+                  className="px-2.5 py-1 rounded-xl text-xs font-mono text-slate-600 dark:text-slate-300 hover:bg-black/5 dark:hover:bg-white/10 flex items-center gap-1 transition-colors"
+                  title="Download Synchronized LRC File"
+                >
+                  <FileText size={12} className="text-teal-500" />
+                  <span>.LRC</span>
+                </a>
+              )}
               {rawLyrics && (
                 <button
                   onClick={handleCopyLyrics}
@@ -325,18 +351,50 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
             {timedLyrics.length > 0 ? (
               timedLyrics.map((line, idx) => {
                 const isActive = idx === activeLineIndex;
+                const isSection = (line as any).is_section || (line.text.startsWith('[') && line.text.endsWith(']'));
+
+                if (isSection) {
+                  return (
+                    <div key={idx} className="py-2">
+                      <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-teal-600 dark:text-teal-400 bg-teal-500/10 px-3 py-1 rounded-full border border-teal-500/20">
+                        {line.text}
+                      </span>
+                    </div>
+                  );
+                }
+
                 return (
                   <div
                     key={idx}
                     data-line-idx={idx}
                     onClick={() => handleSeekToTime(line.start)}
-                    className={`cursor-pointer transition-all duration-300 px-4 py-1.5 rounded-2xl ${
+                    className={`cursor-pointer transition-all duration-300 px-4 py-2 rounded-2xl ${
                       isActive
-                        ? 'text-teal-600 dark:text-teal-400 font-extrabold text-base sm:text-lg scale-105 bg-teal-500/10 shadow-sm'
+                        ? 'text-teal-600 dark:text-teal-300 font-extrabold text-base sm:text-lg scale-105 bg-teal-500/10 shadow-sm'
                         : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-sm'
                     }`}
                   >
-                    <span>{line.text}</span>
+                    {isActive && line.words && line.words.length > 0 ? (
+                      <span className="inline-flex flex-wrap justify-center gap-1.5">
+                        {line.words.map((w, wIdx) => {
+                          const isWordSung = currentTime >= w.start;
+                          return (
+                            <span
+                              key={wIdx}
+                              className={`transition-colors duration-150 ${
+                                isWordSung
+                                  ? 'text-teal-600 dark:text-teal-300 font-black drop-shadow-sm'
+                                  : 'text-slate-400 dark:text-slate-500 opacity-60'
+                              }`}
+                            >
+                              {w.word}
+                            </span>
+                          );
+                        })}
+                      </span>
+                    ) : (
+                      <span>{line.text}</span>
+                    )}
                     {isActive && (
                       <span className="text-[10px] font-mono block opacity-60 mt-0.5">
                         {formatTime(line.start)}

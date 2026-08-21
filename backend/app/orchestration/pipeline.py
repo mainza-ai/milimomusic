@@ -208,8 +208,21 @@ class GenerateAndTranscribePipeline:
                 })
             )
 
-            # Generate Lyric Sync / Karaoke
-            timed_lyrics = lyric_sync_engine.align_lyrics(req.lyrics or "", gen_result.duration_sec)
+            # Generate Acoustic Lyric Sync / Karaoke
+            effective_lyrics = ""
+            with Session(engine) as session:
+                j = session.get(Job, job_id)
+                if j and j.lyrics:
+                    effective_lyrics = j.lyrics
+            if not effective_lyrics:
+                effective_lyrics = req.lyrics or ""
+
+            vocal_stem_candidate = final_vocal_path or real_stems.get("vocals", "") or local_master
+            timed_lyrics = lyric_sync_engine.align_lyrics(
+                lyrics=effective_lyrics,
+                duration_sec=gen_result.duration_sec,
+                vocal_stem_path=vocal_stem_candidate
+            )
 
             # Dual-engine stems: real Demucs 4-master stems (neural separation
             # of the actual audio) AND optional MuScriptor-derived per-instrument

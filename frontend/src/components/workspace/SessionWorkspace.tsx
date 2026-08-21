@@ -214,6 +214,23 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             : job.timed_lyrics_json
         : [];
 
+    const activeLineIndex = (() => {
+        if (timedLyrics.length === 0) return -1;
+        for (let i = 0; i < timedLyrics.length; i++) {
+            const line = timedLyrics[i];
+            const nextLine = timedLyrics[i + 1];
+            const lineStart = line.start;
+            const lineEnd = nextLine ? nextLine.start : (line.end || line.start + 6);
+            if (currentTime >= lineStart && currentTime < lineEnd) {
+                return i;
+            }
+        }
+        if (currentTime >= timedLyrics[timedLyrics.length - 1].start) {
+            return timedLyrics.length - 1;
+        }
+        return -1;
+    })();
+
     const notes: NoteEvent[] = job.notes_json
         ? typeof job.notes_json === 'string'
             ? JSON.parse(job.notes_json)
@@ -770,23 +787,21 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                         </div>
 
                         {/* Synchronized Karaoke Lyrics Stream */}
-                        {timedLyrics.length > 0 && (
-                            <div className="h-24 w-full max-w-xl bg-white/70 dark:bg-[#12141c]/70 border border-black/[0.06] dark:border-white/10 rounded-2xl p-4 flex flex-col items-center justify-center text-center space-y-1 overflow-hidden shadow-apple-sm backdrop-blur-xl">
-                                {timedLyrics.map((line, idx) => {
-                                    const isCurrent = currentTime >= line.start && currentTime <= line.end;
-                                    return (
-                                        <p
-                                            key={idx}
-                                            className={`text-xs transition-all duration-300 font-mono ${
-                                                isCurrent
-                                                    ? 'text-teal-600 dark:text-teal-300 font-bold text-sm scale-105'
-                                                    : 'text-slate-400 dark:text-slate-500 opacity-60'
-                                            }`}
-                                        >
-                                            {line.text}
-                                        </p>
-                                    );
-                                })}
+                        {timedLyrics.length > 0 && activeLineIndex !== -1 && (
+                            <div className="h-20 w-full max-w-xl bg-white/70 dark:bg-[#12141c]/70 border border-black/[0.06] dark:border-white/10 rounded-2xl p-3 flex flex-col items-center justify-center text-center space-y-0.5 overflow-hidden shadow-apple-sm backdrop-blur-xl">
+                                {activeLineIndex > 0 && (
+                                    <p className="text-[11px] font-mono text-slate-400 dark:text-slate-500 opacity-50 truncate max-w-md">
+                                        {timedLyrics[activeLineIndex - 1]?.text}
+                                    </p>
+                                )}
+                                <p className="text-xs sm:text-sm font-bold text-teal-600 dark:text-teal-300 font-mono scale-105 transition-all duration-200">
+                                    {timedLyrics[activeLineIndex]?.text}
+                                </p>
+                                {activeLineIndex < timedLyrics.length - 1 && (
+                                    <p className="text-[11px] font-mono text-slate-400 dark:text-slate-500 opacity-50 truncate max-w-md">
+                                        {timedLyrics[activeLineIndex + 1]?.text}
+                                    </p>
+                                )}
                             </div>
                         )}
                     </div>
@@ -850,27 +865,38 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                                 </p>
                             </div>
 
-                            {job.lyrics && (
-                                <button
-                                    onClick={() => {
-                                        navigator.clipboard.writeText(job.lyrics || '');
-                                        alert("Lyrics copied to clipboard!");
-                                    }}
-                                    className="px-3 py-1.5 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/20 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                            <div className="flex items-center gap-2">
+                                <a
+                                    href={`${API_BASE_URL}/tracks/${job.id}/lrc`}
+                                    download={`${job.title || 'lyrics'}.lrc`}
+                                    className="px-3 py-1.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-1.5 transition-colors"
                                 >
-                                    <Copy size={13} />
-                                    <span>Copy Text</span>
-                                </button>
-                            )}
+                                    <FileText size={13} className="text-teal-500" />
+                                    <span>Download .LRC</span>
+                                </a>
+
+                                {job.lyrics && (
+                                    <button
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(job.lyrics || '');
+                                            alert("Lyrics copied to clipboard!");
+                                        }}
+                                        className="px-3 py-1.5 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/20 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                                    >
+                                        <Copy size={13} />
+                                        <span>Copy Text</span>
+                                    </button>
+                                )}
+                            </div>
                         </div>
 
                         {/* Lyrics Container */}
                         <div className="flex-1 overflow-y-auto pr-2 space-y-4 font-sans select-text">
                             {timedLyrics.length > 0 ? (
                                 timedLyrics.map((line, idx) => {
-                                    const isCurrent = currentTime >= line.start && currentTime <= line.end;
-                                    const isPast = currentTime > line.end;
-                                    const isSection = line.text.startsWith('[') && line.text.endsWith(']');
+                                    const isCurrent = idx === activeLineIndex;
+                                    const isPast = idx < activeLineIndex;
+                                    const isSection = (line as any).is_section || (line.text.startsWith('[') && line.text.endsWith(']'));
 
                                     if (isSection) {
                                         return (
@@ -895,7 +921,27 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                                             }`}
                                         >
                                             <div className="flex items-center justify-between gap-4">
-                                                <span>{line.text}</span>
+                                                {isCurrent && line.words && line.words.length > 0 ? (
+                                                    <span className="inline-flex flex-wrap gap-1.5">
+                                                        {line.words.map((w: any, wIdx: number) => {
+                                                            const isWordSung = currentTime >= w.start;
+                                                            return (
+                                                                <span
+                                                                    key={wIdx}
+                                                                    className={`transition-colors duration-150 ${
+                                                                        isWordSung
+                                                                            ? 'text-teal-800 dark:text-teal-200 font-black'
+                                                                            : 'text-slate-400 dark:text-slate-500 opacity-60'
+                                                                    }`}
+                                                                >
+                                                                    {w.word}
+                                                                </span>
+                                                            );
+                                                        })}
+                                                    </span>
+                                                ) : (
+                                                    <span>{line.text}</span>
+                                                )}
                                                 <span className="text-xs font-mono text-slate-400 opacity-60">
                                                     {formatTime(line.start)}
                                                 </span>

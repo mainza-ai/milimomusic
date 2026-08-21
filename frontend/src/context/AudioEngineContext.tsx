@@ -301,7 +301,23 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     }, [repeatMode, nextTrack, playlist, currentTrack?.id]);
 
-    // Time update handler
+    // High-precision 60fps Playhead tracking for smooth karaoke & visualizer sync
+    useEffect(() => {
+        if (!isPlaying) return;
+
+        let animFrameId: number;
+        const tick = () => {
+            if (audioRef.current && !audioRef.current.paused) {
+                setCurrentTime(audioRef.current.currentTime);
+            }
+            animFrameId = requestAnimationFrame(tick);
+        };
+
+        animFrameId = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(animFrameId);
+    }, [isPlaying]);
+
+    // Time update handler (heartbeat fallback)
     const handleTimeUpdate = useCallback(() => {
         if (audioRef.current) {
             setCurrentTime(audioRef.current.currentTime);

@@ -483,6 +483,70 @@ async def update_track_midi(job_id: str, notes: List[Dict[str, Any]] = Body(...)
         return {"status": "saved", "job": job}
 
 
+@app.get("/tracks/{job_id}/lrc")
+def get_track_lrc(job_id: str):
+    """Generate and download standard .lrc synchronized lyrics for a track."""
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+
+        timed_lines = []
+        if job.timed_lyrics_json:
+            try:
+                timed_lines = json.loads(job.timed_lyrics_json)
+            except Exception:
+                timed_lines = []
+
+        if not timed_lines and job.lyrics:
+            timed_lines = lyric_sync_engine.align_lyrics(job.lyrics, duration_sec=180.0)
+
+        title = job.title or job.prompt or "Milimo Track"
+        lrc_text = lyric_sync_engine.generate_lrc(timed_lines, title=title)
+        return Response(
+            content=lrc_text,
+            media_type="text/plain",
+            headers={"Content-Disposition": f'attachment; filename="{title}.lrc"'}
+        )
+
+
+@app.post("/tracks/{job_id}/realign_lyrics")
+def realign_track_lyrics(job_id: str, lyrics: Optional[str] = Body(None, embed=True)):
+    """Recompute neural acoustic lyric timestamps on-demand for a track."""
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+
+        if lyrics is not None:
+            job.lyrics = lyrics
+
+        eff_lyrics = job.lyrics or job.prompt or ""
+        stems_dict = json.loads(job.stems_json) if job.stems_json else {}
+        vocal_path = stems_dict.get("vocals") or job.audio_path
+
+        duration_sec = 180.0
+        local_audio = (job.audio_path or "").replace("/audio/", "generated_audio/", 1)
+        if local_audio and os.path.exists(local_audio):
+            try:
+                import soundfile as sf
+                info = sf.info(local_audio)
+                duration_sec = float(info.duration)
+            except Exception:
+                pass
+
+        timed = lyric_sync_engine.align_lyrics(
+            lyrics=eff_lyrics,
+            duration_sec=duration_sec,
+            vocal_stem_path=vocal_path
+        )
+        job.timed_lyrics_json = json.dumps(timed)
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        return {"status": "realigned", "timed_lyrics": timed, "job": job}
+
+
 @app.post("/workspace/{job_id}/notes")
 def save_workspace_notes(job_id: UUID, notes: List[Dict[str, Any]] = Body(...)):
     """Save edited note events from the Piano Roll editor."""

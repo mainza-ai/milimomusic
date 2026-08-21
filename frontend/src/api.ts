@@ -765,5 +765,12 @@ export const trackApi = {
     updateMidiNotes: async (jobId: string, notes: NoteEvent[]): Promise<{ status: string; job: Job }> => {
         const res = await axios.post(`${API_BASE_URL}/tracks/${jobId}/midi`, notes);
         return res.data;
+    },
+    getLrcUrl: (jobId: string): string => {
+        return `${API_BASE_URL}/tracks/${jobId}/lrc`;
+    },
+    realignLyrics: async (jobId: string, lyrics?: string): Promise<{ status: string; timed_lyrics: any[]; job: Job }> => {
+        const res = await axios.post(`${API_BASE_URL}/tracks/${jobId}/realign_lyrics`, { lyrics });
+        return res.data;
     }
 };

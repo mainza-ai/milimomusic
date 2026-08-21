@@ -507,8 +507,24 @@ Executed comprehensive UX/UI cosmetic enhancements aligning the application with
 3. **Music Videos "In Development" Status (`MusicVideosView.tsx`, `App.tsx`)**:
    - Added an amber/teal `In Development` status badge in the header and sidebar navigation.
    - Added an informational notice detailing the upcoming text-to-video / audio-reactive diffusion pipeline (Wan2.1 / CogVideoX).
-4. **Global Creator Attribution (`AppFooter.tsx`)**:
-   - Created `AppFooter.tsx` stating `"Milimo Music · Created by Mainza Kangombe"` and embedded it across all primary views (`Explore`, `Songs`, `Playlists`, `Projects`, `Profile`, `Music Videos`).
+## [2026-08-21] create | Neural Acoustic Lyrics & Karaoke Synchronization
+Implemented end-to-end neural acoustic lyric alignment on the backend and 60fps high-precision playhead tracking on the frontend:
+1. **Neural Acoustic LyricSyncEngine (`backend/app/transcription/karaoke.py`)**:
+   - Replaced naive linear duration slicing with RMS vocal energy envelope extraction on isolated vocal stems (`vocals.wav`).
+   - Added Voice Activity Detection (VAD) and syllable/phonetic proportional timing so intro silences, instrumental solos, and tempos are respected accurately.
+   - Built structure header tag parser (`[Intro]`, `[Verse]`, `[Chorus]`, etc.) to treat musical section markers as structural landmarks without consuming singing duration.
+   - Implemented standard `.lrc` and `.srt` subtitle exporters.
+2. **Orchestration Pipeline Integration (`backend/app/orchestration/pipeline.py`)**:
+   - Passed effective `job.lyrics` and separated `vocal_stem_candidate` to `lyric_sync_engine.align_lyrics`, ensuring auto-generated songs from MiniMax and AI Co-Writer are fully synchronized.
+3. **Backend API Endpoints (`backend/app/main.py`)**:
+   - Added `GET /tracks/{job_id}/lrc` to download standard `.lrc` lyrics file.
+   - Added `POST /tracks/{job_id}/realign_lyrics` to recalculate acoustic alignments on-demand.
+4. **Frontend 60fps Playhead & Karaoke UI Upgrades**:
+   - `AudioEngineContext.tsx`: Added high-precision `requestAnimationFrame` playhead ticker (60fps / 16ms) during playback.
+   - `GlobalAudioPlayer.tsx`: Enhanced synchronized lyrics drawer with continuous proximity line tracking, word-level progressive highlights, section tag badges, and `.LRC` download.
+   - `TrackDetailView.tsx`: Upgraded Tab 3 with live interactive karaoke viewer, view mode toggle (`Karaoke` vs `Text`), Re-Align button, and `.LRC` export.
+   - `SessionWorkspace.tsx`: Upgraded floating live karaoke stream and DAW lyrics mode with word-level transitions and section headers.
 5. **Verification**:
-   - Clean Vite production build with zero TypeScript or styling warnings.
+   - Unit tests passed in `backend/tests/test_lyrics_sync.py`.
+   - Clean Vite production build in 1.53s.
 

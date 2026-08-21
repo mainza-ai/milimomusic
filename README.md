@@ -118,19 +118,59 @@ conda activate milimomusic
 
 ### 2. Backend Initialization
 
+#### Option A: Apple Silicon (macOS M1 / M2 / M3 / M4) with MLX Acceleration (Recommended)
+
+Milimo Music runs natively on Apple Silicon with unified memory via **Apple MLX** (`mlx-audio`):
+
+1. **Install Dependencies & MLX Audio Engine**:
+   ```bash
+   cd backend
+   conda activate milimomusic
+   pip install -r requirements.txt
+   pip install mlx "mlx-audio @ git+https://github.com/Blaizzy/mlx-audio.git@784b29e2691a93ca7483147d86f61859dfaa6296"
+   ```
+
+2. **Download MiniMax Music 3 MLX Weights**:
+   ```bash
+   # Download the native 16-bit MLX weights snapshot from Hugging Face:
+   pip install huggingface_hub
+   huggingface-cli download mlx-community/MiniMax-Music3-bf16
+   ```
+
+3. **Configure Environment Variables**:
+   Copy `.env.example` to `.env` in the project root:
+   ```bash
+   cp ../.env.example ../.env
+   ```
+   Set `MINIMAX_MODEL_PATH` to your downloaded snapshot path (or model ID) in `../.env`:
+   ```bash
+   # Example:
+   # MINIMAX_MODEL_PATH=/Users/<username>/.cache/huggingface/hub/models--mlx-community--MiniMax-Music3-bf16/snapshots/<snapshot-id>
+   ```
+
+4. **Launch Backend Server**:
+   ```bash
+   PYTHONPATH=.:../muscriptor python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
+   ```
+
+*(Optional — Run Local Apple Silicon Lyrics LLM with OMLX)*:
+```bash
+pip install omlx
+omlx --model mlx-community/Llama-3.2-3B-Instruct-bf16 --port 8787
+```
+
+---
+
+#### Option B: Standard / Linux / CUDA / CPU Setup
+
 ```bash
 cd backend
 conda activate milimomusic
 pip install -r requirements.txt
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+PYTHONPATH=.:../muscriptor python -m uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
 ```
-> Interactive OpenAPI documentation is accessible at `http://localhost:8000/docs`.
 
-*(Optional — Native Apple Silicon MLX Acceleration)*:
-```bash
-echo 'MINIMAX_MODEL_PATH=mlx-community/MiniMax-Music3-bf16' >> ../.env
-pip install mlx "mlx-audio @ git+https://github.com/Blaizzy/mlx-audio.git@784b29e2691a93ca7483147d86f61859dfaa6296"
-```
+> Interactive OpenAPI documentation is accessible at `http://localhost:8000/docs`.
 
 ### 3. Frontend Initialization
 

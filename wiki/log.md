@@ -528,3 +528,62 @@ Implemented end-to-end neural acoustic lyric alignment on the backend and 60fps 
    - Unit tests passed in `backend/tests/test_lyrics_sync.py`.
    - Clean Vite production build in 1.53s.
 
+
+## [2026-08-21] fix | MiniMax real-inference unblocked + prompting-guide caption fixes
+- **Root cause fix:** `minimax_provider.py` clamped inference `steps` to 32 but the model
+  allows only 1–30, so every song ≥62s threw and silently fell back to the procedural
+  synth ("generic tonal audio"). Clamp corrected to 30; verified real inference is viable
+  (snapshot present, `mlx-audio` available).
+- **Prompting-guide alignment (official `multimodalart/minimax-music3-prompting-guide`):**
+  constructed structured captions now follow the three-heading skeleton with the guide's
+  sub-fields and always state vocal presence; `format_full_caption` no longer appends a
+  4th `[Description]` block; `sanitize_section_tags` forces every `[Tag]` onto its own
+  line (MiniMax drops lyric text sharing a line with a leading tag).
+
+## [2026-08-21] fix | Fallback-to-synth surfaced + structured-caption plumbing
+- `GeneratedAudioResult` gained `used_fallback_synth` + `fallback_reason`; `minimax_provider`
+  records an honest reason for every skip/failure case (mlx missing, snapshot missing,
+  inference threw).
+- New typed `Job` columns (`used_fallback_synth` bool default false, `fallback_reason`
+  text) + `migrate_db.py` columns; `pipeline.py` persists them after generation.
+- UI: visible "⚠️ Fallback synthesis (not MiniMax Music 3)" badge in the track hero and a
+  full warning with reason in the AI Provenance tab (`TrackDetailView.tsx`).
+- **Dead-UI fix:** `GenerationRequest.structured_caption` was dropped between the composer
+  and the provider; `pipeline.py` now passes it through and the provider honors provided
+  sections (auto-filling missing ones) — user caption edits finally reach the model.
+- Tests: `tests/test_provider_provenance.py` (4); full backend suite 70 passed.
+
+## [2026-08-21] create | Caption Rewriter (official music-caption-rewriter port)
+- Vendored the official caption library (`genre-router.md` + 18 family indexes + ~1,000
+  caption templates, 4.4MB) at `backend/data/caption-library/` (licensing noted in
+  `LICENSES.md` §5 — upstream repo carries no LICENSE file).
+- `LLMService.rewrite_caption()` routes a brief → ranks style families → few-shots the top
+  templates into the real configured LLM → validates a three-heading caption with an honest,
+  non-blocking constructed fallback.
+- New `POST /generate/rewrite_caption` endpoint; `produce_full_track` regenerates its
+  caption via the rewriter; the composer **Enhance** button fills all three caption fields
+  through it.
+- Live-verified against the configured OpenCode `minimax-m3` provider (routed
+  `dance-pop-disco-funk` / `hip-hop-rap`, honors lyric tags, ~250–450 words).
+
+## [2026-08-21] fix | BS-Roformer 6-Stem Neural Separation & Dynamic DAW Multitrack Architecture
+- Replaced legacy HTDemucs with SOTA **BS-Roformer / MelBand-Roformer** neural source separation (`transcription/real_separator.py`) supporting dynamic stem counts (4, 5, 6+ stems, default 6-stem: `vocals`, `drums`, `bass`, `guitar`, `piano`, `other`).
+- Added native hardware acceleration device resolution (`CUDA` → Apple Silicon `MPS` → `CPU`) with process singleton caching and `unload_model()` memory release.
+- Added `SeparationResult` dataclass returning dynamic stems dictionary, `source_id`, `sources_available`, and `stem_count`.
+- Pinned `audio-separator>=0.28.0` in `requirements.txt`.
+- Cleaned up obsolete legacy DSP filter-bank (`transcription/stem_separator.py`) and updated test suite `tests/test_v2_core.py`.
+- Made `pipeline.py`, `/transcribe/upload`, and `/transcribe/export/{job_id}/ableton` dynamically persist and export all neural stems.
+- Upgraded frontend (`api.ts`, `TrackDetailView.tsx`, `SessionWorkspace.tsx`) with dynamic `StemsMap` index signatures, shared `getStemMeta` helper with Apple-grade colors/icons/gradients, dynamic stem matrices, and removed hardcoded `"htdemucs"` strings.
+
+## [2026-08-21] create | NVIDIA NIM Provider & AI Producer Resiliency Upgrade
+- Added **NVIDIA NIM** OpenAI-compatible provider (`https://integrate.api.nvidia.com/v1`) with full live model querying across 102+ available models (Llama 3.1/3.3, Mistral, Nemotron, Gemma, etc.).
+- Integrated environment variables `NVIDIA_API_KEY`, `NVIDIA_BASE_URL`, `NVIDIA_MODEL` into `.env` and `DEFAULT_CONFIG`.
+- Updated `LLMSettingsModal.tsx` and `api.ts` with dedicated NVIDIA NIM settings pane, active model selector with dynamic live fetching via `/config/fetch-models` (no hardcoded model restriction).
+- Implemented **Code Resiliency Improvements** in `LLMService`:
+  - Added keyword-aware fallback style tag extraction (`_extract_fallback_tags`) matching prompt genres and subgenres against `StyleRegistry`.
+  - Added creative song title fallback generation (`_extract_fallback_title`).
+  - Added automatic multi-provider failover on 429/401/network errors across configured providers.
+  - Replaced raw prompt echoing fallback with structured musical song drafts and transparent error notices.
+  - Fixed `generate_structured` on third-party OpenAI-compatible endpoints to use JSON mode and Pydantic validation directly.
+
+

@@ -24,15 +24,59 @@ export interface BeatGrid {
 }
 
 export interface StemsMap {
+    [key: string]: any;
     vocals?: string;
     drums?: string;
     bass?: string;
+    guitar?: string;
+    piano?: string;
     other?: string;
     instrumental?: string;
     /** Dynamic per-instrument stems keyed by instrument name (from transcription). */
     instrumental_parts?: Record<string, string>;
     /** General MIDI program (instrument) number per instrument name. */
     instrument_programs?: Record<string, number>;
+    stems_source?: string;
+    sources_available?: string[];
+    default_source?: string;
+}
+
+export interface StemMeta {
+    label: string;
+    icon: string;
+    color: string;
+    gradient: string;
+}
+
+export function getStemMeta(stemKey: string): StemMeta {
+    const k = stemKey.toLowerCase();
+    if (k.includes('vocal') || k === 'lead_vocals' || k === 'backing_vocals') {
+        return { label: 'Vocals', icon: '🎤', color: '#0d9488', gradient: 'from-teal-500 to-cyan-500' };
+    }
+    if (k.includes('drum') || k === 'percussion' || k.includes('beat')) {
+        return { label: 'Drums', icon: '🥁', color: '#ea580c', gradient: 'from-amber-500 to-orange-500' };
+    }
+    if (k.includes('bass') || k === 'synth_bass') {
+        return { label: 'Bass', icon: '🎸', color: '#0284c7', gradient: 'from-sky-500 to-blue-500' };
+    }
+    if (k.includes('guitar') || k === 'acoustic_guitar' || k === 'electric_guitar') {
+        return { label: 'Guitar', icon: '🎸', color: '#d97706', gradient: 'from-amber-600 to-yellow-500' };
+    }
+    if (k.includes('piano') || k === 'keys' || k === 'keyboard') {
+        return { label: 'Piano & Keys', icon: '🎹', color: '#6366f1', gradient: 'from-violet-500 to-purple-500' };
+    }
+    if (k.includes('wind') || k.includes('flute') || k.includes('sax') || k.includes('brass') || k.includes('horn')) {
+        return { label: 'Winds & Brass', icon: '🎷', color: '#10b981', gradient: 'from-emerald-500 to-teal-500' };
+    }
+    if (k.includes('string') || k.includes('violin') || k.includes('cello')) {
+        return { label: 'Strings', icon: '🎻', color: '#ec4899', gradient: 'from-rose-500 to-pink-500' };
+    }
+    return {
+        label: stemKey.charAt(0).toUpperCase() + stemKey.slice(1).replace(/_/g, ' '),
+        icon: '🎛️',
+        color: '#64748b',
+        gradient: 'from-teal-500 to-emerald-500'
+    };
 }
 
 export interface TimedWord {
@@ -82,6 +126,8 @@ export interface Job {
     beat_grid_json?: string;
     timed_lyrics_json?: string;
     structured_caption_json?: string;
+    used_fallback_synth?: boolean;
+    fallback_reason?: string | null;
     voice_profile_id?: string;
     project_id?: string;
     session_id?: string;
@@ -320,6 +366,16 @@ export const api = {
         return res.data;
     },
 
+    rewriteCaption: async (concept: string, lyrics: string | undefined, tags: string | undefined, modelName: string) => {
+        const res = await axios.post(`${API_BASE_URL}/generate/rewrite_caption`, {
+            concept,
+            lyrics: lyrics || null,
+            tags: tags || null,
+            model_name: modelName
+        });
+        return res.data;
+    },
+
     producerCompose: async (prompt: string, modelName?: string) => {
         const res = await axios.post(`${API_BASE_URL}/producer/compose`, {
             prompt,
@@ -485,6 +541,7 @@ export interface ProviderConfig {
 
 export interface LLMConfig {
     provider?: string;
+    nvidia?: ProviderConfig;
     openai?: ProviderConfig;
     gemini?: ProviderConfig;
     openrouter?: ProviderConfig;

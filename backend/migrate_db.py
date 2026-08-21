@@ -30,7 +30,9 @@ def migrate():
             "parent_job_id": "TEXT",
             "temperature": "FLOAT",
             "cfg_scale": "FLOAT",
-            "topk": "INTEGER"
+            "topk": "INTEGER",
+            "used_fallback_synth": "BOOLEAN DEFAULT 0",
+            "fallback_reason": "TEXT"
         }
 
         for col_name, col_type in new_columns.items():

@@ -2,7 +2,7 @@
 title: Orchestration Pipeline (Generate → Transcribe)
 type: concept
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-21
 tags: [pipeline, orchestration, generation, transcription, stems, demucs, voice, karaoke]
 aliases: [generation pipeline, orchestration pipeline, GenerateAndTranscribePipeline]
 ---
@@ -47,6 +47,16 @@ toggle** (4 Master Stems ↔ Per-Instrument) so the user chooses which to view/h
 `timed_lyrics_json`, `structured_caption_json` — all consumed by the
 [Session workspace (DAW)](../entities/session-workspace.md).
 
+## Generation provenance (never silent)
+- `GenerationRequest.structured_caption` (composer / Ask Producer) is passed through to
+  `provider.generate(..., structured_caption=...)` and honored, so user-authored captions
+  actually reach [MiniMax Music 3](../entities/minimax-music3.md) (see
+  [Caption Rewriter](caption-rewriter.md)).
+- The pipeline persists `Job.used_fallback_synth` + `Job.fallback_reason` from the provider
+  result. When real MiniMax inference is skipped or throws, the UI shows a visible
+  "Fallback synthesis" badge (hero + AI Provenance tab) instead of silently playing the
+  procedural synth.
+
 ## Entry points
 - Driven by `POST /generate/music` (background task).
 - `POST /transcribe/upload` runs separation + transcription + per-instrument stems on user
@@ -54,8 +64,10 @@ toggle** (4 Master Stems ↔ Per-Instrument) so the user chooses which to view/h
 
 ## Fidelity notes (current, accurate as of 2026-08-20)
 - **Step 1** runs **real MiniMax Music 3 MLX weight inference** (`mlx_audio.music.generate`)
-  on Apple Silicon, conditioned on prompt + structured caption + lyrics + section tags; on
-  Windows/Linux (no mlx) it falls back to the conditioned placeholder path
+  on Apple Silicon, conditioned on prompt + structured caption + lyrics + section tags;
+  inference `steps` are clamped to the model's 1–30 range (a prior clamp of 32 made every
+  ≥62s song silently fall back to the synth). On Windows/Linux (no mlx) it falls back to
+  the conditioned placeholder path, now surfaced to the user
   ([MiniMax Music 3](../entities/minimax-music3.md)).
 - **Step 2** is real **HTDemucs** neural separation ([Stem Separation](../entities/stem-separator.md)).
 - **Step 3** is optional voice-conversion ([Voice Studio](../entities/voice-service.md)).
@@ -66,5 +78,6 @@ toggle** (4 Master Stems ↔ Per-Instrument) so the user chooses which to view/h
 ## Related pages
 - [Generation provider](../entities/generation-provider.md) | [Backend & API](../entities/backend-api.md)
 - [Stem Separation](../entities/stem-separator.md) | [MuScriptor](../entities/muscriptor.md)
+- [Caption Rewriter](caption-rewriter.md) | [Structured Captions](structured-caption.md)
 - [Voice Studio](../entities/voice-service.md) | [Session workspace](../entities/session-workspace.md)
 - [Architecture](../architecture.md)

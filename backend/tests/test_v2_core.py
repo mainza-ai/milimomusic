@@ -9,7 +9,7 @@ import asyncio
 from app.providers.registry import provider_registry
 from app.providers.minimax_provider import MiniMaxMusic3Provider
 from app.transcription.muscriptor_provider import muscriptor_provider
-from app.transcription.stem_separator import stem_separator
+from app.transcription.real_separator import separate_sources
 from app.transcription.karaoke import lyric_sync_engine
 from app.services.voice_service import voice_service
 from app.services.model_manager import model_manager
@@ -70,17 +70,17 @@ async def test_muscriptor_transcription():
     assert os.path.exists("generated_audio/test_job_123.musicxml")
 
 
-@pytest.mark.asyncio
-async def test_stem_separation():
-    result = await stem_separator.separate(
-        audio_path="/audio/test.wav",
+def test_stem_separation():
+    result = separate_sources(
+        master_wav_path="generated_audio/test_rhythmic_song.wav",
         job_id="test_job_stem"
     )
-    assert result.vocals_path.endswith("_vocals.wav")
-    assert result.drums_path.endswith("_drums.wav")
-    assert result.bass_path.endswith("_bass.wav")
-    assert result.other_path.endswith("_other.wav")
-    assert result.instrumental_path.endswith("_instrumental.wav")
+    assert hasattr(result, "stems")
+    assert "vocals" in result.stems
+    assert "drums" in result.stems
+    assert "bass" in result.stems
+    assert "other" in result.stems
+    assert result.stem_count >= 4
 
 
 def test_voice_profile_management():

@@ -95,7 +95,8 @@ class GenerateAndTranscribePipeline:
                 topk=req.topk,
                 llm_model=req.llm_model,
                 progress_callback=_gen_progress,
-                cancel_event=cancel_event
+                cancel_event=cancel_event,
+                structured_caption=req.structured_caption or None
             )
 
             # Update DB with audio path (and producer-enhanced inputs).
@@ -105,6 +106,11 @@ class GenerateAndTranscribePipeline:
                     job.audio_path = gen_result.audio_path
                     if gen_result.structured_caption:
                         job.structured_caption_json = json.dumps(gen_result.structured_caption)
+                    # Generation provenance: persist whether real MiniMax inference
+                    # produced the audio or the procedural fallback synth did, plus
+                    # the reason — surfaced to the UI so fallbacks are never silent.
+                    job.used_fallback_synth = gen_result.used_fallback_synth
+                    job.fallback_reason = gen_result.fallback_reason
                     meta = gen_result.metadata or {}
                     # The producer may have enhanced a weak prompt / written real
                     # lyrics; surface those on the Job so the UI shows what was
@@ -123,18 +129,17 @@ class GenerateAndTranscribePipeline:
                     session.add(job)
                     session.commit()
 
-            # Step 2: Real Neural Source Separation (Demucs / HTDemucs).
+            # Step 2: SOTA Neural Source Separation (BS-Roformer / MelBand-Roformer).
             # Separates the ACTUAL generated master into genuine audio stems
-            # (vocals, drums, bass, other) — real separated audio, not DSP
-            # filter banks and never synthesized oscillators. Runs in a worker
-            # thread because HTDemucs inference is CPU/GPU-heavy.
+            # (vocals, drums, bass, guitar, piano, other) — real separated audio,
+            # never synthesized oscillators. Runs in a worker thread.
             event_manager.publish("job_progress", {
                 "job_id": job_id_str,
                 "step": 2,
                 "total_steps": 4,
                 "phase": "stems",
                 "progress": 50,
-                "message": "Real source separation (HTDemucs): vocals, drums, bass, other..."
+                "message": "Neural source separation (BS-Roformer 6-stem): vocals, drums, bass, guitar, piano, other..."
             })
 
             local_master = gen_result.audio_path.replace("/audio/", "generated_audio/")
@@ -146,15 +151,21 @@ class GenerateAndTranscribePipeline:
             # available. Production-robust: separation is an enhancement, never a
             # single point of failure for the whole pipeline.
             real_stems: dict[str, str] = {}
+            stems_source_id = "bs_roformer_6stem"
             try:
                 loop = asyncio.get_running_loop()
-                real_stems = await loop.run_in_executor(
+                separation_res = await loop.run_in_executor(
                     None, separate_sources, local_master,
                     "generated_audio/stems", job_id_str, 1,
                 )
+                if hasattr(separation_res, "stems"):
+                    real_stems = dict(separation_res.stems)
+                    stems_source_id = getattr(separation_res, "source_id", "bs_roformer_6stem")
+                elif isinstance(separation_res, dict):
+                    real_stems = dict(separation_res)
             except Exception as e:
                 logger.warning(
-                    f"HTDemucs separation failed for {job_id_str} ({e}); "
+                    f"Neural separation failed for {job_id_str} ({e}); "
                     "continuing with per-instrument (MuScriptor) stems."
                 )
                 event_manager.publish("job_progress", {
@@ -163,15 +174,14 @@ class GenerateAndTranscribePipeline:
                     "total_steps": 4,
                     "phase": "stems",
                     "progress": 50,
-                    "message": "Separation unavailable; using MuScriptor per-instrument parts.",
+                    "message": "Neural separation unavailable; using MuScriptor per-instrument parts.",
                 })
 
-            # Release the HTDemucs (torch) model so it isn't resident alongside the
-            # MiniMax MLX model between generations — keeps memory footprint low.
+            # Release the separation model from memory
             try:
                 unload_model()
             except Exception as _u:
-                logger.debug(f"HTDemucs unload skipped: {_u}")
+                logger.debug(f"Separation unload skipped: {_u}")
 
             # Step 3: Optional Voice Identity Conversion (on the REAL vocal stem)
             final_vocal_path = real_stems.get("vocals", "")
@@ -250,22 +260,23 @@ class GenerateAndTranscribePipeline:
                     job.musicxml_path = transcription_result.musicxml_path
                     job.notes_json = json.dumps(transcription_result.notes)
                     job.beat_grid_json = json.dumps(transcription_result.beat_grid)
-                    # REAL separated stems (HTDemucs) + the transcription-driven
+                    # REAL separated stems (BS-Roformer) + the transcription-driven
                     # DAW sources. MuScriptor remains the MIDI/notation engine;
                     # audio stems are the genuine separated audio.
-                    job.stems_json = json.dumps({
-                        "vocals": final_vocal_path or real_stems.get("vocals", ""),
-                        "drums": real_stems.get("drums", ""),
-                        "bass": real_stems.get("bass", ""),
-                        "other": real_stems.get("other", ""),
-                        "stems_source": "htdemucs",
-                        # Per-instrument (MuScriptor-derived) stem set. The DAW
-                        # can switch between "4 master stems" and these parts.
+                    dynamic_stems_payload = {
+                        "stems_source": stems_source_id,
                         "instrumental_parts": instrument_parts,
                         "instrument_programs": instrument_programs,
-                        "sources_available": ["muscriptor", "htdemucs"],
+                        "sources_available": [stems_source_id, "muscriptor"],
                         "default_source": "muscriptor",
-                    })
+                    }
+                    # Merge all real neural stems dynamically (vocals, drums, bass, guitar, piano, other, etc.)
+                    for stem_k, stem_v in real_stems.items():
+                        dynamic_stems_payload[stem_k] = stem_v
+                    if final_vocal_path:
+                        dynamic_stems_payload["vocals"] = final_vocal_path
+
+                    job.stems_json = json.dumps(dynamic_stems_payload)
                     job.timed_lyrics_json = json.dumps(timed_lyrics)
                     session.add(job)
                     session.commit()

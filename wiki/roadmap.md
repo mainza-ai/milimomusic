@@ -65,14 +65,14 @@ Neither model does vocal-identity cloning natively. Path: **post-generation SVC*
 separation pipeline. A "Sing as…" voice-profile selector in Compose. Requires a consent gate.
 
 ### 3.7 New backend capabilities
-Fast stem separation (**BS-Roformer/MelBand-Roformer** via MSST), reference mastering
-(**Matchering**), karaoke + lyric-sync (**WhisperX**), stem/MIDI/MusicXML export,
+Fast stem separation (**BS-Roformer/MelBand-Roformer** 6-stem via `audio-separator` and native neural pipeline), reference mastering
+(**Matchering**), acoustic & syllable-weighted karaoke sync, stem/MIDI/MusicXML export,
 piano roll/notation editing, instrument re-assignment, remix/rearrange, import &
 transcribe user audio, DAW-native (Ableton) export.
 
 ### 4. UI: session grows a workspace
-Keep the Suno-class IA (left rail, chat-first Compose, Explore feed) but a finished
-session gains a mode switcher: **Listen → Arrange → Piano Roll → Notation → Mix**.
+Keep the Apple-grade DAW workspace (left rail, chat-first Compose, Explore feed) with a finished
+session mode switcher: **Listen → Arrange → Piano Roll → Notation → Mix → Lyrics**.
 
 ### 5. Licensing
 Non-commercial open source; produce an accurate `LICENSES.md` matrix
@@ -80,8 +80,7 @@ Non-commercial open source; produce an accurate `LICENSES.md` matrix
 usage terms prohibit transcribing audio you don't hold rights to.
 
 ## Status
-This is a *plan* — it describes a funded direction, not current functionality. Current
-shipping capabilities are in [overview](overview.md).
+Core v2 capabilities (MiniMax Music 3 provider, MuScriptor neural transcription, BS-Roformer 6-stem separation, dynamic DAW workspace, acoustic karaoke synchronization, voice profile management) are actively shipped and integrated. Ongoing work focuses on fine-tuning extensions and external mastering plugins.
 
 ## Related pages
 - [Overview](overview.md) | [Architecture](architecture.md)

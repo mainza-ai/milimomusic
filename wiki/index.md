@@ -19,7 +19,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 ## Entities — generation & providers
 
 - [Generation Provider Abstraction](entities/generation-provider.md) — pluggable `GenerationProvider` interface + registry + capability manifests.
-- [MiniMax Music 3](entities/minimax-music3.md) — the default generation model (structured captions, up to 5 min).
+- [MiniMax Music 3](entities/minimax-music3.md) — the default generation model (structured captions, up to 5 min; fallback-to-synth now surfaced to the UI).
 - [HeartMuLa](entities/heartmula.md) — the 3B music language model; now a legacy/local provider.
 - [Heartlib](entities/heartlib.md) — the local audio-generation framework wrapping HeartMuLa + HeartCodec.
 - [HeartCodec](entities/heartcodec.md) — the 12.5 Hz 8-codebook neural audio codec.
@@ -40,7 +40,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 ## Entities — in-app services & agents
 
 - [AI Co-Writer](entities/ai-cowriter.md) — the multi-agent lyrics engine (Coordinator→Lyricist→StructureGuard).
-- [Producer Service](entities/producer-service.md) — LLM producer that enhances weak prompts + writes real lyrics so real inference never fakes or fails.
+- [Producer Service](entities/producer-service.md) — LLM producer that enhances weak prompts + writes real lyrics; captions now come from the [Caption Rewriter](concepts/caption-rewriter.md).
 - [Training Studio](entities/training-studio.md) — fine-tune HeartMuLa on custom audio datasets (LoRA/full).
 - [Repair Segment / Inpainting Service](entities/inpainting.md) — regenerate a time-range or glitch region.
 - [LLM Service & Providers](entities/llm-service.md) — OpenCode, OMLX, Ollama, OpenAI, Gemini, OpenRouter, DeepSeek, LM Studio.
@@ -55,6 +55,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 
 - [Orchestration Pipeline](concepts/generation-pipeline.md) — the 4-step generate → stems → voice → transcribe flow.
 - [Structured Captions](concepts/structured-caption.md) — the MiniMax Global Metadata / Vocal Details / Arrangement format.
+- [Caption Rewriter](concepts/caption-rewriter.md) — official music-caption-rewriter port: brief → professional three-heading caption via the real LLM.
 - [Lyrics conditioning](concepts/lyrics-conditioning.md) — how audio is aligned to lyrics & prosody.
 - [Prompt structure & style tags](concepts/prompt-structure.md) — the [BOS] <tag>… format + supported HeartMuLa tags.
 - [Track extension](concepts/track-extension.md) — continuing generation from a prior track's tail.

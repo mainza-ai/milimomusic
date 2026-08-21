@@ -4,6 +4,7 @@ import {
     type VoiceProfile,
     trackApi,
     voiceApi,
+    getStemMeta,
     API_BASE_URL
 } from '../../api';
 import { useAudioEngine } from '../../context/AudioEngineContext';
@@ -102,7 +103,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
     const [pitchShift, setPitchShift] = useState<number>(0);
     const [formantPreserve, setFormantPreserve] = useState<boolean>(true);
     const [dryWet, setDryWet] = useState<number>(100);
-    const [stemSourceMode, setStemSourceMode] = useState<'muscriptor' | 'htdemucs'>('muscriptor');
+    const [stemSourceMode, setStemSourceMode] = useState<'muscriptor' | 'neural'>('muscriptor');
 
     // Dedicated Stem Audition Audio Node
     const stemAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -267,22 +268,42 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
         }
     };
 
-    // Stems list derivation
-    const master4Stems = [
-        { key: 'vocals', label: 'Vocals', icon: '🎤', path: stemsData.vocals },
-        { key: 'drums', label: 'Drums', icon: '🥁', path: stemsData.drums },
-        { key: 'bass', label: 'Bass', icon: '🎸', path: stemsData.bass },
-        { key: 'other', label: 'Other Instruments', icon: '🎹', path: stemsData.other }
-    ].filter(s => !!s.path);
+    // Dynamic Neural Stems derivation (supporting arbitrary 4, 5, 6+ stems)
+    const reservedStemKeys = new Set([
+        'instrumental_parts',
+        'instrument_programs',
+        'stems_source',
+        'sources_available',
+        'default_source'
+    ]);
 
-    const instrumentParts = stemsData.instrumental_parts ? Object.entries(stemsData.instrumental_parts).map(([name, path]) => ({
-        key: name,
-        label: name,
-        icon: name.toLowerCase().includes('drum') ? '🥁' : name.toLowerCase().includes('bass') ? '🎸' : name.toLowerCase().includes('vocal') ? '🎤' : '🎹',
-        path: path as string
-    })) : [];
+    const neuralStems = Object.entries(stemsData)
+        .filter(([key, path]) => !reservedStemKeys.has(key) && typeof path === 'string' && !!path)
+        .map(([key, path]) => {
+            const meta = getStemMeta(key);
+            return {
+                key,
+                label: meta.label,
+                icon: meta.icon,
+                color: meta.color,
+                gradient: meta.gradient,
+                path: path as string
+            };
+        });
 
-    const activeStemsList = stemSourceMode === 'muscriptor' && instrumentParts.length > 0 ? instrumentParts : master4Stems;
+    const instrumentParts = stemsData.instrumental_parts ? Object.entries(stemsData.instrumental_parts).map(([name, path]) => {
+        const meta = getStemMeta(name);
+        return {
+            key: name,
+            label: name,
+            icon: meta.icon,
+            color: meta.color,
+            gradient: meta.gradient,
+            path: path as string
+        };
+    }) : [];
+
+    const activeStemsList = stemSourceMode === 'muscriptor' && instrumentParts.length > 0 ? instrumentParts : neuralStems;
 
     // Lineage derivation
     const parentTrack = track.parent_job_id ? allJobs.find(j => j.id === track.parent_job_id) : null;
@@ -427,6 +448,14 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-400 border border-black/[0.06] dark:border-white/5">
                                 🎛️ {track.model_provider || 'MiniMax Music 3'}
                             </span>
+                            {track.used_fallback_synth && (
+                                <span
+                                    className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-700 dark:text-rose-300 font-bold border border-rose-500/30"
+                                    title={track.fallback_reason || 'Real inference was skipped'}
+                                >
+                                    ⚠️ Fallback synthesis (not MiniMax Music 3)
+                                </span>
+                            )}
                         </div>
 
                         {/* Primary Action Buttons */}
@@ -727,14 +756,14 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                         Dynamic Instrument Parts ({instrumentParts.length})
                                     </button>
                                     <button
-                                        onClick={() => setStemSourceMode('htdemucs')}
+                                        onClick={() => setStemSourceMode('neural')}
                                         className={`px-3 py-1 rounded-lg transition-all ${
-                                            stemSourceMode === 'htdemucs'
+                                            stemSourceMode === 'neural'
                                                 ? 'bg-white dark:bg-white/20 text-teal-700 dark:text-teal-300 font-bold shadow-sm'
                                                 : 'text-slate-500'
                                         }`}
                                     >
-                                        4 Master Stems (HTDemucs)
+                                        Neural Stems ({neuralStems.length})
                                     </button>
                                 </div>
                             )}
@@ -1224,6 +1253,18 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                     <span className="text-xs font-bold text-teal-600 dark:text-teal-400 font-mono">{track.topk ?? 50}</span>
                                 </div>
                             </div>
+
+                            {track.used_fallback_synth && (
+                                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30">
+                                    <span className="text-[10px] font-bold text-rose-700 dark:text-rose-300 uppercase tracking-wider block">
+                                        ⚠️ Fallback Synthesis Used
+                                    </span>
+                                    <span className="text-xs text-rose-700/90 dark:text-rose-300/90 block mt-1 leading-relaxed">
+                                        This track was generated with the procedural fallback synthesizer, NOT real MiniMax Music 3 inference.
+                                        {track.fallback_reason ? ` Reason: ${track.fallback_reason}` : ' Real inference was skipped.'}
+                                    </span>
+                                </div>
+                            )}
 
                             {/* Structured Caption Breakdown */}
                             {structuredCaption && Object.keys(structuredCaption).length > 0 && (

@@ -1,43 +1,39 @@
+# Core Web & Async API
 fastapi>=0.109.2
 uvicorn[standard]>=0.27.0
 sqlmodel>=0.0.16
 python-dotenv>=1.0.0
-
-# ---------------------------------------------------------------------------
-# Multi-platform note:
-# The core app runs on macOS, Windows and Linux with the deps below. Two
-# platform-specific OPTIONAL runtimes unlock real MiniMax Music 3 inference:
-#
-#   * macOS (Apple Silicon, MPS): real weight inference via native MLX.
-#       pip install mlx
-#       pip install "mlx-audio @ git+https://github.com/Blaizzy/mlx-audio.git@784b29e2691a93ca7483147d86f61859dfaa6296"
-#     The provider auto-detects mlx-audio and uses it; otherwise it falls back
-#     to a conditioned placeholder so the app still runs (never crashes).
-#
-#   * Windows/Linux (NVIDIA GPU): run the original PyTorch MiniMax Music 3 path
-#     once transformers ships MiniMaxMusic3ForConditionalGeneration. Not a hard
-#     dependency of this repo.
-#
-# Neither is listed below deliberately: listing them would force Apple-only or
-# GPU-only installs on every platform. Install per-platform as above.
-# ---------------------------------------------------------------------------
+python-multipart>=0.0.20
 requests>=2.31.0
 pydantic>=2.9.0
-python-multipart>=0.0.20
+
+# LLM Providers & Multi-Agent Co-Writer
 openai>=1.90.0
 google-genai>=0.6.0
 pydantic-ai
 pydantic-graph
+
+# Audio Processing, DSP & Dynamic Stems
+numpy>=1.24
+soundfile>=0.14.0
+soxr>=1.1.0
+torch>=2.0
+torchaudio>=2.0
+audio-separator>=0.28.0
+
+# Neural Transcription, Beat Tracking & Notation
 mido>=1.3.3
 beat-this>=1.1.0
 rotary-embedding-torch>=0.9.1
-soxr>=1.1.0
 einops>=0.4
 safetensors>=0.4
 huggingface_hub>=0.13
-soundfile>=0.14.0
-numpy>=1.24
-torch>=2.0
-torchaudio>=2.0
+
+# Testing & HTTP Utilities
+httpx>=0.27.0
+pytest>=8.0.0
+pytest-asyncio>=0.23.0
+
+# Local Package Dependencies
 -e ../heartlib
 -e ../muscriptor

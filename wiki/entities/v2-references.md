@@ -30,14 +30,11 @@ reference, not a hardcoded choice.
   Code MIT; **weights CC BY-NC 4.0** (non-commercial only).
 
 ## Audio-processing tools
-- 🟡 **BS-Roformer / MelBand-Roformer** — fast 4-stem separation. Currently Milimo ships a
-  **DSP filter-bank** stem separator instead ([Stem Separator](stem-separator.md)); the
-  neural MSST path is the roadmap upgrade.
+- 🔵 **BS-Roformer / MelBand-Roformer** — SOTA 6-stem separation (`vocals`, `drums`, `bass`, `guitar`, `piano`, `other`) via `audio-separator` and native neural pipeline across CUDA/MPS/CPU ([Stem Separator](stem-separator.md)).
 - 🟡 **Matchering** — reference mastering. Endpoint + Mix-tab UI exist, but the
   implementation is a stub ([Matchering mastering](matchering-mastering.md)).
-- 🟡 **WhisperX** — forced lyric alignment. Milimo currently uses uniform (even-partition)
-  alignment; WhisperX is the roadmap upgrade ([Karaoke & Lyric Sync](karaoke-lyricsync.md)).
-- ⚪ **Demucs** — intentionally dropped/archived reference (the "dep currency" lesson).
+- 🔵 **Neural Acoustic & Syllable VAD Sync** — dynamic RMS vocal energy envelope extraction, VAD, and syllable-weighted karaoke timing ([Karaoke & Lyric Sync](karaoke-lyricsync.md)).
+- ⚪ **Demucs** — legacy reference superseded by BS-Roformer (the "dep currency" lesson).
 
 ## Voice cloning (SVC)
 - 🟡 **RVC v2** (via forks e.g. **Applio**, MIT) / **So-VITS-SVC** — profile management +
@@ -45,9 +42,9 @@ reference, not a hardcoded choice.
   model conversion not yet wired.
 
 ## Licensing summary
-Non-commercial open source. **`LICENSES.md`** now exists at repo root with the full matrix
-(platform, models, tools, user-rights notice). MuScriptor weights CC BY-NC 4.0; MiniMax
-weights "MiniMax Open Weights"; Matchering GPL-3.0; WhisperX BSD-2-Clause; RVC MIT.
+Core platform code is licensed under **Apache-2.0**. **`LICENSES.md`** at repo root details the full matrix
+(platform, models, tools, user-rights notice). Upstream model weights operate under their respective licenses:
+MuScriptor neural weights CC BY-NC 4.0; MiniMax weights "MiniMax Open Weights"; Matchering GPL-3.0; WhisperX BSD-2-Clause; RVC MIT.
 
 ## Related pages
 - [Roadmap (v2)](../roadmap.md) | [MiniMax Music 3](minimax-music3.md) | [MuScriptor](muscriptor.md)

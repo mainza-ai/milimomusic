@@ -38,6 +38,11 @@ class GeneratedAudioResult(BaseModel):
     sample_rate: int = 44100
     metadata: Dict[str, Any] = field(default_factory=dict)
     structured_caption: Optional[Dict[str, str]] = None
+    # Provenance: whether real model inference failed/skipped and the track was
+    # produced by the procedural fallback synth instead. Surfaced to the UI and
+    # persisted on the Job so users can always tell real MiniMax output apart.
+    used_fallback_synth: bool = False
+    fallback_reason: Optional[str] = None
 
 
 class GenerationProvider(ABC):
@@ -74,6 +79,7 @@ class GenerationProvider(ABC):
         topk: int = 50,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         cancel_event: Optional[Any] = None,
+        structured_caption: Optional[Dict[str, str]] = None,
         **kwargs
     ) -> GeneratedAudioResult:
         """Generate full audio track."""

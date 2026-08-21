@@ -6,7 +6,7 @@
 
 Created by **[Mainza Kangombe](https://www.linkedin.com/in/mainza-kangombe-6214295)**
 
-[![License: Non-Commercial](https://img.shields.io/badge/License-Non--Commercial-teal.svg)](#license)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-teal.svg)](LICENSE)
 [![Python: 3.10+](https://img.shields.io/badge/Python-3.10%20%7C%203.11%20%7C%203.12-0284c7.svg)](https://www.python.org/)
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20%7C%20SQLModel-14b8a6.svg)](https://fastapi.tiangolo.com/)
 [![React 19](https://img.shields.io/badge/Frontend-React%2019%20%7C%20Vite%20%7C%20Tailwind-0ea5e9.svg)](https://react.dev/)
@@ -28,16 +28,17 @@ Created by **[Mainza Kangombe](https://www.linkedin.com/in/mainza-kangombe-62142
 
 ## 🌟 Overview
 
-**Milimo Music** is an open-source, production-grade AI music generation platform and digital audio workstation (DAW). It bridges the gap between state-of-the-art generative audio models and multitrack studio workflows — transforming natural language prompts and structured lyrics into 48kHz stereo masters, note-level polyphonic MIDI, dynamic Grand Staff sheet music, isolated neural stems, and voice-converted audio.
+**Milimo Music** is an open-source, production-grade AI music generation platform and digital audio workstation (DAW). It bridges the gap between state-of-the-art generative audio models and multitrack studio workflows — transforming natural language prompts and structured lyrics into 48kHz stereo masters, note-level polyphonic MIDI, dynamic Grand Staff sheet music, isolated neural stems, synchronized acoustic karaoke, and voice-converted audio.
 
 ```mermaid
 graph LR
-    A["💡 Prompt & Lyrics"] --> B["🤖 AI Co-Writer"]
+    A["💡 Concept & Lyrics"] --> B["🤖 AI Co-Writer & Caption Rewriter"]
     B --> C["🎼 MiniMax Music 3 Engine"]
-    C --> D["🎛️ Dual Stem Separation<br/>(HTDemucs & MuScriptor)"]
+    C --> D["🎛️ Neural 6-Stem Separation<br/>(BS-Roformer & MuScriptor)"]
     D --> E["🎙️ Offline Voice Conversion<br/>(SVC Studio)"]
     E --> F["🎹 Neural Transcription<br/>(MIDI + MusicXML 3.1)"]
-    F --> G["💻 5-Mode Web Audio DAW<br/>(Arrange • Piano Roll • Notation • Mix)"]
+    F --> G["🎤 Neural Acoustic Lyric Sync<br/>(RMS VAD • Syllables • LRC/SRT)"]
+    G --> H["💻 6-Mode Web Audio DAW<br/>(Listen • Arrange • Piano Roll • Notation • Mix • Lyrics)"]
 ```
 
 ---
@@ -46,9 +47,23 @@ graph LR
 
 ### 🎧 Generative Audio Engine & Pluggable Providers
 - **MiniMax Music 3 Default Engine**: Conditioned on structured multi-section captions (`[Intro]`, `[Verse]`, `[Chorus]`, `[Solo]`, `[Outro]`) and acoustic style descriptors. Runs native **Apple Silicon MLX weight inference** (`mlx-community/MiniMax-Music3-bf16`) with automatic multi-platform CPU/CUDA fallbacks.
-- **Self-Healing LLM Producer**: Automatically expands minimalist prompts into professional musical arrangements and generates structured lyrics, ensuring inference models always receive rich conditioning.
+### 🤖 AI Co-Writer, Prompt Enhancer & Caption Rewriter
+- **Multi-Provider LLM Integration**: Native support for **NVIDIA NIM** (Llama 3.1/3.3, Nemotron, DeepSeek, Qwen), **OpenCode Go**, **DeepSeek**, **OpenAI**, **Google Gemini**, and local inference engines (**OMLX** for Apple Silicon and **Ollama**).
+- **Dynamic Model Selection**: Live model discovery querying hosted APIs directly with zero hardcoded constraints.
+- **Caption Rewriter & Self-Healing Producer**: Automatically expands minimalist prompts into professional 3-heading structured captions (`[Global Metadata]`, `[Vocal Details]`, `[Arrangement]`) and complete, structured lyrics with automatic multi-provider failover and keyword-aware style recovery.
 - **Precision Signal & Sampling Controls**: Full control over audio duration (5s–300s), CFG scale, temperature, top-k/top-p filtering, DiT diffusion steps, and seed locking.
 - **Acoustic Inpainting & Extension**: Seamlessly extend existing tracks from their tail or regenerate designated glitch regions.
+
+### 🎛️ BS-Roformer Neural 6-Stem Source Separation
+- **SOTA 6-Stem Separation**: Neural separation of the master audio into isolated **Vocals, Drums, Bass, Guitar, Piano, and Other** stems via BS-Roformer / MelBand-Roformer (`audio-separator`).
+- **Hardware Acceleration**: Automatic native execution across CUDA, Apple Silicon MPS, and CPU.
+- **Dual-Engine DAW Stems**: Toggle between **Neural Stems (BS-Roformer)** and **Dynamic Per-Instrument Parts (MuScriptor)**.
+
+### 🎤 Neural Acoustic Lyrics & Karaoke Synchronization
+- **Acoustic Vocal Energy Extraction**: RMS amplitude envelopes on isolated vocal stems for drift-free timing during instrumental solos and intros.
+- **Voice Activity Detection & Syllables**: Syllable-weighted word distribution ensuring natural singing cadence.
+- **Live 60fps Playhead**: Sub-frame accurate interactive word highlighting in the Global Player and Studio Workspace.
+- **Industry Subtitle Export**: One-click download of synchronized `.lrc` and `.srt` lyric files.
 
 ### 🎼 MuScriptor Neural Transcription & Engraving
 - **Polyphonic Multi-Instrument Transcription**: Neural extraction of distinct instrument lines (Piano, Bass, Drums, Vocal melody).
@@ -56,20 +71,17 @@ graph LR
 - **W3C MusicXML 3.1 Sheet Music (`.musicxml`)**: Automatic Grand Staff engraving with Treble (𝄞) and Bass (𝄢) clefs, key signatures, and measure deduplication.
 - **Beat & Tempo Tracking**: Downbeat grid extraction, measure divisions, and BPM detection via `beat-this`.
 
-### 🎛️ 5-Mode Web Audio DAW Workspace
-- **Dual-Engine Stems**: Toggle between **4 Master Stems** (real HTDemucs neural source separation: vocals, drums, bass, other) and **Per-Instrument Parts** (MuScriptor transcription parts with General MIDI program badges).
+### 💻 6-Mode Web Audio DAW Workspace
+- **Listen Mode**: High-fidelity stereo playback with live waveform visualization and metadata inspection.
 - **Arrangement Timeline**: Multitrack stem lanes with real note-density overlays, Solo (`S`) / Mute (`M`) staging, and zoomable measure grid.
 - **Piano Roll MIDI Editor**: 144px Apple Studio Grand Piano Keyboard with ivory/ebony keys, vertical measure divisions, live polyphonic Web Audio synth auditioning, interactive note editing, and bidirectional score synchronization.
 - **Notation Viewer**: Dynamic SVG Grand Staff engraving with real diatonic pitch placement, curved flags, unified chord stems, and sheet music PDF downloads.
 - **Multitrack Console Mixer**: Channel faders, stereo panning, animated LED peak meters, and Matchering reference mastering (-14.0 LUFS broadcast target).
+- **Lyrics & Karaoke Studio**: Fullscreen live karaoke teleprompter with interactive line seeking and on-demand acoustic realignment.
 
 ### 🎙️ Voice Studio & Singing Voice Conversion (SVC)
 - **Offline Vocal Cloning**: Transform vocal tracks into custom timbres using offline voice profiles.
 - **Consent-Enforced Governance**: Cryptographic audio consent gating to ensure ethical vocal profile creation.
-
-### 🎚️ Centralized Audio Engine & Pro Transport Suite
-- **Single-Node Audio Engine**: Zero playback contention, ghost loops, or audio collisions via centralized `AudioEngineContext`.
-- **Zero-Overlap Player Dock**: Rigid 3-zone flex layout with spinning vinyl disc artwork, timecode modes (elapsed/remaining), scrubber, playback speed (0.75x–2.0x), volume fader, Up Next Queue drawer, and synchronized LRC lyrics sheet.
 
 ---
 
@@ -77,12 +89,13 @@ graph LR
 
 | Layer | Technologies & Frameworks | Description |
 |---|---|---|
-| **Frontend** | React 19, Vite, Tailwind CSS, Web Audio API | Apple-inspired interface, 5-mode DAW, floating dock player, interactive notation |
+| **Frontend** | React 19, Vite, Tailwind CSS, Web Audio API | Apple-inspired interface, 6-mode DAW, floating dock player, interactive notation |
 | **Backend** | FastAPI, SQLModel, SQLite, PyTorch, Librosa | REST API, async task execution, SSE progress streaming, audio pipeline |
 | **Generative ML** | MLX (Apple Silicon), PyTorch (CUDA/CPU) | MiniMax Music 3, HeartMuLa-3B, HeartCodec |
+| **Separation** | BS-Roformer, MelBand-Roformer, audio-separator | 6-stem neural source separation (Vocals, Drums, Bass, Guitar, Piano, Other) |
 | **Transcription** | MuScriptor, MuseScore 4, Mido, MusicXML 3.1 | Note-level neural transcription, score engraving, MIDI generation |
-| **Separation** | HTDemucs (Meta Demucs v4), SoundFile, NumPy | High-fidelity 4-stem neural source separation |
-| **LLM & Co-Writer** | OpenCode Go, OMLX, Ollama, OpenAI, Gemini | Prompt expansion, multi-agent lyricist engine, style tagging |
+| **Lyric Sync** | RMS Energy Envelope, VAD, LRC/SRT Generator | Acoustic karaoke alignment, progressive word timing |
+| **LLM & Co-Writer** | NVIDIA NIM, OpenCode Go, DeepSeek, OMLX, Ollama, OpenAI, Gemini | Structured caption rewriter, multi-agent lyricist engine, style tagging |
 
 ---
 
@@ -107,6 +120,7 @@ conda activate milimomusic
 
 ```bash
 cd backend
+conda activate milimomusic
 pip install -r requirements.txt
 python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 ```
@@ -114,7 +128,7 @@ python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
 
 *(Optional — Native Apple Silicon MLX Acceleration)*:
 ```bash
-echo 'MINIMAX_MODEL_PATH=mlx-community/MiniMax-Music3-bf16' >> .env
+echo 'MINIMAX_MODEL_PATH=mlx-community/MiniMax-Music3-bf16' >> ../.env
 pip install mlx "mlx-audio @ git+https://github.com/Blaizzy/mlx-audio.git@784b29e2691a93ca7483147d86f61859dfaa6296"
 ```
 
@@ -147,4 +161,11 @@ npm run dev
 
 ## 📄 License
 
-Milimo Music is released under the **Non-Commercial Open Source License**. Developed by **[Mainza Kangombe](https://www.linkedin.com/in/mainza-kangombe-6214295)**.
+The **Milimo Music** platform source code is released under the **[Apache License 2.0](LICENSE)**. Created and maintained by **[Mainza Kangombe](https://www.linkedin.com/in/mainza-kangombe-6214295)**.
+
+> **Notice on Upstream Model Weights**: Pre-trained model weights utilized by the platform operate under their respective upstream licenses:
+> - **MuScriptor Neural Transcription Weights**: Licensed by Kyutai × Mirelo under [Creative Commons Attribution-NonCommercial 4.0 (CC BY-NC 4.0)](https://creativecommons.org/licenses/by-nc/4.0/).
+> - **MiniMax Music 3 Weights**: Governed by the MiniMax Open Weights License.
+> 
+> See [`LICENSES.md`](LICENSES.md) for the complete licensing matrix across all core components, third-party DSP engines, and AI models.
+

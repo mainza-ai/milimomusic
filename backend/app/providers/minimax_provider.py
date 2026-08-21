@@ -323,15 +323,35 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 sec_content = sections[i+1].strip() if i+1 < len(sections) else ""
                 metadata[sec_name] = sec_content
         else:
-            # Construct structured caption from tags and free-text prompt
+            # Construct structured caption from tags and free-text prompt, following
+            # the official MiniMax prompting guide's three-heading skeleton and its
+            # sub-fields (Basic Attributes / Emotional Progression / Imagery / Sonics;
+            # Vocal Gender & Timbre / Style / Harmony / FX; Instrument Lifecycle /
+            # Groove / Embellishments). Vocals are always stated explicitly — leaving
+            # them unspecified is the #1 cause of unwanted instrumental drift.
             tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
             genre = tag_list[0] if tag_list else "Contemporary"
-            mood = tag_list[1] if len(tag_list) > 1 else "Energetic"
+            tempo = tag_list[1] if len(tag_list) > 1 else "energetic"
             instruments = ", ".join(tag_list[2:]) if len(tag_list) > 2 else "Drums, Bass, Synths, Vocals"
+            imagery = prompt.strip() or "A scene the song belongs to."
 
-            metadata["global_metadata"] = f"Genre: {genre}\nMood: {mood}"
-            metadata["vocal_details"] = "Lead Vocals: Expressive, Dynamic"
-            metadata["arrangement"] = f"Instrumentation: {instruments}\nProduction: Studio Master"
+            metadata["global_metadata"] = (
+                f"Basic Attributes: Genre {genre}, tempo {tempo}.\n"
+                f"Global Emotional Progression: Opens with the {tempo} {genre} character and builds in energy toward the chorus before resolving cleanly.\n"
+                f"Application Scenarios & Imagery: {imagery}\n"
+                f"Sonics & Production Profile: Polished, well-balanced mix with centered vocals and moderate stereo width."
+            )
+            metadata["vocal_details"] = (
+                "Vocal Gender & Timbre: Singer A (Female), a clear and expressive vocal with strong presence.\n"
+                "Vocal Style: Melodic and emotive throughout, with dynamic phrasing and a fuller delivery in the chorus.\n"
+                "Harmony/Backing Vocals: Subtle stacked harmonies in the chorus.\n"
+                "Vocal FX: Light reverb and delay for space without losing presence."
+            )
+            metadata["arrangement"] = (
+                f"Instrument Lifecycle (Primary/Secondary): Primary {genre} foundation anchored by {instruments}.\n"
+                f"Groove & Foundation Progression: Rhythmic drive throughout, thickening in the chorus and stripping back in the bridge.\n"
+                f"Embellishments, Textures & Spatial FX: Moderate reverb tails and subtle risers on transitions."
+            )
 
         return metadata
 
@@ -345,8 +365,6 @@ class MiniMaxMusic3Provider(GenerationProvider):
             parts.append(f"[Vocal Details]\n{structured_caption['vocal_details']}")
         if structured_caption.get("arrangement"):
             parts.append(f"[Arrangement]\n{structured_caption['arrangement']}")
-        if prompt_text:
-            parts.append(f"[Description]\n{prompt_text}")
         return "\n\n".join(parts)
 
     @staticmethod
@@ -373,6 +391,15 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
             else:
                 cleaned = re.sub(pattern, replacement, cleaned, flags=re.IGNORECASE)
+
+        # MiniMax input contract: every [Section] tag must sit alone on its own line —
+        # lyric text on the same line as a leading tag is silently dropped by the model.
+        # Split any "tag + text on one line" into two lines (tag already alone: no-op).
+        cleaned = re.sub(
+            r'(?im)^[ \t]*(\[[^\]\n]+\])[ \t]+([^\n].*)$',
+            r'\1\n\2',
+            cleaned,
+        )
         return cleaned
 
     async def generate(
@@ -388,6 +415,7 @@ class MiniMaxMusic3Provider(GenerationProvider):
         topk: int = 50,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         cancel_event: Optional[Any] = None,
+        structured_caption: Optional[Dict[str, str]] = None,
         **kwargs
     ) -> GeneratedAudioResult:
         if kwargs.get("llm_model"):
@@ -419,8 +447,19 @@ class MiniMaxMusic3Provider(GenerationProvider):
             eff_lyrics = (lyrics or "").strip()
             eff_tags = (tags or "").strip()
 
-        # Rebuild the structured caption from the (possibly enhanced) inputs.
-        structured_meta = self.parse_structured_caption(eff_prompt, eff_tags)
+        # Structured caption: honor caller-provided sections (composer UI /
+        # producer) when present — the pipeline passes GenerationRequest.
+        # structured_caption through — and fill any missing section from the
+        # auto-constructed caption so the model always sees a complete 3-heading
+        # caption. The constructed path follows the official MiniMax prompting
+        # guide (three headings, explicit vocals, no fabricated precision).
+        auto_meta = self.parse_structured_caption(eff_prompt, eff_tags)
+        provided = structured_caption or {}
+        structured_meta = {
+            "global_metadata": (provided.get("global_metadata") or "").strip() or auto_meta.get("global_metadata", ""),
+            "vocal_details": (provided.get("vocal_details") or "").strip() or auto_meta.get("vocal_details", ""),
+            "arrangement": (provided.get("arrangement") or "").strip() or auto_meta.get("arrangement", ""),
+        }
         formatted_caption = self.format_full_caption(structured_meta, eff_prompt)
         sanitized_lyrics = self.sanitize_section_tags(eff_lyrics)
 
@@ -432,10 +471,12 @@ class MiniMaxMusic3Provider(GenerationProvider):
         wav_path = output_path.replace(".mp3", ".wav")
 
         used_real_inference = False
+        fallback_reason: Optional[str] = None
         if _MLX_AUDIO_AVAILABLE and os.path.isdir(self.snapshot_path):
             try:
-                # Steps scale roughly with length: ~2s per step, clamped for sanity.
-                steps = min(32, max(10, int(duration_sec / 2)))
+                # Steps scale roughly with length: ~2s per step, clamped to the model's
+                # allowed maximum of 30 (mlx_audio raises if steps > 30).
+                steps = min(30, max(10, int(duration_sec / 2)))
                 if progress_callback:
                     progress_callback(1, 3, f"MiniMax Music 3: Running real MLX inference ({steps} steps) on Apple Silicon...")
                 await loop.run_in_executor(
@@ -452,9 +493,19 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 used_real_inference = True
                 logger.info("Real MiniMax Music 3 inference produced audio at %s", wav_path)
             except Exception as e:
+                fallback_reason = str(e)
                 logger.warning(f"Real MiniMax inference failed ({e}); falling back to procedural waveform.", exc_info=True)
 
         if not used_real_inference:
+            # Surface WHY the real path was skipped so the UI can show an honest
+            # reason instead of a silent mystery (and logs can be debugged).
+            if fallback_reason is None:
+                if not _MLX_AUDIO_AVAILABLE:
+                    fallback_reason = f"mlx-audio unavailable: {_MLX_IMPORT_ERROR or 'not installed'}"
+                elif not os.path.isdir(self.snapshot_path):
+                    fallback_reason = f"MiniMax Music 3 model snapshot not found at {self.snapshot_path}"
+                else:
+                    fallback_reason = "real inference path was not attempted (unknown)"
             # Heavy CPU synthesis offloaded to a worker thread so the event loop is not blocked.
             await loop.run_in_executor(None, synthesize_dynamic_audio_waveform, duration_sec, seed, output_path, prompt, lyrics, tags)
             wav_path = output_path.replace(".mp3", ".wav")
@@ -464,6 +515,8 @@ class MiniMaxMusic3Provider(GenerationProvider):
             duration_sec=duration_sec,
             sample_rate=44100,
             structured_caption=structured_meta,
+            used_fallback_synth=(not used_real_inference),
+            fallback_reason=fallback_reason,
             metadata={
                 "provider": "minimax_music3",
                 "seed": seed,

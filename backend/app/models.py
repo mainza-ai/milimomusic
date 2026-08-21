@@ -45,6 +45,11 @@ class Job(SQLModel, table=True):
     timed_lyrics_json: Optional[str] = Field(default=None)  # JSON serialized word-level timestamps
     structured_caption_json: Optional[str] = Field(default=None)
     
+    # Generation provenance: whether the track came from genuine model inference
+    # or the procedural fallback synth (surfaced to the UI, never silent).
+    used_fallback_synth: bool = Field(default=False)
+    fallback_reason: Optional[str] = Field(default=None)
+
     # Project & Session Association
     project_id: Optional[str] = Field(default=None, index=True)
     session_id: Optional[str] = Field(default=None, index=True)
@@ -222,6 +227,15 @@ class EnhancePromptRequest(SQLModel):
     model_provider: Optional[str] = "minimax_music3"
 
 
+class RewriteCaptionRequest(SQLModel):
+    model_config = {"protected_namespaces": ()}
+    concept: str
+    lyrics: Optional[str] = None
+    tags: Optional[str] = None
+    model_name: Optional[str] = None
+    model_provider: Optional[str] = "minimax_music3"
+
+
 class InspirationRequest(SQLModel):
     model_config = {"protected_namespaces": ()}
     model_name: Optional[str] = None
@@ -236,6 +250,7 @@ class ProviderConfig(SQLModel):
 
 class LLMConfigUpdate(SQLModel):
     provider: Optional[str] = None
+    nvidia: Optional[ProviderConfig] = None
     openai: Optional[ProviderConfig] = None
     gemini: Optional[ProviderConfig] = None
     openrouter: Optional[ProviderConfig] = None

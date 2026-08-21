@@ -170,15 +170,29 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     const handleEnhancePrompt = async () => {
         setIsEnhancing(true);
         try {
-            const result = await api.getInspiration(lyricsModel);
-            setTopic(result.topic);
-            setStyle(result.tags);
-            if (!title) setTitle(result.topic.slice(0, 30));
-            setGlobalMetadata(`Genre: ${result.tags}\nMood: Inspiring & Dynamic`);
+            // The enhancement is a professional structured-caption rewrite (official
+            // MiniMax music-caption-rewriter workflow). If there is no concept yet,
+            // spark one first via the inspiration endpoint.
+            let currentTopic = topic || title || '';
+            let currentStyle = style || '';
+            if (!currentTopic) {
+                const insp = await api.getInspiration(lyricsModel);
+                currentTopic = insp.topic;
+                currentStyle = insp.tags || currentStyle;
+            }
+            const result = await api.rewriteCaption(currentTopic, lyrics, currentStyle || undefined, lyricsModel);
+            if (result.global_metadata) setGlobalMetadata(result.global_metadata);
+            if (result.vocal_details) setVocalDetails(result.vocal_details);
+            if (result.arrangement) setArrangement(result.arrangement);
+            if (currentTopic && !topic) setTopic(currentTopic);
+            if (currentStyle && !style) setStyle(currentStyle);
+            if (!title && currentTopic) setTitle(currentTopic.slice(0, 30));
         } catch (e) {
-            setTopic("A neon journey through midnight rain");
-            setStyle("Synthwave, Dark, Retro, Electronic");
-            if (!title) setTitle("Midnight Neon Journey");
+            // LLM unreachable: keep the user's inputs; fall back to a minimal
+            // structured default so the caption fields are never empty/lying.
+            if (!globalMetadata) {
+                setGlobalMetadata(`Genre: ${style || 'Contemporary Pop'}\nMood: Energetic & Dynamic`);
+            }
         } finally {
             setIsEnhancing(false);
         }

@@ -15,9 +15,11 @@ def _load_dotenv_once():
     if _ENV_LOADED:
         return
     _ENV_LOADED = True
-    load_dotenv(os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), ".env"))
-    # Also allow a backend/.env
-    load_dotenv(os.path.join(os.path.dirname(__file__), "..", ".env"))
+    # Search root .env and backend/.env
+    repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
+    load_dotenv(os.path.join(repo_root, ".env"))
+    load_dotenv(os.path.join(repo_root, "backend", ".env"))
+    load_dotenv(".env")
 
 
 logger = logging.getLogger(__name__)
@@ -46,6 +48,11 @@ DEFAULT_CONFIG = {
         "base_url": "http://localhost:1234/v1",
         "model": "local-model"
     },
+    "nvidia": {
+        "api_key": "",
+        "base_url": "https://integrate.api.nvidia.com/v1",
+        "model": "meta/llama-3.3-70b-instruct"
+    },
     "deepseek": {
         "api_key": "",
         "model": "deepseek-chat"
@@ -69,6 +76,7 @@ DEFAULT_CONFIG = {
 
 # map: config_key -> (env_var, default)
 _ENV_MAP = {
+    "nvidia": {"api_key": ("NVIDIA_API_KEY", ""), "base_url": ("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"), "model": ("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct")},
     "opencode": {"api_key": ("OPENCODE_API_KEY", ""), "base_url": ("OPENCODE_BASE_URL", "https://opencode.ai/zen/go/v1"), "model": ("OPENCODE_MODEL", "minimax-m3")},
     "deepseek": {"api_key": ("DEEPSEEK_API_KEY", ""), "base_url": ("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), "model": ("DEEPSEEK_MODEL", "deepseek-chat")},
     "openrouter": {"api_key": ("OPENROUTER_API_KEY", ""), "base_url": ("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"), "model": ("OPENROUTER_MODEL", "openai/gpt-3.5-turbo")},

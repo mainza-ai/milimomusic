@@ -134,7 +134,7 @@ class OllamaProvider(LLMProvider):
                     "stream": False,
                     "options": kwargs.get("options", {})
                 },
-                timeout=kwargs.get("timeout", 300)
+                timeout=kwargs.get("timeout", (3.0, 30.0))
             )
             if resp.status_code == 200:
                 return _strip_thinking(resp.json().get("response", ""))
@@ -155,7 +155,7 @@ class OllamaProvider(LLMProvider):
                     "format": "json",
                     "options": kwargs.get("options", {})
                 },
-                timeout=kwargs.get("timeout", 300)
+                timeout=kwargs.get("timeout", (3.0, 30.0))
             )
             if resp.status_code == 200:
                 raw_response = _strip_thinking(resp.json().get("response", ""))
@@ -187,17 +187,27 @@ class OllamaProvider(LLMProvider):
         return raw_response
 
 class OpenAIProvider(LLMProvider):
-    def __init__(self, api_key: str, base_url: Optional[str] = None):
+    def __init__(self, api_key: str, base_url: Optional[str] = None, timeout: float = 30.0):
         if OpenAI is None:
             raise ImportError("OpenAI library is not installed. Please run `pip install openai`.")
-        self.client = OpenAI(api_key=api_key, base_url=base_url)
+        self.client = OpenAI(api_key=api_key or "no-key", base_url=base_url, timeout=timeout, max_retries=2)
 
     def get_models(self) -> List[str]:
         try:
             # Iterate directly to handle pagination automatically
-            return [model.id for model in self.client.models.list()]
+            models = [model.id for model in self.client.models.list()]
+            return models
         except Exception as e:
             logger.warning(f"Failed to fetch OpenAI models: {e}")
+            if self.client.base_url and "nvidia.com" in str(self.client.base_url):
+                return [
+                    "meta/llama-3.1-70b-instruct",
+                    "meta/llama-3.1-8b-instruct",
+                    "meta/llama-3.3-70b-instruct",
+                    "nvidia/llama-3.1-nemotron-70b-instruct",
+                ]
+            elif self.client.base_url and "deepseek.com" in str(self.client.base_url):
+                return ["deepseek-chat", "deepseek-reasoner"]
             return []
 
     def generate_text(self, prompt: str, model: str, **kwargs) -> str:
@@ -235,8 +245,15 @@ class OpenAIProvider(LLMProvider):
             raise e
 
     def generate_structured(self, prompt: str, model: str, response_format: Type[BaseModel], **kwargs) -> BaseModel:
+        # If running against third-party providers (NVIDIA, DeepSeek, OpenCode, OpenRouter, LM Studio),
+        # use standard json_object mode and Pydantic validation directly.
+        is_official_openai = self.client.base_url and "api.openai.com" in str(self.client.base_url)
+        if not is_official_openai:
+            json_data = self.generate_json(prompt, model, **kwargs)
+            return response_format.model_validate(json_data)
+
         try:
-            # Use beta parse if available and robust
+            # Use beta parse if official OpenAI endpoint
             completion = self.client.beta.chat.completions.parse(
                 model=model,
                 messages=[
@@ -252,8 +269,8 @@ class OpenAIProvider(LLMProvider):
             return parsed
         except Exception as e:
             self._handle_error(e, model)
-            # If parse fails (e.g. model doesn't support generic parse), fallback to JSON
-            logger.warning(f"Generate structured failed, falling back to JSON mode: {e}")
+            # If parse fails, fallback to JSON
+            logger.warning(f"Generate structured parse failed, falling back to JSON mode: {e}")
             json_data = self.generate_json(prompt, model, **kwargs)
             return response_format.model_validate(json_data)
 
@@ -319,6 +336,137 @@ class GeminiProvider(LLMProvider):
          json_data = self.generate_json(prompt, model, **kwargs)
          return response_format.model_validate(json_data)
 
+# ---------------------------------------------------------------------------
+# MiniMax Music 3 caption rewriter — official music-caption-rewriter port.
+#
+# Vendored static library (backend/data/caption-library): genre route table +
+# 18 family indexes + ~1,000 caption templates from the official MiniMax Music 3
+# repo. Workflow mirrors the official SKILL.md: route brief -> rank family ->
+# score template filenames -> few-shot the real LLM -> synthesize a new
+# three-heading caption. Never blocks generation: any failure degrades to a
+# safe constructed caption.
+# ---------------------------------------------------------------------------
+_CAPTION_LIBRARY = os.path.join(
+    os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+    "data", "caption-library",
+)
+_CAPTION_ROUTER_PATH = os.path.join(_CAPTION_LIBRARY, "references", "genre-router.md")
+_CAPTION_INDEX_DIR = os.path.join(_CAPTION_LIBRARY, "references")
+_CAPTION_TEMPLATE_DIR = os.path.join(_CAPTION_LIBRARY, "templates")
+
+
+def _load_caption_family_routes() -> Dict[str, str]:
+    """Parse genre-router.md into {family_slug: positive_cues}."""
+    routes: Dict[str, str] = {}
+    try:
+        with open(_CAPTION_ROUTER_PATH, encoding="utf-8") as f:
+            for line in f:
+                m = re.match(r"\|\s*`([a-z0-9-]+)`\s*\|\s*([^|]+?)\s*\|\s*[^|]*\|\s*\[", line)
+                if m:
+                    routes[m.group(1)] = m.group(2).strip()
+    except Exception as e:
+        logger.warning(f"Caption router unavailable ({e}); rewriter uses fallback only.")
+    return routes
+
+
+def _list_caption_families() -> List[str]:
+    """Family slugs from the vendored index-*.md files."""
+    try:
+        return sorted(
+            name[len("index-"):-len(".md")]
+            for name in os.listdir(_CAPTION_INDEX_DIR)
+            if name.startswith("index-") and name.endswith(".md")
+        )
+    except Exception as e:
+        logger.warning(f"Caption indexes unavailable ({e}).")
+        return []
+
+
+_CAPTION_FAMILY_ROUTES = _load_caption_family_routes()
+_CAPTION_FAMILIES = _list_caption_families()
+
+
+def _caption_tokens(text: Optional[str]) -> set:
+    return set(re.findall(r"[a-z0-9]+", (text or "").lower()))
+
+
+def _rank_caption_families(query: str, limit: int = 2) -> List[str]:
+    """Pick the 1-2 most relevant style families for a brief via token overlap."""
+    q = _caption_tokens(query)
+    scores = []
+    for family in _CAPTION_FAMILIES:
+        fam_tokens = set(family.split("-"))
+        score = len(q & fam_tokens) * 3
+        cues = _CAPTION_FAMILY_ROUTES.get(family, "")
+        score += len(q & _caption_tokens(cues)) * 1
+        if score:
+            scores.append((score, family))
+    scores.sort(key=lambda kv: -kv[0])
+    return [f for _, f in scores[:limit]]
+
+
+def _pick_caption_templates(query: str, families: List[str], k: int = 3) -> List[str]:
+    """Score template filenames against brief tokens + routed families."""
+    q = _caption_tokens(query)
+    scored = []
+    try:
+        for name in os.listdir(_CAPTION_TEMPLATE_DIR):
+            if not name.endswith(".txt"):
+                continue
+            stem = name[:-len(".txt")]
+            score = len(q & _caption_tokens(stem))
+            if any(stem.startswith(family) for family in families):
+                score += 4
+            if score:
+                scored.append((score, name))
+    except Exception as e:
+        logger.warning(f"Caption template scan failed ({e}).")
+        return []
+    scored.sort(key=lambda kv: -kv[0])
+    return [os.path.join(_CAPTION_TEMPLATE_DIR, n) for _, n in scored[:k]]
+
+
+def _read_caption_file(path: str) -> str:
+    try:
+        with open(path, encoding="utf-8") as f:
+            return f.read()
+    except Exception:
+        return ""
+
+
+_CAPTION_REWRITE_SYSTEM = """You are a professional music caption writer for MiniMax Music 3.
+
+Rewrite the user's brief into a structured caption with EXACTLY three sections, in this order:
+1. Global Metadata — genre and subgenres, tempo, emotional progression (start -> peak -> resolve), application imagery, and sonic/production profile.
+2. Vocal Details — for vocal music: lead vocal gender/timbre/register, delivery per section, harmony/backing vocals, and restrained vocal FX. For instrumental music: state explicitly that it is instrumental and name the instrument or texture carrying the lead melodic role.
+3. Arrangement — a section-by-section timeline (Intro, Verse, Pre-Chorus, Chorus, Bridge, Outro): primary/secondary instrument lifecycles, groove development, transitions, embellishments, and spatial FX.
+
+Rules:
+- Treat bracketed lyric section tags as directives; keep them OUT of the caption and never merge them with lyric text.
+- Never reproduce, paraphrase, or summarize lyric text.
+- Do not copy sentences from the reference templates; synthesize a new caption around the brief.
+- Use an exact BPM/key only when explicitly given; otherwise use ranges or qualitative tempo.
+- Do not invent a precise key, BPM, vocal gender, or production technique beyond what the brief supports.
+- Total length must be 250-450 words: Global Metadata about 120-180 words, Vocal Details about 70-110 words, Arrangement about 100-160 words. Prefer concrete musical changes over decorative prose.
+- Respond ONLY with a JSON object: {"global_metadata": "...", "vocal_details": "...", "arrangement": "..."}"""
+
+
+def _build_caption_rewrite_prompt(concept: str, lyrics: Optional[str], tags: Optional[str], templates: List[str]) -> str:
+    brief = (concept or "").strip() or "A brand new song"
+    parts = [f"USER BRIEF: {brief}"]
+    if tags:
+        parts.append(f"STYLE TAGS: {tags}")
+    if lyrics:
+        parts.append(f"LYRICS (bracketed tags are section directives; never put lyric text in the caption):\n{lyrics}")
+    if templates:
+        refs = []
+        for t in templates:
+            content = _read_caption_file(t)
+            if content:
+                refs.append(f"--- reference template: {os.path.basename(t)} ---\n{content}")
+        if refs:
+            parts.append("REFERENCE TEMPLATES (style guidance only — do not copy sentences):\n" + "\n\n".join(refs))
+    return "\n\n".join(parts)
 
 
 class LLMService:
@@ -336,7 +484,15 @@ class LLMService:
             config = ConfigManager().get_config()
             provider_name = config.get("provider", "ollama")
         
-        if provider_name == "ollama":
+        if provider_name == "nvidia":
+            api_key = config.get("nvidia", {}).get("api_key", "") or os.environ.get("NVIDIA_API_KEY", "")
+            base_url = config.get("nvidia", {}).get("base_url", "https://integrate.api.nvidia.com/v1") or "https://integrate.api.nvidia.com/v1"
+            return OpenAIProvider(
+                api_key=api_key,
+                base_url=base_url,
+                timeout=45.0
+            )
+        elif provider_name == "ollama":
             base_url = config.get("ollama", {}).get("base_url", "http://localhost:11434")
             return OllamaProvider(base_url=base_url)
         elif provider_name == "openai":
@@ -384,7 +540,12 @@ class LLMService:
     def fetch_available_models(provider_name: str, api_key: Optional[str] = None, base_url: Optional[str] = None) -> List[str]:
         try:
             temp_config = {"provider": provider_name}
-            if provider_name == "ollama":
+            if provider_name == "nvidia":
+                temp_config["nvidia"] = {
+                    "api_key": api_key or os.environ.get("NVIDIA_API_KEY", ""),
+                    "base_url": base_url or "https://integrate.api.nvidia.com/v1"
+                }
+            elif provider_name == "ollama":
                 temp_config["ollama"] = {"base_url": base_url or "http://localhost:11434"}
             elif provider_name == "openai":
                 temp_config["openai"] = {"api_key": api_key}
@@ -674,65 +835,261 @@ class LLMService:
         except Exception as log_e:
             logger.warning(f"Logging failed: {log_e}")
         
-        try:
-            result = await run_lyrics_graph(
-                current_lyrics=current_lyrics,
-                user_message=user_message,
-                topic=topic,
-                tags=tags,
-                provider=provider,
-                model_name=model,
-            )
-            
-            # Debug log success with FINAL LYRICS
+        # Prepare provider attempts with automatic failover
+        primary_name = ConfigManager().get_config().get("provider", "nvidia")
+        providers_to_try = [(provider, model, primary_name)]
+        
+        full_cfg = ConfigManager().get_config()
+        for candidate_name in ["nvidia", "deepseek", "opencode", "omlx", "ollama"]:
+            if candidate_name != primary_name:
+                c_cfg = full_cfg.get(candidate_name, {})
+                c_key = c_cfg.get("api_key") or os.environ.get(f"{candidate_name.upper()}_API_KEY", "")
+                if c_key or candidate_name in ["omlx", "ollama", "lmstudio"]:
+                    try:
+                        c_provider = LLMService._get_provider(override_config={"provider": candidate_name, candidate_name: c_cfg})
+                        c_model = c_cfg.get("model") or "meta/llama-3.1-70b-instruct"
+                        providers_to_try.append((c_provider, c_model, candidate_name))
+                    except Exception:
+                        pass
+
+        last_error = None
+        for p_inst, p_model, p_name in providers_to_try:
             try:
-                with open("ai_debug.log", "a") as f:
-                    f.write(f"--- GRAPH SUCCESS ---\n")
-                    f.write(f"AI Message: {result.get('message', 'N/A')}\n\n")
-                    new_lyrics = result.get('lyrics', '')
-                    f.write(f"--- NEW LYRICS ({len(new_lyrics)} chars) ---\n")
-                    f.write(f"{new_lyrics}\n")
-                    f.write(f"--- END NEW LYRICS ---\n")
-                    f.write(f"{'='*60}\n\n")
-            except:
-                pass
-            
-            return result
-            
-        except MaxRetriesExceededError as e:
-            logger.error(f"Graph max retries exceeded: {e}")
-            return {
-                "message": str(e),
-                "lyrics": current_lyrics,
-                "error": True
-            }
-        except Exception as e:
-            logger.error(f"Lyrics graph failed: {e}")
-            return {
-                "message": f"An error occurred: {str(e)}",
-                "lyrics": current_lyrics,
-                "error": True
-            }
+                result = await run_lyrics_graph(
+                    current_lyrics=current_lyrics,
+                    user_message=user_message,
+                    topic=topic,
+                    tags=tags,
+                    provider=p_inst,
+                    model_name=p_model,
+                )
+                
+                # Debug log success with FINAL LYRICS
+                try:
+                    with open("ai_debug.log", "a") as f:
+                        f.write(f"--- GRAPH SUCCESS ({p_name}) ---\n")
+                        f.write(f"AI Message: {result.get('message', 'N/A')}\n\n")
+                        new_lyrics = result.get('lyrics', '')
+                        f.write(f"--- NEW LYRICS ({len(new_lyrics)} chars) ---\n")
+                        f.write(f"{new_lyrics}\n")
+                        f.write(f"--- END NEW LYRICS ---\n")
+                        f.write(f"{'='*60}\n\n")
+                except:
+                    pass
+                
+                if result.get("lyrics"):
+                    return result
+            except MaxRetriesExceededError as e:
+                logger.warning(f"Lyrics graph max retries with {p_name}: {e}")
+                last_error = e
+            except Exception as e:
+                logger.warning(f"Lyrics graph attempt failed with {p_name}: {e}")
+                last_error = e
+
+        return {
+            "message": f"LLM lyric generation encountered an error: {str(last_error)}",
+            "lyrics": current_lyrics,
+            "error": True
+        }
+
+    @staticmethod
+    def _extract_fallback_tags(concept: str) -> str:
+        """Extract valid tags and subgenres from prompt keywords if LLM provider fails."""
+        text = (concept or "").lower()
+        matched: List[str] = []
+        
+        # Check against available registered styles
+        all_styles = StyleRegistry().get_styles_for_prompt()
+        for s in all_styles:
+            if re.search(rf"\b{re.escape(s.lower())}\b", text):
+                if s not in matched:
+                    matched.append(s)
+
+        # Keyword mapping for common production idioms
+        kw_map = [
+            (r"\b(hip[- ]?hop|rap|rapper|mc|bars|spit)\b", "Hip-Hop"),
+            (r"\b(trap|808|drill)\b", "Trap"),
+            (r"\b(gangster|gangsta|thug|street)\b", "Hip-Hop"),
+            (r"\b(r[&n]b|rhythm and blues|soul|motown)\b", "R&B"),
+            (r"\b(synthwave|retrowave|synth|80s)\b", "Synthesizer"),
+            (r"\b(electronic|techno|house|edm|dance)\b", "Electronic"),
+            (r"\b(pop|radio hit|anthem)\b", "Pop"),
+            (r"\b(rock|guitar|punk|indie|grunge)\b", "Rock"),
+            (r"\b(metal|heavy|hardcore)\b", "Heavy"),
+            (r"\b(acoustic|unplugged|folk)\b", "Acoustic"),
+            (r"\b(piano|ballad)\b", "Piano"),
+            (r"\b(cinematic|orchestral|epic|film score)\b", "Cinematic"),
+            (r"\b(lo[- ]?fi|chillhop|relax|mellow)\b", "Lofi"),
+            (r"\b(female vocals?|woman|girl|singer)\b", "Female Vocal"),
+            (r"\b(male vocals?|man|guy)\b", "Male Vocal"),
+            (r"\b(dark|shadow|grim)\b", "Dark"),
+            (r"\b(sad|melancholic|heartbreak)\b", "Emotional"),
+        ]
+        for pattern, tag in kw_map:
+            if re.search(pattern, text, re.I):
+                if tag not in matched:
+                    matched.append(tag)
+
+        if not matched:
+            return "Pop, Modern DAW Master"
+        return ", ".join(matched[:5])
+
+    @staticmethod
+    def _extract_fallback_title(concept: str) -> str:
+        """Create a clean, creative song title from concept keywords if LLM is unavailable."""
+        clean = re.sub(r'^(create|make|write|generate|produce|it is|it\'s|a|an|the|song about|track about)\s+', '', concept.strip(), flags=re.I)
+        clean = re.sub(r'[^\w\s]', '', clean).strip()
+        words = clean.split()
+        if len(words) <= 4:
+            return clean.title() if clean else "Studio Master"
+        return " ".join(words[:4]).title()
+
+    @staticmethod
+    def _synthesize_fallback_lyrics(topic: str, tags: str) -> str:
+        """Synthesize a complete structured 4-part song arrangement when upstream LLMs are unavailable."""
+        return (
+            f"[Verse 1]\n"
+            f"Step inside the rhythm, hear the bass line start to roll\n"
+            f"Every single melody is speaking to the soul\n"
+            f"We started with a vision now we're taking to the stage\n"
+            f"Writing brand new history across the open page\n\n"
+            f"[Chorus]\n"
+            f"Turn the sound up higher, feel the power and the flame\n"
+            f"Nothing holds us under when we're mastering the game\n"
+            f"From the ground into the skyline, we're the rhythm and the light\n"
+            f"We own every heartbeat in the city through the night\n\n"
+            f"[Verse 2]\n"
+            f"Moving with momentum, every measure coming clear\n"
+            f"Dropping in the pocket so the whole world wants to hear\n"
+            f"Focused on the frequency, perfection in the mix\n"
+            f"Nothing broken in the groove that passion cannot fix\n\n"
+            f"[Outro]\n"
+            f"Let the echo linger as the faders slowly fall\n"
+            f"Standing at the pinnacle, we answered to the call"
+        )
 
     @staticmethod
     def generate_title(context: str, model: Optional[str] = None) -> str:
-        provider = LLMService._get_provider()
-        model = model or LLMService._get_active_model()
+        config = ConfigManager().get_config()
+        primary_name = config.get("provider", "nvidia")
+        providers_to_try = [primary_name, "nvidia", "deepseek", "omlx", "ollama"]
         
         prompt = f"Generate a short, creative, 2-5 word song title based on this concept/lyrics: '{context}'. Return ONLY the title, no quotes or prefix."
         
+        for p_name in providers_to_try:
+            try:
+                p_cfg = config.get(p_name, {})
+                p_inst = LLMService._get_provider(override_config={"provider": p_name, p_name: p_cfg})
+                p_model = p_cfg.get("model") or model or "meta/llama-3.1-70b-instruct"
+                response = p_inst.generate_text(prompt, p_model).strip().replace('"', '').replace('\n', ' ')
+                if response and len(response) < 60:
+                    return response
+            except Exception:
+                pass
+                
+        return LLMService._extract_fallback_title(context)
+
+    @staticmethod
+    async def rewrite_caption(
+        concept: str,
+        lyrics: Optional[str] = None,
+        tags: Optional[str] = None,
+        model: Optional[str] = None,
+        provider_config: Optional[Dict] = None,
+    ) -> Dict[str, Any]:
+        """Rewrite a brief into a professional three-heading MiniMax structured caption.
+
+        Uses the official music-caption-rewriter library (family routing + reference
+        templates) with the real configured LLM provider. Production contract: this
+        NEVER raises and NEVER blocks generation — any failure (LLM unreachable,
+        unparseable output) degrades to a safe constructed caption with an honest
+        fallback_reason so callers can surface it.
+        """
+        query = f"{concept or ''} {tags or ''}"
+        families = _rank_caption_families(query)
+        template_paths = _pick_caption_templates(query, families, k=3)
+        prompt = _build_caption_rewrite_prompt(concept, lyrics, tags, template_paths)
+        full_prompt = f"{_CAPTION_REWRITE_SYSTEM}\n\n{prompt}\n\nReturn the JSON object now."
+
         try:
-            response = provider.generate_text(prompt, model).strip().replace('"', '')
-            return response
-        except Exception:
-            return "Untitled Track"
-            
+            provider = LLMService._get_provider(provider_config)
+            model = model or LLMService._get_active_model()
+            result = provider.generate_json(full_prompt, model, options={"temperature": 0.7})
+            caption = LLMService._parse_caption_response(result)
+            if caption:
+                return {
+                    "structured_caption": caption,
+                    "rewritten": True,
+                    "fallback_reason": None,
+                    "families": families,
+                    "templates": [os.path.basename(t) for t in template_paths],
+                }
+            reason = "caption response did not contain all three sections"
+        except Exception as e:
+            reason = str(e)
+            logger.warning(f"Caption rewrite failed ({reason}); using constructed fallback caption.")
+
+        return {
+            "structured_caption": LLMService._constructed_caption(concept, tags),
+            "rewritten": False,
+            "fallback_reason": reason,
+            "families": families,
+            "templates": [os.path.basename(t) for t in template_paths],
+        }
+
+    @staticmethod
+    def _parse_caption_response(result: Any) -> Optional[Dict[str, str]]:
+        """Validate an LLM caption response: all three sections, non-empty strings."""
+        if not isinstance(result, dict):
+            return None
+        caption: Dict[str, str] = {}
+        for key in ("global_metadata", "vocal_details", "arrangement"):
+            value = result.get(key)
+            if isinstance(value, str) and value.strip():
+                caption[key] = value.strip()
+        if len(caption) == 3:
+            return caption
+        return None
+
+    @staticmethod
+    def _constructed_caption(concept: Optional[str], tags: Optional[str]) -> Dict[str, str]:
+        """Deterministic fallback caption (mirrors the provider's constructed path)."""
+        tag_list = [t.strip() for t in (tags or "").split(",") if t.strip()]
+        genre = tag_list[0] if tag_list else "Contemporary"
+        tempo = tag_list[1] if len(tag_list) > 1 else "energetic"
+        instruments = ", ".join(tag_list[2:]) if len(tag_list) > 2 else "Drums, Bass, Synths, Vocals"
+        imagery = (concept or "").strip() or "A scene the song belongs to."
+        return {
+            "global_metadata": (
+                f"Basic Attributes: Genre {genre}, tempo {tempo}.\n"
+                f"Global Emotional Progression: Opens with the {tempo} {genre} character and builds in energy toward the chorus before resolving cleanly.\n"
+                f"Application Scenarios & Imagery: {imagery}\n"
+                f"Sonics & Production Profile: Polished, well-balanced mix with centered vocals and moderate stereo width."
+            ),
+            "vocal_details": (
+                "Vocal Gender & Timbre: Singer A (Female), a clear and expressive vocal with strong presence.\n"
+                "Vocal Style: Melodic and emotive throughout, with dynamic phrasing and a fuller delivery in the chorus.\n"
+                "Harmony/Backing Vocals: Subtle stacked harmonies in the chorus.\n"
+                "Vocal FX: Light reverb and delay for space without losing presence."
+            ),
+            "arrangement": (
+                f"Instrument Lifecycle (Primary/Secondary): Primary {genre} foundation anchored by {instruments}.\n"
+                f"Groove & Foundation Progression: Rhythmic drive throughout, thickening in the chorus and stripping back in the bridge.\n"
+                f"Embellishments, Textures & Spatial FX: Moderate reverb tails and subtle risers on transitions."
+            ),
+        }
+
     @staticmethod
     def enhance_prompt(concept: str, model: Optional[str] = None) -> dict:
-        provider = LLMService._get_provider()
-        model = model or LLMService._get_active_model()
+        config = ConfigManager().get_config()
+        primary_name = config.get("provider", "nvidia")
+        providers_to_try = [primary_name]
+        for c in ["nvidia", "deepseek", "opencode", "openai", "gemini", "openrouter"]:
+            if c not in providers_to_try:
+                c_key = config.get(c, {}).get("api_key") or os.environ.get(f"{c.upper()}_API_KEY")
+                if c_key:
+                    providers_to_try.append(c)
 
-        # Dynamic style fetching
         valid_tags = StyleRegistry().get_styles_for_prompt()
         valid_tags_str = ", ".join(valid_tags)
         
@@ -744,23 +1101,29 @@ class LLMService:
             f"2. Select 3-5 'tags' ONLY from this list: [{valid_tags_str}]. Do NOT use any other tags.\n"
             "3. Return ONLY a raw JSON object with keys 'topic' and 'tags'. Do NOT wrap in markdown code blocks.\n\n"
             "Example Output:\n"
-            '{"topic": "A melancholic acoustic ballad about lost love in autumn.", "tags": "Acoustic, Sad, Soft"}'
+            '{"topic": "A high-energy hip hop anthem with hard 808s and confident delivery.", "tags": "Hip-Hop, Trap, Male Vocal, Female Vocal"}'
         )
 
-        try:
-            result = provider.generate_json(prompt, model)
-            return result
-        except Exception as e:
-            logger.warning(f"Enhance prompt failed: {e}")
-            return {"topic": concept, "tags": "Pop, Soft"}
+        for p_name in providers_to_try:
+            try:
+                p_cfg = config.get(p_name, {})
+                p_inst = LLMService._get_provider(override_config={"provider": p_name, p_name: p_cfg})
+                p_model = p_cfg.get("model") or model or "meta/llama-3.1-70b-instruct"
+                result = p_inst.generate_json(prompt, p_model)
+                if isinstance(result, dict) and result.get("topic") and result.get("tags"):
+                    return result
+            except Exception as e:
+                logger.warning(f"Enhance prompt failed with provider '{p_name}': {e}")
+
+        # Intelligent Fallback extraction from prompt keywords
+        fallback_tags = LLMService._extract_fallback_tags(concept)
+        return {"topic": concept, "tags": fallback_tags}
 
     @staticmethod
     async def produce_full_track(concept: str, model: Optional[str] = None) -> dict:
         """Full-scale AI Producer synthesis:
         Derives topic, verified tags, title, complete structured lyrics, and structured captions.
         """
-        provider = LLMService._get_provider()
-        model = model or LLMService._get_active_model()
         clean_concept = (concept or "").strip()
 
         # 1. Detect if instrumental is requested
@@ -769,29 +1132,41 @@ class LLMService:
         # 2. Enhance topic and valid style tags
         enhanced = LLMService.enhance_prompt(clean_concept, model)
         topic = enhanced.get("topic", clean_concept)
-        tags = enhanced.get("tags", "Pop, Electronic")
+        tags = enhanced.get("tags", "") or LLMService._extract_fallback_tags(clean_concept)
 
         # 3. Derive Title
         title = LLMService.generate_title(clean_concept, model)
-        if not title or title.lower() == "untitled track":
-            title = topic[:30]
+        if not title or title.lower() in ["untitled track", "studio master"]:
+            title = LLMService._extract_fallback_title(clean_concept)
 
         # 4. Generate structured lyrics (if vocal)
         lyrics = ""
+        producer_notice = None
         if not is_instrumental:
             try:
-                lyrics = await LLMService.generate_lyrics_async(topic, model, tags=tags)
+                lyrics_res = await LLMService.generate_lyrics_async(topic, model, tags=tags)
+                if isinstance(lyrics_res, dict):
+                    lyrics = lyrics_res.get("lyrics", "")
+                    if lyrics_res.get("error"):
+                        producer_notice = lyrics_res.get("message")
+                else:
+                    lyrics = str(lyrics_res)
             except Exception as e:
                 logger.warning(f"Lyric generation in produce_full_track failed: {e}")
-                lyrics = f"[Verse 1]\n{clean_concept}\n\n[Chorus]\n{topic}"
+                producer_notice = str(e)
+
+            if not lyrics or len(lyrics.strip()) < 30:
+                lyrics = LLMService._synthesize_fallback_lyrics(topic, tags)
             lyrics = _strip_thinking(lyrics)
 
-        # 5. Format Structured Caption
-        structured_caption = {
-            "global_metadata": f"Genre: {tags}\nMood: Studio Master",
-            "vocal_details": "Lead Vocals: Clear, Expressive, Dynamic" if not is_instrumental else "Instrumental (No Vocals)",
-            "arrangement": f"Instrumentation: {tags}\nProduction: High Fidelity Stereo Master"
-        }
+        # 5. Structured Caption via the official rewriter (three-heading contract).
+        caption_result = await LLMService.rewrite_caption(
+            concept=clean_concept,
+            lyrics=lyrics or None,
+            tags=tags,
+            model=model,
+        )
+        structured_caption = caption_result.get("structured_caption", {})
 
         return {
             "title": title,
@@ -799,7 +1174,8 @@ class LLMService:
             "tags": tags,
             "lyrics": lyrics,
             "structured_caption": structured_caption,
-            "is_instrumental": is_instrumental
+            "is_instrumental": is_instrumental,
+            "producer_notice": producer_notice
         }
 
     @staticmethod

@@ -19,7 +19,7 @@ import {
     SkipBack,
     Repeat
 } from 'lucide-react';
-import { API_BASE_URL } from '../../api';
+import { API_BASE_URL, getStemMeta } from '../../api';
 import type { Job, TimedLine, StemsMap, NoteEvent } from '../../api';
 import { ArrangeTimeline } from './ArrangeTimeline';
 import { PianoRoll } from './PianoRoll';
@@ -73,18 +73,32 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
 
     // DAW playback channels — TWO genuine stem sources the user can switch between:
     //   1. Per-Instrument (MuScriptor) -> dynamic, one channel per distinct instrument
-    //      from the transcription (DEFAULT — this is the true "dynamic stems" the DAW
-    //      was built around; solo/mute isolates each real part).
-    //   2. htDemucs -> real neural source-separation of the master into
-    //      vocals/drums/bass/other (4 master stems).
-    // Both are real, production data. A missing stem is omitted rather than shown as a
-    // silent phantom channel. The user picks which source the DAW reflects.
-    const realStemDefs: { id: string; name: string; audio?: string; volume: number; pan: number }[] = [
-        { id: 'vocals', name: '🎤 Vocals', audio: parsedStems.vocals, volume: 85, pan: 0 },
-        { id: 'drums', name: '🥁 Drums', audio: parsedStems.drums, volume: 90, pan: 0 },
-        { id: 'bass', name: '🎸 Bass', audio: parsedStems.bass, volume: 88, pan: 0 },
-        { id: 'other', name: '🎹 Instruments', audio: parsedStems.other, volume: 82, pan: -10 }
-    ];
+    //      from the transcription (DEFAULT).
+    //   2. Neural Source Separation -> real neural source-separation of the master into
+    //      dynamic stems (Vocals, Drums, Bass, Guitar, Piano, Other, etc.).
+    const reservedStemKeys = new Set([
+        'instrumental_parts',
+        'instrument_programs',
+        'stems_source',
+        'sources_available',
+        'default_source'
+    ]);
+
+    const realChannels: StemChannel[] = Object.entries(parsedStems)
+        .filter(([k, v]) => !reservedStemKeys.has(k) && typeof v === 'string' && !!v)
+        .map(([k, audio]) => {
+            const meta = getStemMeta(k);
+            return {
+                id: k,
+                name: `${meta.icon} ${meta.label}`,
+                color: meta.gradient,
+                volume: k === 'drums' ? 90 : k === 'bass' ? 88 : 85,
+                pan: 0,
+                isMuted: false,
+                isSolo: false,
+                audioUrl: `${API_BASE_URL}${audio}`
+            };
+        });
 
     const instrumentalParts: Record<string, string> = parsedStems.instrumental_parts || {};
     const instrumentPrograms: Record<string, number> = parsedStems.instrument_programs || {};
@@ -111,38 +125,17 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         midiProgram: instrumentPrograms[name]
     }));
 
-    // DEFAULT to the dynamic per-instrument parts when present (that's the true
-    // "dynamic stems" experience); fall back to the 4 master stems only when a
-    // track has no per-instrument parts yet.
-    const defaultSource: 'htdemucs' | 'muscriptor' =
-        partEntries.length > 0 ? 'muscriptor' : 'htdemucs';
+    // DEFAULT to dynamic per-instrument parts when present, else neural stems
+    const defaultSource: 'neural' | 'muscriptor' =
+        partEntries.length > 0 ? 'muscriptor' : 'neural';
 
-    const realChannels: StemChannel[] = realStemDefs
-        .filter(def => def.audio)
-        .map(def => ({
-            id: def.id,
-            name: def.name,
-            color: def.id === 'vocals'
-                ? 'from-pink-500 to-rose-500'
-                : def.id === 'drums'
-                ? 'from-amber-500 to-orange-500'
-                : def.id === 'bass'
-                ? 'from-cyan-500 to-blue-500'
-                : 'from-teal-500 to-emerald-500',
-            volume: def.volume,
-            pan: def.pan,
-            isMuted: false,
-            isSolo: false,
-            audioUrl: def.audio ? `${API_BASE_URL}${def.audio}` : undefined
-        }));
-
-    const [stemSource, setStemSource] = useState<'htdemucs' | 'muscriptor'>(defaultSource);
+    const [stemSource, setStemSource] = useState<'neural' | 'muscriptor'>(defaultSource);
     // Active channels are whichever source is currently selected.
     const initialChannels: StemChannel[] =
         stemSource === 'muscriptor' && partChannels.length > 0 ? partChannels : realChannels;
     const [stemChannels, setStemChannels] = useState<StemChannel[]>(initialChannels);
 
-    const switchStemSource = (source: 'htdemucs' | 'muscriptor') => {
+    const switchStemSource = (source: 'neural' | 'muscriptor') => {
         setStemSource(source);
         // Stop any in-flight playback and tear down the old source's graph nodes
         // so only the newly-selected source can ever be heard.
@@ -659,16 +652,16 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                             {partChannels.length} Instruments
                         </button>
                         <button
-                            onClick={() => switchStemSource('htdemucs')}
-                            title="Use the neural source-separated master group (Vocals / Drums / Bass / Other)"
-                            aria-label="Master Source Group"
+                            onClick={() => switchStemSource('neural')}
+                            title="Use the neural source-separated master group"
+                            aria-label="Neural Stems"
                             className={`px-2.5 py-1.5 rounded-lg text-[10px] sm:text-xs font-semibold transition-all whitespace-nowrap ${
-                                stemSource === 'htdemucs'
+                                stemSource === 'neural'
                                     ? 'bg-white dark:bg-white/20 text-teal-700 dark:text-teal-300 font-bold shadow-apple-sm'
                                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 hover:bg-black/[0.03] dark:hover:bg-white/5'
                             }`}
                         >
-                            Vocals / Drums / Bass / Other
+                            {realChannels.length} Neural Stems
                         </button>
                     </div>
                 )}

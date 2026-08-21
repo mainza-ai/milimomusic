@@ -18,7 +18,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
     currentConfig,
     onConfigUpdate
 }) => {
-    const [activeTab, setActiveTab] = useState<string>('opencode');
+    const [activeTab, setActiveTab] = useState<string>('nvidia');
     const [config, setConfig] = useState<LLMConfig>(currentConfig);
     const [isSaving, setIsSaving] = useState(false);
     const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -78,7 +78,8 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                     activeTab === 'ollama' ||
                     activeTab === 'lmstudio' ||
                     activeTab === 'omlx' ||
-                    activeTab === 'opencode'
+                    activeTab === 'opencode' ||
+                    activeTab === 'nvidia'
                         ? true
                         : !!configSection?.api_key;
 
@@ -144,6 +145,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
     };
 
     const providers = [
+        { id: 'nvidia', name: 'NVIDIA NIM', icon: '🟢', desc: 'Hosted Llama 3.1/3.3 & Nemotron' },
         { id: 'opencode', name: 'OpenCode Go', icon: '🚀', desc: 'Remote Cloud Engine' },
         { id: 'omlx', name: 'OMLX Local (Port 8787)', icon: '⚡', desc: 'Apple Silicon MLX Server' },
         { id: 'ollama', name: 'Ollama (Local)', icon: '🦙', desc: 'Local Ollama Instance' },
@@ -235,6 +237,68 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                         </span>
                                     )}
                                 </div>
+
+                                {/* NVIDIA NIM Panel */}
+                                {activeTab === 'nvidia' && (
+                                    <div className="space-y-4">
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                                                <Key size={12} />
+                                                NVIDIA NIM API Key
+                                            </label>
+                                            <input
+                                                type="password"
+                                                value={config.nvidia?.api_key || ''}
+                                                onChange={(e) => handleChange('nvidia', 'api_key', e.target.value)}
+                                                className="w-full apple-input font-mono text-xs"
+                                                placeholder="nvapi-..."
+                                            />
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                                                <Globe size={12} />
+                                                API Base URL
+                                            </label>
+                                            <input
+                                                type="text"
+                                                value={config.nvidia?.base_url || 'https://integrate.api.nvidia.com/v1'}
+                                                onChange={(e) => handleChange('nvidia', 'base_url', e.target.value)}
+                                                className="w-full apple-input font-mono text-xs"
+                                                placeholder="https://integrate.api.nvidia.com/v1"
+                                            />
+                                        </div>
+
+                                        <div className="space-y-1">
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                                                    <Cpu size={12} />
+                                                    Active Model ({availableModels.length} available)
+                                                </label>
+                                                <button
+                                                    onClick={handleFetchModels}
+                                                    disabled={isLoadingModels}
+                                                    className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
+                                                >
+                                                    <RefreshCw size={11} className={isLoadingModels ? 'animate-spin' : ''} />
+                                                    <span>Refresh Models</span>
+                                                </button>
+                                            </div>
+                                            <Combobox
+                                                value={config.nvidia?.model || 'meta/llama-3.1-70b-instruct'}
+                                                onChange={(val) => handleChange('nvidia', 'model', val)}
+                                                options={availableModels}
+                                                onRefresh={handleFetchModels}
+                                                isLoading={isLoadingModels}
+                                                placeholder="Select or enter NVIDIA NIM model..."
+                                            />
+                                        </div>
+
+                                        <div className="bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 p-3 rounded-2xl text-xs border border-emerald-500/20">
+                                            Connected to <strong>NVIDIA NIM API</strong> with support for <code>meta/llama-3.1-70b-instruct</code>, <code>meta/llama-3.1-8b-instruct</code>, and 100+ hosted models.
+                                        </div>
+                                    </div>
+                                )}
 
                                 {/* OpenCode Go Panel */}
                                 {activeTab === 'opencode' && (

@@ -50,6 +50,7 @@ from app.models import (
     LyricsRequest,
     LyricsChatRequest,
     EnhancePromptRequest,
+    RewriteCaptionRequest,
     InspirationRequest,
     LLMConfigUpdate,
     ProviderConfig,
@@ -260,11 +261,13 @@ async def transcribe_uploaded_audio(file: UploadFile = File(...)):
     with open(upload_path, "wb") as f:
         f.write(content)
 
-    # 1. Real neural source separation (HTDemucs) on the uploaded audio
+    # 1. Real neural source separation (BS-Roformer) on the uploaded audio
     loop = asyncio.get_running_loop()
-    stems = await loop.run_in_executor(
+    separation_res = await loop.run_in_executor(
         None, separate_sources, upload_path, "generated_audio/stems", job_id, 1
     )
+    real_stems = dict(separation_res.stems) if hasattr(separation_res, "stems") else dict(separation_res)
+    stems_source_id = getattr(separation_res, "source_id", "bs_roformer_6stem")
 
     # 2. MuScriptor transcription
     transcription = await muscriptor_provider.transcribe(upload_path, job_id)
@@ -279,6 +282,16 @@ async def transcribe_uploaded_audio(file: UploadFile = File(...)):
     except Exception as e:
         logger.warning(f"Per-instrument stem rendering skipped for import {job_id}: {e}")
 
+    dynamic_stems_payload = {
+        "stems_source": stems_source_id,
+        "instrumental_parts": instrument_parts,
+        "instrument_programs": instrument_programs,
+        "sources_available": [stems_source_id, "muscriptor"],
+        "default_source": "muscriptor",
+    }
+    for stem_k, stem_v in real_stems.items():
+        dynamic_stems_payload[stem_k] = stem_v
+
     # 3. Create Job session in DB
     job = Job(
         id=UUID(job_id),
@@ -290,17 +303,7 @@ async def transcribe_uploaded_audio(file: UploadFile = File(...)):
         musicxml_path=transcription.musicxml_path,
         notes_json=json.dumps(transcription.notes),
         beat_grid_json=json.dumps(transcription.beat_grid),
-        stems_json=json.dumps({
-            "vocals": stems.get("vocals", ""),
-            "drums": stems.get("drums", ""),
-            "bass": stems.get("bass", ""),
-            "other": stems.get("other", ""),
-            "stems_source": "htdemucs",
-            "instrumental_parts": instrument_parts,
-            "instrument_programs": instrument_programs,
-            "sources_available": ["muscriptor", "htdemucs"],
-            "default_source": "muscriptor",
-        })
+        stems_json=json.dumps(dynamic_stems_payload)
     )
 
     with Session(engine) as session:
@@ -398,21 +401,30 @@ def export_track_asset(job_id: str, export_format: str):
             beat_grid = json.loads(job.beat_grid_json) if job.beat_grid_json else {}
             stems = json.loads(job.stems_json) if job.stems_json else {}
             parts = stems.get("instrumental_parts", {})
+            stems_src = stems.get("stems_source", "bs_roformer_6stem")
+
             instrument_tracks = [
                 {"name": inst, "audio": url, "source": "muscriptor",
                  "program": stems.get("instrument_programs", {}).get(inst, 0)}
                 for inst, url in parts.items()
             ]
+
+            # Dynamically build neural stem tracks for all available stems (vocals, drums, bass, guitar, piano, other)
+            reserved_keys = {"stems_source", "instrumental_parts", "instrument_programs", "sources_available", "default_source"}
+            neural_tracks = []
+            for stem_key, stem_url in stems.items():
+                if stem_key not in reserved_keys and stem_url and isinstance(stem_url, str):
+                    neural_tracks.append({
+                        "name": stem_key.capitalize(),
+                        "audio": stem_url,
+                        "source": stems_src
+                    })
+
             ableton_desc = {
                 "format": "ableton-midi-multitrack",
                 "bpm": beat_grid.get("bpm", 120.0),
-                "source": stems.get("stems_source", "htdemucs"),
-                "tracks": [
-                    {"name": "Vocals", "audio": stems.get("vocals"), "source": "htdemucs"},
-                    {"name": "Drums", "audio": stems.get("drums"), "source": "htdemucs"},
-                    {"name": "Bass", "audio": stems.get("bass"), "source": "htdemucs"},
-                    {"name": "Instruments", "audio": stems.get("other"), "source": "htdemucs"}
-                ],
+                "source": stems_src,
+                "tracks": neural_tracks,
                 "instrumental_parts": instrument_tracks,
                 "note_events": notes
             }
@@ -578,6 +590,8 @@ def update_llm_config(config: LLMConfigUpdate):
     try:
         if config.provider:
             LLMService.set_active_provider(config.provider)
+        if config.nvidia:
+            LLMService.update_config("nvidia", config.nvidia.model_dump(exclude_unset=True))
         if config.openai:
             LLMService.update_config("openai", config.openai.model_dump(exclude_unset=True))
         if config.gemini:
@@ -607,7 +621,10 @@ def fetch_models(request: LLMConfigUpdate):
             raise HTTPException(status_code=400, detail="Provider required")
         api_key = None
         base_url = None
-        if provider == "openai" and request.openai:
+        if provider == "nvidia" and request.nvidia:
+            api_key = request.nvidia.api_key
+            base_url = request.nvidia.base_url
+        elif provider == "openai" and request.openai:
             api_key = request.openai.api_key
         elif provider == "deepseek" and request.deepseek:
             api_key = request.deepseek.api_key
@@ -639,6 +656,30 @@ def enhance_prompt(req: EnhancePromptRequest):
         return result
     except Exception:
         return {"topic": req.concept, "tags": "Pop, Electronic, Modern DAW Master"}
+
+
+@app.post("/generate/rewrite_caption")
+async def rewrite_caption(req: RewriteCaptionRequest):
+    """Rewrite a brief into a professional three-heading MiniMax structured caption
+    (official music-caption-rewriter workflow). Never blocks generation: the service
+    falls back to a constructed caption and reports it honestly via 'rewritten'/
+    'fallback_reason' instead of raising."""
+    result = await LLMService.rewrite_caption(
+        concept=req.concept,
+        lyrics=req.lyrics,
+        tags=req.tags,
+        model=req.model_name,
+    )
+    caption = result.get("structured_caption", {})
+    return {
+        "global_metadata": caption.get("global_metadata", ""),
+        "vocal_details": caption.get("vocal_details", ""),
+        "arrangement": caption.get("arrangement", ""),
+        "rewritten": result.get("rewritten", False),
+        "fallback_reason": result.get("fallback_reason"),
+        "families": result.get("families", []),
+        "templates": result.get("templates", []),
+    }
 
 
 @app.post("/generate/evaluate_inspiration")

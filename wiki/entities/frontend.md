@@ -2,7 +2,7 @@
 title: Frontend
 type: entity
 created: 2026-08-19
-updated: 2026-08-20
+updated: 2026-08-21
 sources: [sources/readme.md, sources/v2-refactor-plan.md]
 tags: [frontend, react, vite, tailwind, ui, daw]
 aliases: [Web UI, Frontend app]
@@ -55,14 +55,16 @@ Suno-style **reference IA** plus a full web **DAW workspace**.
 - **LLMSettingsModal**, **PathsSettingsModal** — providers/paths.
 - **InpaintModal** — [Repair Segment](inpainting.md).
 - **HistoryFeed** — session history with "Open in DAW", stems/MIDI badges, day-grouping.
-- UI kit — `GradientButton`, `GlassCard`, `AudioVisualizer`, `Combobox`, `Toast`,
-  `GlobalAudioPlayer`, `FloatingStatusWidget` (pipeline progress overlay driven by SSE
-  `job_progress` events), `MilimoLogo`; theme context (`ThemeContext`).
-
-## Client API (`api.ts`)
-Groups: `api` (generate, lyrics, enhancement, history, jobs, SSE events), `modelsApi`,
-`voiceApi`, `workspaceApi` (transcribe upload, export, mastering, save notes), `trainingApi`,
-`projectApi`, `styleApi`, `pathsApi`. Full surface in [Backend & API](backend-api.md).
+## Centralized Audio Engine & Playback Architecture
+- **Single-Node `AudioEngineContext`** (`frontend/src/context/AudioEngineContext.tsx`):
+  - Root singleton `<audio>` element with WebAudio `AnalyserNode` connected via `crossOrigin="anonymous"`.
+  - Exposes `useAudioEngine()` controlling playback state, buffering, seeking, master volume fader, smart previous/next, shuffle, and loop modes.
+  - Contextual dock visibility: floating dock automatically hides when entering dedicated studio environments (`TrackDetailView` and `SessionWorkspace`).
+- **Floating Harbor Dock Player (`GlobalAudioPlayer.tsx`)**:
+  - Rigid 3-zone flexbox layout (Left Track Info, Centered Non-Collapsing Transport, Right Studio Tools) eliminating all button collisions.
+  - Pro media controls suite: Return to Start/Zero (`|<<`), Rewind 10s, Hero Play/Pause, Advance 10s, Next Track (`>>|`), Repeat modes, Speed selector (0.75x–2.0x), Volume slider + Mute, Up Next Queue Drawer, and Synchronized LRC Lyrics Sheet.
+- **Track Studio Hero (`TrackDetailView.tsx`)**:
+  - Integrated full transport cluster with live frequency equalizer waves, timecode modes (elapsed/remaining), speed selector, and isolated stem auditioning bus.
 
 ## Related pages
 - [Architecture](../architecture.md) | [Session Workspace](session-workspace.md)

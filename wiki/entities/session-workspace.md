@@ -2,7 +2,7 @@
 title: Session Workspace (DAW)
 type: entity
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-21
 tags: [daw, workspace, piano-roll, notation, mixer, arrange, multitrack, web-audio]
 aliases: [SessionWorkspace, DAW, Web Audio DAW]
 ---
@@ -79,7 +79,9 @@ switches, causing "hear everything" bugs):
   `scheduleAll()`, so the full mix state (`applyMixParams`) is re-applied at the end of `scheduleAll()`
   immediately after the nodes exist. This makes solo/mute/volume/pan take effect even when changed
   *while paused before first play*.
-- Transport bar: Rewind −5s, Play/Pause, Advance +5s, timecode, scrubber, master volume.
+- **Transport bar**: Return to Zero / Start (`|<<`), Step Back 1 Measure (`-1 Bar`), Rewind 10s (`RotateCcw`),
+  Master Play/Pause hero button, Advance 10s (`RotateCw`), Step Forward 1 Measure (`+1 Bar`), Loop Playback
+  Toggle (`Repeat`), Timecode (elapsed/duration), Dynamic BPM indicator, Full Multitrack Scrubber, and Master Volume slider.
 - **Export DAW Assets** dropdown → `GET /transcribe/export/{job_id}/{format}` for
   `midi`, `musicxml`, `lrc`.
 

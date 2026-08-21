@@ -127,6 +127,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
     };
 
     const handleToggleMasterPlay = () => {
+        stopPreviewRef.current?.();
         if (stemAudioRef.current && playingStemKey) {
             stemAudioRef.current.pause();
             setPlayingStemKey(null);
@@ -153,6 +154,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
             stemAudio.pause();
             setPlayingStemKey(null);
         } else {
+            stopPreviewRef.current?.();
             if (isCurrentPlaying) {
                 engineTogglePlay();
             }
@@ -305,6 +307,148 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
 
     const activeStemsList = stemSourceMode === 'muscriptor' && instrumentParts.length > 0 ? instrumentParts : neuralStems;
 
+    // ── Multi-stem preview mixer (REAL Solo/Mute) ───────────────────────────
+    // The Stems Matrix S/M buttons drive a genuine sample-locked Web Audio
+    // preview of ALL stems in the active source simultaneously. Solo/Mute are
+    // applied to live GainNodes — they are never decorative here.
+    const previewCtxRef = useRef<AudioContext | null>(null);
+    const previewMasterRef = useRef<GainNode | null>(null);
+    const previewGainsRef = useRef<Record<string, GainNode>>({});
+    const previewSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+    const previewBufCacheRef = useRef<Record<string, AudioBuffer>>({});
+    const [isPreviewPlaying, setIsPreviewPlaying] = useState(false);
+    // Real per-stem waveform peaks for the matrix cards (decoded amplitude).
+    const [stemPreviewPeaks, setStemPreviewPeaks] = useState<Record<string, number[]>>({});
+
+    const stopPreview = React.useCallback(() => {
+        previewSourcesRef.current.forEach(src => {
+            try { src.stop(); } catch { /* already stopped */ }
+            try { src.disconnect(); } catch { /* ignore */ }
+        });
+        previewSourcesRef.current.clear();
+        setIsPreviewPlaying(false);
+    }, []);
+
+    // Late-bound handle so handlers defined above this block can stop the
+    // preview without ordering constraints.
+    const stopPreviewRef = useRef<() => void>(stopPreview);
+    stopPreviewRef.current = stopPreview;
+
+    useEffect(() => () => {
+        stopPreview();
+        if (previewCtxRef.current) {
+            previewCtxRef.current.close().catch(() => {});
+            previewCtxRef.current = null;
+        }
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
+    // Apply Solo/Mute to the LIVE preview gains whenever they change.
+    useEffect(() => {
+        const ctx = previewCtxRef.current;
+        if (!ctx || !previewMasterRef.current) return;
+        activeStemsList.forEach(stem => {
+            const g = previewGainsRef.current[stem.key];
+            if (!g) return;
+            const audible = soloStem !== null
+                ? (soloStem === stem.key && !mutedStems.has(stem.key))
+                : !mutedStems.has(stem.key);
+            g.gain.setTargetAtTime(audible ? 1 : 0, ctx.currentTime, 0.015);
+        });
+    }, [soloStem, mutedStems, activeStemsList]);
+
+    const computeMiniPeaks = (buffer: AudioBuffer, buckets: number = 40): number[] => {
+        const data = buffer.getChannelData(0);
+        const block = Math.max(1, Math.floor(data.length / buckets));
+        const peaks: number[] = [];
+        let max = 0;
+        for (let i = 0; i < buckets; i++) {
+            let peak = 0;
+            const start = i * block;
+            for (let j = 0; j < block; j += 16) {
+                const v = Math.abs(data[start + j] || 0);
+                if (v > peak) peak = v;
+            }
+            if (peak > max) max = peak;
+            peaks.push(peak);
+        }
+        return max > 0 ? peaks.map(p => p / max) : peaks;
+    };
+
+    const stemAudibleAt = (key: string): number =>
+        soloStem !== null
+            ? (soloStem === key && !mutedStems.has(key) ? 1 : 0)
+            : (mutedStems.has(key) ? 0 : 1);
+
+    const handlePreviewToggle = async () => {
+        if (isPreviewPlaying) {
+            stopPreview();
+            return;
+        }
+        const stems = activeStemsList.filter(s => s.path);
+        if (stems.length === 0) return;
+
+        // Preview replaces any other audio on this page.
+        stopPreviewRef.current?.();
+        if (stemAudioRef.current && playingStemKey) {
+            stemAudioRef.current.pause();
+            setPlayingStemKey(null);
+        }
+        if (isCurrentPlaying) engineTogglePlay();
+
+        try {
+            if (!previewCtxRef.current) {
+                const Ctor: typeof AudioContext =
+                    window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+                previewCtxRef.current = new Ctor();
+                const master = previewCtxRef.current.createGain();
+                master.gain.value = 1;
+                master.connect(previewCtxRef.current.destination);
+                previewMasterRef.current = master;
+                previewGainsRef.current = {};
+            }
+            const ctx = previewCtxRef.current;
+            if (ctx.state === 'suspended') await ctx.resume().catch(() => {});
+
+            const loaded = await Promise.all(stems.map(async s => {
+                let buf = previewBufCacheRef.current[s.key];
+                if (!buf) {
+                    const url = s.path!.startsWith('http') ? s.path! : `${API_BASE_URL}${s.path!}`;
+                    buf = await ctx.decodeAudioData(await (await fetch(url)).arrayBuffer());
+                    previewBufCacheRef.current[s.key] = buf;
+                }
+                return { key: s.key, buf };
+            }));
+
+            const startAt = ctx.currentTime + 0.05;
+            let endedCount = 0;
+            const peaksMap: Record<string, number[]> = {};
+            loaded.forEach(({ key, buf }) => {
+                let g = previewGainsRef.current[key];
+                if (!g) {
+                    g = ctx.createGain();
+                    g.connect(previewMasterRef.current!);
+                    previewGainsRef.current[key] = g;
+                }
+                g.gain.setValueAtTime(stemAudibleAt(key), startAt);
+                const src = ctx.createBufferSource();
+                src.buffer = buf;
+                src.connect(g);
+                src.onended = () => {
+                    endedCount++;
+                    if (endedCount >= loaded.length) setIsPreviewPlaying(false);
+                };
+                src.start(startAt);
+                previewSourcesRef.current.add(src);
+                peaksMap[key] = computeMiniPeaks(buf);
+            });
+            setStemPreviewPeaks(peaksMap);
+            setIsPreviewPlaying(true);
+        } catch (e) {
+            console.error('Stem mix preview failed:', e);
+            setIsPreviewPlaying(false);
+        }
+    };
+
     // Lineage derivation
     const parentTrack = track.parent_job_id ? allJobs.find(j => j.id === track.parent_job_id) : null;
     const derivativeTracks = allJobs.filter(j => j.parent_job_id === track.id);
@@ -441,9 +585,6 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                             </span>
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold border border-amber-500/20">
                                 ⏱️ {Math.round((track.duration_ms || 60000) / 1000)}s
-                            </span>
-                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-400 border border-black/[0.06] dark:border-white/5">
-                                🔊 -14.0 LUFS Master
                             </span>
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-400 border border-black/[0.06] dark:border-white/5">
                                 🎛️ {track.model_provider || 'MiniMax Music 3'}
@@ -713,7 +854,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                             <Icon size={14} className={isActive ? 'text-teal-500' : 'text-slate-400'} />
                             <span>{tab.label}</span>
                             {tab.count !== undefined && (
-                                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono ${
+                                <span className={`text-[10px] px-1.5 py-px rounded-full font-mono ${
                                     isActive ? 'bg-teal-500/20 text-teal-700 dark:text-teal-300' : 'bg-black/5 dark:bg-white/5 text-slate-400'
                                 }`}>
                                     {tab.count}
@@ -738,35 +879,52 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                     </span>
                                 </h3>
                                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                                    Solo, mute, audition, and download uncompressed 48kHz WAV audio stems.
+                                    Preview the full stem mix — Solo and Mute drive the live preview gains in real time.
                                 </p>
                             </div>
 
-                            {/* Stem Source Switcher */}
-                            {instrumentParts.length > 0 && (
-                                <div className="flex items-center bg-black/[0.04] dark:bg-white/5 p-1 rounded-xl border border-black/[0.06] dark:border-white/10 text-xs font-semibold">
-                                    <button
-                                        onClick={() => setStemSourceMode('muscriptor')}
-                                        className={`px-3 py-1 rounded-lg transition-all ${
-                                            stemSourceMode === 'muscriptor'
-                                                ? 'bg-white dark:bg-white/20 text-teal-700 dark:text-teal-300 font-bold shadow-sm'
-                                                : 'text-slate-500'
-                                        }`}
-                                    >
-                                        Dynamic Instrument Parts ({instrumentParts.length})
-                                    </button>
-                                    <button
-                                        onClick={() => setStemSourceMode('neural')}
-                                        className={`px-3 py-1 rounded-lg transition-all ${
-                                            stemSourceMode === 'neural'
-                                                ? 'bg-white dark:bg-white/20 text-teal-700 dark:text-teal-300 font-bold shadow-sm'
-                                                : 'text-slate-500'
-                                        }`}
-                                    >
-                                        Neural Stems ({neuralStems.length})
-                                    </button>
-                                </div>
-                            )}
+                            <div className="flex items-center gap-2 flex-wrap">
+                                {/* REAL stem-mix preview: sample-locked playback of all
+                                    stems; S/M buttons below act on the live gains. */}
+                                <button
+                                    onClick={handlePreviewToggle}
+                                    className={`px-3.5 py-1.5 rounded-xl font-bold text-xs flex items-center gap-1.5 transition-all shadow-md active:scale-[0.98] ${
+                                        isPreviewPlaying
+                                            ? 'bg-slate-900 dark:bg-white text-white dark:text-slate-900'
+                                            : 'bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 shadow-teal-500/20'
+                                    }`}
+                                    title={isPreviewPlaying ? 'Stop the stem mix preview' : 'Play all stems together as a live mix (Solo/Mute apply)'}
+                                >
+                                    {isPreviewPlaying ? <Pause size={13} /> : <Play size={13} className="ml-0.5" />}
+                                    <span>{isPreviewPlaying ? 'Stop Mix Preview' : 'Preview Stem Mix'}</span>
+                                </button>
+
+                                {/* Stem Source Switcher */}
+                                {instrumentParts.length > 0 && (
+                                    <div className="flex items-center bg-black/[0.04] dark:bg-white/5 p-1 rounded-xl border border-black/[0.06] dark:border-white/10 text-xs font-semibold">
+                                        <button
+                                            onClick={() => { stopPreviewRef.current?.(); setStemSourceMode('muscriptor'); }}
+                                            className={`px-3 py-1 rounded-lg transition-all ${
+                                                stemSourceMode === 'muscriptor'
+                                                    ? 'bg-white dark:bg-white/20 text-teal-700 dark:text-teal-300 font-bold shadow-sm'
+                                                    : 'text-slate-500'
+                                            }`}
+                                        >
+                                            Dynamic Instrument Parts ({instrumentParts.length})
+                                        </button>
+                                        <button
+                                            onClick={() => { stopPreviewRef.current?.(); setStemSourceMode('neural'); }}
+                                            className={`px-3 py-1 rounded-lg transition-all ${
+                                                stemSourceMode === 'neural'
+                                                    ? 'bg-white dark:bg-white/20 text-teal-700 dark:text-teal-300 font-bold shadow-sm'
+                                                    : 'text-slate-500'
+                                            }`}
+                                        >
+                                            Neural Stems ({neuralStems.length})
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
                         </div>
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-3.5">
@@ -787,9 +945,6 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                                     <h4 className="text-xs font-bold text-slate-900 dark:text-white capitalize">
                                                         {stem.label}
                                                     </h4>
-                                                    <span className="text-[10px] font-mono text-slate-400">
-                                                        48kHz Stereo WAV
-                                                    </span>
                                                 </div>
                                             </div>
 
@@ -808,12 +963,13 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
 
                                                 <button
                                                     onClick={() => setSoloStem(isSolo ? null : stem.key)}
+                                                    aria-pressed={isSolo}
                                                     className={`w-7 h-7 rounded-lg font-mono font-bold text-[11px] flex items-center justify-center border transition-all ${
                                                         isSolo
                                                             ? 'bg-amber-500 text-slate-950 border-amber-400 shadow-sm'
                                                             : 'bg-black/[0.03] dark:bg-white/5 border-black/10 dark:border-white/10 text-slate-500 hover:text-amber-500'
                                                     }`}
-                                                    title="Solo Stem"
+                                                    title={isSolo ? `Un-solo ${stem.label}` : `Solo ${stem.label} in the mix preview`}
                                                 >
                                                     S
                                                 </button>
@@ -824,33 +980,40 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                                         else next.add(stem.key);
                                                         setMutedStems(next);
                                                     }}
+                                                    aria-pressed={isMuted}
                                                     className={`w-7 h-7 rounded-lg font-mono font-bold text-[11px] flex items-center justify-center border transition-all ${
                                                         isMuted
                                                             ? 'bg-rose-500 text-white border-rose-400 shadow-sm'
                                                             : 'bg-black/[0.03] dark:bg-white/5 border-black/10 dark:border-white/10 text-slate-500 hover:text-rose-500'
                                                     }`}
-                                                    title="Mute Stem"
+                                                    title={isMuted ? `Unmute ${stem.label}` : `Mute ${stem.label} in the mix preview`}
                                                 >
                                                     M
                                                 </button>
                                             </div>
                                         </div>
 
-                                        {/* Waveform graphic bar */}
+                                        {/* Waveform: real decoded amplitude once previewed;
+                                            neutral placeholder before first decode — never
+                                            a simulated signal. */}
                                         <div className="h-8 rounded-xl bg-black/[0.03] dark:bg-white/5 border border-black/[0.04] dark:border-white/5 p-1 flex items-center justify-between gap-0.5 overflow-hidden">
-                                            {Array.from({ length: 40 }).map((_, i) => (
+                                            {(stemPreviewPeaks[stem.key] || Array.from({ length: 40 }, () => 0.12)).map((p, i) => (
                                                 <div
                                                     key={i}
-                                                    className="flex-1 bg-teal-500/30 rounded-full transition-all"
-                                                    style={{ height: `${Math.max(15, Math.sin(i * 0.4) * 80 + 20)}%` }}
+                                                    className={`flex-1 rounded-full transition-all ${
+                                                        stemPreviewPeaks[stem.key]
+                                                            ? 'bg-teal-500/50'
+                                                            : 'bg-teal-500/15'
+                                                    }`}
+                                                    style={{ height: `${Math.max(10, p * 90)}%` }}
                                                 />
                                             ))}
                                         </div>
 
                                         {/* Action: Download Stem WAV */}
                                         <div className="flex items-center justify-between pt-1 border-t border-black/[0.04] dark:border-white/5 text-[11px]">
-                                            <span className="text-slate-400 font-mono">
-                                                Broadcast Ready
+                                            <span className="text-slate-400 font-mono uppercase">
+                                                {isMuted ? 'Muted in preview' : isSolo ? 'Soloed in preview' : 'Stem'}
                                             </span>
                                             {stem.path && (
                                                 <a
@@ -888,7 +1051,15 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                     Pitch Range
                                 </span>
                                 <span className="text-xl font-extrabold text-slate-800 dark:text-slate-200 font-mono">
-                                    {notesData.length > 0 ? `${notesData[0].note_name || 'C2'} – ${notesData[notesData.length - 1].note_name || 'G5'}` : 'C2 – C6'}
+                                    {(() => {
+                                        if (notesData.length === 0) return '—';
+                                        let lo = notesData[0], hi = notesData[0];
+                                        for (const n of notesData) {
+                                            if (n.pitch < lo.pitch) lo = n;
+                                            if (n.pitch > hi.pitch) hi = n;
+                                        }
+                                        return `${lo.note_name || lo.pitch} – ${hi.note_name || hi.pitch}`;
+                                    })()}
                                 </span>
                             </div>
 
@@ -903,10 +1074,15 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
 
                             <div className="p-3.5 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/10 shadow-apple-sm text-center">
                                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
-                                    Quantization Grid
+                                    Measures
                                 </span>
                                 <span className="text-xl font-extrabold text-amber-600 dark:text-amber-400 font-mono">
-                                    1/16 Beat Alignment
+                                    {(() => {
+                                        const bpm = Number(beatGrid.bpm) > 0 ? Number(beatGrid.bpm) : 120;
+                                        const bpb = Number(beatGrid.beats_per_bar) > 0 ? Number(beatGrid.beats_per_bar) : 4;
+                                        const durSec = track.duration_ms ? track.duration_ms / 1000 : 30;
+                                        return Math.max(1, Math.ceil(durSec / ((60 / bpm) * bpb)));
+                                    })()}
                                 </span>
                             </div>
                         </div>

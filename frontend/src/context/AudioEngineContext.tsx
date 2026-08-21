@@ -2,6 +2,7 @@ import React, { createContext, useContext, useState, useRef, useEffect, useCallb
 import type { Job } from '../api';
 import { API_BASE_URL } from '../api';
 import { getAudioContext } from '../utils/audioContext';
+import { consumeHotkey, isTextEntryTarget, hasModifier } from '../utils/hotkeyScope';
 
 export interface AudioEngineContextValue {
     currentTrack: Job | null;
@@ -15,7 +16,7 @@ export interface AudioEngineContextValue {
     isShuffle: boolean;
     playlist: Job[];
     analyserNode: AnalyserNode | null;
-    playTrack: (track: Job, customPlaylist?: Job[]) => Promise<void>;
+    playTrack: (track: Job, customPlaylist?: Job[], startAtSeconds?: number) => Promise<void>;
     pause: () => void;
     resume: () => Promise<void>;
     togglePlay: (track?: Job) => void;
@@ -58,6 +59,8 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     // Audio node connectivity tracker
     const isSourceConnected = useRef(false);
+    // Queued seek for a track whose metadata hasn't loaded yet.
+    const pendingSeekRef = useRef<{ trackId: string; time: number } | null>(null);
 
     // Full absolute URL resolver
     const getAudioUrl = useCallback((path?: string | null): string => {
@@ -131,8 +134,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         seek(0);
     }, [seek]);
 
-    // Play specific track
-    const playTrack = useCallback(async (track: Job, customPlaylist?: Job[]) => {
+    // Play specific track. `startAtSeconds` queues a seek applied as soon as
+    // the new element's metadata loads — lets list rows start playback at a
+    // clicked waveform position without racing load events.
+    const playTrack = useCallback(async (track: Job, customPlaylist?: Job[], startAtSeconds?: number) => {
         if (!track?.audio_path) return;
 
         if (customPlaylist && customPlaylist.length > 0) {
@@ -148,11 +153,15 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
         setCurrentTrack(track);
         setCurrentTime(0);
+        pendingSeekRef.current = startAtSeconds && startAtSeconds > 0
+            ? { trackId: track.id, time: startAtSeconds }
+            : null;
 
         if (audioRef.current) {
             ensureAudioGraph();
             const fullUrl = getAudioUrl(track.audio_path);
-            if (audioRef.current.src !== fullUrl) {
+            const isReload = audioRef.current.src !== fullUrl;
+            if (isReload) {
                 audioRef.current.src = fullUrl;
                 audioRef.current.load();
             }
@@ -160,6 +169,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             try {
                 await audioRef.current.play();
                 setIsPlaying(true);
+                // Same-source restart with a queued position: metadata won't
+                // fire again, so apply the seek directly.
+                if (!isReload && pendingSeekRef.current?.trackId === track.id) {
+                    audioRef.current.currentTime = pendingSeekRef.current.time;
+                    setCurrentTime(pendingSeekRef.current.time);
+                    pendingSeekRef.current = null;
+                }
             } catch (err: any) {
                 if (err.name !== 'AbortError') {
                     console.warn('Playback start postponed/blocked:', err);
@@ -301,13 +317,17 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     }, [repeatMode, nextTrack, playlist, currentTrack?.id]);
 
-    // High-precision 60fps Playhead tracking for smooth karaoke & visualizer sync
+    // Playhead tracking for karaoke & visualizer sync. Runs at ~30fps (every
+    // other frame): a 60fps setState here re-rendered EVERY context consumer
+    // — effectively the whole app tree — twice as often as needed.
     useEffect(() => {
         if (!isPlaying) return;
 
         let animFrameId: number;
+        let frame = 0;
         const tick = () => {
-            if (audioRef.current && !audioRef.current.paused) {
+            frame++;
+            if (frame % 2 === 0 && audioRef.current && !audioRef.current.paused) {
                 setCurrentTime(audioRef.current.currentTime);
             }
             animFrameId = requestAnimationFrame(tick);
@@ -328,6 +348,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const handleLoadedMetadata = useCallback(() => {
         if (audioRef.current && audioRef.current.duration) {
             setDuration(audioRef.current.duration);
+        }
+        // Apply a queued start-position seek once the element can accept one.
+        const pending = pendingSeekRef.current;
+        if (pending && audioRef.current) {
+            audioRef.current.currentTime = Math.max(0, Math.min(audioRef.current.duration || 0, pending.time));
+            setCurrentTime(audioRef.current.currentTime);
+            pendingSeekRef.current = null;
         }
     }, []);
 
@@ -384,11 +411,24 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     // Global Keyboard Hotkeys Listener
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
+            // Never swallow OS/browser shortcuts (Cmd+Left = Back, Ctrl+Home, etc).
+            if (hasModifier(e)) return;
+
             // Ignore keystrokes when typing into text inputs, textarea, or content editable
             const target = e.target as HTMLElement | null;
-            if (target && (target.tagName === 'INPUT' || target.tagName === 'TEXTAREA' || target.tagName === 'SELECT' || target.isContentEditable)) {
-                return;
-            }
+            if (isTextEntryTarget(target)) return;
+
+            // Space on a focused button must activate that button (native
+            // behavior) — hijacking it broke every focused control app-wide.
+            if ((e.code === 'Space' || e.code === 'Enter') && target?.tagName === 'BUTTON') return;
+
+            // A mounted surface (e.g. the DAW workspace) owns transport keys
+            // while it is active; if it consumed this keystroke, stand down so
+            // two audio streams can never play simultaneously.
+            if (consumeHotkey(e)) return;
+
+            // No music loaded → nothing to control → don't hijack page keys.
+            if (!currentTrack) return;
 
             if (e.code === 'Space' || e.code === 'KeyK') {
                 e.preventDefault();
@@ -422,7 +462,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [togglePlay, seek, currentTime, duration, returnToStart, prevTrackOrRestart, nextTrack, setVolume, volume, toggleMute]);
+    }, [togglePlay, seek, currentTime, duration, returnToStart, prevTrackOrRestart, nextTrack, setVolume, volume, toggleMute, currentTrack]);
 
     return (
         <AudioEngineContext.Provider

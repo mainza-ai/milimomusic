@@ -13,6 +13,7 @@ import {
 } from 'lucide-react';
 
 import { api, voiceApi, coverApi, API_BASE_URL, type Job, type LLMConfig, type VoiceProfile, type Project } from '../api';
+import { Toggle } from './ui/primitives';
 import { LLMSettingsModal } from './LLMSettingsModal';
 import { VoiceStudioModal } from './voice/VoiceStudioModal';
 import { ModelsManagerModal } from './models/ModelsManagerModal';
@@ -138,14 +139,20 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     }, []);
 
     const [duration, setDuration] = useState(() => parseInt(localStorage.getItem('milimo_duration') || '60'));
-    const [temperature] = useState(() => parseFloat(localStorage.getItem('milimo_temperature') || '1.0'));
-    const [cfgScale] = useState(() => parseFloat(localStorage.getItem('milimo_cfg') || '2.0'));
-    const [topk] = useState(() => parseInt(localStorage.getItem('milimo_topk') || '50'));
-    const [seed] = useState<number | undefined>(() => {
+    // Generation hyperparameters — previously read-only ghosts with NO setter
+    // anywhere in the UI (reproducibility required devtools). Now fully editable.
+    const [temperature, setTemperature] = useState(() => parseFloat(localStorage.getItem('milimo_temperature') || '1.0'));
+    const [cfgScale, setCfgScale] = useState(() => parseFloat(localStorage.getItem('milimo_cfg') || '2.0'));
+    const [topk, setTopk] = useState(() => parseInt(localStorage.getItem('milimo_topk') || '50'));
+    const [seed, setSeed] = useState<number | undefined>(() => {
         const saved = localStorage.getItem('milimo_seed');
         return saved ? parseInt(saved) : undefined;
     });
-    const [isSeedLocked] = useState(() => localStorage.getItem('milimo_seed_locked') === 'true');
+    const [isSeedLocked, setIsSeedLocked] = useState(() => localStorage.getItem('milimo_seed_locked') === 'true');
+
+    const persistParam = (key: string, value: string | number | boolean) => {
+        localStorage.setItem(key, String(value));
+    };
 
     const [lyricsModel, setLyricsModel] = useState(() => localStorage.getItem('milimo_lyrics_model') || (lyricsModels[0] || 'deepseek-ai/deepseek-v4-flash-0731'));
 
@@ -351,9 +358,12 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                         </button>
                         <label className="flex items-center gap-2 cursor-pointer select-none">
                             <span className="text-[11px] font-semibold text-slate-500">Instrumental</span>
-                            <div onClick={(e) => { e.stopPropagation(); setIsInstrumental(!isInstrumental); }} className={`w-9 h-5 rounded-full transition-colors relative flex items-center p-0.5 ${isInstrumental ? 'bg-teal-500' : 'bg-black/20'}`}>
-                                <div className={`w-4 h-4 rounded-full bg-white shadow-sm transition-transform ${isInstrumental ? 'translate-x-4' : 'translate-x-0'}`} />
-                            </div>
+                            <Toggle
+                                checked={isInstrumental}
+                                onChange={setIsInstrumental}
+                                label="Generate instrumental (no vocals)"
+                                size="sm"
+                            />
                         </label>
                     </div>
                     <AnimatePresence initial={false}>
@@ -410,9 +420,12 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                         </button>
                         <label className="flex items-center gap-2 cursor-pointer select-none">
                             <span className="text-[11px] font-semibold text-slate-500">Advanced</span>
-                            <div onClick={(e) => { e.stopPropagation(); setShowAdvanced(!showAdvanced); }} className={`w-9 h-5 rounded-full transition-colors relative flex items-center p-0.5 ${showAdvanced ? 'bg-teal-500' : 'bg-black/20'}`}>
-                                <div className={`w-4 h-4 rounded-full bg-white transition-transform ${showAdvanced ? 'translate-x-4' : 'translate-x-0'}`} />
-                            </div>
+                            <Toggle
+                                checked={showAdvanced}
+                                onChange={setShowAdvanced}
+                                label="Show advanced generation parameters"
+                                size="sm"
+                            />
                         </label>
                     </div>
                     <AnimatePresence initial={false}>
@@ -444,6 +457,73 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                             <div className="flex justify-between text-xs"><span className="text-[11px]">Duration</span><span className="font-bold text-teal-500">{duration}s</span></div>
                                             <input type="range" min={5} max={300} step={5} value={duration} onChange={(e) => setDuration(parseInt(e.target.value))} className="w-full accent-teal-500" />
                                         </div>
+
+                                        {/* Generation hyperparameters — real controls for
+                                            reproducibility and sampling behavior. */}
+                                        <div className="space-y-1">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="text-[11px]">Temperature</span>
+                                                <span className="font-bold text-teal-500 tabular-nums">{temperature.toFixed(2)}</span>
+                                            </div>
+                                            <input
+                                                type="range" min={0.1} max={2} step={0.05}
+                                                value={temperature}
+                                                onChange={(e) => { const v = parseFloat(e.target.value); setTemperature(v); persistParam('milimo_temperature', v); }}
+                                                className="w-full accent-teal-500"
+                                                aria-label="Sampling temperature"
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <div className="flex justify-between text-xs">
+                                                <span className="text-[11px]">CFG Scale</span>
+                                                <span className="font-bold text-teal-500 tabular-nums">{cfgScale.toFixed(1)}</span>
+                                            </div>
+                                            <input
+                                                type="range" min={1} max={8} step={0.5}
+                                                value={cfgScale}
+                                                onChange={(e) => { const v = parseFloat(e.target.value); setCfgScale(v); persistParam('milimo_cfg', v); }}
+                                                className="w-full accent-teal-500"
+                                                aria-label="CFG guidance scale"
+                                            />
+                                        </div>
+                                        <div className="grid grid-cols-2 gap-2">
+                                            <label className="space-y-1 block">
+                                                <span className="text-[11px] font-bold uppercase text-slate-400">Top-K</span>
+                                                <input
+                                                    type="number" min={1} max={200}
+                                                    value={topk}
+                                                    onChange={(e) => { const v = Math.max(1, Math.min(200, parseInt(e.target.value) || 50)); setTopk(v); persistParam('milimo_topk', v); }}
+                                                    className="apple-input py-1.5 text-[11px] font-mono"
+                                                    aria-label="Top-K sampling"
+                                                />
+                                            </label>
+                                            <label className="space-y-1 block">
+                                                <span className="text-[11px] font-bold uppercase text-slate-400">Seed</span>
+                                                <input
+                                                    type="number"
+                                                    placeholder="Random"
+                                                    value={seed ?? ''}
+                                                    onChange={(e) => {
+                                                        const raw = e.target.value;
+                                                        const v = raw === '' ? undefined : parseInt(raw);
+                                                        setSeed(v);
+                                                        if (v === undefined) localStorage.removeItem('milimo_seed');
+                                                        else persistParam('milimo_seed', v);
+                                                    }}
+                                                    className="apple-input py-1.5 text-[11px] font-mono"
+                                                    aria-label="Generation seed"
+                                                />
+                                            </label>
+                                        </div>
+                                        <label className="flex items-center justify-between cursor-pointer select-none pt-0.5">
+                                            <span className="text-[11px] font-semibold text-slate-500" title="Reuse the exact seed on every generation for reproducible renders">Lock seed (reproducible)</span>
+                                            <Toggle
+                                                checked={isSeedLocked}
+                                                onChange={(next) => { setIsSeedLocked(next); persistParam('milimo_seed_locked', next); }}
+                                                label="Lock seed for reproducible generations"
+                                                size="sm"
+                                            />
+                                        </label>
                                     </div>
                                 )}
                             </motion.div>

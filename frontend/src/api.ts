@@ -821,6 +821,10 @@ export const trackApi = {
         const res = await axios.get(`${API_BASE_URL}/tracks/${jobId}/sheets`);
         return res.data;
     },
+    getTrackPeaks: async (jobId: string, buckets: number = 240): Promise<{ job_id: string; buckets: number; duration: number; peaks: number[] }> => {
+        const res = await axios.get(`${API_BASE_URL}/tracks/${jobId}/peaks`, { params: { buckets } });
+        return res.data;
+    },
     updateMidiNotes: async (jobId: string, notes: NoteEvent[]): Promise<{ status: string; job: Job }> => {
         const res = await axios.post(`${API_BASE_URL}/tracks/${jobId}/midi`, notes);
         return res.data;

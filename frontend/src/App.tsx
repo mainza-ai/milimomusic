@@ -61,7 +61,10 @@ import {
   Paperclip,
   Trash2,
   FileAudio,
-  Square
+  Square,
+  Play,
+  CheckCircle2,
+  AlertCircle
 } from 'lucide-react';
 
 export type NavView =
@@ -240,7 +243,7 @@ function App() {
     }
   };
 
-  const [producerStatusStage, setProducerStatusStage] = useState<string>('Analyzing musical direction & style tags...');
+  const [producerStatusStage, setProducerStatusStage] = useState<string | null>(null);
   const activeChatAbortController = useRef<AbortController | null>(null);
 
   const handleCancelChatSubmission = () => {
@@ -301,45 +304,21 @@ function App() {
     }
 
     setIsChatSubmitting(true);
-    setProducerStatusStage('Analyzing musical direction & style tags...');
+    setProducerStatusStage('AI Producer working — analyzing prompt, writing lyrics & arrangement...');
 
     const controller = new AbortController();
     activeChatAbortController.current = controller;
 
-    // 3. Immediate Floating Status HUD notification
+    // Honest indeterminate status: the producer pipeline runs server-side and
+    // exposes no per-stage percentages, so the HUD shows "Working…" instead of
+    // fabricated timer-driven progress jumps.
     window.dispatchEvent(new CustomEvent('milimo_progress', {
       detail: {
         job_id: 'producer-planning',
         stage: 'AI Producer',
-        progress: 25,
-        message: 'Analyzing musical direction & style tags...'
+        message: 'Analyzing musical direction & writing the arrangement...'
       }
     }));
-
-    // Stage timer transitions for live Apple-grade feedback during LLM execution
-    const t1 = setTimeout(() => {
-      setProducerStatusStage('Writing song lyrics with AI Co-Writer...');
-      window.dispatchEvent(new CustomEvent('milimo_progress', {
-        detail: {
-          job_id: 'producer-planning',
-          stage: 'AI Co-Writer',
-          progress: 55,
-          message: 'Writing structured song lyrics...'
-        }
-      }));
-    }, 2500);
-
-    const t2 = setTimeout(() => {
-      setProducerStatusStage('Structuring arrangement & production captions...');
-      window.dispatchEvent(new CustomEvent('milimo_progress', {
-        detail: {
-          job_id: 'producer-planning',
-          stage: 'MiniMax Music 3',
-          progress: 85,
-          message: 'Structuring arrangement & MiniMax captions...'
-        }
-      }));
-    }, 6000);
 
     try {
       // If session was freshly created optimistically, real create on server first
@@ -356,9 +335,6 @@ function App() {
         role: 'user',
         audio_attachment_path: currentAttachment || undefined
       }, controller.signal);
-
-      clearTimeout(t1);
-      clearTimeout(t2);
 
       window.dispatchEvent(new CustomEvent('milimo_progress', {
         detail: {
@@ -377,20 +353,46 @@ function App() {
         if (!isComposerOpen) setIsComposerOpen(true);
       }
     } catch (e: any) {
-      clearTimeout(t1);
-      clearTimeout(t2);
       if (axios.isCancel(e) || e.name === 'CanceledError' || e.name === 'AbortError') {
         console.log("Chat submission cancelled by user.");
       } else {
+        window.dispatchEvent(new CustomEvent('milimo_progress', {
+          detail: {
+            job_id: 'producer-planning',
+            stage: 'AI Producer',
+            progress: 100,
+            message: 'Producer request failed.'
+          }
+        }));
         alert("Producer chat error: " + (e.response?.data?.detail || e.message));
       }
     } finally {
       setIsChatSubmitting(false);
+      setProducerStatusStage(null);
       activeChatAbortController.current = null;
     }
   };
 
   useEffect(() => {
+    // ── Deep-link restoration: refresh / shared URLs land where they point ──
+    // pushState was already written on every navigation, but nothing ever READ
+    // the URL back on load — reloading destroyed the entire app state.
+    const params = new URLSearchParams(window.location.search);
+    const viewParam = params.get('view') as NavView | null;
+    const trackId = params.get('track');
+    if (viewParam === 'workspace' && trackId) {
+      api.getJobStatus(trackId)
+        .then(job => { setActiveWorkspaceJob(job); setCurrentNav('workspace'); })
+        .catch(() => setCurrentNav('explore'));
+    } else if (viewParam === 'track-detail' && trackId) {
+      setCurrentNav('track-detail');
+      api.getJobStatus(trackId)
+        .then(track => setSelectedTrack(track))
+        .catch(() => setCurrentNav('explore'));
+    } else if (viewParam && viewParam !== 'explore') {
+      setCurrentNav(viewParam);
+    }
+
     refreshActiveCheckpoint();
     api.getLyricsModels().then(setLyricsModels).catch(console.error);
     loadHistory(0, 'all', '', true);
@@ -464,6 +466,14 @@ function App() {
         } catch (e) {
           console.error(e);
         }
+      } else if (viewParam === 'workspace' && trackId) {
+        try {
+          const job = await api.getJobStatus(trackId);
+          setActiveWorkspaceJob(job);
+          setCurrentNav('workspace');
+        } catch (e) {
+          console.error(e);
+        }
       } else if (viewParam) {
         setCurrentNav(viewParam);
       }
@@ -529,6 +539,14 @@ function App() {
   const lastProgressRef = useRef(0);
   const PROGRESS_THROTTLE_MS = 400;
 
+  // Live refs so the SSE handler (registered once) always reads CURRENT state
+  // and calls the CURRENT refresh closure. The old code captured mount-time
+  // values: every 'processing' event saw currentJobId===null and triggered a
+  // full handleRefresh() that also reset the user's active search/filter.
+  const currentJobIdRef = useRef<string | null>(null);
+  const handleRefreshRef = useRef<() => void>(() => {});
+  handleRefreshRef.current = handleRefresh;
+
   // SSE Subscription
   useEffect(() => {
     const evtSource = api.connectToEvents((e) => {
@@ -552,23 +570,29 @@ function App() {
         }
 
         if (type === 'job_update') {
-          if (data.status === 'completed') {
+          if (data.status === 'completed' || data.status === 'failed') {
             setIsGenerating(false);
             setGenerationProgress(null);
             setCurrentJobId(null);
-            handleRefresh();
-          } else if (data.status === 'failed') {
-            setIsGenerating(false);
-            setGenerationProgress(null);
-            setCurrentJobId(null);
-            handleRefresh();
+            currentJobIdRef.current = null;
+            // Completion hand-off (U3): surface the finished track instead of
+            // silently refreshing.
+            if (data.status === 'completed') {
+              window.dispatchEvent(new CustomEvent('milimo_job_completed', { detail: data }));
+            } else {
+              window.dispatchEvent(new CustomEvent('milimo_job_failed', { detail: data }));
+            }
+            handleRefreshRef.current();
           } else if (data.status === 'processing' || data.status === 'queued') {
             // Update local state only — avoid pulling/ re-rendering the full history on
             // every non-terminal transition (the terminal statuses above handle refresh).
             setCurrentJobId(data.job_id);
             setIsGenerating(true);
-            if (data.status === 'processing' && currentJobId !== data.job_id) {
-              handleRefresh();
+            // Refresh exactly once when a NEW job enters the pipeline
+            // (ref compare — never true repeatedly for the same job).
+            if (currentJobIdRef.current !== data.job_id) {
+              currentJobIdRef.current = data.job_id;
+              handleRefreshRef.current();
             }
           }
         }
@@ -587,15 +611,15 @@ function App() {
     const interval = setInterval(async () => {
       try {
         const job = await api.getJobStatus(currentJobId);
-        if (job.status === 'completed') {
+        if (job.status === 'completed' || job.status === 'failed') {
           setIsGenerating(false);
           setGenerationProgress(null);
           setCurrentJobId(null);
-          handleRefresh();
-        } else if (job.status === 'failed') {
-          setIsGenerating(false);
-          setGenerationProgress(null);
-          setCurrentJobId(null);
+          currentJobIdRef.current = null;
+          window.dispatchEvent(new CustomEvent(
+            job.status === 'completed' ? 'milimo_job_completed' : 'milimo_job_failed',
+            { detail: { job_id: job.id, status: job.status, title: job.title } }
+          ));
           handleRefresh();
         }
       } catch (e) {
@@ -605,6 +629,71 @@ function App() {
 
     return () => clearInterval(interval);
   }, [isGenerating, currentJobId]);
+
+  // ── REAL backend health pill ────────────────────────────────────────────
+  // The sidebar status dot used to be hardcoded "MiniMax Engine Ready" —
+  // green while the backend could be down. Now it reflects /health truth.
+  const [backendHealth, setBackendHealth] = useState<'checking' | 'online' | 'offline'>('checking');
+  useEffect(() => {
+    let cancelled = false;
+    const check = () => {
+      api.checkHealth()
+        .then(() => { if (!cancelled) setBackendHealth('online'); })
+        .catch(() => { if (!cancelled) setBackendHealth('offline'); });
+    };
+    check();
+    const iv = setInterval(check, 15000);
+    return () => { cancelled = true; clearInterval(iv); };
+  }, []);
+
+  // ── Generation completion hand-off ──────────────────────────────────────
+  // A finished generation is a MOMENT: notify, offer Play / Open Studio —
+  // never let the new track silently sink into the feed.
+  const [completionNotice, setCompletionNotice] = useState<{ ok: boolean; jobId: string; title?: string } | null>(null);
+  useEffect(() => {
+    let timer: number | undefined;
+    const onCompleted = (e: Event) => {
+      const d = (e as CustomEvent).detail || {};
+      setCompletionNotice({ ok: true, jobId: d.job_id || '', title: d.title });
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setCompletionNotice(null), 12000);
+    };
+    const onFailed = () => {
+      setCompletionNotice({ ok: false, jobId: '', title: undefined });
+      window.clearTimeout(timer);
+      timer = window.setTimeout(() => setCompletionNotice(null), 12000);
+    };
+    window.addEventListener('milimo_job_completed', onCompleted);
+    window.addEventListener('milimo_job_failed', onFailed);
+    return () => {
+      window.clearTimeout(timer);
+      window.removeEventListener('milimo_job_completed', onCompleted);
+      window.removeEventListener('milimo_job_failed', onFailed);
+    };
+  }, []);
+
+  const handleCompletionPlay = async () => {
+    if (!completionNotice?.jobId) return;
+    try {
+      const job = await api.getJobStatus(completionNotice.jobId);
+      setCompletionNotice(null);
+      if (job.audio_path) enginePlayTrack(job);
+    } catch (e) {
+      console.error('Failed to play completed track', e);
+    }
+  };
+
+  const handleCompletionOpenStudio = async () => {
+    if (!completionNotice?.jobId) return;
+    try {
+      const job = await api.getJobStatus(completionNotice.jobId);
+      setCompletionNotice(null);
+      handleSelectTrack(job);
+      handleOpenWorkspace(job); // pauses the global engine — never two streams
+    } catch (e) {
+      console.error('Failed to open workspace for completed track', e);
+    }
+  };
 
   const handleGenerateMusic = async (data: CompositionData) => {
     setIsGenerating(true);
@@ -732,6 +821,12 @@ function App() {
     enginePause();
     setActiveWorkspaceJob(job);
     setCurrentNav('workspace');
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('view', 'workspace');
+      url.searchParams.set('track', job.id);
+      window.history.pushState({ view: 'workspace', trackId: job.id }, '', url.toString());
+    } catch (e) {}
   };
 
   const handleAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -773,7 +868,7 @@ function App() {
           isMobileMenuOpen
             ? 'fixed inset-y-0 left-0 w-64 translate-x-0'
             : isLeftRailCollapsed
-            ? 'w-18 md:w-20 hidden md:flex'
+            ? 'w-[72px] md:w-20 hidden md:flex'
             : 'w-64 hidden md:flex'
         }`}
       >
@@ -854,7 +949,7 @@ function App() {
                     {!isLeftRailCollapsed && <span className="truncate">{item.label}</span>}
                   </div>
                   {!isLeftRailCollapsed && (item as any).badge && (
-                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-bold">
+                    <span className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-bold">
                       {(item as any).badge}
                     </span>
                   )}
@@ -940,7 +1035,7 @@ function App() {
                   <Icon size={15} className={`${engine.color} flex-shrink-0`} />
                   {!isLeftRailCollapsed && <span className="truncate">{engine.label}</span>}
                   {!isLeftRailCollapsed && (engine as any).badge && (
-                    <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold border border-amber-500/20 ml-auto">
+                    <span className="text-[10px] font-mono px-1.5 py-px rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold border border-amber-500/20 ml-auto">
                       {(engine as any).badge}
                     </span>
                   )}
@@ -956,7 +1051,7 @@ function App() {
                 <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
                   Recent Sessions
                 </span>
-                <span className="text-[9px] font-mono text-teal-600 dark:text-teal-400">
+                <span className="text-[10px] font-mono text-teal-600 dark:text-teal-400">
                   {history.length} tracks
                 </span>
               </div>
@@ -976,11 +1071,11 @@ function App() {
                         <div className="font-semibold text-slate-800 dark:text-slate-200 truncate">
                           {session.title || session.prompt.slice(0, 22)}
                         </div>
-                        <div className="text-[9px] text-slate-400 font-mono">
+                        <div className="text-[10px] text-slate-400 font-mono">
                           {session.id.slice(0, 6)} · {session.tags?.split(',')[0] || 'Pop'}
                         </div>
                       </div>
-                      <span className={`text-[8px] font-mono px-1.5 py-0.5 rounded-full flex-shrink-0 ${
+                      <span className={`text-[10px] font-mono px-1.5 py-0.5 rounded-full flex-shrink-0 ${
                         isReadyForDAW
                           ? 'bg-teal-500/10 text-teal-600 dark:text-teal-400 font-bold'
                           : 'bg-amber-500/10 text-amber-600'
@@ -1094,9 +1189,17 @@ function App() {
 
           {!isLeftRailCollapsed && (
             <div className="flex items-center justify-between text-xs text-slate-500 dark:text-slate-400 px-1 pt-1">
-              <div className="flex items-center space-x-2">
-                <span className="w-2 h-2 rounded-full bg-teal-500 animate-pulse" />
-                <span className="text-[11px] font-medium truncate">MiniMax Engine Ready</span>
+              <div className="flex items-center space-x-2" title={`Backend health: ${backendHealth}`}>
+                <span className={`w-2 h-2 rounded-full ${
+                  backendHealth === 'online'
+                    ? 'bg-teal-500 animate-pulse'
+                    : backendHealth === 'checking'
+                    ? 'bg-amber-400 animate-pulse'
+                    : 'bg-rose-500'
+                }`} />
+                <span className="text-[11px] font-medium truncate">
+                  {backendHealth === 'online' ? 'Engine Online' : backendHealth === 'checking' ? 'Checking engine…' : 'Backend Offline'}
+                </span>
               </div>
               <button
                 onClick={() => setIsSettingsOpen(true)}
@@ -1728,6 +1831,65 @@ function App() {
           }}
           onSelectTrack={handleSelectTrack}
         />
+      )}
+
+      {/* Generation completion hand-off: the finished track announces itself
+          with direct Play / Open Studio actions instead of silently refreshing. */}
+      {completionNotice && (
+        <div className="fixed top-6 right-6 z-[110] animate-slide-down">
+          <div className={`w-80 rounded-2xl border shadow-apple-2xl backdrop-blur-2xl p-4 ${
+            completionNotice.ok
+              ? 'bg-white/90 dark:bg-[#141620]/95 border-teal-500/30'
+              : 'bg-white/90 dark:bg-[#141620]/95 border-rose-500/40'
+          }`}>
+            <div className="flex items-start gap-3">
+              <span className={`mt-0.5 w-8 h-8 rounded-xl flex items-center justify-center flex-shrink-0 ${
+                completionNotice.ok
+                  ? 'bg-teal-500/15 text-teal-600 dark:text-teal-400'
+                  : 'bg-rose-500/15 text-rose-600 dark:text-rose-400'
+              }`}>
+                {completionNotice.ok ? <CheckCircle2 size={17} /> : <AlertCircle size={17} />}
+              </span>
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-bold text-slate-900 dark:text-white truncate">
+                  {completionNotice.ok
+                    ? (completionNotice.title || 'Your track') + ' is ready'
+                    : 'Generation failed'}
+                </p>
+                <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5">
+                  {completionNotice.ok
+                    ? 'Master, stems, MIDI & score are available.'
+                    : 'The pipeline reported a failure. Check the track status for details.'}
+                </p>
+                {completionNotice.ok && (
+                  <div className="flex items-center gap-2 mt-2.5">
+                    <button
+                      onClick={handleCompletionPlay}
+                      className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 active:scale-[0.98] transition-transform"
+                    >
+                      <Play size={12} className="ml-0.5" />
+                      <span>Play</span>
+                    </button>
+                    <button
+                      onClick={handleCompletionOpenStudio}
+                      className="px-3 py-1.5 rounded-xl bg-black/[0.05] dark:bg-white/10 text-slate-700 dark:text-slate-200 font-bold text-xs active:scale-[0.98] transition-transform"
+                    >
+                      Open Studio
+                    </button>
+                  </div>
+                )}
+              </div>
+              <button
+                onClick={() => setCompletionNotice(null)}
+                className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 flex-shrink-0"
+                title="Dismiss"
+                aria-label="Dismiss notification"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          </div>
+        </div>
       )}
 
       <FloatingStatusWidget />

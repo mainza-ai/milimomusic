@@ -207,7 +207,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                             <span className="text-base">{p.icon}</span>
                                             <div className="truncate">
                                                 <div className="truncate">{p.name}</div>
-                                                <div className="text-[9px] text-slate-400 dark:text-slate-500 font-normal">{p.desc}</div>
+                                                <div className="text-[10px] text-slate-400 dark:text-slate-500 font-normal">{p.desc}</div>
                                             </div>
                                         </div>
                                         {config.provider === p.id && (

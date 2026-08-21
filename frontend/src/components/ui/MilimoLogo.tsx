@@ -12,7 +12,7 @@ export const MilimoLogo: React.FC<MilimoLogoProps> = ({
     className = ''
 }) => {
     const sizeMap = {
-        sm: { img: 'w-7 h-7', title: 'text-xs', sub: 'text-[9px]' },
+        sm: { img: 'w-7 h-7', title: 'text-xs', sub: 'text-[10px]' },
         md: { img: 'w-9 h-9', title: 'text-sm', sub: 'text-[10px]' },
         lg: { img: 'w-12 h-12', title: 'text-lg', sub: 'text-xs' }
     };
@@ -39,7 +39,7 @@ export const MilimoLogo: React.FC<MilimoLogoProps> = ({
                         <span className={`${currentSize.title} font-extrabold tracking-tight text-slate-900 dark:text-white font-sans`}>
                             Milimo Music
                         </span>
-                        <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-teal-500/10 dark:bg-teal-500/20 text-teal-700 dark:text-teal-300 font-semibold border border-teal-500/20">
+                        <span className="text-[10px] font-mono px-1.5 py-px rounded-full bg-teal-500/10 dark:bg-teal-500/20 text-teal-700 dark:text-teal-300 font-semibold border border-teal-500/20">
                             v2
                         </span>
                     </div>

@@ -5,7 +5,8 @@ import { api } from '../../api';
 interface TaskProgress {
     jobId: string;
     stage: string;
-    progress: number;
+    /** null = genuinely indeterminate work (no real percentage available). */
+    progress: number | null;
     message: string;
 }
 
@@ -32,11 +33,13 @@ export const FloatingStatusWidget: React.FC = () => {
                 setTask({
                     jobId: data.job_id || 'active',
                     stage: data.stage || 'Synthesizing Audio',
-                    progress: data.progress || 0,
+                    // Absent/invalid progress renders as an honest indeterminate
+                    // bar — never a fabricated percentage.
+                    progress: typeof data.progress === 'number' ? data.progress : null,
                     message: data.msg || data.message || 'Processing audio tensor frames...'
                 });
 
-                if (data.progress >= 100) {
+                if (typeof data.progress === 'number' && data.progress >= 100) {
                     setTimeout(() => setTask(null), 3000);
                 }
             }
@@ -74,14 +77,18 @@ export const FloatingStatusWidget: React.FC = () => {
             </p>
 
             <div className="w-full bg-slate-200 dark:bg-slate-800 rounded-full h-1.5 overflow-hidden shadow-inner">
-                <div
-                    className="bg-gradient-to-r from-teal-500 to-cyan-400 h-full transition-all duration-300 rounded-full"
-                    style={{ width: `${Math.min(100, Math.max(0, task.progress))}%` }}
-                />
+                {task.progress === null ? (
+                    <div className="h-full w-1/3 rounded-full bg-gradient-to-r from-teal-500 to-cyan-400 animate-[indeterminate_1.2s_ease-in-out_infinite_alternate]" />
+                ) : (
+                    <div
+                        className="bg-gradient-to-r from-teal-500 to-cyan-400 h-full transition-all duration-300 rounded-full"
+                        style={{ width: `${Math.min(100, Math.max(0, task.progress))}%` }}
+                    />
+                )}
             </div>
             <div className="flex justify-between text-[10px] text-slate-500 dark:text-slate-400 font-mono mt-1 font-semibold">
                 <span>Pipeline Active</span>
-                <span>{task.progress}%</span>
+                <span>{task.progress === null ? 'Working…' : `${task.progress}%`}</span>
             </div>
         </div>
     );

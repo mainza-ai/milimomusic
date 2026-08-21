@@ -481,7 +481,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
                 {currentSong.title || currentSong.prompt || 'Untitled Track'}
               </h3>
               <div className="flex items-center space-x-1.5 mt-0.5 truncate">
-                <span className="text-[9px] sm:text-[10px] font-mono px-1.5 py-0.2 rounded-md bg-teal-500/10 text-teal-700 dark:text-teal-300 font-semibold border border-teal-500/20 truncate">
+                <span className="text-[10px] sm:text-[10px] font-mono px-1.5 py-px rounded-md bg-teal-500/10 text-teal-700 dark:text-teal-300 font-semibold border border-teal-500/20 truncate">
                   {currentSong.model_provider || 'MiniMax Music 3'}
                 </span>
               </div>

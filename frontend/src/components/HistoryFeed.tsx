@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Job } from '../api';
 import { api, API_BASE_URL } from '../api';
-import { AudioPlayer } from './AudioPlayer';
+import { TrackRowPlayer } from './TrackRowPlayer';
 import { Edit2, Check, Trash2, Search, Calendar, Heart, Sliders, Layers, Sparkles, Info, Clock } from 'lucide-react';
 
 interface HistoryFeedProps {
@@ -28,6 +28,9 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
     currentJobId,
     onRefresh,
     onOpenWorkspace,
+    onLoadMore,
+    hasMore,
+    isLoadingMore,
     onFilterChange,
     currentFilter,
     onSearch,
@@ -41,10 +44,14 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
     const [tempTitle, setTempTitle] = useState("");
     const [localSearch, setLocalSearch] = useState(searchQuery);
     const [lyricsOpen, setLyricsOpen] = useState<Record<string, boolean>>({});
+    const searchDebounceRef = useRef<number | undefined>(undefined);
 
     useEffect(() => {
         setLocalSearch(searchQuery);
     }, [searchQuery]);
+
+    // Debounced server-side search: one request per pause, not per keystroke.
+    useEffect(() => () => window.clearTimeout(searchDebounceRef.current), []);
 
     useEffect(() => {
         if (currentJobId && scrollRef.current) {
@@ -144,8 +151,10 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                     <input
                         value={localSearch}
                         onChange={(e) => {
-                            setLocalSearch(e.target.value);
-                            onSearch(e.target.value);
+                            const v = e.target.value;
+                            setLocalSearch(v);
+                            window.clearTimeout(searchDebounceRef.current);
+                            searchDebounceRef.current = window.setTimeout(() => onSearch(v), 300);
                         }}
                         placeholder="Search sessions, tags, prompts..."
                         className="w-full pl-10 pr-4 py-2 bg-white/80 dark:bg-white/5 border border-black/[0.08] dark:border-white/10 rounded-xl text-xs text-slate-900 dark:text-slate-100 focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-500 font-medium placeholder:text-slate-400 dark:placeholder:text-slate-500 shadow-sm"
@@ -155,6 +164,21 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
 
             {/* List */}
             <div ref={scrollRef} className="flex-1 overflow-y-auto p-6 space-y-6">
+                {history.length === 0 && (
+                    <div className="h-full flex flex-col items-center justify-center text-center space-y-3 py-16">
+                        <div className="w-14 h-14 rounded-2xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-center">
+                            <Sparkles size={22} className="text-teal-500" />
+                        </div>
+                        <p className="text-sm font-bold text-slate-700 dark:text-slate-200">
+                            {searchQuery ? 'No tracks match your search' : 'No tracks yet'}
+                        </p>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 max-w-xs">
+                            {searchQuery
+                                ? 'Try a different query or clear the filter.'
+                                : 'Describe a song in the Ask Producer bar or open the Composer to generate your first track.'}
+                        </p>
+                    </div>
+                )}
                 {sortedGroupKeys.map(groupLabel => (
                     <div key={groupLabel}>
                         <div className="flex items-center gap-2 mb-3 text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider">
@@ -240,7 +264,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                             )}
 
                                                             {hasStemsAndMidi && (
-                                                                <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20 flex items-center gap-1 font-semibold">
+                                                                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20 flex items-center gap-1 font-semibold">
                                                                     <Layers size={10} />
                                                                     Stems & MIDI
                                                                 </span>
@@ -260,7 +284,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                             {job.status === 'completed' && onSelectTrack && (
                                                                 <button
                                                                     onClick={() => onSelectTrack(job)}
-                                                                    className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/20 flex items-center gap-1 font-semibold transition-colors cursor-pointer"
+                                                                    className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/20 flex items-center gap-1 font-semibold transition-colors cursor-pointer"
                                                                     title="Inspect Full Sound Details (BPM, Key, Stems, MIDI, Hyperparameters)"
                                                                 >
                                                                     <Info size={10} />
@@ -271,7 +295,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                             {job.duration_ms && (
                                                                 <span
                                                                     onClick={() => onSelectTrack?.(job)}
-                                                                    className="text-[9px] font-mono px-1.5 py-0.5 rounded-md bg-black/[0.03] dark:bg-white/5 text-slate-500 dark:text-slate-400 flex items-center gap-1 cursor-pointer hover:text-teal-500 transition-colors"
+                                                                    className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-black/[0.03] dark:bg-white/5 text-slate-500 dark:text-slate-400 flex items-center gap-1 cursor-pointer hover:text-teal-500 transition-colors"
                                                                     title="Track Duration"
                                                                 >
                                                                     <Clock size={9} />
@@ -282,7 +306,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                             {job.model_provider && (
                                                                 <span
                                                                     onClick={() => onSelectTrack?.(job)}
-                                                                    className="text-[9px] font-mono px-1.5 py-0.5 rounded-md bg-black/[0.03] dark:bg-white/5 text-slate-500 dark:text-slate-400 truncate max-w-[120px] cursor-pointer hover:text-teal-500 transition-colors"
+                                                                    className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-black/[0.03] dark:bg-white/5 text-slate-500 dark:text-slate-400 truncate max-w-[120px] cursor-pointer hover:text-teal-500 transition-colors"
                                                                     title="Model Engine"
                                                                 >
                                                                     {job.model_provider}
@@ -292,7 +316,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                             {job.tags && (
                                                                 <span
                                                                     onClick={() => onSelectTrack?.(job)}
-                                                                    className="text-[9px] font-mono px-1.5 py-0.5 rounded-md bg-black/[0.03] dark:bg-white/5 text-teal-600 dark:text-teal-400 truncate max-w-[140px] cursor-pointer hover:underline"
+                                                                    className="text-[10px] font-mono px-1.5 py-0.5 rounded-md bg-black/[0.03] dark:bg-white/5 text-teal-600 dark:text-teal-400 truncate max-w-[140px] cursor-pointer hover:underline"
                                                                     title={job.tags}
                                                                 >
                                                                     {job.tags.split(',').slice(0, 2).join(', ')}
@@ -348,14 +372,16 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                     <div className="flex items-center justify-between text-[11px] font-mono">
                                                         <span className="text-teal-600 dark:text-teal-400 font-bold flex items-center gap-1.5 animate-pulse">
                                                             <Sparkles size={13} className="animate-spin-slow text-teal-500" />
-                                                            <span>{job.status === 'queued' ? 'Queued in Studio Pipeline...' : 'Synthesizing 48kHz audio & separating 4 stems...'}</span>
+                                                            <span>{job.status === 'queued' ? 'Queued in Studio Pipeline…' : 'Generating master audio, stems, MIDI & score…'}</span>
                                                         </span>
                                                         <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 font-bold">
                                                             {job.model_provider || 'MiniMax Music 3'}
                                                         </span>
                                                     </div>
+                                                    {/* Honest indeterminate stripe — the feed row has no
+                                                        real per-job percentage, so none is claimed. */}
                                                     <div className="w-full h-1.5 bg-black/[0.04] dark:bg-white/5 rounded-full overflow-hidden">
-                                                        <div className="h-full bg-gradient-to-r from-teal-500 via-cyan-400 to-sky-500 rounded-full animate-pulse shadow-sm" style={{ width: '70%' }} />
+                                                        <div className="h-full w-1/3 bg-gradient-to-r from-teal-500 via-cyan-400 to-sky-500 rounded-full animate-[indeterminate_1.2s_ease-in-out_infinite_alternate]" />
                                                     </div>
                                                 </div>
                                             )}
@@ -375,7 +401,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                                 className="w-full flex items-center justify-between text-[10px] font-mono font-bold text-teal-700 dark:text-teal-300 uppercase tracking-wider"
                                                             >
                                                                 <span>Lyrics</span>
-                                                                <span className="text-[9px] text-slate-400">
+                                                                <span className="text-[10px] text-slate-400">
                                                                     {lyricsOpen[job.id] ? 'Hide ▲' : 'Show ▼'}
                                                                 </span>
                                                             </button>
@@ -389,11 +415,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                             </pre>
                                                         </div>
                                                     )}
-                                                    <AudioPlayer
-                                                        audioUrl={job.audio_path}
-                                                        title={job.title || job.prompt || "Untitled"}
-                                                        jobId={job.id}
-                                                    />
+                                                    <TrackRowPlayer job={job} />
                                                 </div>
                                             )}
                                         </motion.div>
@@ -403,6 +425,20 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                         </div>
                     </div>
                 ))}
+
+                {/* Pagination: previously the props arrived but were never
+                    destructured — tracks beyond the first page were unreachable. */}
+                {hasMore && onLoadMore && (
+                    <div className="flex justify-center pt-2 pb-6">
+                        <button
+                            onClick={onLoadMore}
+                            disabled={isLoadingMore}
+                            className="px-5 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 border border-black/[0.06] dark:border-white/10 text-xs font-bold text-slate-700 dark:text-slate-200 transition-colors disabled:opacity-50"
+                        >
+                            {isLoadingMore ? 'Loading…' : 'Load More Tracks'}
+                        </button>
+                    </div>
+                )}
             </div>
         </div>
     );

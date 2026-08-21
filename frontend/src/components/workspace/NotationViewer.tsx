@@ -55,11 +55,20 @@ const STAFF_HEIGHT = 8 * HALF; // 60px between top and bottom lines
 const MARGIN_TOP = 50;       // Vertical clearance above staff for high ledger notes
 const SVG_HEIGHT = 160;      // Total SVG height per staff
 
-function durClass(dur: number | undefined): { glyph: 'whole' | 'half' | 'quarter' | 'eighth'; dur: number } {
+// Rhythm glyphs are derived from the track's real tempo, not raw seconds.
+// The beat grid defines BPM in quarter-note beats (beat unit 4), so a note's
+// musical length in BEATS is duration / seconds-per-beat. Bucketing raw
+// seconds was only correct at ~70 BPM and mis-engraved everything else.
+const BEAT_UNIT = 4; // beat-grid beat unit (quarter note); one place to change if the backend ever emits real time signatures.
+
+function durClass(dur: number | undefined, bpm: number): { glyph: 'whole' | 'half' | 'quarter' | 'eighth'; dur: number } {
     const d = dur && dur > 0 ? dur : 0.5;
-    if (d >= 3.4) return { glyph: 'whole', dur: d };
-    if (d >= 1.7) return { glyph: 'half', dur: d };
-    if (d >= 0.85) return { glyph: 'quarter', dur: d };
+    const secPerBeat = 60 / Math.max(1, bpm);
+    const beats = d / secPerBeat;
+    // Thresholds allow dotted values to round up to the nearest engraved glyph.
+    if (beats >= 3) return { glyph: 'whole', dur: d };
+    if (beats >= 1.5) return { glyph: 'half', dur: d };
+    if (beats >= 0.75) return { glyph: 'quarter', dur: d };
     return { glyph: 'eighth', dur: d };
 }
 
@@ -203,7 +212,7 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
 
         for (const n of sorted) {
             const { pos, accidental, name } = midiToDiatonic(n.pitch);
-            const { glyph } = durClass(n.duration);
+            const { glyph } = durClass(n.duration, bpm);
             let showAccidental = false;
             if (accidental) {
                 // Show accidental only if not already shown in this measure for this specific pitch
@@ -446,7 +455,7 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
                 {/* Stacked Time Signature (e.g. 4/4) in Staff Spaces */}
                 <g className="font-serif font-bold select-none" fill="#1e293b" fontSize="20" textAnchor="middle">
                     <text x={76} y={MARGIN_TOP + 23}>{beatsPerBar}</text>
-                    <text x={76} y={MARGIN_TOP + 53}>4</text>
+                    <text x={76} y={MARGIN_TOP + 53}>{BEAT_UNIT}</text>
                 </g>
 
                 {/* Start Barline after Clef */}
@@ -704,7 +713,7 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
                         </h1>
                         <div className="flex items-center justify-between text-xs text-slate-600 font-serif italic pt-2">
                             <span>Tempo: ♩ = {bpm}</span>
-                            <span>{beatsPerBar}/4 · {selectedInstrument === 'all' ? 'Conductor Full Score' : `${selectedInstrument} Part`} · MuScriptor</span>
+                            <span>{beatsPerBar}/{BEAT_UNIT} · {selectedInstrument === 'all' ? 'Conductor Full Score' : `${selectedInstrument} Part`} · MuScriptor</span>
                         </div>
                     </div>
 

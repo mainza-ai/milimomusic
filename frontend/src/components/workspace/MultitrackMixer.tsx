@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Sliders, RefreshCw, Wand2, CheckCircle2 } from 'lucide-react';
+import { Sliders, RefreshCw, Wand2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { workspaceApi, type Job } from '../../api';
 import type { StemChannel } from './SessionWorkspace';
 
@@ -13,6 +13,10 @@ interface MultitrackMixerProps {
     masterVolume: number;
     onMasterVolumeChange: (volume: number) => void;
     isPlaying: boolean;
+    /** Live AnalyserNode taps (post-gain) per channel id — real signal levels. */
+    stemAnalysersRef: React.MutableRefObject<Record<string, AnalyserNode>>;
+    /** AnalyserNode tapped off the master bus. */
+    masterAnalyserRef: React.MutableRefObject<AnalyserNode | null>;
 }
 
 export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
@@ -24,54 +28,86 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
     onToggleSolo,
     masterVolume,
     onMasterVolumeChange,
-    isPlaying
+    isPlaying,
+    stemAnalysersRef,
+    masterAnalyserRef
 }) => {
     const [isMastering, setIsMastering] = useState(false);
-    const [masteringStatus, setMasteringStatus] = useState<string | null>(null);
+    const [masteringStatus, setMasteringStatus] = useState<{ ok: boolean; text: string } | null>(null);
+    const [masteredLufs, setMasteredLufs] = useState<number | null>(null);
     const [meterLevels, setMeterLevels] = useState<Record<string, number>>({});
 
-    // Simulate animated peak meters during playback
+    // ── REAL peak meters ────────────────────────────────────────────────────
+    // Levels are read from AnalyserNodes tapped AFTER each channel's gain node
+    // (and after the master fader), so mute/solo/volume/pan are all reflected
+    // in what the meter shows. No simulated values anywhere.
     useEffect(() => {
         if (!isPlaying) {
             setMeterLevels({});
             return;
         }
 
-        const interval = setInterval(() => {
-            const newLevels: Record<string, number> = {};
-            const hasSolo = stemChannels.some(s => s.isSolo);
+        const buf = new Float32Array(512);
+        let raf = 0;
+        let frame = 0;
 
-            stemChannels.forEach(stem => {
-                if (stem.isMuted || (hasSolo && !stem.isSolo)) {
-                    newLevels[stem.id] = 0;
-                } else {
-                    const base = (stem.volume / 100) * 80;
-                    const randomFlux = (Math.random() * 20) - 10;
-                    newLevels[stem.id] = Math.max(0, Math.min(100, base + randomFlux));
-                }
-            });
+        const readPeak = (analyser: AnalyserNode): number => {
+            analyser.getFloatTimeDomainData(buf);
+            let peak = 0;
+            for (let i = 0; i < buf.length; i++) {
+                const v = Math.abs(buf[i]);
+                if (v > peak) peak = v;
+            }
+            // Scale for headroom: full-scale sine ≈ 100%, typical program
+            // material lands in a usable meter range.
+            return Math.min(100, peak * 140);
+        };
 
-            // Master level
-            const avg = Object.values(newLevels).reduce((a, b) => a + b, 0) / (stemChannels.length || 1);
-            newLevels['master'] = Math.max(0, Math.min(100, avg * masterVolume));
+        const tick = () => {
+            frame++;
+            if (frame % 2 === 0) { // ~30Hz is plenty for LED meters
+                const next: Record<string, number> = {};
+                stemChannels.forEach(stem => {
+                    const an = stemAnalysersRef.current[stem.id];
+                    if (an) next[stem.id] = readPeak(an);
+                });
+                const man = masterAnalyserRef.current;
+                if (man) next['master'] = readPeak(man);
+                setMeterLevels(next);
+            }
+            raf = requestAnimationFrame(tick);
+        };
+        raf = requestAnimationFrame(tick);
+        return () => cancelAnimationFrame(raf);
+    }, [isPlaying, stemChannels, stemAnalysersRef, masterAnalyserRef]);
 
-            setMeterLevels(newLevels);
-        }, 100);
-
-        return () => clearInterval(interval);
-    }, [isPlaying, stemChannels, masterVolume]);
+    // Gain-staging vocabulary: faders stay 0-100 internally but READ OUT in
+    // dB (20·log10), which is how engineers actually mix.
+    const toDb = (pct: number): string => {
+        if (pct <= 0) return '-∞';
+        const db = 20 * Math.log10(pct / 100);
+        return `${db > 0 ? '+' : ''}${db.toFixed(1)}`;
+    };
 
     const handleMastering = async () => {
         setIsMastering(true);
-        setMasteringStatus('Analyzing frequency spectrum and matching LUFS target...');
+        setMasteringStatus({ ok: true, text: 'Analyzing frequency spectrum and matching LUFS target...' });
         try {
-            await workspaceApi.applyMastering(job.id);
-            setMasteringStatus('Reference Mastering Complete! Broadcast Target: -14.0 LUFS.');
-            setTimeout(() => setMasteringStatus(null), 4000);
+            const res = await workspaceApi.applyMastering(job.id);
+            setMasteredLufs(typeof res.lufs === 'number' ? res.lufs : null);
+            setMasteringStatus({
+                ok: true,
+                text: `Reference Mastering Complete · Measured ${typeof res.lufs === 'number' ? res.lufs.toFixed(1) : '—'} LUFS`
+            });
+            setTimeout(() => setMasteringStatus(null), 5000);
         } catch (e) {
             console.error('Mastering failed', e);
-            setMasteringStatus('Mastering complete! Applied reference limiting.');
-            setTimeout(() => setMasteringStatus(null), 3000);
+            // Honesty rule: a failed render NEVER reports success.
+            setMasteringStatus({
+                ok: false,
+                text: 'Mastering failed — the track was not modified. Check backend logs and retry.'
+            });
+            setTimeout(() => setMasteringStatus(null), 6000);
         } finally {
             setIsMastering(false);
         }
@@ -95,9 +131,15 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
 
                 <div className="flex items-center space-x-3">
                     {masteringStatus && (
-                        <span className="text-xs font-mono font-bold text-teal-600 dark:text-teal-400 animate-pulse flex items-center gap-1.5 bg-teal-500/10 px-3 py-1.5 rounded-xl border border-teal-500/20">
-                            <CheckCircle2 size={13} />
-                            <span>{masteringStatus}</span>
+                        <span
+                            className={`text-xs font-mono font-bold flex items-center gap-1.5 px-3 py-1.5 rounded-xl border ${
+                                masteringStatus.ok
+                                    ? 'text-teal-600 dark:text-teal-400 animate-pulse bg-teal-500/10 border-teal-500/20'
+                                    : 'text-rose-600 dark:text-rose-400 bg-rose-500/10 border-rose-500/30'
+                            }`}
+                        >
+                            {masteringStatus.ok ? <CheckCircle2 size={13} /> : <AlertTriangle size={13} />}
+                            <span>{masteringStatus.text}</span>
                         </span>
                     )}
 
@@ -133,7 +175,7 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
                                 </span>
                                 {typeof channel.midiProgram === 'number' && (
                                     <span
-                                        className="inline-flex text-[8px] font-mono text-teal-600 dark:text-teal-300 bg-teal-500/10 border border-teal-500/20 px-1.5 py-0.5 rounded-md"
+                                        className="inline-flex text-[10px] font-mono text-teal-600 dark:text-teal-300 bg-teal-500/10 border border-teal-500/20 px-1.5 py-0.5 rounded-md"
                                         title={`General MIDI program ${channel.midiProgram}`}
                                     >
                                         GM {channel.midiProgram}
@@ -143,7 +185,7 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
 
                             {/* Stereo Pan Control */}
                             <div className="w-full space-y-1 text-center">
-                                <span className="text-[9px] font-mono text-slate-400 block font-bold">
+                                <span className="text-[10px] font-mono text-slate-400 block font-bold">
                                     PAN: {channel.pan === 0 ? 'C' : channel.pan < 0 ? `L${Math.abs(channel.pan)}` : `R${channel.pan}`}
                                 </span>
                                 <input
@@ -188,15 +230,17 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
 
                             {/* Fader & Peak Meter Container */}
                             <div className="flex items-center space-x-3 h-44 py-2">
-                                {/* Vertical Fader Slider */}
+                                {/* Vertical Fader Slider — double-click resets to unity (0.0 dB) */}
                                 <input
                                     type="range"
                                     min="0"
                                     max="100"
                                     value={channel.volume}
                                     onChange={(e) => onVolumeChange(channel.id, parseInt(e.target.value))}
-                                    title={`${channel.name} Volume: ${channel.volume}%`}
-                                    aria-label={`${channel.name} Volume Fader`}
+                                    onDoubleClick={() => onVolumeChange(channel.id, 100)}
+                                    title={`${channel.name} Volume: ${toDb(channel.volume)} dB (double-click = unity)`}
+                                    aria-label={`${channel.name} Volume Fader (dB)`}
+                                    aria-valuetext={`${toDb(channel.volume)} dB`}
                                     className="h-36 w-2 appearance-none bg-slate-200 dark:bg-slate-700 rounded-lg cursor-pointer accent-teal-500"
                                     style={{ writingMode: 'vertical-lr', direction: 'rtl' }}
                                 />
@@ -213,9 +257,13 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
                                 </div>
                             </div>
 
-                            {/* Fader Decibel Value */}
-                            <div className="text-center font-mono text-[11px] font-bold text-slate-700 dark:text-slate-300">
-                                {channel.volume}%
+                            {/* Fader Decibel Value (unity highlighted) */}
+                            <div className={`text-center font-mono text-[11px] font-bold tabular-nums ${
+                                channel.volume === 100
+                                    ? 'text-teal-600 dark:text-teal-400'
+                                    : 'text-slate-700 dark:text-slate-300'
+                            }`}>
+                                {toDb(channel.volume)} dB
                             </div>
                         </div>
                     );
@@ -231,8 +279,11 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
                     </div>
 
                     <div className="w-full text-center">
-                        <span className="text-[10px] font-mono font-bold text-teal-600 dark:text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded-md border border-teal-500/20">
-                            -14.0 LUFS
+                        <span
+                            className="text-[10px] font-mono font-bold text-teal-600 dark:text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded-md border border-teal-500/20"
+                            title={masteredLufs !== null ? `Measured integrated loudness after reference mastering` : 'Run Matchering Reference Master to measure loudness'}
+                        >
+                            {masteredLufs !== null ? `${masteredLufs.toFixed(1)} LUFS` : 'LUFS —'}
                         </span>
                     </div>
 
@@ -245,8 +296,9 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
                             step="0.01"
                             value={masterVolume}
                             onChange={(e) => onMasterVolumeChange(parseFloat(e.target.value))}
-                            title={`Master Bus Volume: ${Math.round(masterVolume * 100)}%`}
-                            aria-label="Master Bus Volume Fader"
+                            onDoubleClick={() => onMasterVolumeChange(1)}
+                            title={`Master Bus Volume: ${toDb(Math.round(masterVolume * 100))} dB (double-click = unity)`}
+                            aria-label="Master Bus Volume Fader (dB)"
                             className="h-40 w-3 appearance-none bg-slate-200 dark:bg-slate-700 rounded-lg cursor-pointer accent-teal-500"
                             style={{ writingMode: 'vertical-lr', direction: 'rtl' }}
                         />
@@ -262,8 +314,8 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
                         </div>
                     </div>
 
-                    <div className="text-center font-mono text-xs font-black text-teal-600 dark:text-teal-400">
-                        {Math.round(masterVolume * 100)}%
+                    <div className="text-center font-mono text-xs font-black text-teal-600 dark:text-teal-400 tabular-nums">
+                        {toDb(Math.round(masterVolume * 100))} dB
                     </div>
                 </div>
             </div>

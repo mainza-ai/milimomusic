@@ -213,7 +213,7 @@ export const VoiceStudioModal: React.FC<VoiceStudioModalProps> = ({ isOpen, onCl
                                             <div className="flex items-center space-x-1.5">
                                                 <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100">{p.name}</h4>
                                                 {p.is_default && (
-                                                    <span className="text-[9px] px-1.5 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-400 font-semibold border border-teal-500/20">
+                                                    <span className="text-[10px] px-1.5 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-400 font-semibold border border-teal-500/20">
                                                         Default
                                                     </span>
                                                 )}

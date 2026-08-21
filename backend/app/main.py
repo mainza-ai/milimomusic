@@ -471,6 +471,82 @@ def get_track_sheets(job_id: str):
         return {"job_id": str(job.id), "sheets": sheets}
 
 
+@app.get("/tracks/{job_id}/peaks")
+def get_track_peaks(job_id: str, buckets: int = 240):
+    """Normalized waveform peaks for lightweight library waveforms.
+
+    Library rows must never download multi-MB masters just to draw a waveform.
+    This computes an amplitude envelope from the master ONCE, caches it to disk
+    beside the media, and serves a few-KB JSON payload instead.
+
+    Sync handler on purpose: FastAPI runs it in the threadpool, keeping the
+    event loop free while soundfile reads blocks from disk.
+    """
+    import numpy as np
+    import soundfile as sf
+
+    buckets = max(32, min(720, buckets))
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job or not job.audio_path:
+            raise HTTPException(status_code=404, detail="Track not found")
+        audio_name = os.path.basename(job.audio_path)
+
+    media_dir = os.path.abspath("generated_audio")
+    audio_path = os.path.abspath(os.path.join(media_dir, audio_name))
+    # Containment: never compute/serve anything outside the media directory.
+    if not audio_path.startswith(media_dir + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid audio path")
+    if not os.path.exists(audio_path):
+        raise HTTPException(status_code=404, detail="Audio file missing")
+
+    cache_dir = os.path.join(media_dir, ".peaks")
+    os.makedirs(cache_dir, exist_ok=True)
+    stem = os.path.splitext(audio_name)[0]
+    cache_path = os.path.join(cache_dir, f"{stem}.{buckets}.json")
+
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass  # corrupted cache → fall through and recompute
+
+    try:
+        with sf.SoundFile(audio_path) as f:
+            total = len(f)
+            if total == 0:
+                raise HTTPException(status_code=409, detail="Empty audio file")
+            duration = round(total / f.samplerate, 3)
+            edges = np.linspace(0, total, buckets + 1, dtype=int)
+            peaks: List[float] = []
+            for i in range(buckets):
+                n = int(edges[i + 1] - edges[i])
+                if n <= 0:
+                    peaks.append(0.0)
+                    continue
+                f.seek(int(edges[i]))
+                seg = f.read(n, dtype="float32", always_2d=True)
+                mono = seg.mean(axis=1)
+                peaks.append(float(np.abs(mono).max()) if len(mono) else 0.0)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Peaks computation failed for {audio_name}: {e}")
+        raise HTTPException(status_code=500, detail="Peaks computation failed")
+
+    max_p = max(peaks) or 1.0
+    if max_p > 0:
+        peaks = [round(p / max_p, 3) for p in peaks]
+    payload = {"job_id": str(job_id), "buckets": buckets, "duration": duration, "peaks": peaks}
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(payload, f)
+    except Exception:
+        pass  # cache write is best-effort; recompute next time
+    return payload
+
+
 @app.post("/tracks/{job_id}/midi")
 async def update_track_midi(job_id: str, notes: List[Dict[str, Any]] = Body(...)):
     """Save edited note events from the DAW Piano Roll and re-generate MIDI and MusicXML."""

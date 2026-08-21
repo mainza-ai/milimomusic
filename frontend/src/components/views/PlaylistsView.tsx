@@ -7,6 +7,7 @@ interface PlaylistsViewProps {
     songs: Job[];
     onPlaySong: (job: Job) => void;
     onOpenWorkspace: (job: Job) => void;
+    onSelectTrack?: (job: Job) => void;
 }
 
 interface Playlist {
@@ -21,7 +22,8 @@ interface Playlist {
 export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
     songs,
     onPlaySong,
-    onOpenWorkspace
+    onOpenWorkspace,
+    onSelectTrack
 }) => {
     const [playlists, setPlaylists] = useState<Playlist[]>(() => {
         const saved = localStorage.getItem('milimo_playlists');
@@ -298,8 +300,12 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                                                 >
                                                     <Play size={11} className="ml-0.5" />
                                                 </button>
-                                                <div className="truncate">
-                                                    <h5 className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                                                <div
+                                                    onClick={() => onSelectTrack?.(song)}
+                                                    className="truncate cursor-pointer group/title"
+                                                    title="Open Track Studio"
+                                                >
+                                                    <h5 className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate group-hover/title:text-teal-600 dark:group-hover/title:text-teal-400 transition-colors">
                                                         {song.title || song.prompt.slice(0, 35)}
                                                     </h5>
                                                     <span className="text-[10px] text-slate-500 dark:text-slate-400">
@@ -309,6 +315,16 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                                             </div>
 
                                             <div className="flex items-center space-x-2">
+                                                {onSelectTrack && (
+                                                    <button
+                                                        onClick={() => onSelectTrack(song)}
+                                                        className="px-2.5 py-1 bg-black/5 dark:bg-white/5 hover:bg-teal-500/20 text-slate-700 dark:text-slate-200 hover:text-teal-600 dark:hover:text-teal-300 font-bold rounded-lg text-[10px] transition-all border border-black/5 dark:border-white/5"
+                                                        title="Open Track Studio"
+                                                    >
+                                                        Studio
+                                                    </button>
+                                                )}
+
                                                 <button
                                                     onClick={() => onOpenWorkspace(song)}
                                                     className="px-2.5 py-1 bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950 font-bold rounded-lg text-[10px] transition-all"

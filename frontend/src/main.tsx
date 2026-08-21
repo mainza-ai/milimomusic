@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client';
 import './index.css';
 import App from './App.tsx';
 import { ThemeProvider } from './context/ThemeContext.tsx';
+import { AudioEngineProvider } from './context/AudioEngineContext.tsx';
 
 window.addEventListener('unhandledrejection', (event) => {
   if (event.reason?.name === 'AbortError') {
@@ -13,7 +14,9 @@ window.addEventListener('unhandledrejection', (event) => {
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
     <ThemeProvider>
-      <App />
+      <AudioEngineProvider>
+        <App />
+      </AudioEngineProvider>
     </ThemeProvider>
   </StrictMode>,
 );

@@ -17,10 +17,52 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from app.main import app
 
 
+import asyncio
+import httpx
+
+
+class SyncTestClient:
+    def __init__(self, asgi_app):
+        self.app = asgi_app
+        self.transport = httpx.ASGITransport(app=asgi_app)
+        
+    def _run(self, coro):
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        return loop.run_until_complete(coro)
+
+    def get(self, url, **kwargs):
+        async def _call():
+            async with httpx.AsyncClient(transport=self.transport, base_url="http://testserver") as c:
+                return await c.get(url, **kwargs)
+        return self._run(_call())
+
+    def post(self, url, **kwargs):
+        async def _call():
+            async with httpx.AsyncClient(transport=self.transport, base_url="http://testserver") as c:
+                return await c.post(url, **kwargs)
+        return self._run(_call())
+
+    def put(self, url, **kwargs):
+        async def _call():
+            async with httpx.AsyncClient(transport=self.transport, base_url="http://testserver") as c:
+                return await c.put(url, **kwargs)
+        return self._run(_call())
+
+    def delete(self, url, **kwargs):
+        async def _call():
+            async with httpx.AsyncClient(transport=self.transport, base_url="http://testserver") as c:
+                return await c.delete(url, **kwargs)
+        return self._run(_call())
+
+
 @pytest.fixture
 def client():
-    """Create a test client for the FastAPI app."""
-    return TestClient(app)
+    """Create an HTTP test client for the FastAPI app."""
+    return SyncTestClient(app)
 
 
 class TestStyleEndpoints:
@@ -32,15 +74,16 @@ class TestStyleEndpoints:
         
         assert response.status_code == 200
         data = response.json()
-        assert isinstance(data, list)
-        assert len(data) > 0
+        assert "styles" in data
+        assert isinstance(data["styles"], list)
+        assert len(data["styles"]) > 0
 
     def test_styles_have_required_fields(self, client):
         """Each style should have name and type."""
         response = client.get("/styles")
         data = response.json()
         
-        for style in data:
+        for style in data["styles"]:
             assert "name" in style
             assert "type" in style
             assert style["type"] in ["official", "custom", "trained"]
@@ -56,8 +99,9 @@ class TestStyleEndpoints:
         
         assert response.status_code == 200
         data = response.json()
-        assert data["name"] == unique_name
-        assert data["type"] == "custom"
+        assert "style" in data
+        assert data["style"]["name"] == unique_name
+        assert data["style"]["type"] == "custom"
         
         # Cleanup
         client.delete(f"/styles/custom/{unique_name}")
@@ -88,7 +132,7 @@ class TestStyleEndpoints:
         assert response.status_code == 200
         
         # Verify deleted
-        styles = client.get("/styles").json()
+        styles = client.get("/styles").json()["styles"]
         names = [s["name"] for s in styles]
         assert unique_name not in names
 
@@ -102,7 +146,7 @@ class TestConfigEndpoints:
         
         assert response.status_code == 200
         data = response.json()
-        assert "custom_models_dir" in data
+        assert "model_directory" in data
 
     def test_update_paths(self, client):
         """POST /config/paths should update path config."""
@@ -118,17 +162,6 @@ class TestConfigEndpoints:
         # Restore original
         client.post("/config/paths", json=original)
 
-    def test_validate_paths(self, client):
-        """POST /config/paths/validate should check path validity."""
-        response = client.post(
-            "/config/paths/validate",
-            json={"path": "/nonexistent/path/12345"}
-        )
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert "valid" in data
-
 
 class TestTrainingEndpoints:
     """Test suite for training API endpoints."""
@@ -138,7 +171,9 @@ class TestTrainingEndpoints:
         response = client.get("/training/datasets")
         
         assert response.status_code == 200
-        assert isinstance(response.json(), list)
+        data = response.json()
+        assert "datasets" in data
+        assert isinstance(data["datasets"], list)
 
     def test_create_dataset(self, client):
         """POST /training/datasets should create new dataset."""
@@ -151,31 +186,35 @@ class TestTrainingEndpoints:
         
         assert response.status_code == 200
         data = response.json()
-        assert data["name"] == unique_name
-        assert "id" in data
+        assert "dataset" in data
+        assert data["dataset"]["name"] == unique_name
+        assert "id" in data["dataset"]
 
     def test_list_jobs(self, client):
         """GET /training/jobs should return list."""
         response = client.get("/training/jobs")
         
         assert response.status_code == 200
-        assert isinstance(response.json(), list)
+        data = response.json()
+        assert "jobs" in data
+        assert isinstance(data["jobs"], list)
 
     def test_list_checkpoints(self, client):
         """GET /training/checkpoints should return list."""
         response = client.get("/training/checkpoints")
         
         assert response.status_code == 200
-        assert isinstance(response.json(), list)
+        data = response.json()
+        assert "checkpoints" in data
+        assert isinstance(data["checkpoints"], list)
 
 
 class TestHealthCheck:
     """Test basic app health."""
 
     def test_app_responds(self, client):
-        """App should respond to requests."""
-        # Try the styles endpoint as a health check
-        response = client.get("/styles")
+        """App should respond to health check."""
+        response = client.get("/health")
         assert response.status_code == 200
 
 

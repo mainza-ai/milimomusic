@@ -2,7 +2,7 @@ import React, { useEffect, useRef } from 'react';
 import { getAudioContext } from '../../utils/audioContext';
 
 interface AudioVisualizerProps {
-    mediaElement: HTMLMediaElement | null;
+    mediaElement?: HTMLMediaElement | null;
     isPlaying: boolean;
     className?: string;
     mode?: 'bars' | 'wave' | 'mirror';
@@ -23,6 +23,7 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
     const analyserRef = useRef<AnalyserNode | null>(null);
     const animationRef = useRef<number | undefined>(undefined);
     const peakBarsRef = useRef<number[]>([]);
+    const frameCountRef = useRef(0);
 
     useEffect(() => {
         if (!mediaElement) return;
@@ -62,15 +63,30 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
     }, [mediaElement]);
 
     const draw = () => {
-        if (!canvasRef.current || !analyserRef.current) return;
+        if (!canvasRef.current) return;
 
         const canvas = canvasRef.current;
         const ctx = canvas.getContext('2d', { alpha: true });
         if (!ctx) return;
 
-        const bufferLength = analyserRef.current.frequencyBinCount;
+        frameCountRef.current++;
+        const barCount = 48;
+        const bufferLength = analyserRef.current ? analyserRef.current.frequencyBinCount : barCount;
         const dataArray = new Uint8Array(bufferLength);
-        analyserRef.current.getByteFrequencyData(dataArray);
+
+        if (analyserRef.current) {
+            analyserRef.current.getByteFrequencyData(dataArray);
+        } else {
+            // Simulated rhythmic spectrum when no direct AnalyserNode is attached
+            const t = frameCountRef.current * 0.08;
+            for (let i = 0; i < barCount; i++) {
+                const wave1 = Math.sin(i * 0.3 + t);
+                const wave2 = Math.cos(i * 0.15 - t * 0.5);
+                const noise = Math.sin(i * 1.5 + t * 2) * 0.3;
+                const normalized = Math.max(0.1, (wave1 + wave2 + noise + 2) / 4);
+                dataArray[i] = Math.floor(normalized * 240);
+            }
+        }
 
         // Resize peaks array if needed
         if (peakBarsRef.current.length !== bufferLength) {
@@ -81,8 +97,7 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
 
         const width = canvas.width;
         const height = canvas.height;
-        const barCount = 48;
-        const step = Math.floor(bufferLength / barCount);
+        const step = Math.max(1, Math.floor(bufferLength / barCount));
         const barWidth = (width / barCount) * 0.7;
         const barSpacing = (width / barCount) * 0.3;
 
@@ -102,7 +117,6 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
             gradient.addColorStop(0.5, '#0072ff');
             gradient.addColorStop(1, '#38ef7d');
         } else {
-            // Neon Default: Electric Cyan -> Vivid Teal -> Amber Gold
             gradient.addColorStop(0, '#00f2fe');
             gradient.addColorStop(0.4, '#14b8a6');
             gradient.addColorStop(0.8, '#06b6d4');
@@ -110,17 +124,15 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
         }
 
         if (mode === 'mirror') {
-            // Dual Mirror Spectrum (Center Y)
             const centerY = height / 2;
             ctx.shadowBlur = 10;
             ctx.shadowColor = 'rgba(0, 242, 254, 0.4)';
 
             for (let i = 0; i < barCount; i++) {
-                const value = dataArray[i * step] || 0;
+                const value = dataArray[i * step] || dataArray[i] || 0;
                 const percent = value / 255;
                 const h = (percent * (centerY - 4)) * 0.95;
 
-                // Update peak gravity
                 if (h > peakBarsRef.current[i]) {
                     peakBarsRef.current[i] = h;
                 } else {
@@ -128,16 +140,13 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
                 }
 
                 const x = i * (barWidth + barSpacing) + barSpacing / 2;
-
                 ctx.fillStyle = gradient;
 
-                // Top Half
                 if (h > 1) {
                     ctx.beginPath();
                     ctx.roundRect(x, centerY - h, barWidth, h, [3, 3, 0, 0]);
                     ctx.fill();
 
-                    // Bottom Mirror Half with subtle fade
                     ctx.globalAlpha = 0.55;
                     ctx.beginPath();
                     ctx.roundRect(x, centerY, barWidth, h * 0.7, [0, 0, 3, 3]);
@@ -145,7 +154,6 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
                     ctx.globalAlpha = 1.0;
                 }
 
-                // Glowing Peak Dots
                 const peak = peakBarsRef.current[i];
                 if (peak > 2) {
                     ctx.fillStyle = '#ffffff';
@@ -157,7 +165,6 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
                 }
             }
         } else if (mode === 'wave') {
-            // Smooth Waveform Ribbon
             ctx.beginPath();
             ctx.moveTo(0, height / 2);
 
@@ -176,12 +183,11 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
             ctx.shadowColor = 'rgba(20, 184, 166, 0.6)';
             ctx.stroke();
         } else {
-            // Standard Upward Spectrum Bars
             ctx.shadowBlur = 8;
             ctx.shadowColor = 'rgba(0, 242, 254, 0.4)';
 
             for (let i = 0; i < barCount; i++) {
-                const value = dataArray[i * step] || 0;
+                const value = dataArray[i * step] || dataArray[i] || 0;
                 const h = (value / 255) * (height - 6);
                 const x = i * (barWidth + barSpacing) + barSpacing / 2;
 
@@ -207,7 +213,6 @@ export const AudioVisualizer: React.FC<AudioVisualizerProps> = ({
             draw();
         } else {
             if (animationRef.current) cancelAnimationFrame(animationRef.current);
-            // Gentle clear
             if (canvasRef.current) {
                 const ctx = canvasRef.current.getContext('2d');
                 ctx?.clearRect(0, 0, canvasRef.current.width, canvasRef.current.height);

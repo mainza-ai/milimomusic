@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { type Job, type TimedLine, API_BASE_URL } from '../../api';
+import { useAudioEngine } from '../../context/AudioEngineContext';
 import {
   Play,
   Pause,
@@ -19,46 +20,42 @@ import {
   Gauge,
   Mic2,
   Copy,
-  Check,
-  FileText
+  Check
 } from 'lucide-react';
 import { AudioVisualizer } from './AudioVisualizer';
 
 interface GlobalAudioPlayerProps {
-  currentSong: Job | null;
-  playlist: Job[];
-  isPlaying: boolean;
-  onTogglePlay: () => void;
-  onNext: () => void;
-  onPrev: () => void;
-  onClose: () => void;
   onOpenWorkspace: (job: Job) => void;
+  onSelectTrack?: (job: Job) => void;
 }
 
 export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
-  currentSong,
-  playlist,
-  isPlaying,
-  onTogglePlay,
-  onNext,
-  onPrev,
-  onClose,
-  onOpenWorkspace
+  onOpenWorkspace,
+  onSelectTrack
 }) => {
-  const audioRef = useRef<HTMLAudioElement | null>(null);
-  const [currentTime, setCurrentTime] = useState(0);
-  const [duration, setDuration] = useState(0);
-  const [timeMode, setTimeMode] = useState<'elapsed' | 'remaining'>('elapsed');
+  const {
+    currentTrack: currentSong,
+    isPlaying,
+    currentTime,
+    duration,
+    volume,
+    isMuted,
+    playbackRate,
+    repeatMode,
+    isShuffle,
+    togglePlay,
+    nextTrack,
+    prevTrack,
+    seek,
+    setVolume,
+    toggleMute,
+    setPlaybackRate,
+    setRepeatMode,
+    toggleShuffle,
+    stop
+  } = useAudioEngine();
 
-  // Playback Features
-  const [repeatMode, setRepeatMode] = useState<'off' | 'all' | 'one'>('off');
-  const [isShuffle, setIsShuffle] = useState(false);
-  const [playbackSpeed, setPlaybackSpeed] = useState<number>(1.0);
-  const [volume, setVolume] = useState(() => {
-    const saved = localStorage.getItem('milimo_volume');
-    return saved ? parseFloat(saved) : 0.8;
-  });
-  const [isMuted, setIsMuted] = useState(false);
+  const [timeMode, setTimeMode] = useState<'elapsed' | 'remaining'>('elapsed');
   const [isSpeedMenuOpen, setIsSpeedMenuOpen] = useState(false);
 
   // Synchronized Lyrics State
@@ -96,97 +93,19 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
   };
 
   const handleSeekToTime = (timeInSec: number) => {
-    if (audioRef.current) {
-      audioRef.current.currentTime = timeInSec;
-      setCurrentTime(timeInSec);
-    }
-  };
-
-  // Audio Sync
-  useEffect(() => {
-    if (!audioRef.current || !currentSong?.audio_path) return;
-
-    const fullUrl = currentSong.audio_path.startsWith('http')
-      ? currentSong.audio_path
-      : `${API_BASE_URL}${currentSong.audio_path}`;
-
-    if (audioRef.current.src !== fullUrl) {
-      audioRef.current.src = fullUrl;
-      audioRef.current.playbackRate = playbackSpeed;
-      if (isPlaying) {
-        audioRef.current.play().catch(() => {});
-      }
-    }
-  }, [currentSong]);
-
-  useEffect(() => {
-    if (!audioRef.current) return;
-    if (isPlaying) {
-      audioRef.current.play().catch(() => {});
-    } else {
-      audioRef.current.pause();
-    }
-  }, [isPlaying]);
-
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.volume = isMuted ? 0 : volume;
-    }
-  }, [volume, isMuted]);
-
-  useEffect(() => {
-    if (audioRef.current) {
-      audioRef.current.playbackRate = playbackSpeed;
-    }
-  }, [playbackSpeed]);
-
-  const handleTimeUpdate = () => {
-    if (audioRef.current) {
-      setCurrentTime(audioRef.current.currentTime);
-    }
-  };
-
-  const handleLoadedMetadata = () => {
-    if (audioRef.current) {
-      setDuration(audioRef.current.duration || 60);
-    }
-  };
-
-  const handleEnded = () => {
-    if (repeatMode === 'one') {
-      if (audioRef.current) {
-        audioRef.current.currentTime = 0;
-        audioRef.current.play();
-      }
-    } else if (repeatMode === 'all' || playlist.length > 1) {
-      onNext();
-    } else {
-      onTogglePlay();
-    }
+    seek(timeInSec);
   };
 
   const handleSeek = (e: React.ChangeEvent<HTMLInputElement>) => {
-    const time = parseFloat(e.target.value);
-    setCurrentTime(time);
-    if (audioRef.current) {
-      audioRef.current.currentTime = time;
-    }
+    seek(parseFloat(e.target.value));
   };
 
   const handleRewind10 = () => {
-    if (audioRef.current) {
-      const newTime = Math.max(0, audioRef.current.currentTime - 10);
-      audioRef.current.currentTime = newTime;
-      setCurrentTime(newTime);
-    }
+    seek(Math.max(0, currentTime - 10));
   };
 
   const handleAdvance10 = () => {
-    if (audioRef.current) {
-      const newTime = Math.min(duration, audioRef.current.currentTime + 10);
-      audioRef.current.currentTime = newTime;
-      setCurrentTime(newTime);
-    }
+    seek(Math.min(duration, currentTime + 10));
   };
 
   const toggleRepeat = () => {
@@ -196,7 +115,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
   };
 
   const formatTime = (seconds: number) => {
-    if (isNaN(seconds)) return '0:00';
+    if (isNaN(seconds) || seconds < 0) return '0:00';
     const mins = Math.floor(seconds / 60);
     const secs = Math.floor(seconds % 60);
     return `${mins}:${secs.toString().padStart(2, '0')}`;
@@ -218,13 +137,6 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
 
   return (
     <div className="fixed bottom-0 inset-x-0 z-40 p-2 sm:p-4 pointer-events-none flex flex-col items-center">
-      <audio
-        ref={audioRef}
-        onTimeUpdate={handleTimeUpdate}
-        onLoadedMetadata={handleLoadedMetadata}
-        onEnded={handleEnded}
-      />
-
       {isLyricsOpen && (
         <div className="w-full max-w-4xl mb-3 p-5 sm:p-6 rounded-3xl bg-white/95 dark:bg-[#10121a]/95 border border-teal-500/30 shadow-apple-2xl backdrop-blur-3xl pointer-events-auto flex flex-col max-h-[60vh] sm:max-h-[420px] transition-all animate-slide-up z-50">
           <div className="flex items-center justify-between border-b border-black/[0.06] dark:border-white/[0.08] pb-3 mb-3">
@@ -241,81 +153,73 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
                 </p>
               </div>
             </div>
-
             <div className="flex items-center space-x-2">
               <button
                 onClick={handleCopyLyrics}
-                className="px-2.5 py-1 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-1.5 transition-colors"
+                className="p-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 font-bold text-xs transition-colors flex items-center gap-1.5"
                 title="Copy Lyrics to Clipboard"
               >
-                {isCopied ? <Check size={13} className="text-teal-500" /> : <Copy size={13} />}
-                <span className="text-[11px]">{isCopied ? 'Copied' : 'Copy'}</span>
+                {isCopied ? <Check size={14} className="text-teal-500" /> : <Copy size={14} />}
+                <span className="hidden sm:inline">{isCopied ? 'Copied' : 'Copy'}</span>
               </button>
               <button
                 onClick={() => setIsLyricsOpen(false)}
-                className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                className="p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
                 title="Close Lyrics"
               >
-                <X size={15} />
+                <X size={16} />
               </button>
             </div>
           </div>
 
-          <div ref={lyricsScrollRef} className="flex-1 overflow-y-auto pr-2 space-y-4 py-2 select-text font-sans">
+          <div
+            ref={lyricsScrollRef}
+            className="flex-1 overflow-y-auto space-y-3.5 pr-2 custom-scrollbar text-center py-4"
+          >
             {timedLyrics.length > 0 ? (
               timedLyrics.map((line, idx) => {
-                const isCurrent = currentTime >= line.start && currentTime <= line.end;
+                const isActive = activeLineIndex === idx;
                 const isPast = currentTime > line.end;
-                const isSectionHeader = line.text.startsWith('[') && line.text.endsWith(']');
-
-                if (isSectionHeader) {
-                  return (
-                    <div key={idx} className="pt-3 pb-1">
-                      <span className="text-[10px] font-mono font-bold uppercase tracking-widest text-teal-600 dark:text-teal-400 bg-teal-500/10 px-2.5 py-1 rounded-full border border-teal-500/20">
-                        {line.text}
-                      </span>
-                    </div>
-                  );
-                }
-
                 return (
                   <div
                     key={idx}
                     data-line-idx={idx}
                     onClick={() => handleSeekToTime(line.start)}
-                    className={`cursor-pointer transition-all duration-300 rounded-xl px-3 py-1.5 ${
-                      isCurrent
-                        ? 'bg-teal-500/15 dark:bg-teal-500/20 text-teal-900 dark:text-teal-200 font-extrabold text-base sm:text-lg scale-[1.01] shadow-sm'
+                    className={`cursor-pointer px-4 py-2 rounded-2xl transition-all duration-300 ${
+                      isActive
+                        ? 'text-lg sm:text-xl font-extrabold text-teal-600 dark:text-teal-300 scale-105 bg-teal-500/10'
                         : isPast
-                        ? 'text-slate-500 dark:text-slate-400 font-medium text-sm hover:text-teal-600 dark:hover:text-teal-400'
-                        : 'text-slate-400 dark:text-slate-500 font-normal text-sm hover:text-slate-700 dark:hover:text-slate-300'
+                        ? 'text-sm sm:text-base text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300'
+                        : 'text-sm sm:text-base text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                     }`}
                   >
-                    <div className="flex items-center justify-between gap-3">
-                      <span>{line.text}</span>
-                      <span className="text-[10px] font-mono text-slate-400 dark:text-slate-600 opacity-0 group-hover:opacity-100 flex-shrink-0">
-                        {formatTime(line.start)}
+                    <p>{line.text}</p>
+                    {isActive && (
+                      <span className="text-[10px] font-mono text-teal-500/70 font-normal">
+                        {formatTime(line.start)} - {formatTime(line.end)}
                       </span>
-                    </div>
+                    )}
                   </div>
                 );
               })
             ) : rawLyrics ? (
-              <pre className="text-xs sm:text-sm font-sans leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
+              <div className="text-sm sm:text-base leading-relaxed text-slate-700 dark:text-slate-300 whitespace-pre-wrap font-sans text-left px-4">
                 {rawLyrics}
-              </pre>
+              </div>
             ) : (
-              <div className="h-full flex flex-col items-center justify-center text-center p-8 text-slate-400 space-y-2">
-                <FileText size={24} className="opacity-40" />
-                <p className="text-xs">No lyrics recorded for this instrumental or custom master.</p>
+              <div className="h-full flex flex-col items-center justify-center text-slate-400 py-8">
+                <Mic2 size={32} className="opacity-30 mb-2" />
+                <p className="text-xs">No lyrics found for this track.</p>
               </div>
             )}
           </div>
         </div>
       )}
 
-      <div className="w-full max-w-5xl bg-white/90 dark:bg-[#12141c]/90 border border-black/[0.08] dark:border-white/[0.08] shadow-apple-2xl rounded-3xl p-3 sm:p-4 backdrop-blur-2xl pointer-events-auto transition-all">
-        <div className="flex items-center space-x-3 mb-2 px-1">
+      {/* Main Floating Apple Player Bar */}
+      <div className="w-full max-w-5xl bg-white/90 dark:bg-[#12141c]/90 border border-black/[0.08] dark:border-white/10 shadow-apple-2xl backdrop-blur-2xl rounded-3xl p-3 sm:p-4 pointer-events-auto flex flex-col space-y-2.5 transition-all">
+        {/* Scrubber Progress Bar */}
+        <div className="flex items-center space-x-2 sm:space-x-3 w-full px-1">
           <button
             onClick={() => setTimeMode(timeMode === 'elapsed' ? 'remaining' : 'elapsed')}
             className="text-[10px] font-mono font-medium text-slate-500 dark:text-slate-400 w-10 text-right select-none hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
@@ -346,7 +250,11 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
         </div>
 
         <div className="flex items-center justify-between gap-2 sm:gap-4">
-          <div className="flex items-center space-x-3 min-w-0 flex-1 max-w-xs sm:max-w-sm">
+          <div
+            onClick={() => onSelectTrack?.(currentSong)}
+            className="flex items-center space-x-3 min-w-0 flex-1 max-w-xs sm:max-w-sm cursor-pointer group/player-track hover:opacity-90 transition-opacity"
+            title="Open Track Studio"
+          >
             <div className="w-11 h-11 sm:w-12 sm:h-12 rounded-2xl bg-gradient-to-tr from-teal-500/20 via-cyan-500/20 to-sky-500/20 border border-black/[0.08] dark:border-white/10 p-1 flex-shrink-0 flex items-center justify-center shadow-sm relative overflow-hidden group">
               <img
                 src="/milimo_logo.png"
@@ -365,7 +273,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
             </div>
 
             <div className="min-w-0 pr-2">
-              <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
+              <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 truncate group-hover/player-track:text-teal-600 dark:group-hover/player-track:text-teal-400 transition-colors">
                 {currentSong.title || currentSong.prompt || 'Untitled Track'}
               </h3>
               <div className="flex items-center space-x-1.5 mt-0.5">
@@ -381,7 +289,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
 
           <div className="flex items-center space-x-1 sm:space-x-2">
             <button
-              onClick={() => setIsShuffle(!isShuffle)}
+              onClick={toggleShuffle}
               className={`p-1.5 rounded-xl transition-colors hidden xs:block ${
                 isShuffle
                   ? 'text-teal-600 dark:text-teal-400 bg-teal-500/10'
@@ -393,7 +301,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
             </button>
 
             <button
-              onClick={onPrev}
+              onClick={prevTrack}
               className="p-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
               title="Previous Track"
             >
@@ -409,7 +317,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
             </button>
 
             <button
-              onClick={onTogglePlay}
+              onClick={() => togglePlay()}
               className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-gradient-to-tr from-teal-500 via-cyan-400 to-sky-500 hover:from-teal-400 hover:to-cyan-300 text-slate-950 font-bold flex items-center justify-center shadow-lg shadow-teal-500/30 hover:scale-105 active:scale-95 transition-transform"
               title={isPlaying ? 'Pause' : 'Play'}
             >
@@ -425,7 +333,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
             </button>
 
             <button
-              onClick={onNext}
+              onClick={nextTrack}
               className="p-1.5 rounded-xl text-slate-600 dark:text-slate-300 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
               title="Next Track"
             >
@@ -448,7 +356,6 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
           <div className="flex items-center space-x-2 justify-end flex-1 max-w-xs">
             <div className="w-20 sm:w-28 h-8 hidden md:block rounded-xl overflow-hidden bg-black/[0.04] dark:bg-white/5 border border-black/[0.06] dark:border-white/5 p-1">
               <AudioVisualizer
-                mediaElement={audioRef.current}
                 isPlaying={isPlaying}
                 mode="mirror"
                 accentGradient="cyberpunk"
@@ -476,7 +383,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
                 title="Playback Speed"
               >
                 <Gauge size={12} className="text-teal-500" />
-                <span>{playbackSpeed}x</span>
+                <span>{playbackRate}x</span>
               </button>
 
               {isSpeedMenuOpen && (
@@ -485,11 +392,11 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
                     <button
                       key={s}
                       onClick={() => {
-                        setPlaybackSpeed(s);
+                        setPlaybackRate(s);
                         setIsSpeedMenuOpen(false);
                       }}
                       className={`w-full px-3 py-1 text-left text-xs font-mono rounded-lg transition-colors ${
-                        playbackSpeed === s
+                        playbackRate === s
                           ? 'bg-teal-500/15 text-teal-700 dark:text-teal-300 font-bold'
                           : 'text-slate-600 dark:text-slate-400 hover:bg-black/5 dark:hover:bg-white/5'
                       }`}
@@ -504,7 +411,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
             {/* Volume Control */}
             <div className="flex items-center space-x-1.5 group/vol hidden lg:flex">
               <button
-                onClick={() => setIsMuted(!isMuted)}
+                onClick={toggleMute}
                 title={isMuted || volume === 0 ? "Unmute Audio" : "Mute Audio"}
                 aria-label={isMuted || volume === 0 ? "Unmute Audio" : "Mute Audio"}
                 className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
@@ -517,12 +424,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
                 max="1"
                 step="0.05"
                 value={isMuted ? 0 : volume}
-                onChange={(e) => {
-                  const val = parseFloat(e.target.value);
-                  setVolume(val);
-                  setIsMuted(val === 0);
-                  localStorage.setItem('milimo_volume', val.toString());
-                }}
+                onChange={(e) => setVolume(parseFloat(e.target.value))}
                 title={`Playback Volume: ${Math.round((isMuted ? 0 : volume) * 100)}%`}
                 aria-label="Playback Volume Slider"
                 className="w-16 accent-teal-500 h-1.5 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer"
@@ -547,7 +449,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
             </button>
 
             <button
-              onClick={onClose}
+              onClick={stop}
               className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
               title="Dismiss Player"
             >

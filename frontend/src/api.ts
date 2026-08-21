@@ -62,6 +62,10 @@ export interface Job {
     seed?: number;
     is_favorite?: boolean;
 
+    // Visual Artwork Assets
+    cover_image_path?: string;
+    image_prompt?: string;
+
     // v2 Generation & Provider
     model_provider?: string;
     llm_model?: string;
@@ -80,12 +84,15 @@ export interface Job {
     structured_caption_json?: string;
     voice_profile_id?: string;
     project_id?: string;
+    session_id?: string;
 }
 
 export interface Project {
     id: string;
     name: string;
     description?: string;
+    cover_image_path?: string;
+    image_prompt?: string;
     tags?: string;
     bpm?: number;
     key_signature?: string;
@@ -103,6 +110,8 @@ export interface Project {
 export interface ProjectCreate {
     name: string;
     description?: string;
+    cover_image_path?: string;
+    image_prompt?: string;
     tags?: string;
     bpm?: number;
     key_signature?: string;
@@ -113,11 +122,57 @@ export interface ProjectCreate {
 export interface ProjectUpdate {
     name?: string;
     description?: string;
+    cover_image_path?: string;
+    image_prompt?: string;
     tags?: string;
     bpm?: number;
     key_signature?: string;
     color?: string;
     icon?: string;
+}
+
+export interface StudioSession {
+    id: string;
+    title: string;
+    project_id?: string;
+    active_job_id?: string;
+    created_at: string;
+    updated_at: string;
+    message_count?: number;
+    job_count?: number;
+    jobs?: Job[];
+    messages?: SessionMessage[];
+}
+
+export interface SessionMessage {
+    id: string;
+    session_id: string;
+    role: 'user' | 'producer' | 'system';
+    content: string;
+    audio_attachment_path?: string;
+    generated_job_id?: string;
+    preset_data_json?: string;
+    created_at: string;
+}
+
+export interface SessionCreate {
+    title?: string;
+    project_id?: string;
+    active_job_id?: string;
+}
+
+export interface SessionUpdate {
+    title?: string;
+    project_id?: string;
+    active_job_id?: string;
+}
+
+export interface SessionMessageCreate {
+    content: string;
+    role?: 'user' | 'producer';
+    audio_attachment_path?: string;
+    generated_job_id?: string;
+    preset_data_json?: string;
 }
 
 export interface ModelVariant {
@@ -205,7 +260,12 @@ export const api = {
         modelProvider: string = 'minimax_music3',
         voiceProfileId?: string,
         structuredCaption?: Record<string, string>,
-        projectId?: string
+        projectId?: string,
+        title?: string,
+        isInstrumental?: boolean,
+        coverImagePath?: string,
+        imagePrompt?: string,
+        sessionId?: string
     ) => {
         const res = await axios.post(`${API_BASE_URL}/generate/music`, {
             prompt,
@@ -221,7 +281,12 @@ export const api = {
             model_provider: modelProvider,
             voice_profile_id: voiceProfileId,
             structured_caption: structuredCaption,
-            project_id: projectId
+            project_id: projectId,
+            title,
+            is_instrumental: isInstrumental,
+            cover_image_path: coverImagePath,
+            image_prompt: imagePrompt,
+            session_id: sessionId
         });
         return res.data;
     },
@@ -618,5 +683,71 @@ export const projectApi = {
     },
     removeTrackFromProject: async (projectId: string, jobId: string): Promise<void> => {
         await axios.delete(`${API_BASE_URL}/projects/${projectId}/tracks/${jobId}`);
+    }
+};
+
+export const sessionApi = {
+    listSessions: async (): Promise<StudioSession[]> => {
+        const res = await axios.get(`${API_BASE_URL}/sessions`);
+        return res.data;
+    },
+    createSession: async (data: SessionCreate = {}): Promise<StudioSession> => {
+        const res = await axios.post(`${API_BASE_URL}/sessions`, data);
+        return res.data;
+    },
+    getSession: async (id: string): Promise<StudioSession> => {
+        const res = await axios.get(`${API_BASE_URL}/sessions/${id}`);
+        return res.data;
+    },
+    updateSession: async (id: string, data: SessionUpdate): Promise<StudioSession> => {
+        const res = await axios.patch(`${API_BASE_URL}/sessions/${id}`, data);
+        return res.data;
+    },
+    deleteSession: async (id: string): Promise<void> => {
+        await axios.delete(`${API_BASE_URL}/sessions/${id}`);
+    },
+    sendChatMessage: async (id: string, message: SessionMessageCreate): Promise<{
+        session: StudioSession;
+        user_message: SessionMessage;
+        producer_message: SessionMessage;
+        preset: any;
+    }> => {
+        const res = await axios.post(`${API_BASE_URL}/sessions/${id}/chat`, message);
+        return res.data;
+    }
+};
+
+export const coverApi = {
+    uploadCoverImage: async (file: File): Promise<{ url: string; filename: string }> => {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await axios.post(`${API_BASE_URL}/upload/image`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        return res.data;
+    },
+    generateCoverPrompt: async (params: { title?: string; description?: string; tags?: string; genre?: string }): Promise<{ prompt: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/generate/cover-prompt`, params);
+        return res.data;
+    },
+    generateCoverImage: async (params: { prompt: string; style?: string }): Promise<{ url: string; prompt: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/generate/cover-image`, params);
+        return res.data;
+    }
+};
+
+export const trackApi = {
+    updateTrackMetadata: async (jobId: string, updates: Partial<Job>): Promise<Job> => {
+        const res = await axios.patch(`${API_BASE_URL}/jobs/${jobId}`, updates);
+        return res.data;
+    },
+    getStudioPackUrl: (jobId: string): string => {
+        return `${API_BASE_URL}/jobs/${jobId}/studio-pack`;
+    },
+    voiceConvertTrack: async (jobId: string, voiceProfileId: string): Promise<Job> => {
+        const res = await axios.post(`${API_BASE_URL}/jobs/${jobId}/voice-convert`, {
+            voice_profile_id: voiceProfileId
+        });
+        return res.data;
     }
 };

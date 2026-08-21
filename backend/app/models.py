@@ -32,6 +32,10 @@ class Job(SQLModel, table=True):
     cfg_scale: Optional[float] = Field(default=None)
     topk: Optional[int] = Field(default=None)
 
+    # Visual Artwork Assets
+    cover_image_path: Optional[str] = Field(default=None)
+    image_prompt: Optional[str] = Field(default=None)
+
     # v2 Multitrack & MuScriptor Transcription Assets
     midi_path: Optional[str] = Field(default=None)
     musicxml_path: Optional[str] = Field(default=None)
@@ -40,8 +44,10 @@ class Job(SQLModel, table=True):
     beat_grid_json: Optional[str] = Field(default=None)     # JSON serialized BeatGrid
     timed_lyrics_json: Optional[str] = Field(default=None)  # JSON serialized word-level timestamps
     structured_caption_json: Optional[str] = Field(default=None)
-    # Project Association
+    
+    # Project & Session Association
     project_id: Optional[str] = Field(default=None, index=True)
+    session_id: Optional[str] = Field(default=None, index=True)
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_msg: Optional[str] = None
@@ -52,6 +58,8 @@ class Project(SQLModel, table=True):
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
     name: str
     description: Optional[str] = None
+    cover_image_path: Optional[str] = Field(default=None)
+    image_prompt: Optional[str] = Field(default=None)
     tags: Optional[str] = None # Genre / Target Style
     bpm: Optional[int] = Field(default=120)
     key_signature: Optional[str] = Field(default="C Major")
@@ -64,6 +72,8 @@ class Project(SQLModel, table=True):
 class ProjectCreate(SQLModel):
     name: str
     description: Optional[str] = None
+    cover_image_path: Optional[str] = None
+    image_prompt: Optional[str] = None
     tags: Optional[str] = None
     bpm: Optional[int] = 120
     key_signature: Optional[str] = "C Major"
@@ -74,6 +84,8 @@ class ProjectCreate(SQLModel):
 class ProjectUpdate(SQLModel):
     name: Optional[str] = None
     description: Optional[str] = None
+    cover_image_path: Optional[str] = None
+    image_prompt: Optional[str] = None
     tags: Optional[str] = None
     bpm: Optional[int] = None
     key_signature: Optional[str] = None
@@ -81,10 +93,64 @@ class ProjectUpdate(SQLModel):
     icon: Optional[str] = None
 
 
+class Session(SQLModel, table=True):
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    title: str = Field(default="New session")
+    project_id: Optional[str] = Field(default=None, index=True)
+    active_job_id: Optional[str] = Field(default=None)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class SessionCreate(SQLModel):
+    title: Optional[str] = "New session"
+    project_id: Optional[str] = None
+    active_job_id: Optional[str] = None
+
+
+class SessionUpdate(SQLModel):
+    title: Optional[str] = None
+    project_id: Optional[str] = None
+    active_job_id: Optional[str] = None
+
+
+class SessionMessage(SQLModel, table=True):
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    session_id: UUID = Field(foreign_key="session.id", index=True)
+    role: str = Field(default="user") # 'user' | 'producer' | 'system'
+    content: str
+    audio_attachment_path: Optional[str] = None
+    generated_job_id: Optional[str] = None
+    preset_data_json: Optional[str] = None # JSON serialized preset parameters
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class SessionMessageCreate(SQLModel):
+    role: str = "user"
+    content: str
+    audio_attachment_path: Optional[str] = None
+    generated_job_id: Optional[str] = None
+    preset_data_json: Optional[str] = None
+
+
+class CoverPromptRequest(SQLModel):
+    title: Optional[str] = None
+    description: Optional[str] = None
+    tags: Optional[str] = None
+    genre: Optional[str] = None
+
+
+class CoverImageRequest(SQLModel):
+    prompt: str
+    aspect_ratio: Optional[str] = "1:1"
+    style: Optional[str] = "cinematic album cover"
+
+
 class GenerationRequest(SQLModel):
     model_config = {"protected_namespaces": ()}
     prompt: str
     lyrics: Optional[str] = None
+    title: Optional[str] = None
     duration_ms: int = 30000
     temperature: float = 1.0
     cfg_scale: float = 1.5
@@ -95,6 +161,10 @@ class GenerationRequest(SQLModel):
     llm_model: Optional[str] = None
     parent_job_id: Optional[str] = None
     project_id: Optional[str] = None
+    session_id: Optional[str] = None
+    cover_image_path: Optional[str] = None
+    image_prompt: Optional[str] = None
+    is_instrumental: Optional[bool] = False
     structured_caption: Optional[Dict[str, str]] = None
     voice_profile_id: Optional[str] = None
 

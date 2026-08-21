@@ -755,6 +755,54 @@ class LLMService:
             return {"topic": concept, "tags": "Pop, Soft"}
 
     @staticmethod
+    async def produce_full_track(concept: str, model: Optional[str] = None) -> dict:
+        """Full-scale AI Producer synthesis:
+        Derives topic, verified tags, title, complete structured lyrics, and structured captions.
+        """
+        provider = LLMService._get_provider()
+        model = model or LLMService._get_active_model()
+        clean_concept = (concept or "").strip()
+
+        # 1. Detect if instrumental is requested
+        is_instrumental = bool(re.search(r'\b(instrumental|beat|backing track|lofi beat|no vocals?|karaoke track|ambient track)\b', clean_concept, re.I))
+
+        # 2. Enhance topic and valid style tags
+        enhanced = LLMService.enhance_prompt(clean_concept, model)
+        topic = enhanced.get("topic", clean_concept)
+        tags = enhanced.get("tags", "Pop, Electronic")
+
+        # 3. Derive Title
+        title = LLMService.generate_title(clean_concept, model)
+        if not title or title.lower() == "untitled track":
+            title = topic[:30]
+
+        # 4. Generate structured lyrics (if vocal)
+        lyrics = ""
+        if not is_instrumental:
+            try:
+                lyrics = await LLMService.generate_lyrics_async(topic, model, tags=tags)
+            except Exception as e:
+                logger.warning(f"Lyric generation in produce_full_track failed: {e}")
+                lyrics = f"[Verse 1]\n{clean_concept}\n\n[Chorus]\n{topic}"
+            lyrics = _strip_thinking(lyrics)
+
+        # 5. Format Structured Caption
+        structured_caption = {
+            "global_metadata": f"Genre: {tags}\nMood: Studio Master",
+            "vocal_details": "Lead Vocals: Clear, Expressive, Dynamic" if not is_instrumental else "Instrumental (No Vocals)",
+            "arrangement": f"Instrumentation: {tags}\nProduction: High Fidelity Stereo Master"
+        }
+
+        return {
+            "title": title,
+            "topic": topic,
+            "tags": tags,
+            "lyrics": lyrics,
+            "structured_caption": structured_caption,
+            "is_instrumental": is_instrumental
+        }
+
+    @staticmethod
     def generate_inspiration(model: Optional[str] = None) -> dict:
         provider = LLMService._get_provider()
         model = model or LLMService._get_active_model()

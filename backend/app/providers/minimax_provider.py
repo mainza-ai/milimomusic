@@ -101,14 +101,16 @@ def run_real_minimax_inference(
     steps: int = 24,
 ) -> str:
     """Run genuine MiniMax Music 3 weight inference, writing a WAV to output_path."""
+    import random
     model = _load_minimax_model(snapshot_path)
+    clean_seed = int(seed) if seed is not None and int(seed) >= 0 else random.randint(0, 2147483647)
     _mx_generate_music(
         caption=prompt,
         lyrics=lyrics or "",
         model=model,
         duration=duration_sec,
         steps=steps,
-        seed=seed if seed is not None else -1,
+        seed=clean_seed,
         output_path=output_path,
         verbose=False,
     )

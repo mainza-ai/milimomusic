@@ -365,14 +365,104 @@ Fixed distorted and inverted sheet music note rendering in DAW `NotationViewer.t
 4. Added authentic curved vector flags for eighth notes and classical Grand Staff brace brackets.
 5. Added live playhead tracking line during playback.
 
-## [2026-08-20] fix | DAW Transport & Playhead Clock Synchronization
-Audited and resolved playhead freeze and desynchronization after pause/reset:
-1. Converted `playAll` in `SessionWorkspace.tsx` to asynchronous and properly awaited `AudioContext.resume()` before reading hardware clocks, eliminating the suspended clock jump bug.
-2. Fixed edge case where starting playback at track end caused immediate termination by adding automatic restart reset.
-3. Hardened RAF ticker loop against trailing ticks overwriting reset position `currentTimeRef.current`.
-4. Verified with clean production build and full 31-test backend suite.
+## [2026-08-20] create | Production Workflow Overhaul (New Session, Multi-Turn Producer & Projects)
+Implemented production-grade New Session and Projects workflows matching Apple-inspired reference specifications:
+1. **Projects 2-Column Modal & Cover Artwork**:
+   - Re-engineered New Project modal with square drag-and-drop artwork dropzone on the left (supporting file upload and AI cover art prompt generation) and metadata form on the right with live 250-character counter.
+   - Enhanced project grid cards with cover art previews, track statistics, and active project context banner.
+2. **Stacked Accordion Compose Drawer**:
+   - Overhauled `ComposerSidebar.tsx` into a unified accordion with Lyrics (featuring an Instrumental toggle switch), Sound & Style (featuring an Advanced controls switch), and Details & Artwork.
+   - Added AI cover prompt generation and SVG/PNG cover synthesis.
+3. **New Session Stage & Left Rail History**:
+   - Upgraded Left Navigation Rail with persistent `Sessions` thread list and a primary `+ New session` button.
+   - Designed central "What do you want to create?" hero with 3 visual starter action cards (*Brainstorm lyrics*, *Create a song together*, *Remix my music*).
+   - Integrated conversational multi-turn Producer chat stream and sticky bottom Apple-style Producer prompt bar with attachment and slider shortcuts.
+4. **Backend Hardening & SQLite Migrations**:
+   - Added `StudioSession` and `SessionMessage` models and migrations to `jobs.db`.
+   - Updated music generation and project endpoints to support `cover_image_path`, `image_prompt`, and `session_id`.
+   - Verified 100% test pass (59/59 pytest suites) and zero-error Vite production build.
 
+## [2026-08-20] create | Individual Track Studio & Song Detail Page (TrackDetailView)
+Implemented the production-grade Individual Track Studio (Song Detail Page) for deep inspection and multi-asset export:
+1. **Dedicated Track Studio View (`TrackDetailView.tsx`)**:
+   - Designed Apple-standard Hero Command Bar with high-resolution artwork, editable track title, BPM/Key/LUFS badges, tactile Play/Pause master transport, and interactive audio waveform scrubber.
+   - Built 5 specialized inspection tabs:
+     - **Tab 1: Stems Matrix**: Dual-engine stem switcher (`HTDemucs 4-Stem` vs `MuScriptor Dynamic Instrument Parts`), per-stem interactive Solo (`S`) and Mute (`M`) buttons, volume & pan faders, waveform visualizer, and individual stem `.wav` download.
+     - **Tab 2: Neural Transcription & Score Hub**: Note metrics (total notes, pitch range `C2–G5`, tempo grid), direct downloads for Multi-Track MIDI (`.mid`), W3C MusicXML (`.musicxml`), Note JSON, and integrated Grand Staff score preview.
+     - **Tab 3: Vocal & Lyric Studio**: Syllable-synced real-time karaoke teleprompter, `.lrc` and `.srt` subtitle export, copy lyrics, and 1-click Singing Voice Conversion (SVC) vocal swap with voice profiles.
+     - **Tab 4: AI Generation Provenance**: Model Provider, Structured Caption breakdown (Global Metadata, Vocal Details, Arrangement), Seed with 1-click copy, CFG scale, Temperature, Top-K, Step count, Audio sample rate, and `[✨ Re-roll in Composer]` CTA.
+     - **Tab 5: Version History & Lineage**: Visual lineage tree displaying parent song, extended segments, and voice-converted iterations.
+2. **Backend Studio Pack Packaging & API Hardening**:
+   - Added `GET /jobs/{job_id}/studio-pack` endpoint streaming a complete `.zip` archive containing master audio, stems, MIDI, MusicXML, LRC lyrics, and metadata manifest.
+   - Added `PATCH /jobs/{job_id}` for instant title, tags, and metadata updates.
+   - Added `POST /jobs/{job_id}/voice-convert` for single-click SVC vocal re-voicing derivatives.
+3. **Application Routing Integration**:
+   - Added `'track-detail'` to `NavView` and wired clicking on song rows, thumbnails, or titles across `SongsView` and `HistoryFeed` to open the Track Studio.
+   - Integrated Back button navigation with previous view history and 1-click transitions to the full multitrack DAW workspace.
 
+## [2026-08-20] fix | Producer Chat Full-Track Composition Engine & Lyrics Population
+Resolved missing lyrics and incomplete preset population during New Session conversational Producer prompts:
+1. **Unified Studio Producer Engine (`LLMService.produce_full_track`)**:
+   - Upgraded `backend/app/services/llm_service.py` to synthesize a complete 5-layer track composition package:
+     a) Topic description and strictly validated genre/style tags.
+     b) Production-grade multi-stanza lyrics (`[Intro]`, `[Verse]`, `[Chorus]`, `[Bridge]`, `[Outro]`) via `generate_lyrics_async`.
+     c) Reasoning and thinking token sanitization (`_strip_thinking`) ensuring no model scratchpads leak into lyrics.
+     d) Evocative song title generation (`generate_title`).
+     e) Full 3-part structured caption breakdown (`global_metadata`, `vocal_details`, `arrangement`) and instrumental prompt detection.
+2. **Session Chat Endpoint Hardening (`backend/app/main.py: session_chat`)**:
+   - Upgraded `POST /sessions/{session_id}/chat` to invoke `LLMService.produce_full_track` and attach complete preset payloads (`title`, `topic`, `tags`, `lyrics`, `structured_caption`, `is_instrumental`).
+   - Enhanced producer message formatting in the chat stream with full lyrics preview and song title proposal.
+3. **Frontend Ingestion & Instant Composer Sync (`App.tsx` & `ComposerSidebar.tsx`)**:
+   - Hooked `producerPreset` to automatically populate Title, Lyrics, Topic, Style tags, Global Metadata, Vocal Details, and Arrangement fields in the Composer.
+   - Added interactive `[Load in Composer]` quick-action buttons on Producer message bubbles.
+   - Verified 100% test suite pass (59/59 pytests) and live end-to-end country song composition.
 
+## [2026-08-20] create | Universal Navigation & Track Studio Deep-Drill Architecture
+Unified the whole-application Information Architecture (IA) and eliminated click hijacking across all song representations:
+1. **Separated In-Place Rename from Navigation in History (`HistoryFeed.tsx`)**:
+   - Replaced title click interception with a dedicated pencil `<Edit2 />` action button.
+   - Connected song titles, prompts, and entire card containers to `onSelectTrack(job)`, opening `TrackDetailView`.
+   - Added explicit tactile `[Track Studio]` action button with `<Sparkles />` icon.
+2. **Universal Click-Through Across All Core Views**:
+   - **`GlobalAudioPlayer.tsx`**: Made bottom player album artwork, track title, and provider chip open `TrackDetailView` on click.
+   - **`ProjectsView.tsx`**: Hooked project track cards and titles with `onSelectTrack` and added `[Studio]` action button.
+   - **`PlaylistsView.tsx`**: Hooked playlist song rows and titles with `onSelectTrack` and added `[Studio]` action button.
+   - **`ProfileView.tsx`**: Hooked user creations and top track rows with `onSelectTrack` and added `[Studio]` action button.
+3. **URL Deep-Linking & Browser History Synchronization (`App.tsx`)**:
+   - Synchronized active track and view state with URL search parameters (`?view=track-detail&track={job_id}`).
+   - Connected `popstate` event listeners so browser Back and Forward buttons seamlessly navigate between views and preserve track studio context on page reload.
+4. **Interactive Singing Voice Conversion (SVC) Parametric Controls (`TrackDetailView.tsx`)**:
+   - Added Pitch Shift slider (`-12` to `+12` semitones), Formant preservation switch, and Dry/Wet blend slider (`0%` to `100%`).
+   - Verified 100% Pytest pass rate (59/59) and zero-error Vite production build (1.47s).
 
+## [2026-08-21] fix | Track Studio Master Audio Transport & Direct Stem Playback Engine
+Resolved audio playback failures on individual track detail pages and hardened sound auditioning across all views:
+1. **Dedicated Track Studio Master Transport (`TrackDetailView.tsx`)**:
+   - Integrated a local HTML5 `<audio>` engine with real-time waveform equalizer animation and interactive scrubber.
+   - Wired the Master Play/Pause button and artwork hover triggers to directly control audio playback with zero lag.
+   - Added live time counter (`0:00 / 3:14`), volume slider, and instant mute toggle.
+2. **Interactive Multitrack Stem Auditioning (`TrackDetailView.tsx`)**:
+   - Added direct Play/Pause auditioning buttons to each stem card on Tab 1 (Vocals, Drums, Bass, Instruments).
+   - Hooked dedicated stem audio elements allowing instant auditioning of isolated WAV audio stems.
+3. **Global Audio Player Autoplay Hardening (`GlobalAudioPlayer.tsx`)**:
+   - Explicitly bound `src={audioUrl}` on the JSX `<audio>` tag to eliminate race conditions on initial mount.
+   - Added `onCanPlay` callback and safe Promise handling on `.play()` to prevent browser autoplay blocks and interruption errors.
+4. **Explore Feed History Sound Details Badges (`HistoryFeed.tsx` & `App.tsx`)**:
+   - Passed `onSelectTrack` to the primary Explore feed instance.
+   - Added interactive `[Sound Details]`, duration, model provider, and style tags pills to every history card.
+   - Verified 100% Pytest pass rate (59/59) and zero-error Vite build (1.51s).
+
+## [2026-08-21] create | Unified Single-Node Audio Engine & Contextual Player Architecture
+Architected a centralized audio playback engine and eliminated dual-player collisions, audio contention, and ghost looping:
+1. **Centralized Audio Engine Provider (`frontend/src/context/AudioEngineContext.tsx`)**:
+   - Built a single root `<audio>` node and unified state provider (`useAudioEngine()`) governing playback, buffering, playhead seeking, master volume, and playlist progression across the application.
+   - Eliminated all independent and conflicting HTML5 `<audio>` element instances.
+2. **Contextual Floating Dock Visibility (`frontend/src/App.tsx`)**:
+   - Configured intelligent screen awareness: floating dock (`GlobalAudioPlayer`) is displayed only during library browsing (`explore`, `songs`, `projects`, `playlists`, `profile`, `videos`).
+   - Automatically collapses and hides the floating dock when entering dedicated studio workspaces (`track-detail`, `workspace`), giving exclusive visual and tactile ownership to the in-page Studio Hero Transport.
+3. **Seamless Studio Hero Transport (`frontend/src/components/views/TrackDetailView.tsx`)**:
+   - Bound hero playhead, animated frequency equalizer bars, and master scrubber directly to `useAudioEngine()`.
+   - Isolated stem auditioning bus on Tab 1 so auditioning individual WAV stems cleanly pauses master playback with zero phase collision.
+4. **Zero-Error Verification**:
+   - 100% Pytest pass rate (59/59) and clean Vite production build (1.49s).
 

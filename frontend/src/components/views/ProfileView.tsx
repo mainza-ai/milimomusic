@@ -7,9 +7,10 @@ interface ProfileViewProps {
     songs: Job[];
     onPlaySong: (job: Job) => void;
     onOpenWorkspace: (job: Job) => void;
+    onSelectTrack?: (job: Job) => void;
 }
 
-export const ProfileView: React.FC<ProfileViewProps> = ({ songs, onPlaySong, onOpenWorkspace }) => {
+export const ProfileView: React.FC<ProfileViewProps> = ({ songs, onPlaySong, onOpenWorkspace, onSelectTrack }) => {
     const [artistName, setArtistName] = useState(() => localStorage.getItem('milimo_artist_name') || 'Mainza Kangombe');
     const [bio, setBio] = useState(() => localStorage.getItem('milimo_artist_bio') || 'Founder & Audio Architect. Exploring generative AI soundscapes, neural synthesis, and offline DAW workflows.');
     const [isEditing, setIsEditing] = useState(false);
@@ -150,8 +151,12 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ songs, onPlaySong, onO
                                 {song.is_favorite && <Heart size={12} className="fill-rose-500 text-rose-500" />}
                             </div>
 
-                            <div>
-                                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                            <div
+                                onClick={() => onSelectTrack?.(song)}
+                                className="cursor-pointer group/title"
+                                title="Open Track Studio"
+                            >
+                                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate group-hover/title:text-teal-600 dark:group-hover/title:text-teal-400 transition-colors">
                                     {song.title || song.prompt.slice(0, 35)}
                                 </h4>
                                 <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">
@@ -159,18 +164,27 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ songs, onPlaySong, onO
                                 </p>
                             </div>
 
-                            <div className="flex items-center justify-between pt-2 border-t border-black/[0.06] dark:border-white/5">
+                            <div className="flex items-center justify-between pt-2 border-t border-black/[0.06] dark:border-white/5 gap-1.5 flex-wrap">
                                 <button
                                     onClick={() => onPlaySong(song)}
-                                    className="px-3 py-1 bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950 font-bold rounded-lg text-[10px] transition-all"
+                                    className="px-2.5 py-1 bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950 font-bold rounded-lg text-[10px] transition-all"
                                 >
-                                    Play Track
+                                    Play
                                 </button>
+                                {onSelectTrack && (
+                                    <button
+                                        onClick={() => onSelectTrack(song)}
+                                        className="px-2.5 py-1 bg-black/5 dark:bg-white/5 hover:bg-teal-500/20 text-slate-700 dark:text-slate-200 hover:text-teal-600 dark:hover:text-teal-300 font-bold rounded-lg text-[10px] transition-all border border-black/5 dark:border-white/5"
+                                        title="Open Track Studio"
+                                    >
+                                        Studio
+                                    </button>
+                                )}
                                 <button
                                     onClick={() => onOpenWorkspace(song)}
-                                    className="px-3 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-bold rounded-lg text-[10px] transition-all"
+                                    className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-bold rounded-lg text-[10px] transition-all"
                                 >
-                                    DAW Edit
+                                    DAW
                                 </button>
                             </div>
                         </GlassCard>

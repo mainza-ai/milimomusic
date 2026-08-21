@@ -11,6 +11,7 @@ interface SongsViewProps {
     onToggleFavorite: (jobId: string) => void;
     onExtend: (job: Job) => void;
     onDelete?: (jobId: string) => void;
+    onSelectTrack?: (job: Job) => void;
 }
 
 export const SongsView: React.FC<SongsViewProps> = ({
@@ -20,7 +21,8 @@ export const SongsView: React.FC<SongsViewProps> = ({
     onOpenWorkspace,
     onToggleFavorite,
     onExtend,
-    onDelete
+    onDelete,
+    onSelectTrack
 }) => {
     const [search, setSearch] = useState('');
     const [viewMode, setViewMode] = useState<'grid' | 'table'>('table');
@@ -177,13 +179,19 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                             </button>
                                         </td>
                                         <td className="py-3 px-4">
-                                            <div className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                                            <div 
+                                                onClick={() => onSelectTrack?.(song)}
+                                                className="font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2 cursor-pointer hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
+                                            >
                                                 <span>{song.title || song.prompt.slice(0, 40)}</span>
                                                 {song.is_favorite && (
                                                     <Heart size={12} className="fill-rose-500 text-rose-500 flex-shrink-0" />
                                                 )}
                                             </div>
-                                            <div className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-sm">
+                                            <div 
+                                                onClick={() => onSelectTrack?.(song)}
+                                                className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-sm cursor-pointer"
+                                            >
                                                 {song.prompt}
                                             </div>
                                         </td>
@@ -209,6 +217,15 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                             </span>
                                         </td>
                                         <td className="py-3 px-4 text-right space-x-1.5">
+                                            {onSelectTrack && (
+                                                <button
+                                                    onClick={() => onSelectTrack(song)}
+                                                    className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-bold rounded-lg text-[11px] transition-all inline-flex items-center gap-1"
+                                                    title="Inspect Track Details & Stems"
+                                                >
+                                                    <span>Details</span>
+                                                </button>
+                                            )}
                                             {song.lyrics && (
                                                 <button
                                                     onClick={() => setSelectedLyricsSong(song)}
@@ -275,8 +292,11 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                 </button>
                             </div>
 
-                            <div>
-                                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 truncate">
+                            <div 
+                                onClick={() => onSelectTrack?.(song)}
+                                className="cursor-pointer group/title"
+                            >
+                                <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 group-hover/title:text-teal-600 dark:group-hover/title:text-teal-400 transition-colors truncate">
                                     {song.title || song.prompt.slice(0, 35)}
                                 </h4>
                                 <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">

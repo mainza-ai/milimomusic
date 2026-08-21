@@ -3,8 +3,11 @@ import {
   api,
   trainingApi,
   workspaceApi,
+  sessionApi,
+  coverApi,
   type Job,
-  type Project
+  type Project,
+  type StudioSession
 } from './api';
 import { ComposerSidebar, type CompositionData } from './components/ComposerSidebar';
 import { HistoryFeed } from './components/HistoryFeed';
@@ -16,6 +19,7 @@ import { SessionWorkspace } from './components/workspace/SessionWorkspace';
 import { FloatingStatusWidget } from './components/ui/FloatingStatusWidget';
 import { MilimoLogo } from './components/ui/MilimoLogo';
 import { useTheme } from './context/ThemeContext';
+import { useAudioEngine } from './context/AudioEngineContext';
 
 // Dedicated Reference IA Views
 import { SongsView } from './components/views/SongsView';
@@ -23,6 +27,7 @@ import { PlaylistsView } from './components/views/PlaylistsView';
 import { ProjectsView } from './components/views/ProjectsView';
 import { MusicVideosView } from './components/views/MusicVideosView';
 import { ProfileView } from './components/views/ProfileView';
+import { TrackDetailView } from './components/views/TrackDetailView';
 import { GlobalAudioPlayer } from './components/ui/GlobalAudioPlayer';
 
 import {
@@ -47,7 +52,12 @@ import {
   PanelLeftOpen,
   PanelRightClose,
   Menu,
-  X
+  X,
+  MessageSquare,
+  ArrowUp,
+  Paperclip,
+  Trash2,
+  FileAudio
 } from 'lucide-react';
 
 export type NavView =
@@ -58,11 +68,14 @@ export type NavView =
   | 'videos'
   | 'profile'
   | 'workspace'
-  | 'sessions';
+  | 'sessions'
+  | 'track-detail';
 
 function App() {
   const { theme, setTheme } = useTheme();
   const [currentNav, setCurrentNav] = useState<NavView>('explore');
+  const [previousNav, setPreviousNav] = useState<NavView>('songs');
+  const [selectedTrack, setSelectedTrack] = useState<Job | null>(null);
   const [lyricsModels, setLyricsModels] = useState<string[]>([]);
   const [history, setHistory] = useState<Job[]>([]);
   const [currentJobId, setCurrentJobId] = useState<string | null>(null);
@@ -71,9 +84,25 @@ function App() {
   const [isGeneratingLyrics, setIsGeneratingLyrics] = useState(false);
   const [activeWorkspaceJob, setActiveWorkspaceJob] = useState<Job | null>(null);
 
-  // Audio Playback Player State
-  const [playingSong, setPlayingSong] = useState<Job | null>(null);
-  const [isPlayingAudio, setIsPlayingAudio] = useState(false);
+  // Studio Sessions & Multi-Turn Chat State
+  const [sessions, setSessions] = useState<StudioSession[]>([]);
+  const [activeSession, setActiveSession] = useState<StudioSession | null>(null);
+  const [isChatSubmitting, setIsChatSubmitting] = useState(false);
+  const [attachmentPath, setAttachmentPath] = useState<string | null>(null);
+  const attachmentInputRef = useRef<HTMLInputElement>(null);
+
+  // Centralized Audio Playback Engine
+  const {
+    currentTrack: engineTrack,
+    isPlaying: engineIsPlaying,
+    playTrack: enginePlayTrack,
+    togglePlay: engineTogglePlay,
+    pause: enginePause,
+    stop: engineStop
+  } = useAudioEngine();
+
+  const playingSong = engineTrack;
+  const isPlayingAudio = engineIsPlaying;
   const [activeProject, setActiveProject] = useState<Project | null>(null);
 
   // Responsive Layout States
@@ -161,14 +190,98 @@ function App() {
     }
   };
 
+  const loadSessions = async () => {
+    try {
+      const list = await sessionApi.listSessions();
+      setSessions(list);
+    } catch (e) {
+      console.error("Failed to load sessions", e);
+    }
+  };
+
+  const handleCreateNewSession = async () => {
+    try {
+      const newSession = await sessionApi.createSession({
+        title: 'New Session'
+      });
+      setSessions(prev => [newSession, ...prev]);
+      setActiveSession(newSession);
+      setCurrentNav('explore');
+      setProducerInput('');
+    } catch (e) {
+      console.error("Failed to create new session", e);
+    }
+  };
+
+  const handleSelectSession = async (session: StudioSession) => {
+    try {
+      const full = await sessionApi.getSession(session.id);
+      setActiveSession(full);
+      setCurrentNav('explore');
+    } catch (e) {
+      console.error("Failed to select session", e);
+    }
+  };
+
+  const handleDeleteSession = async (sessionId: string, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    try {
+      await sessionApi.deleteSession(sessionId);
+      setSessions(prev => prev.filter(s => s.id !== sessionId));
+      if (activeSession?.id === sessionId) {
+        setActiveSession(null);
+      }
+    } catch (err) {
+      console.error("Failed to delete session", err);
+    }
+  };
+
+  const handleSendChatMessage = async (content: string) => {
+    if (!content.trim() && !attachmentPath) return;
+
+    let targetSession = activeSession;
+    if (!targetSession) {
+      targetSession = await sessionApi.createSession({
+        title: content.slice(0, 30) || 'New Session'
+      });
+      setSessions(prev => [targetSession!, ...prev]);
+      setActiveSession(targetSession);
+    }
+
+    try {
+      setIsChatSubmitting(true);
+      const res = await sessionApi.sendChatMessage(targetSession.id, {
+        content,
+        role: 'user',
+        audio_attachment_path: attachmentPath || undefined
+      });
+
+      setActiveSession(res.session);
+      setSessions(prev => prev.map(s => (s.id === res.session.id ? res.session : s)));
+      setProducerInput('');
+      setAttachmentPath(null);
+
+      if (res.preset) {
+        setProducerPreset(res.preset);
+        if (!isComposerOpen) setIsComposerOpen(true);
+      }
+    } catch (e: any) {
+      alert("Producer chat error: " + (e.response?.data?.detail || e.message));
+    } finally {
+      setIsChatSubmitting(false);
+    }
+  };
+
   useEffect(() => {
     refreshActiveCheckpoint();
     api.getLyricsModels().then(setLyricsModels).catch(console.error);
     loadHistory(0, 'all', '', true);
+    loadSessions();
   }, []);
 
   const handleRefresh = () => {
     loadHistory(0, historyFilter, searchQuery, true);
+    loadSessions();
     setHistoryOffset(0);
   };
 
@@ -189,17 +302,66 @@ function App() {
     setHistory(prev =>
       prev.map(j => (j.id === jobId ? { ...j, is_favorite: !j.is_favorite } : j))
     );
+    if (selectedTrack?.id === jobId) {
+      setSelectedTrack(prev => prev ? { ...prev, is_favorite: !prev.is_favorite } : null);
+    }
     api.toggleFavorite(jobId).catch(console.error);
   };
+
+  const handleSelectTrack = (track: Job) => {
+    if (currentNav !== 'track-detail') {
+      setPreviousNav(currentNav);
+    }
+    setSelectedTrack(track);
+    setCurrentNav('track-detail');
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('view', 'track-detail');
+      url.searchParams.set('track', track.id);
+      window.history.pushState({ view: 'track-detail', trackId: track.id }, '', url.toString());
+    } catch (e) {}
+  };
+
+  const handleNavigate = (view: NavView) => {
+    setCurrentNav(view);
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('view', view);
+      url.searchParams.delete('track');
+      window.history.pushState({ view }, '', url.toString());
+    } catch (e) {}
+  };
+
+  useEffect(() => {
+    const handlePopState = async () => {
+      const params = new URLSearchParams(window.location.search);
+      const viewParam = params.get('view') as NavView | null;
+      const trackId = params.get('track');
+
+      if (viewParam === 'track-detail' && trackId) {
+        try {
+          const track = await api.getJobStatus(trackId);
+          setSelectedTrack(track);
+          setCurrentNav('track-detail');
+        } catch (e) {
+          console.error(e);
+        }
+      } else if (viewParam) {
+        setCurrentNav(viewParam);
+      }
+    };
+
+    window.addEventListener('popstate', handlePopState);
+    return () => window.removeEventListener('popstate', handlePopState);
+  }, []);
 
   const handleDeleteJob = async (jobId: string) => {
     if (!confirm("Are you sure you want to delete this track? This action cannot be undone.")) return;
 
     // 1. Optimistic removal from state
     setHistory(prev => prev.filter(j => j.id !== jobId));
-    if (playingSong?.id === jobId) {
-      setPlayingSong(null);
-      setIsPlayingAudio(false);
+    if (engineTrack?.id === jobId) {
+      engineStop();
     }
     if (activeWorkspaceJob?.id === jobId) {
       setActiveWorkspaceJob(null);
@@ -351,7 +513,12 @@ function App() {
         data.modelProvider || 'minimax_music3',
         data.voiceProfileId,
         data.structuredCaption,
-        data.projectId || activeProject?.id
+        data.projectId || activeProject?.id,
+        data.title,
+        data.isInstrumental,
+        data.coverImagePath,
+        data.imagePrompt,
+        activeSession?.id
       );
       setCurrentJobId(res.job_id);
       setParentJob(undefined);
@@ -412,13 +579,18 @@ function App() {
     }
   };
 
+  const handleOpenWorkspace = (job: Job) => {
+    enginePause();
+    setActiveWorkspaceJob(job);
+    setCurrentNav('workspace');
+  };
+
   const handleAudioUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
     try {
       const res = await workspaceApi.uploadAndTranscribe(file);
-      setActiveWorkspaceJob(res.job);
-      setCurrentNav('workspace');
+      handleOpenWorkspace(res.job);
       handleRefresh();
     } catch (e) {
       alert("Audio upload and transcription failed");
@@ -427,30 +599,12 @@ function App() {
 
   const handlePlaySong = (job: Job) => {
     if (!job.audio_path) return;
-    if (playingSong?.id === job.id) {
-      setIsPlayingAudio(!isPlayingAudio);
+    const completed = history.filter(s => s.status === 'completed' && s.audio_path);
+    if (engineTrack?.id === job.id) {
+      engineTogglePlay(job);
     } else {
-      setPlayingSong(job);
-      setIsPlayingAudio(true);
+      enginePlayTrack(job, completed);
     }
-  };
-
-  const handleNextSong = () => {
-    const completed = history.filter(s => s.status === 'completed' && s.audio_path);
-    if (completed.length === 0) return;
-    const curIdx = completed.findIndex(s => s.id === playingSong?.id);
-    const nextIdx = (curIdx + 1) % completed.length;
-    setPlayingSong(completed[nextIdx]);
-    setIsPlayingAudio(true);
-  };
-
-  const handlePrevSong = () => {
-    const completed = history.filter(s => s.status === 'completed' && s.audio_path);
-    if (completed.length === 0) return;
-    const curIdx = completed.findIndex(s => s.id === playingSong?.id);
-    const prevIdx = curIdx <= 0 ? completed.length - 1 : curIdx - 1;
-    setPlayingSong(completed[prevIdx]);
-    setIsPlayingAudio(true);
   };
 
   return (
@@ -497,18 +651,14 @@ function App() {
 
           {/* Primary CTA: New Session + */}
           <button
-            onClick={() => {
-              setCurrentNav('explore');
-              setParentJob(undefined);
-              setIsMobileMenuOpen(false);
-            }}
+            onClick={handleCreateNewSession}
             className={`w-full py-2.5 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center justify-center space-x-2 transition-all shadow-md shadow-teal-500/20 active:scale-[0.98] ${
               isLeftRailCollapsed ? 'px-0' : 'px-4'
             }`}
             title="New Session"
           >
             <Plus size={16} />
-            {!isLeftRailCollapsed && <span>New Session +</span>}
+            {!isLeftRailCollapsed && <span>New session +</span>}
           </button>
 
           {/* Flat Reference Navigation (Songs, Projects, Playlists, Videos, Profile, DAW Workspace) */}
@@ -529,13 +679,13 @@ function App() {
                   key={item.id}
                   onClick={() => {
                     if (item.id === 'workspace') {
-                      if (activeWorkspaceJob) setCurrentNav('workspace');
+                      if (activeWorkspaceJob) handleNavigate('workspace');
                       else if (history.length > 0) {
                         setActiveWorkspaceJob(history[0]);
-                        setCurrentNav('workspace');
+                        handleNavigate('workspace');
                       }
                     } else {
-                      setCurrentNav(item.id as NavView);
+                      handleNavigate(item.id as NavView);
                     }
                     setIsMobileMenuOpen(false);
                   }}
@@ -556,6 +706,52 @@ function App() {
               );
             })}
           </div>
+
+          {/* Persistent Sessions Section (Conversation Threads) */}
+          {!isLeftRailCollapsed && sessions.length > 0 && (
+            <div className="pt-3 border-t border-black/[0.06] dark:border-white/5 space-y-1">
+              <div className="flex items-center justify-between px-3 mb-1">
+                <span className="text-[10px] font-bold text-slate-400 dark:text-slate-500 uppercase tracking-wider">
+                  Sessions
+                </span>
+                <button
+                  onClick={handleCreateNewSession}
+                  className="text-slate-400 hover:text-teal-500 p-0.5 rounded"
+                  title="New Session"
+                >
+                  <Plus size={13} />
+                </button>
+              </div>
+              <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
+                {sessions.map(s => {
+                  const isActive = activeSession?.id === s.id && currentNav === 'explore';
+                  return (
+                    <div
+                      key={s.id}
+                      onClick={() => handleSelectSession(s)}
+                      className={`w-full text-left p-2 rounded-xl text-[11px] transition-colors flex items-center justify-between cursor-pointer group ${
+                        isActive
+                          ? 'bg-teal-500/10 text-teal-700 dark:text-teal-300 font-bold border border-teal-500/20'
+                          : 'hover:bg-black/[0.03] dark:hover:bg-white/5 text-slate-700 dark:text-slate-300'
+                      }`}
+                    >
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <MessageSquare size={13} className="text-teal-500 flex-shrink-0" />
+                        <span className="truncate">{s.title || 'Studio Session'}</span>
+                      </div>
+                      <button
+                        onClick={(e) => handleDeleteSession(s.id, e)}
+                        className="opacity-0 group-hover:opacity-100 p-1 hover:text-rose-500 transition-opacity ml-1 flex-shrink-0"
+                        title="Delete session"
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
 
           {/* Production Engines Sub-menu */}
           <div className="pt-3 border-t border-black/[0.06] dark:border-white/5 space-y-1">
@@ -860,18 +1056,41 @@ function App() {
           <div className="flex-1 overflow-hidden flex flex-col min-w-0">
             <SessionWorkspace
               job={activeWorkspaceJob}
-              onClose={() => setCurrentNav('explore')}
+              onClose={() => setCurrentNav(previousNav || 'explore')}
             />
           </div>
+        ) : currentNav === 'track-detail' && selectedTrack ? (
+          <TrackDetailView
+            track={selectedTrack}
+            allJobs={history}
+            isPlaying={isPlayingAudio && playingSong?.id === selectedTrack.id}
+            playingSongId={playingSong?.id}
+            onBack={() => setCurrentNav(previousNav || 'songs')}
+            onPlay={handlePlaySong}
+            onOpenWorkspace={handleOpenWorkspace}
+            onExtend={(job) => {
+              setParentJob(job);
+              setCurrentNav('explore');
+              if (!isComposerOpen) setIsComposerOpen(true);
+            }}
+            onReroll={(preset) => {
+              setProducerPreset(preset);
+              setCurrentNav('explore');
+              if (!isComposerOpen) setIsComposerOpen(true);
+            }}
+            onToggleFavorite={handleToggleFavorite}
+            onTrackUpdated={(updated) => {
+              setSelectedTrack(updated);
+              setHistory(prev => prev.map(j => j.id === updated.id ? updated : j));
+            }}
+            onSelectTrack={handleSelectTrack}
+          />
         ) : currentNav === 'songs' ? (
           <SongsView
             songs={history}
             currentJobId={playingSong?.id}
             onPlay={handlePlaySong}
-            onOpenWorkspace={(job) => {
-              setActiveWorkspaceJob(job);
-              setCurrentNav('workspace');
-            }}
+            onOpenWorkspace={handleOpenWorkspace}
             onToggleFavorite={handleToggleFavorite}
             onExtend={(job) => {
               setParentJob(job);
@@ -879,14 +1098,12 @@ function App() {
               if (!isComposerOpen) setIsComposerOpen(true);
             }}
             onDelete={handleDeleteJob}
+            onSelectTrack={handleSelectTrack}
           />
         ) : currentNav === 'projects' ? (
           <ProjectsView
             allJobs={history}
-            onOpenWorkspace={(job) => {
-              setActiveWorkspaceJob(job);
-              setCurrentNav('workspace');
-            }}
+            onOpenWorkspace={handleOpenWorkspace}
             onPlay={handlePlaySong}
             playingSongId={playingSong?.id}
             isPlayingAudio={isPlayingAudio}
@@ -896,15 +1113,14 @@ function App() {
               setCurrentNav('explore');
               if (!isComposerOpen) setIsComposerOpen(true);
             }}
+            onSelectTrack={handleSelectTrack}
           />
         ) : currentNav === 'playlists' ? (
           <PlaylistsView
             songs={history}
             onPlaySong={handlePlaySong}
-            onOpenWorkspace={(job) => {
-              setActiveWorkspaceJob(job);
-              setCurrentNav('workspace');
-            }}
+            onOpenWorkspace={handleOpenWorkspace}
+            onSelectTrack={handleSelectTrack}
           />
         ) : currentNav === 'videos' ? (
           <MusicVideosView
@@ -915,10 +1131,8 @@ function App() {
           <ProfileView
             songs={history}
             onPlaySong={handlePlaySong}
-            onOpenWorkspace={(job) => {
-              setActiveWorkspaceJob(job);
-              setCurrentNav('workspace');
-            }}
+            onOpenWorkspace={handleOpenWorkspace}
+            onSelectTrack={handleSelectTrack}
           />
         ) : currentNav === 'sessions' ? (
           <div className="flex-1 overflow-hidden flex flex-col min-w-0">
@@ -931,10 +1145,7 @@ function App() {
                 setCurrentNav('explore');
                 if (!isComposerOpen) setIsComposerOpen(true);
               }}
-              onOpenWorkspace={(job) => {
-                setActiveWorkspaceJob(job);
-                setCurrentNav('workspace');
-              }}
+              onOpenWorkspace={handleOpenWorkspace}
               onLoadMore={handleLoadMore}
               hasMore={hasMoreHistory}
               onFilterChange={handleFilterChange}
@@ -944,72 +1155,270 @@ function App() {
               isLoadingMore={isLoadingHistory}
               onToggleFavorite={handleToggleFavorite}
               onDelete={handleDeleteJob}
+              onSelectTrack={handleSelectTrack}
             />
           </div>
         ) : (
-          /* Explore & Chat-First Producer Landing */
-          <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 space-y-6 md:space-y-8 min-w-0">
-            {/* Hero Section */}
-            <div className="max-w-3xl mx-auto text-center space-y-4 md:space-y-5 pt-4 md:pt-6">
-              <div className="flex justify-center">
-                <MilimoLogo size="lg" showText={false} />
-              </div>
+          /* Explore & New Session Stage */
+          <div className="flex-1 overflow-y-auto flex flex-col justify-between p-4 sm:p-6 md:p-8 min-w-0 relative">
+            {/* Hidden Attachment Input */}
+            <input
+              type="file"
+              ref={attachmentInputRef}
+              accept="audio/*,image/*"
+              onChange={async (e) => {
+                const file = e.target.files?.[0];
+                if (file) {
+                  if (file.type.startsWith('image/')) {
+                    const res = await coverApi.uploadCoverImage(file);
+                    setAttachmentPath(res.url);
+                  } else {
+                    const res = await workspaceApi.uploadAndTranscribe(file);
+                    setAttachmentPath(res.job.audio_path || null);
+                  }
+                }
+              }}
+              className="hidden"
+            />
 
-              <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white font-sans">
-                Give the silence something worth remembering.
-              </h2>
-              <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 max-w-xl mx-auto leading-relaxed">
-                Speak it into being. Shape it until it&apos;s yours.
-              </p>
+            <div className="max-w-3xl w-full mx-auto space-y-6 md:space-y-8 pt-4 md:pt-6">
+              {/* If Session Conversation Exists: Show Chat Stream */}
+              {activeSession && activeSession.messages && activeSession.messages.length > 0 ? (
+                <div className="space-y-4 pb-6 animate-fade-in">
+                  <div className="flex items-center justify-between pb-3 border-b border-black/[0.06] dark:border-white/[0.08]">
+                    <div className="flex items-center gap-2">
+                      <MessageSquare size={16} className="text-teal-500" />
+                      <h2 className="text-base font-bold text-slate-900 dark:text-white">
+                        {activeSession.title || 'Studio Session'}
+                      </h2>
+                    </div>
+                    <button
+                      onClick={handleCreateNewSession}
+                      className="px-3 py-1.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-xs font-semibold text-slate-600 dark:text-slate-300 transition-colors"
+                    >
+                      + New Session
+                    </button>
+                  </div>
 
-              {/* Apple-Style Frosted Chat-First Producer Input */}
-              <div className="bg-white/80 dark:bg-[#141620]/90 p-2 rounded-2xl border border-black/[0.08] dark:border-white/[0.1] shadow-apple-lg backdrop-blur-2xl flex flex-col sm:flex-row items-stretch sm:items-center gap-2">
+                  <div className="space-y-3">
+                    {activeSession.messages.map((msg, idx) => {
+                      const isUser = msg.role === 'user';
+                      return (
+                        <div
+                          key={msg.id || idx}
+                          className={`flex ${isUser ? 'justify-end' : 'justify-start'} animate-fade-in`}
+                        >
+                          <div
+                            className={`max-w-[85%] sm:max-w-[75%] p-4 rounded-2xl text-xs sm:text-sm leading-relaxed ${
+                              isUser
+                                ? 'bg-teal-500 text-slate-950 font-medium rounded-br-sm shadow-md'
+                                : 'bg-white dark:bg-[#181a24] text-slate-800 dark:text-slate-200 border border-black/[0.08] dark:border-white/10 rounded-bl-sm shadow-apple-sm'
+                            }`}
+                          >
+                            {!isUser && (
+                              <div className="flex items-center justify-between gap-2 mb-2 pb-1.5 border-b border-black/[0.04] dark:border-white/[0.06]">
+                                <div className="flex items-center gap-1.5 text-[11px] font-bold text-teal-600 dark:text-teal-400">
+                                  <Sparkles size={13} />
+                                  <span>Producer AI</span>
+                                </div>
+                                {msg.preset_data_json && (
+                                  <div className="flex items-center gap-1.5">
+                                    <button
+                                      onClick={() => {
+                                        try {
+                                          const p = JSON.parse(msg.preset_data_json!);
+                                          setProducerPreset(p);
+                                          if (!isComposerOpen) setIsComposerOpen(true);
+                                        } catch (e) {
+                                          console.error(e);
+                                        }
+                                      }}
+                                      className="px-2 py-0.5 rounded-lg bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950 text-[10px] font-bold transition-colors"
+                                      title="Load into Composer"
+                                    >
+                                      Load in Composer
+                                    </button>
+                                  </div>
+                                )}
+                              </div>
+                            )}
+                            <p className="whitespace-pre-wrap font-sans text-xs leading-relaxed">{msg.content}</p>
+
+                            {msg.audio_attachment_path && (
+                              <div className="mt-2 p-2 rounded-xl bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 flex items-center gap-2 text-[11px] font-mono">
+                                <FileAudio size={14} className="text-teal-500" />
+                                <span className="truncate">{msg.audio_attachment_path.split('/').pop()}</span>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      );
+                    })}
+
+                    {isChatSubmitting && (
+                      <div className="flex justify-start animate-fade-in">
+                        <div className="p-4 rounded-2xl bg-white dark:bg-[#181a24] border border-black/[0.08] dark:border-white/10 rounded-bl-sm flex items-center gap-2 text-xs text-slate-400 font-medium">
+                          <div className="w-4 h-4 rounded-full border-2 border-teal-500 border-t-transparent animate-spin" />
+                          <span>Producer is composing arrangement...</span>
+                        </div>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              ) : (
+                /* New Session Hero & 3 Visual Action Cards (Apple Design) */
+                <div className="text-center space-y-6 pt-2">
+                  <div className="flex justify-center">
+                    <MilimoLogo size="lg" showText={false} />
+                  </div>
+
+                  <div className="space-y-2">
+                    <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white font-sans">
+                      What do you want to create?
+                    </h2>
+                    <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 max-w-lg mx-auto leading-relaxed">
+                      Speak it into being. Shape it until it&apos;s yours.
+                    </p>
+                  </div>
+
+                  {/* 3 Visual Starter Action Cards */}
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3.5 pt-2 text-left">
+                    {/* Card 1: Brainstorm lyrics */}
+                    <div
+                      onClick={() => {
+                        setProducerInput('Brainstorm lyrics for an emotional indie pop ballad');
+                        if (!isComposerOpen) setIsComposerOpen(true);
+                      }}
+                      className="p-4 rounded-2xl bg-white/70 dark:bg-[#181a24]/80 border border-black/[0.08] dark:border-white/10 hover:border-teal-500/50 dark:hover:border-teal-500/50 shadow-apple-sm hover:shadow-apple-md cursor-pointer transition-all hover:scale-[1.02] group flex flex-col justify-between"
+                    >
+                      <div className="space-y-2">
+                        <div className="w-9 h-9 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center font-bold">
+                          ✍️
+                        </div>
+                        <h3 className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors">
+                          Brainstorm lyrics
+                        </h3>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                          Generate verses, choruses, and rhymes with AI Co-Writer
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Card 2: Create a song together */}
+                    <div
+                      onClick={() => {
+                        handleProducerGenerate('Create a vibrant synthwave pop track with driving bass and energetic drums');
+                      }}
+                      className="p-4 rounded-2xl bg-white/70 dark:bg-[#181a24]/80 border border-black/[0.08] dark:border-white/10 hover:border-teal-500/50 dark:hover:border-teal-500/50 shadow-apple-sm hover:shadow-apple-md cursor-pointer transition-all hover:scale-[1.02] group flex flex-col justify-between"
+                    >
+                      <div className="space-y-2">
+                        <div className="w-9 h-9 rounded-xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 flex items-center justify-center font-bold">
+                          🎹
+                        </div>
+                        <h3 className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors">
+                          Create a song together
+                        </h3>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                          Collaborate with Producer on arrangement, style, and instrumentation
+                        </p>
+                      </div>
+                    </div>
+
+                    {/* Card 3: Remix my music */}
+                    <div
+                      onClick={() => {
+                        const fileInput = document.querySelector('input[type="file"][accept="audio/*"]') as HTMLInputElement;
+                        fileInput?.click();
+                      }}
+                      className="p-4 rounded-2xl bg-white/70 dark:bg-[#181a24]/80 border border-black/[0.08] dark:border-white/10 hover:border-teal-500/50 dark:hover:border-teal-500/50 shadow-apple-sm hover:shadow-apple-md cursor-pointer transition-all hover:scale-[1.02] group flex flex-col justify-between"
+                    >
+                      <div className="space-y-2">
+                        <div className="w-9 h-9 rounded-xl bg-amber-500/10 text-amber-600 dark:text-amber-400 flex items-center justify-center font-bold">
+                          🎛️
+                        </div>
+                        <h3 className="text-xs font-bold text-slate-900 dark:text-white group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors">
+                          Remix my music
+                        </h3>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed">
+                          Upload audio, separate stems, change vocals, and rearrange
+                        </p>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+
+            {/* Sticky Bottom Conversational Producer Prompt Bar (Apple Design) */}
+            <div className="max-w-3xl w-full mx-auto pt-6 pb-2 sticky bottom-0 z-20">
+              {attachmentPath && (
+                <div className="mb-2 p-2 rounded-xl bg-teal-500/10 border border-teal-500/20 flex items-center justify-between text-xs text-teal-700 dark:text-teal-300 font-mono animate-slide-up">
+                  <div className="flex items-center gap-2 truncate">
+                    <Paperclip size={13} />
+                    <span className="truncate">Attached: {attachmentPath.split('/').pop()}</span>
+                  </div>
+                  <button onClick={() => setAttachmentPath(null)} className="p-1 hover:text-rose-500 text-xs">✕</button>
+                </div>
+              )}
+
+              <div className="bg-white/80 dark:bg-[#181a24]/90 rounded-2xl border border-black/[0.08] dark:border-white/[0.1] shadow-2xl backdrop-blur-2xl p-2 sm:p-2.5 flex items-center gap-2 transition-all focus-within:border-teal-500/60 focus-within:shadow-[0_0_20px_rgba(20,184,166,0.2)]">
+                {/* Left Action Buttons */}
+                <button
+                  onClick={() => attachmentInputRef.current?.click()}
+                  className="p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                  title="Attach Audio or Image Reference"
+                >
+                  <Plus size={18} />
+                </button>
+
+                <button
+                  onClick={() => setIsComposerOpen(!isComposerOpen)}
+                  className="p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                  title="Open Sound & Lyrics Controls"
+                >
+                  <Sliders size={18} />
+                </button>
+
+                {/* Center Text Input */}
                 <input
                   type="text"
-                  placeholder="Ask Producer... e.g., 'A vibrant synthwave anthem with euphoric vocals and punchy 808s'"
+                  placeholder="Describe a song, artist, style, or upload audio..."
                   value={producerInput}
                   onChange={(e) => setProducerInput(e.target.value)}
                   onKeyDown={(e) => {
-                    if (e.key === 'Enter' && producerInput) {
-                      handleProducerGenerate(producerInput);
+                    if (e.key === 'Enter' && (producerInput || attachmentPath) && !isChatSubmitting) {
+                      handleSendChatMessage(producerInput);
                     }
                   }}
-                  className="flex-1 bg-transparent px-3 sm:px-4 py-2.5 sm:py-3 text-xs sm:text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none min-w-0"
+                  className="flex-1 bg-transparent px-2 py-2 text-xs sm:text-sm text-slate-900 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none min-w-0"
                 />
+
+                {/* Right Buttons: Mic & Send Arrow */}
+                <button
+                  onClick={() => setProducerInput('Vocal lead with acoustic guitar and ambient reverb')}
+                  className="p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                  title="Voice Input"
+                >
+                  <Mic size={18} />
+                </button>
+
                 <button
                   onClick={() => {
-                    if (producerInput) {
-                      handleProducerGenerate(producerInput);
+                    if ((producerInput || attachmentPath) && !isChatSubmitting) {
+                      handleSendChatMessage(producerInput);
                     }
                   }}
-                  className="px-4 sm:px-5 py-2.5 sm:py-3 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center justify-center space-x-2 transition-all shadow-md shadow-teal-500/20 active:scale-[0.98] flex-shrink-0"
+                  disabled={(!producerInput.trim() && !attachmentPath) || isChatSubmitting}
+                  className="w-9 h-9 rounded-full bg-teal-500 hover:bg-teal-400 disabled:opacity-40 text-slate-950 font-bold flex items-center justify-center transition-all shadow-md shadow-teal-500/20 active:scale-95 flex-shrink-0"
+                  title="Send message to Producer"
                 >
-                  <Sparkles size={15} />
-                  <span>Generate Track</span>
+                  <ArrowUp size={18} />
                 </button>
-              </div>
-
-              {/* Quick Start Chips */}
-              <div className="flex flex-wrap items-center justify-center gap-1.5 sm:gap-2 pt-1">
-                {[
-                  '✨ Brainstorm lyrics',
-                  '🎹 Create synthwave pop',
-                  '🎤 Remix my music',
-                  '🎼 Transcribe audio to MIDI'
-                ].map(chip => (
-                  <button
-                    key={chip}
-                    onClick={() => setProducerInput(chip.replace(/^[^\w]+/, ''))}
-                    className="px-3 py-1 sm:px-3.5 sm:py-1.5 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 rounded-full text-[11px] sm:text-xs font-medium text-slate-700 dark:text-slate-300 border border-black/[0.06] dark:border-white/5 transition-colors shadow-sm"
-                  >
-                    {chip}
-                  </button>
-                ))}
               </div>
             </div>
 
             {/* Explore Feed */}
-            <div className="pt-2 sm:pt-4">
+            <div className="pt-6">
               <HistoryFeed
                 history={history}
                 currentJobId={currentJobId}
@@ -1031,6 +1440,7 @@ function App() {
                 isLoadingMore={isLoadingHistory}
                 onToggleFavorite={handleToggleFavorite}
                 onDelete={handleDeleteJob}
+                onSelectTrack={handleSelectTrack}
               />
             </div>
           </div>
@@ -1100,23 +1510,15 @@ function App() {
         }}
       />
 
-      {/* Global Apple Studio Dock Player */}
-      {playingSong && (
+      {/* Global Apple Studio Dock Player: Contextually hidden on Track Studio & DAW Workspace views */}
+      {currentNav !== 'track-detail' && currentNav !== 'workspace' && engineTrack && (
         <GlobalAudioPlayer
-          currentSong={playingSong}
-          playlist={history.filter(s => s.status === 'completed' && s.audio_path)}
-          isPlaying={isPlayingAudio}
-          onTogglePlay={() => setIsPlayingAudio(!isPlayingAudio)}
-          onNext={handleNextSong}
-          onPrev={handlePrevSong}
-          onClose={() => {
-            setPlayingSong(null);
-            setIsPlayingAudio(false);
-          }}
           onOpenWorkspace={(job) => {
+            enginePause();
             setActiveWorkspaceJob(job);
             setCurrentNav('workspace');
           }}
+          onSelectTrack={handleSelectTrack}
         />
       )}
 

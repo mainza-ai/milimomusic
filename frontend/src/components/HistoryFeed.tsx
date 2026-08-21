@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import type { Job } from '../api';
 import { api } from '../api';
 import { AudioPlayer } from './AudioPlayer';
-import { Edit2, Check, Trash2, Search, Calendar, Heart, Sliders, Layers, Sparkles } from 'lucide-react';
+import { Edit2, Check, Trash2, Search, Calendar, Heart, Sliders, Layers, Sparkles, Info, Clock } from 'lucide-react';
 
 interface HistoryFeedProps {
     history: Job[];
@@ -20,6 +20,7 @@ interface HistoryFeedProps {
     isLoadingMore?: boolean;
     onToggleFavorite: (id: string) => void;
     onDelete?: (id: string) => void;
+    onSelectTrack?: (job: Job) => void;
 }
 
 export const HistoryFeed: React.FC<HistoryFeedProps> = ({
@@ -32,7 +33,8 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
     onSearch,
     searchQuery,
     onToggleFavorite,
-    onDelete
+    onDelete,
+    onSelectTrack
 }) => {
     const scrollRef = useRef<HTMLDivElement>(null);
     const [editingId, setEditingId] = useState<string | null>(null);
@@ -181,20 +183,24 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                             <div className="flex justify-between items-start mb-3">
                                                 <div className="flex items-center gap-3">
                                                     {/* Track Icon / Logo */}
-                                                    <div className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shadow-sm overflow-hidden p-1 ${
-                                                        job.status === 'completed'
-                                                            ? 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20'
-                                                            : job.status === 'failed'
-                                                            ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
-                                                            : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 animate-pulse'
-                                                    }`}>
+                                                    <div 
+                                                        onClick={() => onSelectTrack?.(job)}
+                                                        className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shadow-sm overflow-hidden p-1 cursor-pointer hover:scale-105 transition-transform ${
+                                                            job.status === 'completed'
+                                                                ? 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20'
+                                                                : job.status === 'failed'
+                                                                ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
+                                                                : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 animate-pulse'
+                                                        }`}
+                                                        title="Inspect Track Studio"
+                                                    >
                                                         <img src="/milimo_logo.png" alt="Track" className="w-full h-full object-cover rounded-lg" onError={(e) => {
                                                             (e.target as HTMLElement).style.display = 'none';
                                                         }} />
                                                     </div>
 
-                                                    <div>
-                                                        <div className="flex items-center gap-2">
+                                                    <div className="flex-1 min-w-0">
+                                                        <div className="flex items-center gap-2 flex-wrap">
                                                             {editingId === job.id ? (
                                                                 <div className="flex items-center gap-1.5">
                                                                     <input
@@ -209,11 +215,24 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                                     </button>
                                                                 </div>
                                                             ) : (
-                                                                <div className="flex items-center gap-1.5 cursor-pointer group/title" onClick={() => handleRenameStart(job)}>
-                                                                    <h3 className="text-xs font-bold text-slate-900 dark:text-slate-100 group-hover/title:text-teal-600 dark:group-hover/title:text-teal-400 transition-colors">
+                                                                <div className="flex items-center gap-1.5">
+                                                                    <h3
+                                                                        onClick={() => onSelectTrack?.(job)}
+                                                                        className="text-xs font-bold text-slate-900 dark:text-slate-100 hover:text-teal-600 dark:hover:text-teal-400 transition-colors cursor-pointer"
+                                                                        title="Open Track Studio"
+                                                                    >
                                                                         {job.title || job.prompt || "Untitled Master"}
                                                                     </h3>
-                                                                    <Edit2 size={11} className="text-slate-400 opacity-0 group-hover/title:opacity-100 transition-opacity" />
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            handleRenameStart(job);
+                                                                        }}
+                                                                        className="p-1 rounded-md text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
+                                                                        title="Rename Track"
+                                                                    >
+                                                                        <Edit2 size={11} />
+                                                                    </button>
                                                                 </div>
                                                             )}
 
@@ -225,21 +244,82 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                             )}
                                                         </div>
 
-                                                        <p className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-md mt-0.5">
+                                                        <p
+                                                            onClick={() => onSelectTrack?.(job)}
+                                                            className="text-[11px] text-slate-500 dark:text-slate-400 truncate max-w-md mt-0.5 cursor-pointer hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+                                                            title="Open Track Studio"
+                                                        >
                                                             {job.prompt}
                                                         </p>
+
+                                                        {/* Sound Metadata Badges */}
+                                                        <div className="flex items-center gap-1.5 mt-1.5 flex-wrap">
+                                                            {job.status === 'completed' && onSelectTrack && (
+                                                                <button
+                                                                    onClick={() => onSelectTrack(job)}
+                                                                    className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/20 flex items-center gap-1 font-semibold transition-colors cursor-pointer"
+                                                                    title="Inspect Full Sound Details (BPM, Key, Stems, MIDI, Hyperparameters)"
+                                                                >
+                                                                    <Info size={10} />
+                                                                    <span>Sound Details</span>
+                                                                </button>
+                                                            )}
+
+                                                            {job.duration_ms && (
+                                                                <span
+                                                                    onClick={() => onSelectTrack?.(job)}
+                                                                    className="text-[9px] font-mono px-1.5 py-0.5 rounded-md bg-black/[0.03] dark:bg-white/5 text-slate-500 dark:text-slate-400 flex items-center gap-1 cursor-pointer hover:text-teal-500 transition-colors"
+                                                                    title="Track Duration"
+                                                                >
+                                                                    <Clock size={9} />
+                                                                    <span>{Math.floor(job.duration_ms / 1000 / 60)}:{Math.floor((job.duration_ms / 1000) % 60).toString().padStart(2, '0')}</span>
+                                                                </span>
+                                                            )}
+
+                                                            {job.model_provider && (
+                                                                <span
+                                                                    onClick={() => onSelectTrack?.(job)}
+                                                                    className="text-[9px] font-mono px-1.5 py-0.5 rounded-md bg-black/[0.03] dark:bg-white/5 text-slate-500 dark:text-slate-400 truncate max-w-[120px] cursor-pointer hover:text-teal-500 transition-colors"
+                                                                    title="Model Engine"
+                                                                >
+                                                                    {job.model_provider}
+                                                                </span>
+                                                            )}
+
+                                                            {job.tags && (
+                                                                <span
+                                                                    onClick={() => onSelectTrack?.(job)}
+                                                                    className="text-[9px] font-mono px-1.5 py-0.5 rounded-md bg-black/[0.03] dark:bg-white/5 text-teal-600 dark:text-teal-400 truncate max-w-[140px] cursor-pointer hover:underline"
+                                                                    title={job.tags}
+                                                                >
+                                                                    {job.tags.split(',').slice(0, 2).join(', ')}
+                                                                </span>
+                                                            )}
+                                                        </div>
                                                     </div>
                                                 </div>
 
-                                                <div className="flex items-center gap-1.5">
+                                                <div className="flex items-center gap-1.5 flex-wrap justify-end">
                                                     <button
                                                         onClick={() => onToggleFavorite(job.id)}
                                                         className={`p-1.5 rounded-lg transition-colors ${
                                                             job.is_favorite ? "text-rose-500 bg-rose-500/10" : "text-slate-400 hover:text-rose-500"
                                                         }`}
+                                                        title={job.is_favorite ? "Remove from Favorites" : "Add to Favorites"}
                                                     >
                                                         <Heart size={14} className={job.is_favorite ? "fill-current" : ""} />
                                                     </button>
+
+                                                    {job.status === 'completed' && onSelectTrack && (
+                                                        <button
+                                                            onClick={() => onSelectTrack(job)}
+                                                            className="px-2.5 py-1 rounded-xl bg-black/5 dark:bg-white/10 hover:bg-teal-500/20 text-slate-700 dark:text-slate-200 hover:text-teal-600 dark:hover:text-teal-300 font-bold text-[10px] flex items-center gap-1 transition-all border border-black/5 dark:border-white/10 active:scale-95 shadow-sm"
+                                                            title="Inspect Track Studio (Stems, MIDI, Score, Provenance)"
+                                                        >
+                                                            <Sparkles size={11} className="text-teal-500" />
+                                                            <span>Track Studio</span>
+                                                        </button>
+                                                    )}
 
                                                     {job.status === 'completed' && onOpenWorkspace && (
                                                         <button
@@ -247,7 +327,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                             className="px-3 py-1 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-[10px] flex items-center gap-1 transition-all shadow-sm active:scale-95"
                                                         >
                                                             <Sliders size={11} />
-                                                            <span>Open in DAW</span>
+                                                            <span>DAW</span>
                                                         </button>
                                                     )}
 

@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { type Job, type Project, type ProjectCreate, projectApi } from '../../api';
+import React, { useState, useEffect, useRef } from 'react';
+import { type Job, type Project, type ProjectCreate, projectApi, coverApi, API_BASE_URL } from '../../api';
 import {
   FolderKanban,
   Plus,
@@ -13,7 +13,10 @@ import {
   Trash2,
   Edit2,
   Clock,
-  FolderPlus
+  FolderPlus,
+  Upload,
+  Image as ImageIcon,
+  X
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 
@@ -24,6 +27,7 @@ interface ProjectsViewProps {
   playingSongId?: string;
   isPlayingAudio?: boolean;
   onGenerateInProject: (project: Project) => void;
+  onSelectTrack?: (job: Job) => void;
 }
 
 export const ProjectsView: React.FC<ProjectsViewProps> = ({
@@ -32,7 +36,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   onPlay,
   playingSongId,
   isPlayingAudio,
-  onGenerateInProject
+  onGenerateInProject,
+  onSelectTrack
 }) => {
   const [projects, setProjects] = useState<Project[]>([]);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
@@ -43,10 +48,17 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   const [isAddTrackModalOpen, setIsAddTrackModalOpen] = useState(false);
   const [isEditModalOpen, setIsEditModalOpen] = useState(false);
 
+  // Image Upload / AI Cover State
+  const [isUploadingCover, setIsUploadingCover] = useState(false);
+  const [isGeneratingCover, setIsGeneratingCover] = useState(false);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+
   // Form State
   const [newProject, setNewProject] = useState<ProjectCreate>({
     name: '',
     description: '',
+    cover_image_path: '',
+    image_prompt: '',
     tags: 'Pop, Electronic, Synthwave',
     bpm: 120,
     key_signature: 'C Major',
@@ -56,6 +68,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   const [editProjectData, setEditProjectData] = useState<ProjectCreate>({
     name: '',
     description: '',
+    cover_image_path: '',
+    image_prompt: '',
     tags: '',
     bpm: 120,
     key_signature: 'C Major',
@@ -82,6 +96,41 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
     loadProjects();
   }, []);
 
+  const handleFileUpload = async (file: File) => {
+    try {
+      setIsUploadingCover(true);
+      const res = await coverApi.uploadCoverImage(file);
+      const fullUrl = res.url.startsWith('http') ? res.url : `${API_BASE_URL}${res.url}`;
+      setNewProject(prev => ({ ...prev, cover_image_path: fullUrl }));
+    } catch (err) {
+      console.error('Failed to upload image:', err);
+    } finally {
+      setIsUploadingCover(false);
+    }
+  };
+
+  const handlePromptCover = async () => {
+    try {
+      setIsGeneratingCover(true);
+      const promptRes = await coverApi.generateCoverPrompt({
+        title: newProject.name || 'Studio Project',
+        description: newProject.description,
+        tags: newProject.tags
+      });
+      const imgRes = await coverApi.generateCoverImage({ prompt: promptRes.prompt });
+      const fullUrl = imgRes.url.startsWith('http') ? imgRes.url : `${API_BASE_URL}${imgRes.url}`;
+      setNewProject(prev => ({
+        ...prev,
+        cover_image_path: fullUrl,
+        image_prompt: promptRes.prompt
+      }));
+    } catch (err) {
+      console.error('Failed to generate cover:', err);
+    } finally {
+      setIsGeneratingCover(false);
+    }
+  };
+
   const handleCreateProject = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newProject.name.trim()) return;
@@ -93,6 +142,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
       setNewProject({
         name: '',
         description: '',
+        cover_image_path: '',
+        image_prompt: '',
         tags: 'Pop, Electronic, Synthwave',
         bpm: 120,
         key_signature: 'C Major',
@@ -257,11 +308,19 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-4">
             <div className="flex items-start space-x-4">
               <div
-                className={`w-16 h-16 rounded-2xl bg-gradient-to-tr ${colorStyle.gradient} p-0.5 shadow-apple-md flex-shrink-0 flex items-center justify-center`}
+                className={`w-16 h-16 rounded-2xl overflow-hidden bg-slate-900 border border-black/10 dark:border-white/10 shadow-apple-md flex-shrink-0 flex items-center justify-center`}
               >
-                <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
-                  <FolderKanban size={28} className="text-white" />
-                </div>
+                {activeProject.cover_image_path ? (
+                  <img
+                    src={activeProject.cover_image_path.startsWith('http') ? activeProject.cover_image_path : `${API_BASE_URL}${activeProject.cover_image_path}`}
+                    alt={activeProject.name}
+                    className="w-full h-full object-cover"
+                  />
+                ) : (
+                  <div className={`w-full h-full bg-gradient-to-tr ${colorStyle.gradient} flex items-center justify-center`}>
+                    <FolderKanban size={28} className="text-white" />
+                  </div>
+                )}
               </div>
 
               <div>
@@ -402,8 +461,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                   >
                     <div className="space-y-3">
                       <div className="flex items-start justify-between gap-2">
-                        <div className="min-w-0">
-                          <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
+                        <div
+                          onClick={() => onSelectTrack?.(job)}
+                          className="min-w-0 cursor-pointer group/title"
+                          title="Open Track Studio"
+                        >
+                          <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate group-hover/title:text-teal-600 dark:group-hover/title:text-teal-400 transition-colors">
                             {job.title || job.prompt.slice(0, 30)}
                           </h4>
                           <p className="text-[11px] font-mono text-teal-600 dark:text-teal-400 truncate mt-0.5">
@@ -446,7 +509,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                     </div>
 
                     {/* Action Bar */}
-                    <div className="flex items-center justify-between pt-3 border-t border-black/[0.06] dark:border-white/10 gap-2">
+                    <div className="flex items-center justify-between pt-3 border-t border-black/[0.06] dark:border-white/10 gap-2 flex-wrap">
                       <div className="flex items-center gap-1.5">
                         <button
                           onClick={() => onPlay(job)}
@@ -461,6 +524,17 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                       </div>
 
                       <div className="flex items-center gap-1.5">
+                        {onSelectTrack && (
+                          <button
+                            onClick={() => onSelectTrack(job)}
+                            className="px-2.5 py-1.5 bg-black/5 dark:bg-white/5 hover:bg-teal-500/20 text-slate-700 dark:text-slate-200 hover:text-teal-600 dark:hover:text-teal-300 font-bold text-xs rounded-xl transition-all flex items-center gap-1 border border-black/5 dark:border-white/5 shadow-sm"
+                            title="Open Track Studio (Stems, MIDI, Score, Provenance)"
+                          >
+                            <Sparkles size={13} className="text-teal-500" />
+                            <span>Studio</span>
+                          </button>
+                        )}
+
                         <button
                           onClick={() => onOpenWorkspace(job)}
                           className="px-3 py-1.5 bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950 font-bold text-xs rounded-xl transition-all flex items-center gap-1"
@@ -678,10 +752,10 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
 
         <button
           onClick={() => setIsCreateModalOpen(true)}
-          className="px-4 py-2.5 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-2xl shadow-apple-md flex items-center space-x-2 transition-all hover:scale-105 active:scale-95 flex-shrink-0"
+          className="px-4 py-2.5 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs rounded-2xl shadow-apple-md flex items-center space-x-2 transition-all hover:scale-105 active:scale-95 flex-shrink-0"
         >
-          <FolderPlus size={16} />
-          <span>New Project Folder +</span>
+          <Plus size={16} />
+          <span>New project</span>
         </button>
       </div>
 
@@ -724,44 +798,51 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
               <GlassCard
                 key={project.id}
                 onClick={() => setActiveProject(project)}
-                className="p-6 space-y-4 hover:border-teal-500/40 cursor-pointer transition-all hover:scale-[1.01] group flex flex-col justify-between"
+                className="p-5 space-y-4 hover:border-teal-500/40 cursor-pointer transition-all hover:scale-[1.01] group flex flex-col justify-between overflow-hidden"
               >
                 <div className="space-y-3">
-                  <div className="flex items-start justify-between gap-3">
-                    <div
-                      className={`w-12 h-12 rounded-2xl bg-gradient-to-tr ${colorStyle.gradient} p-0.5 shadow-md flex items-center justify-center flex-shrink-0`}
-                    >
-                      <div className="w-full h-full bg-slate-950 rounded-[14px] flex items-center justify-center">
-                        <FolderKanban size={22} className="text-white" />
+                  <div className="flex items-start gap-3">
+                    {/* Project Artwork Thumbnail */}
+                    <div className="w-16 h-16 rounded-2xl overflow-hidden bg-slate-900 border border-black/10 dark:border-white/10 flex-shrink-0 shadow-md relative group-hover:scale-105 transition-transform">
+                      {project.cover_image_path ? (
+                        <img
+                          src={project.cover_image_path.startsWith('http') ? project.cover_image_path : `${API_BASE_URL}${project.cover_image_path}`}
+                          alt={project.name}
+                          className="w-full h-full object-cover"
+                          onError={(e) => {
+                            (e.target as HTMLElement).style.display = 'none';
+                          }}
+                        />
+                      ) : (
+                        <div className={`w-full h-full bg-gradient-to-tr ${colorStyle.gradient} flex items-center justify-center`}>
+                          <FolderKanban size={24} className="text-white drop-shadow" />
+                        </div>
+                      )}
+                    </div>
+
+                    <div className="min-w-0 flex-1">
+                      <div className="flex items-center gap-1.5 flex-wrap justify-end mb-1">
+                        <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${colorStyle.badge}`}>
+                          {project.bpm || 120} BPM
+                        </span>
+                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/5 text-slate-600 dark:text-slate-400 border border-black/10 dark:border-white/10">
+                          {project.key_signature || 'C Major'}
+                        </span>
                       </div>
+                      <h3 className="text-base font-bold text-slate-900 dark:text-white group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors truncate">
+                        {project.name}
+                      </h3>
+                      <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">
+                        {project.description || 'Studio sessions container'}
+                      </p>
                     </div>
-
-                    <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                      <span
-                        className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${colorStyle.badge}`}
-                      >
-                        {project.bpm || 120} BPM
-                      </span>
-                      <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/5 text-slate-600 dark:text-slate-400 border border-black/10 dark:border-white/10">
-                        {project.key_signature || 'C Major'}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div>
-                    <h3 className="text-base font-bold text-slate-900 dark:text-white group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors">
-                      {project.name}
-                    </h3>
-                    <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-1">
-                      {project.description || 'Studio sessions container'}
-                    </p>
                   </div>
                 </div>
 
                 <div className="pt-3 border-t border-black/[0.06] dark:border-white/10 flex items-center justify-between text-xs font-mono text-slate-500 dark:text-slate-400">
                   <span className="flex items-center gap-1">
                     <Music size={12} className="text-teal-500" />
-                    {projectJobs.length} {projectJobs.length === 1 ? 'session' : 'sessions'}
+                    {projectJobs.length} {projectJobs.length === 1 ? 'song' : 'songs'}
                   </span>
                   <span className="flex items-center gap-1">
                     <Clock size={12} />
@@ -774,129 +855,146 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
         </div>
       )}
 
-      {/* Modal: Create New Project */}
+      {/* Hidden File Input for Image Upload */}
+      <input
+        type="file"
+        ref={fileInputRef}
+        accept="image/*"
+        onChange={(e) => {
+          const file = e.target.files?.[0];
+          if (file) handleFileUpload(file);
+        }}
+        className="hidden"
+      />
+
+      {/* 2-Column Modal: Create New Project (Production Design) */}
       {isCreateModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
-          <div className="bg-white dark:bg-[#181a24] rounded-3xl border border-black/[0.08] dark:border-white/10 p-6 max-w-md w-full shadow-apple-lg space-y-4">
-            <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
-              <FolderPlus size={18} className="text-teal-500" />
-              <span>Create New Project Folder</span>
-            </h3>
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in">
+          <div className="bg-[#181a24] text-white rounded-3xl border border-white/10 p-6 max-w-xl w-full shadow-2xl space-y-5 relative">
+            {/* Modal Header */}
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-bold text-white">
+                New project
+              </h3>
+              <button
+                onClick={() => setIsCreateModalOpen(false)}
+                className="p-1.5 rounded-full hover:bg-white/10 text-slate-400 hover:text-white transition-colors"
+                title="Close"
+              >
+                <X size={18} />
+              </button>
+            </div>
 
-            <form onSubmit={handleCreateProject} className="space-y-3">
-              <div>
-                <label className="text-[11px] font-bold uppercase text-slate-400 block mb-1">
-                  Project Name
-                </label>
-                <input
-                  type="text"
-                  required
-                  placeholder="e.g., Midnight Neon Album"
-                  value={newProject.name}
-                  onChange={(e) => setNewProject({ ...newProject, name: e.target.value })}
-                  className="apple-input text-xs"
-                />
-              </div>
+            <form onSubmit={handleCreateProject} className="space-y-5">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-5 items-start">
+                {/* Left Column: Drag & Drop Dropzone + Upload & Prompt */}
+                <div className="space-y-3">
+                  <div
+                    onClick={() => fileInputRef.current?.click()}
+                    onDragOver={(e) => e.preventDefault()}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      const file = e.dataTransfer.files?.[0];
+                      if (file) handleFileUpload(file);
+                    }}
+                    className="aspect-square w-full rounded-2xl bg-[#222533] border-2 border-dashed border-white/15 hover:border-teal-500/50 flex flex-col items-center justify-center text-center p-4 cursor-pointer transition-all relative overflow-hidden group"
+                  >
+                    {newProject.cover_image_path ? (
+                      <>
+                        <img
+                          src={newProject.cover_image_path.startsWith('http') ? newProject.cover_image_path : `${API_BASE_URL}${newProject.cover_image_path}`}
+                          alt="Project Cover"
+                          className="w-full h-full object-cover absolute inset-0"
+                        />
+                        <div className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center">
+                          <span className="text-xs font-semibold text-white">Change Image</span>
+                        </div>
+                      </>
+                    ) : isUploadingCover || isGeneratingCover ? (
+                      <div className="space-y-2">
+                        <div className="w-8 h-8 rounded-full border-2 border-teal-400 border-t-transparent animate-spin mx-auto" />
+                        <span className="text-xs text-slate-400 font-medium">
+                          {isGeneratingCover ? 'Generating artwork...' : 'Uploading image...'}
+                        </span>
+                      </div>
+                    ) : (
+                      <div className="space-y-2 text-slate-400">
+                        <ImageIcon size={28} className="mx-auto opacity-50 text-slate-400" />
+                        <p className="text-xs font-medium px-2 leading-relaxed">
+                          Drag and drop project image
+                        </p>
+                      </div>
+                    )}
+                  </div>
 
-              <div>
-                <label className="text-[11px] font-bold uppercase text-slate-400 block mb-1">
-                  Description
-                </label>
-                <textarea
-                  rows={2}
-                  placeholder="What is the concept or sound goal of this project?"
-                  value={newProject.description}
-                  onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
-                  className="apple-input text-xs"
-                />
-              </div>
-
-              <div className="grid grid-cols-2 gap-3">
-                <div>
-                  <label className="text-[11px] font-bold uppercase text-slate-400 block mb-1">
-                    Tempo (BPM)
-                  </label>
-                  <input
-                    type="number"
-                    min={40}
-                    max={240}
-                    value={newProject.bpm}
-                    onChange={(e) => setNewProject({ ...newProject, bpm: parseInt(e.target.value) })}
-                    className="apple-input text-xs"
-                  />
-                </div>
-
-                <div>
-                  <label className="text-[11px] font-bold uppercase text-slate-400 block mb-1">
-                    Musical Key
-                  </label>
-                  <input
-                    type="text"
-                    placeholder="e.g., D Minor"
-                    value={newProject.key_signature}
-                    onChange={(e) => setNewProject({ ...newProject, key_signature: e.target.value })}
-                    className="apple-input text-xs"
-                  />
-                </div>
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold uppercase text-slate-400 block mb-1">
-                  Default Style Tags
-                </label>
-                <input
-                  type="text"
-                  placeholder="e.g., Synthwave, Analog, 80s"
-                  value={newProject.tags}
-                  onChange={(e) => setNewProject({ ...newProject, tags: e.target.value })}
-                  className="apple-input text-xs"
-                />
-              </div>
-
-              <div>
-                <label className="text-[11px] font-bold uppercase text-slate-400 block mb-1">
-                  Folder Accent Color
-                </label>
-                <div className="flex gap-2">
-                  {['teal', 'cyan', 'amber', 'emerald', 'sky'].map((c) => (
+                  <div className="grid grid-cols-2 gap-2">
                     <button
-                      key={c}
                       type="button"
-                      onClick={() => setNewProject({ ...newProject, color: c })}
-                      className={`w-7 h-7 rounded-full border-2 transition-transform ${
-                        c === 'teal'
-                          ? 'bg-teal-500'
-                          : c === 'cyan'
-                          ? 'bg-cyan-500'
-                          : c === 'amber'
-                          ? 'bg-amber-500'
-                          : c === 'emerald'
-                          ? 'bg-emerald-500'
-                          : 'bg-sky-500'
-                      } ${
-                        newProject.color === c
-                          ? 'border-white scale-110 shadow-md'
-                          : 'border-transparent opacity-60'
-                      }`}
-                    />
-                  ))}
-                </div>
-              </div>
+                      onClick={() => fileInputRef.current?.click()}
+                      disabled={isUploadingCover}
+                      className="py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-semibold text-slate-300 hover:text-white flex items-center justify-center space-x-1.5 transition-colors border border-white/5"
+                    >
+                      <Upload size={14} />
+                      <span>Upload</span>
+                    </button>
 
-              <div className="flex justify-end gap-2 pt-3">
-                <button
-                  type="button"
-                  onClick={() => setIsCreateModalOpen(false)}
-                  className="px-4 py-2 rounded-xl bg-black/5 dark:bg-white/5 text-slate-600 dark:text-slate-300 font-bold text-xs"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  className="px-5 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs shadow-md"
-                >
-                  Create Project Folder
-                </button>
+                    <button
+                      type="button"
+                      onClick={handlePromptCover}
+                      disabled={isGeneratingCover}
+                      className="py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-semibold text-teal-300 hover:text-teal-200 flex items-center justify-center space-x-1.5 transition-colors border border-white/5"
+                    >
+                      <Sparkles size={14} />
+                      <span>Prompt</span>
+                    </button>
+                  </div>
+                </div>
+
+                {/* Right Column: Name & Description with 0/250 */}
+                <div className="space-y-4">
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-1.5">
+                      Name
+                    </label>
+                    <input
+                      type="text"
+                      required
+                      placeholder="Project name"
+                      value={newProject.name}
+                      onChange={(e) => setNewProject({ ...newProject, name: e.target.value })}
+                      className="w-full bg-[#222533] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-teal-500 transition-colors"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-1.5">
+                      Description
+                    </label>
+                    <div className="relative">
+                      <textarea
+                        rows={5}
+                        maxLength={250}
+                        placeholder="Add a description for your project..."
+                        value={newProject.description}
+                        onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
+                        className="w-full bg-[#222533] border border-white/10 rounded-xl p-3 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-teal-500 transition-colors resize-none pb-7"
+                      />
+                      <span className="absolute bottom-2 right-3 text-[10px] font-mono text-slate-500 pointer-events-none">
+                        {(newProject.description || '').length}/250
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="flex justify-end pt-2">
+                    <button
+                      type="submit"
+                      disabled={!newProject.name.trim()}
+                      className="px-6 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 disabled:opacity-50 text-slate-950 font-bold text-xs shadow-md transition-all active:scale-95"
+                    >
+                      Create
+                    </button>
+                  </div>
+                </div>
               </div>
             </form>
           </div>

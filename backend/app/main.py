@@ -57,7 +57,14 @@ from app.models import (
     MasteringRequest,
     Project,
     ProjectCreate,
-    ProjectUpdate
+    ProjectUpdate,
+    Session as StudioSession,
+    SessionCreate,
+    SessionUpdate,
+    SessionMessage,
+    SessionMessageCreate,
+    CoverPromptRequest,
+    CoverImageRequest
 )
 
 # Database
@@ -80,6 +87,8 @@ def create_db_and_tables():
             "temperature": "FLOAT",
             "cfg_scale": "FLOAT",
             "topk": "INTEGER",
+            "cover_image_path": "VARCHAR",
+            "image_prompt": "VARCHAR",
             "midi_path": "VARCHAR",
             "musicxml_path": "VARCHAR",
             "notes_json": "TEXT",
@@ -88,14 +97,29 @@ def create_db_and_tables():
             "timed_lyrics_json": "TEXT",
             "structured_caption_json": "TEXT",
             "voice_profile_id": "VARCHAR",
-            "project_id": "VARCHAR"
+            "project_id": "VARCHAR",
+            "session_id": "VARCHAR"
         }
         for col, col_type in new_columns.items():
             if col not in existing_cols:
                 try:
                     session.exec(text(f"ALTER TABLE job ADD COLUMN {col} {col_type};"))
                 except Exception as e:
-                    print(f"Migration notice for {col}: {e}")
+                    print(f"Migration notice for job.{col}: {e}")
+                    
+        # Automatic Migration for project table
+        existing_proj_cols = {row[1] for row in session.exec(text("PRAGMA table_info(project);")).all()}
+        proj_columns = {
+            "cover_image_path": "VARCHAR",
+            "image_prompt": "VARCHAR"
+        }
+        for col, col_type in proj_columns.items():
+            if col not in existing_proj_cols:
+                try:
+                    session.exec(text(f"ALTER TABLE project ADD COLUMN {col} {col_type};"))
+                except Exception as e:
+                    print(f"Migration notice for project.{col}: {e}")
+                    
         session.commit()
 
 
@@ -130,12 +154,15 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return await request_validation_exception_handler(request, exc)
 
 
-# Static Files (Audio Serving)
+# Static Files (Audio & Covers Serving)
 os.makedirs("generated_audio", exist_ok=True)
 os.makedirs("generated_audio/stems", exist_ok=True)
 os.makedirs("generated_audio/mastered", exist_ok=True)
 os.makedirs("generated_audio/converted_vocals", exist_ok=True)
+os.makedirs("data/covers", exist_ok=True)
+
 app.mount("/audio", StaticFiles(directory="generated_audio"), name="audio")
+app.mount("/covers", StaticFiles(directory="data/covers"), name="covers")
 
 
 # --- Core & Health ---
@@ -532,6 +559,256 @@ def generate_styles(req: InspirationRequest):
         return {"styles": ["Pop", "Rock", "Synthwave", "R&B", "Acoustic", "Cinematic"]}
 
 
+@app.post("/generate/cover-prompt")
+def generate_cover_prompt(req: CoverPromptRequest):
+    """Generate an evocative visual prompt for album artwork from song/project metadata."""
+    title = req.title or "Untitled Master"
+    desc = req.description or ""
+    genre = req.genre or req.tags or "Modern Music Production"
+    prompt = f"High-end artistic album cover art for '{title}', {genre}, {desc}, minimalist, cinematic lighting, 8k resolution, modern abstract aesthetics, award-winning graphic design"
+    return {"prompt": prompt}
+
+
+@app.post("/upload/image")
+async def upload_cover_image(file: UploadFile = File(...)):
+    """Upload custom image asset (PNG, JPG, WEBP, SVG) for project or song cover art."""
+    import uuid
+    import shutil
+    
+    ext = os.path.splitext(file.filename)[1].lower() or ".jpg"
+    if ext not in [".jpg", ".jpeg", ".png", ".webp", ".svg"]:
+        raise HTTPException(status_code=400, detail="Unsupported image format. Use PNG, JPG, WEBP, or SVG.")
+        
+    filename = f"cover_{uuid.uuid4().hex[:12]}{ext}"
+    dest_path = os.path.join("data", "covers", filename)
+    
+    with open(dest_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+        
+    return {
+        "url": f"/covers/{filename}",
+        "filename": filename,
+        "content_type": file.content_type
+    }
+
+
+@app.post("/generate/cover-image")
+def generate_cover_image(req: CoverImageRequest):
+    """Generate or synthesize visual artwork for project/song cover."""
+    import uuid
+    import hashlib
+    
+    filename = f"ai_cover_{uuid.uuid4().hex[:10]}.svg"
+    dest_path = os.path.join("data", "covers", filename)
+    
+    # Generate an elegant, procedurally generated ambient dark gradient art
+    h = int(hashlib.md5(req.prompt.encode()).hexdigest(), 16)
+    hue1 = (h % 360)
+    hue2 = ((h >> 4) % 360)
+    hue3 = ((h >> 8) % 360)
+    
+    svg_content = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="100%" height="100%">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:hsl({hue1}, 75%, 20%);stop-opacity:1" />
+      <stop offset="50%" style="stop-color:hsl({hue2}, 85%, 40%);stop-opacity:1" />
+      <stop offset="100%" style="stop-color:hsl({hue3}, 80%, 15%);stop-opacity:1" />
+    </linearGradient>
+    <filter id="blur">
+      <feGaussianBlur stdDeviation="70" />
+    </filter>
+  </defs>
+  <rect width="800" height="800" fill="#090b10" />
+  <circle cx="400" cy="400" r="320" fill="url(#grad)" filter="url(#blur)" opacity="0.85" />
+  <circle cx="{200 + (h % 400)}" cy="{200 + ((h >> 3) % 400)}" r="200" fill="hsl({hue2}, 90%, 55%)" filter="url(#blur)" opacity="0.65" />
+</svg>'''
+    with open(dest_path, "w") as f:
+        f.write(svg_content)
+        
+    return {
+        "url": f"/covers/{filename}",
+        "prompt": req.prompt,
+        "style": req.style
+    }
+
+
+# --- Studio Sessions & Multi-Turn Producer Endpoints ---
+
+@app.get("/sessions")
+def list_sessions():
+    with Session(engine) as session:
+        sessions = session.exec(select(StudioSession).order_by(StudioSession.updated_at.desc())).all()
+        result = []
+        for s in sessions:
+            s_id = s.id
+            messages = session.exec(select(SessionMessage).where(SessionMessage.session_id == s_id)).all()
+            jobs = session.exec(select(Job).where(Job.session_id == str(s_id))).all()
+            s_dict = s.model_dump()
+            s_dict["message_count"] = len(messages)
+            s_dict["job_count"] = len(jobs)
+            s_dict["jobs"] = [j.model_dump() for j in jobs]
+            result.append(s_dict)
+        return result
+
+
+@app.post("/sessions", response_model=StudioSession)
+def create_session(data: SessionCreate):
+    with Session(engine) as session:
+        new_session = StudioSession(
+            title=data.title or "New session",
+            project_id=data.project_id,
+            active_job_id=data.active_job_id
+        )
+        session.add(new_session)
+        session.commit()
+        session.refresh(new_session)
+        return new_session
+
+
+@app.get("/sessions/{session_id}")
+def get_session(session_id: UUID):
+    with Session(engine) as session:
+        studio_session = session.get(StudioSession, session_id)
+        if not studio_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+            
+        messages = session.exec(
+            select(SessionMessage)
+            .where(SessionMessage.session_id == session_id)
+            .order_by(SessionMessage.created_at.asc())
+        ).all()
+        
+        jobs = session.exec(
+            select(Job)
+            .where(Job.session_id == str(session_id))
+            .order_by(Job.created_at.desc())
+        ).all()
+        
+        s_dict = studio_session.model_dump()
+        s_dict["messages"] = [m.model_dump() for m in messages]
+        s_dict["jobs"] = [j.model_dump() for j in jobs]
+        return s_dict
+
+
+@app.patch("/sessions/{session_id}", response_model=StudioSession)
+def update_session(session_id: UUID, data: SessionUpdate):
+    with Session(engine) as session:
+        studio_session = session.get(StudioSession, session_id)
+        if not studio_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+            
+        if data.title is not None:
+            studio_session.title = data.title
+        if data.project_id is not None:
+            studio_session.project_id = data.project_id
+        if data.active_job_id is not None:
+            studio_session.active_job_id = data.active_job_id
+            
+        studio_session.updated_at = datetime.now(timezone.utc)
+        session.add(studio_session)
+        session.commit()
+        session.refresh(studio_session)
+        return studio_session
+
+
+@app.delete("/sessions/{session_id}")
+def delete_session(session_id: UUID):
+    with Session(engine) as session:
+        studio_session = session.get(StudioSession, session_id)
+        if not studio_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+            
+        # Delete session messages
+        messages = session.exec(select(SessionMessage).where(SessionMessage.session_id == session_id)).all()
+        for m in messages:
+            session.delete(m)
+            
+        # Dissociate jobs
+        jobs = session.exec(select(Job).where(Job.session_id == str(session_id))).all()
+        for j in jobs:
+            j.session_id = None
+            session.add(j)
+            
+        session.delete(studio_session)
+        session.commit()
+        return {"status": "deleted", "id": session_id}
+
+
+@app.post("/sessions/{session_id}/chat")
+async def session_chat(session_id: UUID, message_data: SessionMessageCreate):
+    with Session(engine) as db_session:
+        studio_session = db_session.get(StudioSession, session_id)
+        if not studio_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+            
+        # 1. Save user message
+        user_msg = SessionMessage(
+            session_id=session_id,
+            role="user",
+            content=message_data.content,
+            audio_attachment_path=message_data.audio_attachment_path
+        )
+        db_session.add(user_msg)
+        
+        # 2. Query Producer LLM for full track composition (Title, Tags, Topic, Lyrics, Captions)
+        full_preset = await LLMService.produce_full_track(message_data.content)
+        
+        # Build rich producer message
+        title_val = full_preset.get("title", "Studio Master")
+        tags_val = full_preset.get("tags", "Pop, Electronic")
+        topic_val = full_preset.get("topic", message_data.content)
+        lyrics_val = full_preset.get("lyrics", "")
+        
+        if full_preset.get("is_instrumental"):
+            producer_reply = (
+                f"### 🎵 Proposed Track: **{title_val}**\n"
+                f"**Style & Instrumentation:** `{tags_val}`\n\n"
+                f"**Direction:** {topic_val}\n\n"
+                f"*(Instrumental Master arrangement ready in Composer)*"
+            )
+        else:
+            producer_reply = (
+                f"### 🎵 Proposed Track: **{title_val}**\n"
+                f"**Style:** `{tags_val}`\n\n"
+                f"#### **Lyrics:**\n"
+                f"{lyrics_val}"
+            )
+        
+        producer_msg = SessionMessage(
+            session_id=session_id,
+            role="producer",
+            content=producer_reply,
+            preset_data_json=json.dumps(full_preset)
+        )
+        db_session.add(producer_msg)
+        
+        # Update session title with song title or prompt
+        if studio_session.title == "New session" or len(studio_session.title) <= 3:
+            studio_session.title = title_val[:32]
+            
+        studio_session.updated_at = datetime.now(timezone.utc)
+        db_session.commit()
+        db_session.refresh(studio_session)
+        db_session.refresh(user_msg)
+        db_session.refresh(producer_msg)
+        
+        messages = db_session.exec(
+            select(SessionMessage)
+            .where(SessionMessage.session_id == session_id)
+            .order_by(SessionMessage.created_at.asc())
+        ).all()
+        
+        session_dict = studio_session.model_dump()
+        session_dict["messages"] = [m.model_dump() for m in messages]
+        
+        return {
+            "session": session_dict,
+            "user_message": user_msg.model_dump(),
+            "producer_message": producer_msg.model_dump(),
+            "preset": full_preset
+        }
+
+
 # --- Style Registry ---
 from app.services.style_registry import StyleRegistry, Style
 from pydantic import BaseModel
@@ -856,9 +1133,12 @@ async def generate_music(req: GenerationRequest, background_tasks: BackgroundTas
     import random
     seed_val = req.seed if req.seed is not None else random.randint(0, 2**32 - 1)
 
+    lyrics_content = None if req.is_instrumental else req.lyrics
+
     job = Job(
+        title=req.title,
         prompt=req.prompt, 
-        lyrics=req.lyrics, 
+        lyrics=lyrics_content, 
         duration_ms=req.duration_ms, 
         tags=req.tags, 
         seed=seed_val,
@@ -866,6 +1146,9 @@ async def generate_music(req: GenerationRequest, background_tasks: BackgroundTas
         llm_model=req.llm_model,
         parent_job_id=req.parent_job_id,
         project_id=req.project_id,
+        session_id=req.session_id,
+        cover_image_path=req.cover_image_path,
+        image_prompt=req.image_prompt,
         temperature=req.temperature,
         cfg_scale=req.cfg_scale,
         topk=req.topk,
@@ -876,19 +1159,45 @@ async def generate_music(req: GenerationRequest, background_tasks: BackgroundTas
         session.add(job)
         session.commit()
         session.refresh(job)
+        
+        job_id_val = job.id
+        job_id_str = str(job.id)
+        job_status = job.status
+        job_prompt = job.prompt
+        job_provider = job.model_provider
+        job_title = job.title
+        job_cover = job.cover_image_path
+
+        # If linked to a session, update session active_job_id and timestamp
+        if req.session_id:
+            try:
+                studio_session = session.get(StudioSession, UUID(req.session_id))
+                if studio_session:
+                    studio_session.active_job_id = job_id_str
+                    studio_session.updated_at = datetime.now(timezone.utc)
+                    session.add(studio_session)
+                    session.commit()
+            except Exception as e:
+                print(f"Session link notice: {e}")
 
     # Publish initial queued event to SSE subscribers
     event_manager.publish("job_update", {
-        "job_id": str(job.id),
+        "job_id": job_id_str,
         "status": "queued",
-        "prompt": job.prompt,
-        "model_provider": job.model_provider
+        "prompt": job_prompt,
+        "model_provider": job_provider
     })
 
     # Enqueue pipeline in background
-    background_tasks.add_task(music_service.generate_task, job.id, req, engine)
+    background_tasks.add_task(music_service.generate_task, job_id_val, req, engine)
     
-    return {"job_id": job.id, "status": job.status, "model_provider": job.model_provider}
+    return {
+        "job_id": job_id_val,
+        "status": job_status,
+        "model_provider": job_provider,
+        "title": job_title,
+        "cover_image_path": job_cover
+    }
 
 
 @app.post("/jobs/{job_id}/inpaint")
@@ -950,20 +1259,152 @@ def toggle_favorite(job_id: str):
 
 
 @app.patch("/jobs/{job_id}", response_model=Job)
-def rename_job(job_id: str, upgrade: dict):
-    new_title = upgrade.get("title")
-    if not new_title:
-        raise HTTPException(status_code=400, detail="Title is required")
-        
+def update_job(job_id: str, updates: dict = Body(...)):
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        job.title = new_title
+        
+        allowed_fields = ["title", "tags", "prompt", "is_favorite", "project_id", "cover_image_path", "lyrics"]
+        for key in allowed_fields:
+            if key in updates:
+                setattr(job, key, updates[key])
+                
         session.add(job)
         session.commit()
         session.refresh(job)
         return job
+
+
+@app.get("/jobs/{job_id}/studio-pack")
+def export_studio_pack(job_id: str):
+    import io, zipfile, json, os, re
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+            
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            # 1. Master Audio
+            if job.audio_path:
+                local_path = job.audio_path.lstrip("/")
+                possible_paths = [local_path, f"generated_audio/{os.path.basename(local_path)}", f"data/{local_path}"]
+                for p in possible_paths:
+                    if os.path.exists(p):
+                        zf.write(p, arcname="master_audio.wav")
+                        break
+            
+            # 2. Stems
+            if job.stems_json:
+                try:
+                    stems_data = json.loads(job.stems_json)
+                    for stem_name in ["vocals", "drums", "bass", "other"]:
+                        p = stems_data.get(stem_name)
+                        if p and os.path.exists(p.lstrip("/")):
+                            zf.write(p.lstrip("/"), arcname=f"stems/{stem_name}.wav")
+                    parts = stems_data.get("instrumental_parts", {})
+                    for part_name, part_path in parts.items():
+                        if part_path and os.path.exists(part_path.lstrip("/")):
+                            clean_part = re.sub(r'[^a-zA-Z0-9_-]', '_', part_name)
+                            zf.write(part_path.lstrip("/"), arcname=f"stems/instruments/{clean_part}.wav")
+                except Exception as e:
+                    print(f"Stem packing error: {e}")
+            
+            # 3. Transcription & Scores
+            if job.midi_path and os.path.exists(job.midi_path.lstrip("/")):
+                zf.write(job.midi_path.lstrip("/"), arcname="transcription/score.mid")
+            if job.musicxml_path and os.path.exists(job.musicxml_path.lstrip("/")):
+                zf.write(job.musicxml_path.lstrip("/"), arcname="transcription/score.musicxml")
+            if job.notes_json:
+                zf.writestr("transcription/notes.json", job.notes_json)
+                
+            # 4. Lyrics
+            if job.timed_lyrics_json:
+                try:
+                    timed_data = json.loads(job.timed_lyrics_json)
+                    lrc_lines = []
+                    for seg in timed_data:
+                        start_s = seg.get("start", 0.0)
+                        mins = int(start_s // 60)
+                        secs = start_s % 60
+                        lrc_lines.append(f"[{mins:02d}:{secs:05.2f}]{seg.get('text', '')}")
+                    zf.writestr("lyrics/timed_lyrics.lrc", "\n".join(lrc_lines))
+                except Exception:
+                    pass
+            if job.lyrics:
+                zf.writestr("lyrics/lyrics.txt", job.lyrics)
+                
+            # 5. Metadata Manifest
+            metadata = {
+                "id": str(job.id),
+                "title": job.title or "Untitled Studio Master",
+                "prompt": job.prompt,
+                "tags": job.tags,
+                "model_provider": job.model_provider,
+                "seed": job.seed,
+                "temperature": job.temperature,
+                "cfg_scale": job.cfg_scale,
+                "topk": job.topk,
+                "duration_ms": job.duration_ms,
+                "created_at": job.created_at.isoformat() if job.created_at else None,
+                "structured_caption": json.loads(job.structured_caption_json) if job.structured_caption_json else None,
+                "beat_grid": json.loads(job.beat_grid_json) if job.beat_grid_json else None
+            }
+            zf.writestr("metadata.json", json.dumps(metadata, indent=2))
+            
+        zip_buffer.seek(0)
+        safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', job.title or "milimo_track")
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{safe_title}_studio_pack.zip"'}
+        )
+
+
+@app.post("/jobs/{job_id}/voice-convert", response_model=Job)
+async def voice_convert_job(job_id: str, body: dict = Body(...)):
+    voice_profile_id = body.get("voice_profile_id")
+    if not voice_profile_id:
+        raise HTTPException(status_code=400, detail="voice_profile_id is required")
+        
+    from app.services.voice_service import voice_service
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if not job.audio_path:
+            raise HTTPException(status_code=400, detail="Job does not have completed audio")
+            
+        stems = json.loads(job.stems_json) if job.stems_json else {}
+        target_vocal = stems.get("vocals", job.audio_path).lstrip("/")
+        
+        out_vocal = f"generated_audio/{job.id}_svc_{voice_profile_id}.wav"
+        await voice_service.convert_voice(target_vocal, voice_profile_id, out_vocal)
+        
+        new_job = Job(
+            prompt=f"Voice Converted ({voice_profile_id}): {job.prompt}",
+            lyrics=job.lyrics,
+            tags=job.tags,
+            title=f"{job.title or 'Track'} ({voice_profile_id})",
+            duration_ms=job.duration_ms,
+            audio_path=f"/{out_vocal}",
+            stems_json=job.stems_json,
+            midi_path=job.midi_path,
+            musicxml_path=job.musicxml_path,
+            notes_json=job.notes_json,
+            parent_job_id=str(job.id),
+            project_id=job.project_id,
+            session_id=job.session_id,
+            cover_image_path=job.cover_image_path,
+            status="completed",
+            model_provider=job.model_provider,
+            voice_profile_id=voice_profile_id
+        )
+        session.add(new_job)
+        session.commit()
+        session.refresh(new_job)
+        return new_job
 
 
 @app.get("/download_track/{job_id}")
@@ -1053,6 +1494,8 @@ def create_project(data: ProjectCreate):
         project = Project(
             name=data.name,
             description=data.description,
+            cover_image_path=data.cover_image_path,
+            image_prompt=data.image_prompt,
             tags=data.tags,
             bpm=data.bpm or 120,
             key_signature=data.key_signature or "C Major",
@@ -1115,6 +1558,10 @@ def update_project(project_id: UUID, data: ProjectUpdate):
             project.name = data.name
         if data.description is not None:
             project.description = data.description
+        if data.cover_image_path is not None:
+            project.cover_image_path = data.cover_image_path
+        if data.image_prompt is not None:
+            project.image_prompt = data.image_prompt
         if data.tags is not None:
             project.tags = data.tags
         if data.bpm is not None:

@@ -1466,7 +1466,7 @@ function App() {
 
                   <div className="space-y-2">
                     <h2 className="text-2xl sm:text-3xl md:text-4xl font-extrabold tracking-tight text-slate-900 dark:text-white font-sans">
-                      What do you want to create?
+                      Give the silence something worth remembering.
                     </h2>
                     <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-400 max-w-lg mx-auto leading-relaxed">
                       Speak it into being. Shape it until it&apos;s yours.

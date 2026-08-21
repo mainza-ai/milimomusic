@@ -1,3 +1,4 @@
+import copy
 import json
 import os
 from typing import Dict, Any, Optional
@@ -27,7 +28,7 @@ logger = logging.getLogger(__name__)
 CONFIG_FILE = "llm_config.json"
 
 DEFAULT_CONFIG = {
-    "provider": "ollama",
+    "provider": "nvidia",
     "ollama": {
         "base_url": "http://localhost:11434",
         "model": "llama3.2:3b-instruct-fp16"
@@ -100,6 +101,10 @@ def _apply_env_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
                 provider_cfg[field] = env_val
             else:
                 provider_cfg[field] = provider_cfg.get(field, default)
+    # Active provider from env if provided
+    env_provider = os.environ.get("LLM_PROVIDER")
+    if env_provider:
+        config["provider"] = env_provider
     # Paths
     paths = config.setdefault("paths", {})
     for field, env_var, fallback in (
@@ -117,7 +122,7 @@ def _apply_env_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
 
 class ConfigManager:
     _instance = None
-    _config: Dict[str, Any] = {}
+    _file_config: Dict[str, Any] = {}
 
     def __new__(cls):
         if cls._instance is None:
@@ -126,60 +131,84 @@ class ConfigManager:
         return cls._instance
 
     def _load_config(self):
-        """Load configuration from file or use defaults, then overlay .env."""
+        """Load configuration from file or use defaults without polluting with env secrets."""
         _load_dotenv_once()
         if os.path.exists(CONFIG_FILE):
             try:
                 with open(CONFIG_FILE, 'r') as f:
                     loaded_config = json.load(f)
-                    # Merge with default config to ensure all keys exist
-                    self._config = self._merge_configs(DEFAULT_CONFIG, loaded_config)
+                    self._file_config = self._merge_configs(DEFAULT_CONFIG, loaded_config)
             except Exception as e:
                 logger.error(f"Failed to load config file: {e}")
-                self._config = DEFAULT_CONFIG.copy()
+                self._file_config = copy.deepcopy(DEFAULT_CONFIG)
         else:
-            self._config = DEFAULT_CONFIG.copy()
-            self.save_config()
-        # Environment variables take precedence over file/default (no secrets hardcoded)
-        self._config = _apply_env_overrides(self._config)
-        # Preserve the active provider, defaulting to the configured one
-        self._config["provider"] = os.environ.get("LLM_PROVIDER", self._config.get("provider", "ollama"))
+            self._file_config = copy.deepcopy(DEFAULT_CONFIG)
 
     def _merge_configs(self, default: Dict, loaded: Dict) -> Dict:
-        """Deep merge default and loaded configs."""
-        result = default.copy()
+        """Deep merge default and loaded configs, protecting existing api_keys from blank overwrites."""
+        result = copy.deepcopy(default)
         for key, value in loaded.items():
             if key in result and isinstance(result[key], dict) and isinstance(value, dict):
-                result[key] = self._merge_configs(result[key], value)
+                for sub_key, sub_val in value.items():
+                    if sub_key == "api_key" and (sub_val is None or str(sub_val).strip() == ""):
+                        continue
+                    result[key][sub_key] = sub_val
             else:
                 result[key] = value
         return result
 
     def save_config(self):
-        """Save current configuration to file."""
+        """Save current user file configuration without dumping environment secrets."""
         try:
+            to_save = copy.deepcopy(self._file_config)
+            # Never persist keys that match environment variables to llm_config.json
+            for provider, fields in _ENV_MAP.items():
+                if provider in to_save and isinstance(to_save[provider], dict):
+                    for field, (env_var, _) in fields.items():
+                        env_val = os.environ.get(env_var)
+                        if env_val and to_save[provider].get(field) == env_val:
+                            if field == "api_key":
+                                to_save[provider][field] = ""
             with open(CONFIG_FILE, 'w') as f:
-                json.dump(self._config, f, indent=4)
+                json.dump(to_save, f, indent=4)
         except Exception as e:
             logger.error(f"Failed to save config file: {e}")
 
     def get_config(self) -> Dict[str, Any]:
-        """Get the entire configuration."""
-        return self._config
+        """Get the full runtime configuration including .env secrets (for internal backend services)."""
+        runtime_config = copy.deepcopy(self._file_config)
+        return _apply_env_overrides(runtime_config)
+
+    def get_client_config(self) -> Dict[str, Any]:
+        """Get sanitized configuration for client consumption (masks api_keys and returns has_key booleans)."""
+        runtime_config = self.get_config()
+        client_cfg = copy.deepcopy(runtime_config)
+        for provider, fields in _ENV_MAP.items():
+            if provider in client_cfg and isinstance(client_cfg[provider], dict):
+                api_key = client_cfg[provider].get("api_key", "")
+                has_key = bool(api_key and str(api_key).strip() and api_key != "omlx" and api_key != "lm-studio")
+                if provider in ("omlx", "lmstudio"):
+                    has_key = True
+                client_cfg[provider]["has_key"] = has_key
+                client_cfg[provider]["has_api_key"] = has_key
+                # Strip plaintext secret from client payload
+                client_cfg[provider]["api_key"] = ""
+        return client_cfg
 
     def get_provider_config(self, provider_name: str) -> Dict[str, Any]:
-        """Get configuration for a specific provider."""
-        return self._config.get(provider_name, {})
+        """Get runtime configuration for a specific provider."""
+        return self.get_config().get(provider_name, {})
 
     def update_config(self, new_config: Dict[str, Any]):
-        """Update configuration with partial data."""
-        self._config = self._merge_configs(self._config, new_config)
+        """Update configuration with user data and persist safe non-secret fields."""
+        self._file_config = self._merge_configs(self._file_config, new_config)
         self.save_config()
 
     def set_provider(self, provider_name: str):
         """Set the active provider."""
-        if provider_name in self._config:
-            self._config["provider"] = provider_name
+        if provider_name in DEFAULT_CONFIG or provider_name in self._file_config:
+            self._file_config["provider"] = provider_name
             self.save_config()
         else:
             raise ValueError(f"Unknown provider: {provider_name}")
+

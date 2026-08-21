@@ -535,6 +535,8 @@ export const workspaceApi = {
 
 export interface ProviderConfig {
     api_key?: string;
+    has_key?: boolean;
+    has_api_key?: boolean;
     base_url?: string;
     model?: string;
 }

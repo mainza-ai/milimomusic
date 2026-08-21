@@ -77,11 +77,9 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                 const hasCredentials =
                     activeTab === 'ollama' ||
                     activeTab === 'lmstudio' ||
-                    activeTab === 'omlx' ||
-                    activeTab === 'opencode' ||
-                    activeTab === 'nvidia'
+                    activeTab === 'omlx'
                         ? true
-                        : !!configSection?.api_key;
+                        : !!(configSection?.has_key || configSection?.has_api_key || configSection?.api_key);
 
                 if (hasCredentials) {
                     const models = await api.fetchModels(tempConfig);
@@ -251,7 +249,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                                 value={config.nvidia?.api_key || ''}
                                                 onChange={(e) => handleChange('nvidia', 'api_key', e.target.value)}
                                                 className="w-full apple-input font-mono text-xs"
-                                                placeholder="nvapi-..."
+                                                placeholder={config.nvidia?.has_key ? '•••••••• (configured on backend)' : 'nvapi-...'}
                                             />
                                         </div>
 
@@ -310,10 +308,10 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                             </label>
                                             <input
                                                 type="password"
-                                                value={config.opencode?.api_key || (import.meta as any).env?.VITE_OPENCODE_API_KEY || ''}
+                                                value={config.opencode?.api_key || ''}
                                                 onChange={(e) => handleChange('opencode', 'api_key', e.target.value)}
                                                 className="w-full apple-input font-mono text-xs"
-                                                placeholder="sk-..."
+                                                placeholder={config.opencode?.has_key ? '•••••••• (configured on backend)' : 'sk-...'}
                                             />
                                         </div>
 
@@ -452,7 +450,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                                 value={config.deepseek?.api_key || ''}
                                                 onChange={(e) => handleChange('deepseek', 'api_key', e.target.value)}
                                                 className="w-full apple-input font-mono text-xs"
-                                                placeholder="sk-..."
+                                                placeholder={config.deepseek?.has_key ? '•••••••• (configured on backend)' : 'sk-...'}
                                             />
                                         </div>
                                         <div className="space-y-1">
@@ -479,7 +477,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                                 value={config.openai?.api_key || ''}
                                                 onChange={(e) => handleChange('openai', 'api_key', e.target.value)}
                                                 className="w-full apple-input font-mono text-xs"
-                                                placeholder="sk-..."
+                                                placeholder={config.openai?.has_key ? '•••••••• (configured on backend)' : 'sk-...'}
                                             />
                                         </div>
                                         <div className="space-y-1">
@@ -506,7 +504,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                                 value={config.gemini?.api_key || ''}
                                                 onChange={(e) => handleChange('gemini', 'api_key', e.target.value)}
                                                 className="w-full apple-input font-mono text-xs"
-                                                placeholder="AIza..."
+                                                placeholder={config.gemini?.has_key ? '•••••••• (configured on backend)' : 'AIza...'}
                                             />
                                         </div>
                                         <div className="space-y-1">
@@ -533,7 +531,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                                 value={config.openrouter?.api_key || ''}
                                                 onChange={(e) => handleChange('openrouter', 'api_key', e.target.value)}
                                                 className="w-full apple-input font-mono text-xs"
-                                                placeholder="sk-or-..."
+                                                placeholder={config.openrouter?.has_key ? '•••••••• (configured on backend)' : 'sk-or-...'}
                                             />
                                         </div>
                                         <div className="space-y-1">

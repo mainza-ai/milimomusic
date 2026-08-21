@@ -615,6 +615,12 @@ Implemented end-to-end neural acoustic lyric alignment on the backend and 60fps 
 - Restored the official brand tagline: *"Give the silence something worth remembering."* with sub-motto *"Speak it into being. Shape it until it's yours."* to the landing hero in `App.tsx`.
 - Synchronized `wiki/overview.md` and `wiki/entities/frontend.md` with official brand identity, instant prompt feedback, and production cancellation architecture.
 
+## [2026-08-21] sec | Mask LLM Config Secrets, Return has_key Booleans & Purge File Secrets
+- **Masked `GET /config/llm` API Response**: Updated `LLMService.get_config()` to return `has_key` & `has_api_key` booleans while masking plaintext secret strings (`api_key: ""`).
+- **Stopped Env Key Persistence in `llm_config.json`**: ConfigManager now keeps environment variable keys strictly in runtime memory and strips them from JSON writes.
+- **Removed `VITE_OPENCODE_API_KEY` from Client**: Purged client-side references to `VITE_OPENCODE_API_KEY` in `LLMSettingsModal.tsx` and updated placeholders to reflect backend configuration status.
+
+
 
 
 

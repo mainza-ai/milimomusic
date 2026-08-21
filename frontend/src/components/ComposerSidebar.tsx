@@ -120,6 +120,12 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
         try {
             const cfg = await api.getLLMConfig();
             setLlmConfig(cfg);
+            const activeProvider = cfg.provider || 'nvidia';
+            const activeModel = (cfg as any)[activeProvider]?.model;
+            if (activeModel) {
+                setLyricsModel(activeModel);
+                localStorage.setItem('milimo_lyrics_model', activeModel);
+            }
             onRefreshModels?.();
         } catch (e) {
             console.error("Failed to load LLM config", e);
@@ -141,13 +147,19 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     });
     const [isSeedLocked] = useState(() => localStorage.getItem('milimo_seed_locked') === 'true');
 
-    const [lyricsModel, setLyricsModel] = useState(() => localStorage.getItem('milimo_lyrics_model') || (lyricsModels[0] || 'minimax-m3'));
+    const [lyricsModel, setLyricsModel] = useState(() => localStorage.getItem('milimo_lyrics_model') || (lyricsModels[0] || 'deepseek-ai/deepseek-v4-flash-0731'));
 
     useEffect(() => {
-        if (lyricsModels.length > 0 && (!lyricsModel || !lyricsModels.includes(lyricsModel))) {
-            setLyricsModel(lyricsModels[0]);
+        if (lyricsModels.length > 0) {
+            const activeProvider = llmConfig.provider || 'nvidia';
+            const configuredModel = (llmConfig as any)[activeProvider]?.model;
+            if (configuredModel && lyricsModels.includes(configuredModel)) {
+                setLyricsModel(configuredModel);
+            } else if (!lyricsModel || !lyricsModels.includes(lyricsModel)) {
+                setLyricsModel(configuredModel || lyricsModels[0]);
+            }
         }
-    }, [lyricsModels]);
+    }, [lyricsModels, llmConfig]);
 
     useEffect(() => {
         if (!producerPreset) return;
@@ -359,7 +371,26 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                                 <Sparkles size={13} />
                                                 <span>{isGeneratingLyrics ? 'Writing...' : 'AI Co-Writer: Write'}</span>
                                             </button>
-                                            <select value={lyricsModel} onChange={(e) => { setLyricsModel(e.target.value); localStorage.setItem('milimo_lyrics_model', e.target.value); }} className="apple-input py-1.5 px-2 text-[11px] font-mono max-w-[130px] truncate">
+                                            <select 
+                                                value={lyricsModel} 
+                                                onChange={async (e) => { 
+                                                    const newModel = e.target.value;
+                                                    setLyricsModel(newModel); 
+                                                    localStorage.setItem('milimo_lyrics_model', newModel);
+                                                    const activeProvider = llmConfig.provider || 'nvidia';
+                                                    try {
+                                                        await api.updateLLMConfig({
+                                                            [activeProvider]: { model: newModel }
+                                                        });
+                                                    } catch (err) {
+                                                        console.error("Failed to sync model with backend", err);
+                                                    }
+                                                }} 
+                                                className="apple-input py-1.5 px-2 text-[11px] font-mono max-w-[150px] truncate"
+                                            >
+                                                {lyricsModel && !lyricsModels.includes(lyricsModel) && (
+                                                    <option value={lyricsModel}>{lyricsModel}</option>
+                                                )}
                                                 {lyricsModels.map(m => <option key={m} value={m}>{m}</option>)}
                                             </select>
                                         </div>
@@ -402,7 +433,6 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                         <div className="grid grid-cols-2 gap-2">
                                             <select value={modelProvider} onChange={(e) => setModelProvider(e.target.value)} className="apple-input py-1.5 text-[11px] font-mono">
                                                 <option value="minimax_music3">MiniMax Music 3</option>
-                                                <option value="heartmula">HeartMuLa</option>
                                             </select>
                                             <select value={selectedVoiceProfile} onChange={(e) => { if (e.target.value === '__add_new__') setIsVoiceStudioOpen(true); else setSelectedVoiceProfile(e.target.value); }} className="apple-input py-1.5 text-[11px] font-mono">
                                                 <option value="">Default AI Voice</option>

@@ -195,11 +195,11 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                                             title="Inspect Track Studio"
                                                         >
                                                             <img
-                                                                src="/milimo_logo.png"
+                                                                src={song.cover_image_path ? (song.cover_image_path.startsWith('http') ? song.cover_image_path : song.cover_image_path) : '/milimo_logo.png'}
                                                                 alt="Track"
                                                                 className="w-full h-full object-cover rounded-lg"
                                                                 onError={(e) => {
-                                                                    (e.target as HTMLElement).style.display = 'none';
+                                                                    (e.target as HTMLImageElement).src = '/milimo_logo.png';
                                                                 }}
                                                             />
                                                             <Disc size={16} className="absolute text-teal-400 drop-shadow opacity-0 group-hover/art:opacity-100 transition-opacity" />

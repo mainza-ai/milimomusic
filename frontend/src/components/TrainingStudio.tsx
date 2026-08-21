@@ -472,11 +472,16 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
                                     🎓
                                 </span>
                                 <div>
-                                    <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 tracking-tight">
-                                        LoRA & Foundation Training Studio
-                                    </h2>
+                                    <div className="flex items-center gap-2">
+                                        <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 tracking-tight">
+                                            LoRA & Foundation Training Studio
+                                        </h2>
+                                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold border border-amber-500/30">
+                                            In Development
+                                        </span>
+                                    </div>
                                     <p className="text-[11px] font-mono text-slate-400">
-                                        Dataset Audio Tokenization · LoRA Rank Adapters · Checkpoints
+                                        Experimental LoRA fine-tuning & dataset tokenization (Feature preview)
                                     </p>
                                 </div>
                             </div>

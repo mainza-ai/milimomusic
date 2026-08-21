@@ -1,3 +1,4 @@
+import asyncio
 import requests
 import logging
 from typing import List, Optional, Dict, Any, Type
@@ -201,10 +202,10 @@ class OpenAIProvider(LLMProvider):
             logger.warning(f"Failed to fetch OpenAI models: {e}")
             if self.client.base_url and "nvidia.com" in str(self.client.base_url):
                 return [
-                    "meta/llama-3.1-70b-instruct",
-                    "meta/llama-3.1-8b-instruct",
-                    "meta/llama-3.3-70b-instruct",
-                    "nvidia/llama-3.1-nemotron-70b-instruct",
+                    "deepseek-ai/deepseek-v4-flash-0731",
+                    "deepseek-ai/deepseek-r1",
+                    "qwen/qwen2.5-72b-instruct",
+                    "mistralai/mistral-large-2-instruct",
                 ]
             elif self.client.base_url and "deepseek.com" in str(self.client.base_url):
                 return ["deepseek-chat", "deepseek-reasoner"]
@@ -585,21 +586,21 @@ class LLMService:
     @staticmethod
     def _get_active_model() -> str:
         config = ConfigManager().get_config()
-        provider_name = config.get("provider", "opencode")
+        provider_name = config.get("provider", "nvidia")
         model = config.get(provider_name, {}).get("model")
+        if model and str(model).strip():
+            return str(model).strip()
 
-        # Smart fallback: If configured model is missing, fetch first available
+        # Fallback only if no configured model exists
         try:
             provider = LLMService._get_provider()
             available = provider.get_models()
             if available:
-                if not model or model not in available:
-                    logger.info(f"Auto-switching {provider_name} model from '{model}' to '{available[0]}'")
-                    return available[0]
+                return available[0]
         except Exception as e:
             logger.warning(f"Failed to auto-detect model: {e}")
 
-        return model or "minimax-m3"
+        return "deepseek-ai/deepseek-v4-flash-0731"
 
     @staticmethod
     def generate_lyrics(topic: str, model: Optional[str] = None, seed_lyrics: Optional[str] = None) -> str:
@@ -621,19 +622,12 @@ class LLMService:
             )
         else:
             prompt = (
-                f"Write song lyrics about: {topic}. "
-                "IMPORTANT: Use the following format strictly:\n"
-                "[Intro]\n\n"
-                "[Verse]\n"
-                "(lyrics here)\n\n"
-                "[Chorus]\n"
-                "(lyrics here)\n\n"
-                "[Bridge]\n"
-                "(lyrics here)\n\n"
-                "[Outro]\n\n"
-                "RULES:\n"
-                "- Do not include any conversational filler. Just the formatted lyrics.\n"
-                "- FORMATTING: Output ONLY lyrics. NO stage directions like '(guitar solo)', '(instrumental)', or '(repeat chorus)'."
+                f"Write complete, professional song lyrics about: {topic}.\n"
+                "STRICT FORMAT REQUIREMENTS:\n"
+                "1. Use standard section headers in brackets, each on its own line: [Intro], [Verse 1], [Chorus], [Verse 2], [Bridge], [Outro]\n"
+                "2. Do NOT include any lyrics on the same line as a bracketed header.\n"
+                "3. Output ONLY singable lyrics. NO conversational filler, NO explanations.\n"
+                "4. NO stage directions or instrumental notations like '(guitar solo)', '(instrumental)', or '(repeat chorus)'."
             )
         
         response = provider.generate_text(prompt, model)
@@ -847,7 +841,7 @@ class LLMService:
                 if c_key or candidate_name in ["omlx", "ollama", "lmstudio"]:
                     try:
                         c_provider = LLMService._get_provider(override_config={"provider": candidate_name, candidate_name: c_cfg})
-                        c_model = c_cfg.get("model") or "meta/llama-3.1-70b-instruct"
+                        c_model = c_cfg.get("model") or "deepseek-ai/deepseek-v4-flash-0731"
                         providers_to_try.append((c_provider, c_model, candidate_name))
                     except Exception:
                         pass
@@ -980,7 +974,7 @@ class LLMService:
             try:
                 p_cfg = config.get(p_name, {})
                 p_inst = LLMService._get_provider(override_config={"provider": p_name, p_name: p_cfg})
-                p_model = p_cfg.get("model") or model or "meta/llama-3.1-70b-instruct"
+                p_model = p_cfg.get("model") or model or "deepseek-ai/deepseek-v4-flash-0731"
                 response = p_inst.generate_text(prompt, p_model).strip().replace('"', '').replace('\n', ' ')
                 if response and len(response) < 60:
                     return response
@@ -1108,7 +1102,7 @@ class LLMService:
             try:
                 p_cfg = config.get(p_name, {})
                 p_inst = LLMService._get_provider(override_config={"provider": p_name, p_name: p_cfg})
-                p_model = p_cfg.get("model") or model or "meta/llama-3.1-70b-instruct"
+                p_model = p_cfg.get("model") or model or "deepseek-ai/deepseek-v4-flash-0731"
                 result = p_inst.generate_json(prompt, p_model)
                 if isinstance(result, dict) and result.get("topic") and result.get("tags"):
                     return result
@@ -1123,43 +1117,53 @@ class LLMService:
     async def produce_full_track(concept: str, model: Optional[str] = None) -> dict:
         """Full-scale AI Producer synthesis:
         Derives topic, verified tags, title, complete structured lyrics, and structured captions.
+        Uses a unified single-turn producer schema for fast, resilient response times.
         """
         clean_concept = (concept or "").strip()
-
-        # 1. Detect if instrumental is requested
         is_instrumental = bool(re.search(r'\b(instrumental|beat|backing track|lofi beat|no vocals?|karaoke track|ambient track)\b', clean_concept, re.I))
 
-        # 2. Enhance topic and valid style tags
-        enhanced = LLMService.enhance_prompt(clean_concept, model)
-        topic = enhanced.get("topic", clean_concept)
-        tags = enhanced.get("tags", "") or LLMService._extract_fallback_tags(clean_concept)
+        valid_tags = StyleRegistry().get_styles_for_prompt()
+        valid_tags_str = ", ".join(valid_tags)
+        fallback_tags = LLMService._extract_fallback_tags(clean_concept)
+        fallback_title = LLMService._extract_fallback_title(clean_concept)
 
-        # 3. Derive Title
-        title = LLMService.generate_title(clean_concept, model)
-        if not title or title.lower() in ["untitled track", "studio master"]:
-            title = LLMService._extract_fallback_title(clean_concept)
+        prompt = (
+            f"Act as a professional music producer and songwriter. Transform this concept into a complete song specification.\n"
+            f"USER CONCEPT: '{clean_concept}'\n\n"
+            "INSTRUCTIONS:\n"
+            "1. 'title': A short, creative 2-5 word song title.\n"
+            "2. 'topic': A vivid 1-sentence musical direction.\n"
+            f"3. 'tags': 3-5 style tags ONLY from this list: [{valid_tags_str}].\n"
+            + ("4. 'lyrics': Empty string for instrumental." if is_instrumental else "4. 'lyrics': Complete singable lyrics formatted with standard section headers in brackets on their own lines: [Intro], [Verse 1], [Chorus], [Verse 2], [Bridge], [Outro]. No conversational filler, no stage directions.") + "\n\n"
+            "Return ONLY a raw JSON object with keys 'title', 'topic', 'tags', 'lyrics'. Do NOT wrap in markdown."
+        )
 
-        # 4. Generate structured lyrics (if vocal)
+        title = fallback_title
+        topic = clean_concept
+        tags = fallback_tags
         lyrics = ""
-        producer_notice = None
-        if not is_instrumental:
-            try:
-                lyrics_res = await LLMService.generate_lyrics_async(topic, model, tags=tags)
-                if isinstance(lyrics_res, dict):
-                    lyrics = lyrics_res.get("lyrics", "")
-                    if lyrics_res.get("error"):
-                        producer_notice = lyrics_res.get("message")
-                else:
-                    lyrics = str(lyrics_res)
-            except Exception as e:
-                logger.warning(f"Lyric generation in produce_full_track failed: {e}")
-                producer_notice = str(e)
 
-            if not lyrics or len(lyrics.strip()) < 30:
-                lyrics = LLMService._synthesize_fallback_lyrics(topic, tags)
-            lyrics = _strip_thinking(lyrics)
+        try:
+            provider = LLMService._get_provider()
+            active_model = model or LLMService._get_active_model()
+            res = await asyncio.to_thread(provider.generate_json, prompt, active_model, options={"temperature": 0.7})
+            if isinstance(res, dict):
+                if res.get("title"):
+                    title = str(res["title"]).strip().replace('"', '')
+                if res.get("topic"):
+                    topic = str(res["topic"]).strip()
+                if res.get("tags"):
+                    tags = str(res["tags"]).strip()
+                if res.get("lyrics") and not is_instrumental:
+                    lyrics = str(res["lyrics"]).strip()
+        except Exception as e:
+            logger.warning(f"Unified producer synthesis failed ({e}); using intelligent musical fallbacks.")
 
-        # 5. Structured Caption via the official rewriter (three-heading contract).
+        if not is_instrumental and (not lyrics or len(lyrics) < 30):
+            lyrics = LLMService._synthesize_fallback_lyrics(topic, tags)
+        lyrics = _strip_thinking(lyrics)
+
+        # Structured Caption via the official rewriter (three-heading contract)
         caption_result = await LLMService.rewrite_caption(
             concept=clean_concept,
             lyrics=lyrics or None,
@@ -1175,7 +1179,7 @@ class LLMService:
             "lyrics": lyrics,
             "structured_caption": structured_caption,
             "is_instrumental": is_instrumental,
-            "producer_notice": producer_notice
+            "llm_model": model or LLMService._get_active_model()
         }
 
     @staticmethod

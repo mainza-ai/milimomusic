@@ -28,7 +28,6 @@ export const MilimoLogo: React.FC<MilimoLogoProps> = ({
                     alt="Milimo Music Logo"
                     className="w-full h-full object-cover rounded-[10px] transform group-hover:scale-105 transition-transform duration-300"
                     onError={(e) => {
-                        // Fallback gradient if image not found
                         (e.target as HTMLElement).style.display = 'none';
                     }}
                 />

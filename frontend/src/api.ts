@@ -376,11 +376,11 @@ export const api = {
         return res.data;
     },
 
-    producerCompose: async (prompt: string, modelName?: string) => {
+    producerCompose: async (prompt: string, modelName?: string, signal?: AbortSignal) => {
         const res = await axios.post(`${API_BASE_URL}/producer/compose`, {
             prompt,
             model_name: modelName
-        });
+        }, { signal });
         return res.data;
     },
 
@@ -764,13 +764,13 @@ export const sessionApi = {
     deleteSession: async (id: string): Promise<void> => {
         await axios.delete(`${API_BASE_URL}/sessions/${id}`);
     },
-    sendChatMessage: async (id: string, message: SessionMessageCreate): Promise<{
+    sendChatMessage: async (id: string, message: SessionMessageCreate, signal?: AbortSignal): Promise<{
         session: StudioSession;
         user_message: SessionMessage;
         producer_message: SessionMessage;
         preset: any;
     }> => {
-        const res = await axios.post(`${API_BASE_URL}/sessions/${id}/chat`, message);
+        const res = await axios.post(`${API_BASE_URL}/sessions/${id}/chat`, message, { signal });
         return res.data;
     }
 };

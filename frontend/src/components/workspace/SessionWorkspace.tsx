@@ -612,10 +612,15 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             {/* Top Workspace Header Bar */}
             <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-3 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/70 dark:bg-[#12141c]/80 backdrop-blur-2xl flex-shrink-0 z-20 shadow-apple-sm">
                 <div className="flex items-center space-x-3 min-w-0">
-                    <div className="w-8 h-8 rounded-xl bg-teal-500/10 dark:bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/20 flex items-center justify-center font-bold text-xs p-1 flex-shrink-0">
-                        <img src="/milimo_logo.png" alt="Logo" className="w-full h-full object-cover rounded-lg" onError={(e) => {
-                            (e.target as HTMLElement).style.display = 'none';
-                        }} />
+                    <div className="w-8 h-8 rounded-xl bg-teal-500/10 dark:bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/20 flex items-center justify-center font-bold text-xs p-0.5 flex-shrink-0 overflow-hidden">
+                        <img 
+                            src={job.cover_image_path ? (job.cover_image_path.startsWith('http') ? job.cover_image_path : `${API_BASE_URL}${job.cover_image_path}`) : '/milimo_logo.png'} 
+                            alt="Logo" 
+                            className="w-full h-full object-cover rounded-lg" 
+                            onError={(e) => {
+                                (e.target as HTMLImageElement).src = '/milimo_logo.png';
+                            }} 
+                        />
                     </div>
                     <div className="min-w-0">
                         <div className="flex items-center space-x-2 truncate">
@@ -756,8 +761,13 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                     <div className="h-full flex flex-col items-center justify-center p-8 space-y-6">
                         {/* Artwork with Apple App Icon styling */}
                         <div className="relative group">
-                            <div className="w-52 h-52 rounded-3xl bg-gradient-to-tr from-teal-500/20 via-cyan-500/20 to-sky-500/20 border border-black/[0.08] dark:border-white/10 shadow-apple-lg flex items-center justify-center p-6 backdrop-blur-xl">
-                                <img src="/milimo_logo.png" alt="Artwork" className="w-full h-full object-contain filter drop-shadow-md" />
+                            <div className="w-52 h-52 rounded-3xl bg-gradient-to-tr from-teal-500/20 via-cyan-500/20 to-sky-500/20 border border-black/[0.08] dark:border-white/10 shadow-apple-lg flex items-center justify-center p-2 backdrop-blur-xl overflow-hidden">
+                                <img 
+                                    src={job.cover_image_path ? (job.cover_image_path.startsWith('http') ? job.cover_image_path : `${API_BASE_URL}${job.cover_image_path}`) : '/milimo_logo.png'} 
+                                    alt="Artwork" 
+                                    className="w-full h-full object-cover rounded-2xl filter drop-shadow-md" 
+                                    onError={(e) => { (e.target as HTMLImageElement).src = '/milimo_logo.png'; }}
+                                />
                             </div>
                         </div>
 

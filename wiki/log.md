@@ -586,4 +586,33 @@ Implemented end-to-end neural acoustic lyric alignment on the backend and 60fps 
   - Replaced raw prompt echoing fallback with structured musical song drafts and transparent error notices.
   - Fixed `generate_structured` on third-party OpenAI-compatible endpoints to use JSON mode and Pydantic validation directly.
 
+## [2026-08-21] fix | Prompt Responsiveness, Heartlib Removal & LoRA Studio Preview
+- Implemented **Instant 0ms User Feedback** on prompt submission: immediate input clearing, optimistic message injection into chat session, and live Apple-grade animated Producer Composing card with realistic stage progression.
+- Parallelized backend LLM synthesis in `produce_full_track` via `asyncio.gather` for faster end-to-end brief and lyric generation.
+- Integrated instant floating HUD notifications (`milimo_progress` event dispatch) on prompt submission and direct generation flows.
+- Removed legacy `heartlib` dependency and provider from `requirements.txt`, `registry.py`, `ComposerSidebar.tsx`, and `test_v2_core.py`.
+- Deleted legacy photo assets (`milimo_logo.png`) and upgraded `MilimoLogo.tsx`, `AppFooter.tsx`, `GlobalAudioPlayer.tsx`, `HistoryFeed.tsx`, `SongsView.tsx`, and `SessionWorkspace.tsx` to sleek Apple Pro vector SVG graphics (`DEFAULT_COVER_ART`).
+- Marked LoRA Training Studio as **In Development** (`In Dev` pill badge in nav rail and banner in studio modal header).
+- Restarted backend uvicorn server on port 8000.
+
+## [2026-08-21] feat | Production-Grade Cancellation & Abort Architecture
+- Implemented **Client-Side Request Abort**: Configured `AbortController` in `App.tsx` and wired `signal?: AbortSignal` through `sessionApi.sendChatMessage` and `api.producerCompose` to terminate in-flight HTTP requests instantly.
+- Added **Dynamic Stop / Cancel Action in Prompt Bar**: During prompt/producer generation, the send arrow dynamically morphs into an animated Stop button (`<Square>`) that terminates generation immediately.
+- Added **Live Composing Card Cancellation**: Added inline Cancel button in the Producer composing message card.
+- Hardened **Generation Banner & HUD Cancellation**: Added permanent Cancel button in the Active Studio Generation banner (triggering backend `POST /jobs/{id}/cancel` + client state resets) and in `FloatingStatusWidget.tsx`.
+
+## [2026-08-21] fix | Full Brand Logo Restoration Across All DAW Views
+- Restored `milimo_logo.png` across all application touchpoints:
+  - Top Navigation & Landing Page Hero (`MilimoLogo.tsx`)
+  - Track History Feed Thumbnails (`HistoryFeed.tsx`)
+  - Songs View Grid & Table Artwork Fallbacks (`SongsView.tsx`)
+  - Global Audio Player & Playing Queue Drawer (`GlobalAudioPlayer.tsx`)
+  - Session Workspace Header Icon & Large Center Listen Canvas (`SessionWorkspace.tsx`)
+  - OS Lock Screen & Control Center MediaSession Artwork (`AudioEngineContext.tsx`)
+  - Application Footer (`AppFooter.tsx`)
+
+
+
+
+
 

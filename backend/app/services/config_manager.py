@@ -51,7 +51,7 @@ DEFAULT_CONFIG = {
     "nvidia": {
         "api_key": "",
         "base_url": "https://integrate.api.nvidia.com/v1",
-        "model": "meta/llama-3.3-70b-instruct"
+        "model": "deepseek-ai/deepseek-v4-flash-0731"
     },
     "deepseek": {
         "api_key": "",
@@ -76,7 +76,7 @@ DEFAULT_CONFIG = {
 
 # map: config_key -> (env_var, default)
 _ENV_MAP = {
-    "nvidia": {"api_key": ("NVIDIA_API_KEY", ""), "base_url": ("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"), "model": ("NVIDIA_MODEL", "meta/llama-3.3-70b-instruct")},
+    "nvidia": {"api_key": ("NVIDIA_API_KEY", ""), "base_url": ("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"), "model": ("NVIDIA_MODEL", "deepseek-ai/deepseek-v4-flash-0731")},
     "opencode": {"api_key": ("OPENCODE_API_KEY", ""), "base_url": ("OPENCODE_BASE_URL", "https://opencode.ai/zen/go/v1"), "model": ("OPENCODE_MODEL", "minimax-m3")},
     "deepseek": {"api_key": ("DEEPSEEK_API_KEY", ""), "base_url": ("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), "model": ("DEEPSEEK_MODEL", "deepseek-chat")},
     "openrouter": {"api_key": ("OPENROUTER_API_KEY", ""), "base_url": ("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"), "model": ("OPENROUTER_MODEL", "openai/gpt-3.5-turbo")},

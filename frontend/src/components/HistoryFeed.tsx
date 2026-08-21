@@ -1,7 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import type { Job } from '../api';
-import { api } from '../api';
+import { api, API_BASE_URL } from '../api';
 import { AudioPlayer } from './AudioPlayer';
 import { Edit2, Check, Trash2, Search, Calendar, Heart, Sliders, Layers, Sparkles, Info, Clock } from 'lucide-react';
 
@@ -194,9 +194,12 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                         }`}
                                                         title="Inspect Track Studio"
                                                     >
-                                                        <img src="/milimo_logo.png" alt="Track" className="w-full h-full object-cover rounded-lg" onError={(e) => {
-                                                            (e.target as HTMLElement).style.display = 'none';
-                                                        }} />
+                                                        <img 
+                                                            src={job.cover_image_path ? (job.cover_image_path.startsWith('http') ? job.cover_image_path : `${API_BASE_URL}${job.cover_image_path}`) : '/milimo_logo.png'} 
+                                                            alt="Track" 
+                                                            className="w-full h-full object-cover rounded-lg" 
+                                                            onError={(e) => { (e.target as HTMLImageElement).src = '/milimo_logo.png'; }} 
+                                                        />
                                                     </div>
 
                                                     <div className="flex-1 min-w-0">

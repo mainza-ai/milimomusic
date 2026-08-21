@@ -6,7 +6,6 @@ import logging
 from typing import Dict, List, Optional
 from app.providers.base import GenerationProvider, GenerationCapabilities
 from app.providers.minimax_provider import MiniMaxMusic3Provider
-from app.providers.heartmula_provider import HeartMuLaProvider
 
 logger = logging.getLogger(__name__)
 
@@ -23,11 +22,9 @@ class ProviderRegistry:
         return cls._instance
 
     def _register_defaults(self):
-        """Register MiniMax Music 3 as default and HeartMuLa as legacy/local."""
+        """Register MiniMax Music 3 as primary generation engine."""
         minimax = MiniMaxMusic3Provider()
-        heartmula = HeartMuLaProvider()
         self.register_provider("minimax_music3", minimax)
-        self.register_provider("heartmula", heartmula)
 
     def register_provider(self, provider_id: str, provider: GenerationProvider):
         self.providers[provider_id] = provider

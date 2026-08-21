@@ -17,18 +17,13 @@ from app.services.model_manager import model_manager
 
 def test_provider_registry_defaults():
     capabilities = provider_registry.list_capabilities()
-    assert len(capabilities) >= 2
+    assert len(capabilities) >= 1
     
     # Check default active provider is MiniMax Music 3
     active_caps = provider_registry.get_active_capabilities()
     assert active_caps.provider_id == "minimax_music3"
     assert active_caps.supports_structured_caption is True
     assert active_caps.max_duration_sec == 300
-
-    # Check HeartMuLa provider is registered
-    heartmula_provider = provider_registry.get_provider("heartmula")
-    assert heartmula_provider.get_capabilities().provider_id == "heartmula"
-    assert heartmula_provider.get_capabilities().supports_lora is True
 
 
 def test_minimax_structured_caption_parsing():

@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Sparkles, X } from 'lucide-react';
+import { api } from '../../api';
 
 interface TaskProgress {
     jobId: string;
@@ -10,6 +11,19 @@ interface TaskProgress {
 
 export const FloatingStatusWidget: React.FC = () => {
     const [task, setTask] = useState<TaskProgress | null>(null);
+
+    const handleCancel = async () => {
+        if (!task) return;
+        try {
+            if (task.jobId && task.jobId !== 'active' && !task.jobId.startsWith('producer-')) {
+                await api.cancelJob(task.jobId);
+            }
+        } catch (e) {
+            console.error("Failed to cancel from widget", e);
+        } finally {
+            setTask(null);
+        }
+    };
 
     useEffect(() => {
         const handleProgress = (e: any) => {
@@ -43,7 +57,16 @@ export const FloatingStatusWidget: React.FC = () => {
                         {task.stage}
                     </span>
                 </div>
-                <Sparkles size={14} className="text-teal-500 dark:text-teal-400 animate-pulse" />
+                <div className="flex items-center gap-1.5">
+                    <Sparkles size={14} className="text-teal-500 dark:text-teal-400 animate-pulse" />
+                    <button
+                        onClick={handleCancel}
+                        className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-rose-500 transition-colors"
+                        title="Cancel task"
+                    >
+                        <X size={13} />
+                    </button>
+                </div>
             </div>
 
             <p className="text-xs text-slate-600 dark:text-slate-300 truncate mb-2 font-mono">

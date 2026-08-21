@@ -1,4 +1,5 @@
 import { useState, useEffect, useRef } from 'react';
+import axios from 'axios';
 import {
   api,
   trainingApi,
@@ -7,7 +8,8 @@ import {
   coverApi,
   type Job,
   type Project,
-  type StudioSession
+  type StudioSession,
+  type SessionMessage
 } from './api';
 import { ComposerSidebar, type CompositionData } from './components/ComposerSidebar';
 import { HistoryFeed } from './components/HistoryFeed';
@@ -58,7 +60,8 @@ import {
   ArrowUp,
   Paperclip,
   Trash2,
-  FileAudio
+  FileAudio,
+  Square
 } from 'lucide-react';
 
 export type NavView =
@@ -237,39 +240,153 @@ function App() {
     }
   };
 
-  const handleSendChatMessage = async (content: string) => {
-    if (!content.trim() && !attachmentPath) return;
+  const [producerStatusStage, setProducerStatusStage] = useState<string>('Analyzing musical direction & style tags...');
+  const activeChatAbortController = useRef<AbortController | null>(null);
 
+  const handleCancelChatSubmission = () => {
+    if (activeChatAbortController.current) {
+      activeChatAbortController.current.abort();
+      activeChatAbortController.current = null;
+    }
+    setIsChatSubmitting(false);
+    window.dispatchEvent(new CustomEvent('milimo_progress', {
+      detail: {
+        job_id: 'producer-planning',
+        stage: 'Cancelled',
+        progress: 100,
+        message: 'Prompt planning terminated by user.'
+      }
+    }));
+  };
+
+  const handleSendChatMessage = async (content: string) => {
+    const trimmed = content.trim();
+    if (!trimmed && !attachmentPath) return;
+
+    const currentAttachment = attachmentPath;
+
+    // 1. Instant User Feedback: Clear prompt input immediately (0ms)
+    setProducerInput('');
+    setAttachmentPath(null);
+
+    // 2. Optimistic user message insertion
+    const tempUserId = 'temp-msg-' + Date.now();
     let targetSession = activeSession;
+    const optimisticUserMsg: SessionMessage = {
+      id: tempUserId,
+      session_id: targetSession?.id || 'temp',
+      role: 'user',
+      content: trimmed,
+      audio_attachment_path: currentAttachment || undefined,
+      created_at: new Date().toISOString()
+    };
+
     if (!targetSession) {
-      targetSession = await sessionApi.createSession({
-        title: content.slice(0, 30) || 'New Session'
-      });
-      setSessions(prev => [targetSession!, ...prev]);
+      targetSession = {
+        id: 'temp-session-' + Date.now(),
+        title: trimmed.slice(0, 30) || 'New Session',
+        created_at: new Date().toISOString(),
+        updated_at: new Date().toISOString(),
+        messages: [optimisticUserMsg]
+      };
       setActiveSession(targetSession);
+      setSessions(prev => [targetSession!, ...prev]);
+    } else {
+      const updated = {
+        ...targetSession,
+        messages: [...(targetSession.messages || []), optimisticUserMsg]
+      };
+      setActiveSession(updated);
+      setSessions(prev => prev.map(s => s.id === updated.id ? updated : s));
     }
 
+    setIsChatSubmitting(true);
+    setProducerStatusStage('Analyzing musical direction & style tags...');
+
+    const controller = new AbortController();
+    activeChatAbortController.current = controller;
+
+    // 3. Immediate Floating Status HUD notification
+    window.dispatchEvent(new CustomEvent('milimo_progress', {
+      detail: {
+        job_id: 'producer-planning',
+        stage: 'AI Producer',
+        progress: 25,
+        message: 'Analyzing musical direction & style tags...'
+      }
+    }));
+
+    // Stage timer transitions for live Apple-grade feedback during LLM execution
+    const t1 = setTimeout(() => {
+      setProducerStatusStage('Writing song lyrics with AI Co-Writer...');
+      window.dispatchEvent(new CustomEvent('milimo_progress', {
+        detail: {
+          job_id: 'producer-planning',
+          stage: 'AI Co-Writer',
+          progress: 55,
+          message: 'Writing structured song lyrics...'
+        }
+      }));
+    }, 2500);
+
+    const t2 = setTimeout(() => {
+      setProducerStatusStage('Structuring arrangement & production captions...');
+      window.dispatchEvent(new CustomEvent('milimo_progress', {
+        detail: {
+          job_id: 'producer-planning',
+          stage: 'MiniMax Music 3',
+          progress: 85,
+          message: 'Structuring arrangement & MiniMax captions...'
+        }
+      }));
+    }, 6000);
+
     try {
-      setIsChatSubmitting(true);
-      const res = await sessionApi.sendChatMessage(targetSession.id, {
-        content,
+      // If session was freshly created optimistically, real create on server first
+      let realSessionId = targetSession.id;
+      if (targetSession.id.startsWith('temp-session-')) {
+        const created = await sessionApi.createSession({
+          title: trimmed.slice(0, 30) || 'New Session'
+        });
+        realSessionId = created.id;
+      }
+
+      const res = await sessionApi.sendChatMessage(realSessionId, {
+        content: trimmed,
         role: 'user',
-        audio_attachment_path: attachmentPath || undefined
-      });
+        audio_attachment_path: currentAttachment || undefined
+      }, controller.signal);
+
+      clearTimeout(t1);
+      clearTimeout(t2);
+
+      window.dispatchEvent(new CustomEvent('milimo_progress', {
+        detail: {
+          job_id: 'producer-planning',
+          stage: 'AI Producer Ready',
+          progress: 100,
+          message: 'Arrangement & lyrics complete.'
+        }
+      }));
 
       setActiveSession(res.session);
-      setSessions(prev => prev.map(s => (s.id === res.session.id ? res.session : s)));
-      setProducerInput('');
-      setAttachmentPath(null);
+      setSessions(prev => prev.map(s => (s.id === res.session.id || s.id === targetSession!.id ? res.session : s)));
 
       if (res.preset) {
         setProducerPreset(res.preset);
         if (!isComposerOpen) setIsComposerOpen(true);
       }
     } catch (e: any) {
-      alert("Producer chat error: " + (e.response?.data?.detail || e.message));
+      clearTimeout(t1);
+      clearTimeout(t2);
+      if (axios.isCancel(e) || e.name === 'CanceledError' || e.name === 'AbortError') {
+        console.log("Chat submission cancelled by user.");
+      } else {
+        alert("Producer chat error: " + (e.response?.data?.detail || e.message));
+      }
     } finally {
       setIsChatSubmitting(false);
+      activeChatAbortController.current = null;
     }
   };
 
@@ -538,10 +655,29 @@ function App() {
   // those real inputs to generate the final track AND prefill the composer panel.
   const handleProducerGenerate = async (prompt: string) => {
     if (!prompt) return;
+    setProducerInput('');
+    setIsGenerating(true);
+    setGenerationProgress({
+      step: 1,
+      total_steps: 10,
+      phase: 'AI Producer',
+      progress: 15,
+      message: 'AI Producer: Analyzing prompt & structuring musical brief...'
+    });
+    window.dispatchEvent(new CustomEvent('milimo_progress', {
+      detail: {
+        job_id: 'producer-direct',
+        stage: 'AI Producer',
+        progress: 15,
+        message: 'Composing lyrics, arrangement & style tags...'
+      }
+    }));
+
     try {
-      const composed = await api.producerCompose(prompt, lyricsModels[0] || undefined);
+      const composed = await api.producerCompose(prompt, undefined);
       const data: CompositionData = {
-        topic: prompt,
+        title: composed.title || undefined,
+        topic: composed.topic || prompt,
         lyrics: composed.lyrics || `[Verse 1]\n${prompt}\n[Chorus]\n${prompt}`,
         tags: composed.tags || 'Pop, Electronic, Synthwave',
         structuredCaption: composed.structured_caption,
@@ -549,13 +685,13 @@ function App() {
         temperature: 1.0,
         cfgScale: 1.5,
         topk: 50,
-        llmModel: lyricsModels[0] || 'minimax-m3',
+        llmModel: '',
         modelProvider: 'minimax_music3'
       };
       setProducerPreset(data);   // populate composer
-      setProducerInput('');
       await handleGenerateMusic(data);
     } catch (e: any) {
+      setIsGenerating(false);
       alert("Producer error: " + (e.response?.data?.detail || e.message));
     }
   };
@@ -569,14 +705,26 @@ function App() {
     }
   };
 
-  const handleCancelJob = async (jobId: string) => {
+  const handleCancelJob = async (jobId?: string | null) => {
     try {
-      await api.cancelJob(jobId);
+      if (jobId && jobId !== 'producer-direct') {
+        await api.cancelJob(jobId);
+      }
+    } catch (e) {
+      console.error("Failed to cancel job", e);
+    } finally {
       setIsGenerating(false);
+      setGenerationProgress(null);
       setCurrentJobId(null);
       handleRefresh();
-    } catch (e) {
-      console.error("Failed to cancel", e);
+      window.dispatchEvent(new CustomEvent('milimo_progress', {
+        detail: {
+          job_id: jobId || 'active',
+          stage: 'Cancelled',
+          progress: 100,
+          message: 'Operation terminated by user.'
+        }
+      }));
     }
   };
 
@@ -771,7 +919,7 @@ function App() {
 
             {[
               { label: 'Voice Studio', icon: Mic, color: 'text-teal-500 dark:text-teal-400', onClick: () => setIsVoiceStudioOpen(true) },
-              { label: 'LoRA Studio', icon: GraduationCap, color: 'text-amber-500 dark:text-amber-400', onClick: () => setIsTrainingOpen(true) },
+              { label: 'LoRA Studio', icon: GraduationCap, color: 'text-amber-500 dark:text-amber-400', badge: 'In Dev', onClick: () => setIsTrainingOpen(true) },
               { label: 'Models & HW', icon: Cpu, color: 'text-cyan-500 dark:text-cyan-400', onClick: () => setIsModelsManagerOpen(true) }
             ].map((engine, idx) => {
               const Icon = engine.icon;
@@ -790,7 +938,12 @@ function App() {
                   title={engine.label}
                 >
                   <Icon size={15} className={`${engine.color} flex-shrink-0`} />
-                  {!isLeftRailCollapsed && <span>{engine.label}</span>}
+                  {!isLeftRailCollapsed && <span className="truncate">{engine.label}</span>}
+                  {!isLeftRailCollapsed && (engine as any).badge && (
+                    <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 font-bold border border-amber-500/20 ml-auto">
+                      {(engine as any).badge}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -1037,16 +1190,15 @@ function App() {
                 </div>
               </div>
 
-              {currentJobId && (
-                <button
-                  onClick={() => handleCancelJob(currentJobId)}
-                  className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-bold transition-colors flex-shrink-0"
-                  title="Cancel generation"
-                  aria-label="Cancel Generation"
-                >
-                  Cancel
-                </button>
-              )}
+              <button
+                onClick={() => handleCancelJob(currentJobId)}
+                className="px-3 py-1.5 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-bold transition-all flex items-center gap-1.5 border border-rose-500/20 shadow-sm active:scale-95 flex-shrink-0"
+                title="Cancel generation"
+                aria-label="Cancel Generation"
+              >
+                <Square size={11} className="fill-current" />
+                <span>Cancel</span>
+              </button>
             </div>
 
             {/* Glowing Studio Progress Bar */}
@@ -1264,10 +1416,42 @@ function App() {
                     })}
 
                     {isChatSubmitting && (
-                      <div className="flex justify-start animate-fade-in">
-                        <div className="p-4 rounded-2xl bg-white dark:bg-[#181a24] border border-black/[0.08] dark:border-white/10 rounded-bl-sm flex items-center gap-2 text-xs text-slate-400 font-medium">
-                          <div className="w-4 h-4 rounded-full border-2 border-teal-500 border-t-transparent animate-spin" />
-                          <span>Producer is composing arrangement...</span>
+                      <div className="flex justify-start animate-slide-up">
+                        <div className="p-4 rounded-2xl bg-white/95 dark:bg-[#181a24]/95 border border-teal-500/30 dark:border-teal-500/20 rounded-bl-sm shadow-apple-md flex flex-col gap-2.5 max-w-sm w-full backdrop-blur-xl">
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <span className="w-2 h-2 rounded-full bg-teal-500 animate-ping" />
+                              <span className="text-[11px] font-bold text-teal-600 dark:text-teal-400 uppercase tracking-wider">
+                                AI Producer Composing
+                              </span>
+                            </div>
+                            <div className="flex items-center gap-1.5">
+                              <Sparkles size={13} className="text-teal-500 animate-pulse" />
+                              <button
+                                onClick={handleCancelChatSubmission}
+                                className="p-1 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-rose-500 transition-colors"
+                                title="Cancel Producer generation"
+                              >
+                                <X size={13} />
+                              </button>
+                            </div>
+                          </div>
+                          <p className="text-xs text-slate-700 dark:text-slate-200 font-sans flex items-center gap-2">
+                            <span className="inline-block w-3.5 h-3.5 rounded-full border-2 border-teal-500 border-t-transparent animate-spin flex-shrink-0" />
+                            <span className="truncate font-medium">{producerStatusStage}</span>
+                          </p>
+                          <div className="w-full bg-black/5 dark:bg-white/10 rounded-full h-1 overflow-hidden">
+                            <div className="bg-gradient-to-r from-teal-500 to-cyan-400 h-full w-3/4 animate-pulse rounded-full" />
+                          </div>
+                          <div className="flex justify-end">
+                            <button
+                              onClick={handleCancelChatSubmission}
+                              className="text-[11px] font-bold text-rose-500 hover:text-rose-600 hover:underline flex items-center gap-1 transition-colors"
+                            >
+                              <Square size={10} className="fill-current" />
+                              <span>Stop generating</span>
+                            </button>
+                          </div>
                         </div>
                       </div>
                     )}
@@ -1410,18 +1594,31 @@ function App() {
                   <Mic size={18} />
                 </button>
 
-                <button
-                  onClick={() => {
-                    if ((producerInput || attachmentPath) && !isChatSubmitting) {
-                      handleSendChatMessage(producerInput);
-                    }
-                  }}
-                  disabled={(!producerInput.trim() && !attachmentPath) || isChatSubmitting}
-                  className="w-9 h-9 rounded-full bg-teal-500 hover:bg-teal-400 disabled:opacity-40 text-slate-950 font-bold flex items-center justify-center transition-all shadow-md shadow-teal-500/20 active:scale-95 flex-shrink-0"
-                  title="Send message to Producer"
-                >
-                  <ArrowUp size={18} />
-                </button>
+                {isChatSubmitting ? (
+                  <button
+                    type="button"
+                    onClick={handleCancelChatSubmission}
+                    className="w-9 h-9 rounded-full bg-rose-500 hover:bg-rose-600 text-white font-bold flex items-center justify-center transition-all shadow-md shadow-rose-500/25 active:scale-95 flex-shrink-0 animate-pulse"
+                    title="Stop / Terminate Producer thinking"
+                    aria-label="Stop generation"
+                  >
+                    <Square size={12} className="fill-current" />
+                  </button>
+                ) : (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if ((producerInput || attachmentPath) && !isChatSubmitting) {
+                        handleSendChatMessage(producerInput);
+                      }
+                    }}
+                    disabled={!producerInput.trim() && !attachmentPath}
+                    className="w-9 h-9 rounded-full bg-teal-500 hover:bg-teal-400 disabled:opacity-40 text-slate-950 font-bold flex items-center justify-center transition-all shadow-md shadow-teal-500/20 active:scale-95 flex-shrink-0"
+                    title="Send message to Producer"
+                  >
+                    <ArrowUp size={18} />
+                  </button>
+                )}
               </div>
             </div>
 

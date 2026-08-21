@@ -285,7 +285,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                                 </button>
                                             </div>
                                             <Combobox
-                                                value={config.nvidia?.model || 'meta/llama-3.1-70b-instruct'}
+                                                value={config.nvidia?.model || 'deepseek-ai/deepseek-v4-flash-0731'}
                                                 onChange={(val) => handleChange('nvidia', 'model', val)}
                                                 options={availableModels}
                                                 onRefresh={handleFetchModels}
@@ -295,7 +295,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                         </div>
 
                                         <div className="bg-emerald-500/10 text-emerald-800 dark:text-emerald-300 p-3 rounded-2xl text-xs border border-emerald-500/20">
-                                            Connected to <strong>NVIDIA NIM API</strong> with support for <code>meta/llama-3.1-70b-instruct</code>, <code>meta/llama-3.1-8b-instruct</code>, and 100+ hosted models.
+                                            Connected to <strong>NVIDIA NIM API</strong> with dynamic support for <code>deepseek-ai/deepseek-v4-flash-0731</code>, <code>deepseek-ai/deepseek-r1</code>, and 100+ hosted models.
                                         </div>
                                     </div>
                                 )}

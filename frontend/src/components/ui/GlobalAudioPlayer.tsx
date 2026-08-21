@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { type Job, type TimedLine, API_BASE_URL } from '../../api';
 import { useAudioEngine } from '../../context/AudioEngineContext';
+import { DEFAULT_COVER_ART } from '../../constants/assets';
 import {
   Play,
   Pause,
@@ -161,7 +162,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
     ? currentSong.cover_image_path.startsWith('http')
       ? currentSong.cover_image_path
       : `${API_BASE_URL}${currentSong.cover_image_path}`
-    : '/milimo_logo.png';
+    : DEFAULT_COVER_ART;
 
   const upcomingQueue = playlist.filter((p) => p.id !== currentSong.id);
 
@@ -244,7 +245,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
                     ? track.cover_image_path.startsWith('http')
                       ? track.cover_image_path
                       : `${API_BASE_URL}${track.cover_image_path}`
-                    : '/milimo_logo.png';
+                    : DEFAULT_COVER_ART;
                   return (
                     <div
                       key={track.id}
@@ -464,7 +465,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
                 alt="Track Cover"
                 className="w-full h-full object-cover rounded-xl"
                 onError={(e) => {
-                  (e.target as HTMLImageElement).src = '/milimo_logo.png';
+                  (e.target as HTMLImageElement).src = DEFAULT_COVER_ART;
                 }}
               />
               <Disc

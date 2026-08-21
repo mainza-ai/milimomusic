@@ -1461,7 +1461,7 @@ function App() {
                 /* New Session Hero & 3 Visual Action Cards (Apple Design) */
                 <div className="text-center space-y-6 pt-2">
                   <div className="flex justify-center">
-                    <MilimoLogo size="lg" showText={true} />
+                    <MilimoLogo size="lg" showText={false} />
                   </div>
 
                   <div className="space-y-2">

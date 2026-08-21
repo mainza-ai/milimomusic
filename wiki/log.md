@@ -611,6 +611,11 @@ Implemented end-to-end neural acoustic lyric alignment on the backend and 60fps 
   - OS Lock Screen & Control Center MediaSession Artwork (`AudioEngineContext.tsx`)
   - Application Footer (`AppFooter.tsx`)
 
+## [2026-08-21] doc | Official Silence Tagline & Wiki Synchronization
+- Restored the official brand tagline: *"Give the silence something worth remembering."* with sub-motto *"Speak it into being. Shape it until it's yours."* to the landing hero in `App.tsx`.
+- Synchronized `wiki/overview.md` and `wiki/entities/frontend.md` with official brand identity, instant prompt feedback, and production cancellation architecture.
+
+
 
 
 

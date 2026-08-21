@@ -18,8 +18,22 @@ Suno-style **reference IA** plus a full web **DAW workspace**.
 `axios`, `clsx`, `framer-motion`, `lucide-react`, `react`, `react-dom`, `tailwind-merge`,
 `wavesurfer.js`, `zustand`.
 
+## Brand Identity & Design System
+- **Official Tagline**: *"Give the silence something worth remembering."* with sub-motto *"Speak it into being. Shape it until it's yours."*
+- **Brand Logo (`MilimoLogo.tsx`)**: Official `/milimo_logo.png` rendered within an Apple App Icon glassmorphic container (`rounded-xl bg-gradient-to-tr border border-black/10 dark:border-white/15`). Used across landing hero, navigation rail, audio players, feed thumbnails, DAW workspace, and lock-screen metadata.
+- **Apple Glassmorphism UI**: System-wide dark/light palette using clean translucent frosted cards, subtle gradients, and standard status pills.
+
+## Prompt Responsiveness & Production Cancellation
+- **Instant 0ms Input Clearing & Optimistic Chat Injection**: Submitting a prompt immediately clears the input field and injects the user's message optimistically into the active conversation thread with zero perceived latency.
+- **Live Producer Composing Status Card**: Displays animated stage progression (`"Analyzing musical direction..."` → `"Writing song lyrics..."` → `"Structuring arrangement..."`) with real-time progress bar.
+- **Production-Grade Cancellation Architecture**:
+  - `AbortController` integration wired through `sessionApi.sendChatMessage` and `api.producerCompose`.
+  - **Dynamic Stop Button (`<Square>`)**: In-flight submissions turn the prompt bar send arrow into an animated pulsating Stop button.
+  - **Live Composing Card Cancellation**: Inline *"Stop generating"* button and `✕` close control.
+  - **Generation Banner & HUD Cancellation**: Dedicated cancel buttons in the active generation banner and floating HUD widget trigger backend `POST /jobs/{id}/cancel` and immediate client state reset.
+
 ## Suno-style IA — dedicated views (`components/views/`)
-- **Explore** (default landing) — chat-first "Producer" input, quick-start chips, feed.
+- **Explore** (default landing) — chat-first "Producer" input, quick-start chips, feed, and central brand hero with the official silence tagline.
 - **SongsView** — song library: List/Grid, search + genre pills; per-track play, **View
   Lyrics**, Favorite, **DAW** (open workspace), Extend, Delete; "MIDI Ready + 4 Stems" badges.
 - **PlaylistsView** — local (localStorage) playlists/albums with seed playlists; Play All,
@@ -27,7 +41,7 @@ Suno-style **reference IA** plus a full web **DAW workspace**.
 - **ProjectsView** — [project folders](backend-api.md) (BPM, key signature, color); project
   stats, "Generate in this Project", "Add Existing Track", DAW open.
 - **MusicVideosView** — AI music-video studio (aesthetic presets, simulated storyboard,
-  "WhisperX Aligned") — largely a mockup.
+  "WhisperX Aligned") — marked as "In Dev".
 - **ProfileView** — artist profile with badges (STUDIO MASTER, RVC/SVC, Note-Level
   Transcription), featured creations.
 

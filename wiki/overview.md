@@ -10,6 +10,9 @@ aliases: [Milimo]
 
 # Milimo Music — Overview
 
+> **"Give the silence something worth remembering."**
+> *Speak it into being. Shape it until it's yours.*
+
 **Milimo Music** is an open-source, non-commercial **AI music generation, neural
 transcription, and multitrack production platform** ("DAW") created by [Mainza Kangombe](https://www.linkedin.com/in/mainza-kangombe-6214295).
 It pairs state-of-the-art generation models with DAW editing, note-level transcription

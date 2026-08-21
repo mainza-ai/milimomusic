@@ -29,6 +29,7 @@ import { MusicVideosView } from './components/views/MusicVideosView';
 import { ProfileView } from './components/views/ProfileView';
 import { TrackDetailView } from './components/views/TrackDetailView';
 import { GlobalAudioPlayer } from './components/ui/GlobalAudioPlayer';
+import { AppFooter } from './components/ui/AppFooter';
 
 import {
   Plus,
@@ -668,7 +669,7 @@ function App() {
               { id: 'songs', label: 'Songs', icon: Music },
               { id: 'projects', label: 'Projects', icon: FolderKanban },
               { id: 'playlists', label: 'Playlists', icon: ListMusic },
-              { id: 'videos', label: 'Music videos', icon: Video },
+              { id: 'videos', label: 'Music videos', icon: Video, badge: 'In Dev' },
               { id: 'profile', label: 'Profile', icon: User },
               { id: 'workspace', label: 'DAW Workspace', icon: Sliders }
             ].map(item => {
@@ -689,10 +690,10 @@ function App() {
                     }
                     setIsMobileMenuOpen(false);
                   }}
-                  className={`w-full flex items-center rounded-xl text-xs font-semibold transition-all ${
+                  className={`w-full flex items-center justify-between rounded-xl text-xs font-semibold transition-all ${
                     isLeftRailCollapsed
                       ? 'justify-center py-2.5 px-0'
-                      : 'space-x-3 px-3.5 py-2.5'
+                      : 'px-3.5 py-2.5'
                   } ${
                     isActive
                       ? 'bg-black/[0.06] dark:bg-white/10 text-teal-600 dark:text-teal-300 font-bold shadow-sm'
@@ -700,8 +701,15 @@ function App() {
                   }`}
                   title={item.label}
                 >
-                  <Icon size={16} className="text-teal-500 dark:text-teal-400 flex-shrink-0" />
-                  {!isLeftRailCollapsed && <span>{item.label}</span>}
+                  <div className="flex items-center space-x-3 truncate">
+                    <Icon size={16} className="text-teal-500 dark:text-teal-400 flex-shrink-0" />
+                    {!isLeftRailCollapsed && <span className="truncate">{item.label}</span>}
+                  </div>
+                  {!isLeftRailCollapsed && (item as any).badge && (
+                    <span className="text-[9px] font-mono px-1.5 py-0.5 rounded-md bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-bold">
+                      {(item as any).badge}
+                    </span>
+                  )}
                 </button>
               );
             })}
@@ -1442,6 +1450,9 @@ function App() {
                 onDelete={handleDeleteJob}
                 onSelectTrack={handleSelectTrack}
               />
+
+              {/* Global Creator Footer */}
+              <AppFooter />
             </div>
           </div>
         )}

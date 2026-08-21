@@ -4,7 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
     X, Upload, Play, Square, Trash2, FolderPlus, Edit2, HelpCircle,
     Settings2, Loader2, CheckCircle2, AlertCircle,
-    Music, Database, Cpu, Package
+    Music, Database, Cpu, Package, Sparkles
 } from 'lucide-react';
 import { trainingApi, type Dataset, type TrainingJob, type Checkpoint } from '../api';
 
@@ -21,13 +21,13 @@ const HelpTooltip: React.FC<{ text: string }> = ({ text }) => {
     const [isVisible, setIsVisible] = useState(false);
 
     return (
-        <div className="relative inline-block ml-1">
+        <div className="relative inline-block ml-1.5 align-middle">
             <button
                 type="button"
                 onMouseEnter={() => setIsVisible(true)}
                 onMouseLeave={() => setIsVisible(false)}
                 onClick={(e) => { e.preventDefault(); setIsVisible(!isVisible); }}
-                className="text-slate-400 hover:text-teal-500 transition-colors"
+                className="text-slate-400 hover:text-teal-500 dark:hover:text-teal-400 transition-colors"
             >
                 <HelpCircle className="w-3.5 h-3.5" />
             </button>
@@ -37,11 +37,11 @@ const HelpTooltip: React.FC<{ text: string }> = ({ text }) => {
                         initial={{ opacity: 0, y: 5 }}
                         animate={{ opacity: 1, y: 0 }}
                         exit={{ opacity: 0, y: 5 }}
-                        className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-slate-800 text-white text-xs rounded-lg shadow-xl"
+                        className="absolute z-50 bottom-full left-1/2 -translate-x-1/2 mb-2 w-64 p-3 bg-slate-900/95 text-white text-xs rounded-2xl shadow-apple-lg border border-white/10 backdrop-blur-xl"
                     >
-                        <div className="relative">
+                        <div className="relative leading-relaxed">
                             {text}
-                            <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-800" />
+                            <div className="absolute top-full left-1/2 -translate-x-1/2 border-4 border-transparent border-t-slate-900/95" />
                         </div>
                     </motion.div>
                 )}
@@ -150,68 +150,72 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
     // Preprocessing state
     const [isPreprocessing, setIsPreprocessing] = useState(false);
 
-    // Audio preview state
+    // Audio player state
     const [playingFile, setPlayingFile] = useState<string | null>(null);
     const audioRef = React.useRef<HTMLAudioElement | null>(null);
 
+    // Error state
     const [error, setError] = useState<string | null>(null);
 
-    // Load data when modal opens
+    // Load initial data
+    const loadDatasets = useCallback(async () => {
+        try {
+            const list = await trainingApi.listDatasets();
+            setDatasets(list);
+            if (list.length > 0 && !selectedDataset) {
+                setSelectedDataset(list[0]);
+            }
+        } catch (e) {
+            console.error('Failed to load datasets', e);
+        }
+    }, [selectedDataset]);
+
+    const loadJobs = useCallback(async () => {
+        setIsLoadingJobs(true);
+        try {
+            const list = await trainingApi.listJobs();
+            setJobs(list);
+        } catch (e) {
+            console.error('Failed to load jobs', e);
+        } finally {
+            setIsLoadingJobs(false);
+        }
+    }, []);
+
+    const loadCheckpoints = useCallback(async () => {
+        try {
+            const list = await trainingApi.listCheckpoints();
+            setCheckpoints(list);
+        } catch (e) {
+            console.error('Failed to load checkpoints', e);
+        }
+    }, []);
+
     useEffect(() => {
         if (isOpen) {
             loadDatasets();
             loadJobs();
             loadCheckpoints();
         }
-    }, [isOpen]);
+    }, [isOpen, loadDatasets, loadJobs, loadCheckpoints]);
 
-    // Poll jobs every 3 seconds while modal is open for real-time updates
+    // Poll jobs while open
     useEffect(() => {
-        if (!isOpen) return;
+        if (!isOpen || activeTab !== 'jobs') return;
 
-        const interval = setInterval(() => {
-            loadJobs();
-            // Also refresh checkpoints in case training completes
-            loadCheckpoints();
-        }, 3000);
+        const hasActiveJobs = jobs.some(j => j.status === 'running' || j.status === 'preprocessing');
+        if (!hasActiveJobs && jobs.length > 0) return;
 
+        const interval = setInterval(loadJobs, 2000);
         return () => clearInterval(interval);
-    }, [isOpen]);
+    }, [isOpen, activeTab, jobs, loadJobs]);
 
-    const loadDatasets = async () => {
-        try {
-            const data = await trainingApi.listDatasets();
-            setDatasets(data);
-        } catch (e) {
-            console.error('Failed to load datasets', e);
-        }
-    };
-
-    const loadJobs = async () => {
-        setIsLoadingJobs(true);
-        try {
-            const data = await trainingApi.listJobs();
-            setJobs(data);
-        } catch (e) {
-            console.error('Failed to load jobs', e);
-        } finally {
-            setIsLoadingJobs(false);
-        }
-    };
-
-    const loadCheckpoints = async () => {
-        try {
-            const data = await trainingApi.listCheckpoints();
-            setCheckpoints(data);
-        } catch (e) {
-            console.error('Failed to load checkpoints', e);
-        }
-    };
-
+    // Handlers
     const handleCreateDataset = async () => {
         if (!newDatasetName.trim()) return;
         setIsCreatingDataset(true);
         setError(null);
+
         try {
             const styles = newDatasetStyles.split(',').map(s => s.trim()).filter(Boolean);
             const dataset = await trainingApi.createDataset(newDatasetName.trim(), styles);
@@ -228,26 +232,56 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
 
     const handlePreprocessDataset = async () => {
         if (!selectedDataset) return;
-
-        if (!confirm('This will re-process all audio files with the correct tag format. Continue?')) {
-            return;
-        }
-
         setIsPreprocessing(true);
         setError(null);
 
         try {
-            const result = await trainingApi.preprocessDataset(selectedDataset.id, true);
-            // Refresh dataset to update status
-            const updated = await trainingApi.getDataset(selectedDataset.id);
-            setSelectedDataset(updated);
-            setDatasets(prev => prev.map(d => d.id === updated.id ? updated : d));
-            alert(`Successfully processed ${result.processed_count} files!`);
+            const result = await trainingApi.preprocessDataset(selectedDataset.id);
+            if (result.success) {
+                await loadDatasets();
+                setError(null);
+            } else {
+                setError(result.message || 'Preprocessing completed with warnings');
+            }
         } catch (e: any) {
-            setError(e.response?.data?.detail || 'Preprocessing failed');
+            setError(e.response?.data?.detail || 'Failed to preprocess dataset');
         } finally {
             setIsPreprocessing(false);
         }
+    };
+
+    const handleFileUpload = async (files: FileList | null) => {
+        if (!files || !selectedDataset) return;
+
+        for (let i = 0; i < files.length; i++) {
+            const file = files[i];
+            const isAudio = file.type.startsWith('audio/') || /\.(mp3|wav|flac|ogg|m4a)$/i.test(file.name);
+            const isText = file.type === 'text/plain' || file.name.endsWith('.txt');
+
+            if (!isAudio && !isText) continue;
+
+            setUploadProgress(prev => ({ ...prev, [file.name]: true }));
+
+            try {
+                await trainingApi.uploadAudio(
+                    selectedDataset.id,
+                    file,
+                    uploadCaption || file.name.replace(/\.[^/.]+$/, '')
+                );
+                const updated = await trainingApi.getDataset(selectedDataset.id);
+                setSelectedDataset(updated);
+                setDatasets(prev => prev.map(d => d.id === updated.id ? updated : d));
+            } catch (e) {
+                console.error('Failed to upload', file.name, e);
+            } finally {
+                setUploadProgress(prev => {
+                    const next = { ...prev };
+                    delete next[file.name];
+                    return next;
+                });
+            }
+        }
+        setUploadCaption('');
     };
 
     const handlePlayAudio = (filename: string) => {
@@ -256,12 +290,10 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
         const audioUrl = `${import.meta.env.VITE_API_URL || 'http://localhost:8000'}/training/datasets/${selectedDataset.id}/audio/${encodeURIComponent(filename)}`;
 
         if (playingFile === filename && audioRef.current) {
-            // Stop playing
             audioRef.current.pause();
             audioRef.current = null;
             setPlayingFile(null);
         } else {
-            // Start playing
             if (audioRef.current) {
                 audioRef.current.pause();
             }
@@ -274,7 +306,7 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
     };
 
     const handleDeleteDataset = async (datasetId: string) => {
-        if (!confirm('Delete this dataset and all its files?')) return;
+        if (!confirm('Delete this dataset and all its audio files?')) return;
         try {
             await trainingApi.deleteDataset(datasetId);
             setDatasets(prev => prev.filter(d => d.id !== datasetId));
@@ -311,7 +343,6 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
         if (!selectedDataset) return;
         try {
             await trainingApi.deleteAudio(selectedDataset.id, filename);
-            // Update local state
             const updatedDataset = {
                 ...selectedDataset,
                 audio_files: selectedDataset.audio_files.filter(af => af.filename !== filename)
@@ -331,7 +362,6 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
                 editingLyrics.filename,
                 editingLyrics.caption
             );
-            // Update local state
             const updatedDataset = {
                 ...selectedDataset,
                 audio_files: selectedDataset.audio_files.map(af =>
@@ -347,49 +377,6 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
             console.error('Failed to update lyrics', e);
         }
     };
-
-    const handleFileUpload = useCallback(async (files: FileList | null) => {
-        if (!files || !selectedDataset) return;
-
-        // Collect .txt files for lyrics
-        const txtFiles = new Map<string, string>();
-        for (const file of Array.from(files)) {
-            if (file.name.endsWith('.txt')) {
-                const text = await file.text();
-                // Associate by basename (e.g., song.txt -> song.mp3)
-                const baseName = file.name.replace(/\.txt$/, '');
-                txtFiles.set(baseName, text);
-            }
-        }
-
-        for (const file of Array.from(files)) {
-            if (!file.type.startsWith('audio/')) continue;
-
-            // Check if there's a matching .txt lyrics file
-            const baseName = file.name.replace(/\.[^/.]+$/, '');
-            const lyricsFromTxt = txtFiles.get(baseName);
-            const caption = lyricsFromTxt || uploadCaption || baseName;
-
-            setUploadProgress(prev => ({ ...prev, [file.name]: true }));
-
-            try {
-                await trainingApi.uploadAudio(selectedDataset.id, file, caption);
-                // Refresh dataset
-                const updated = await trainingApi.getDataset(selectedDataset.id);
-                setSelectedDataset(updated);
-                setDatasets(prev => prev.map(d => d.id === updated.id ? updated : d));
-            } catch (e) {
-                console.error('Failed to upload', file.name, e);
-            } finally {
-                setUploadProgress(prev => {
-                    const next = { ...prev };
-                    delete next[file.name];
-                    return next;
-                });
-            }
-        }
-        setUploadCaption('');
-    }, [selectedDataset, uploadCaption]);
 
     const handleStartTraining = async () => {
         if (!selectedDataset) return;
@@ -461,11 +448,11 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
         }
     };
 
-    const tabs: { id: Tab; label: string; icon: React.ReactNode }[] = [
-        { id: 'dataset', label: 'Dataset', icon: <Database className="w-4 h-4" /> },
-        { id: 'training', label: 'Training', icon: <Cpu className="w-4 h-4" /> },
-        { id: 'jobs', label: 'Jobs', icon: <Settings2 className="w-4 h-4" /> },
-        { id: 'models', label: 'Models', icon: <Package className="w-4 h-4" /> },
+    const tabs = [
+        { id: 'dataset' as Tab, label: 'Dataset Prep', icon: <FolderPlus className="w-4 h-4" /> },
+        { id: 'training' as Tab, label: 'Training Config', icon: <Cpu className="w-4 h-4" /> },
+        { id: 'jobs' as Tab, label: 'Jobs Monitor', icon: <Settings2 className="w-4 h-4" /> },
+        { id: 'models' as Tab, label: 'Checkpoints', icon: <Package className="w-4 h-4" /> },
     ];
 
     return createPortal(
@@ -473,35 +460,44 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
             {isOpen && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 dark:bg-black/80 backdrop-blur-md p-4 animate-fade-in">
                     <motion.div
-                        initial={{ opacity: 0, scale: 0.95, y: 20 }}
+                        initial={{ opacity: 0, scale: 0.96, y: 15 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}
-                        exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                        className="bg-white/95 dark:bg-[#141620]/95 backdrop-blur-2xl rounded-3xl border border-black/[0.08] dark:border-white/10 shadow-apple-lg w-full max-w-5xl overflow-hidden flex flex-col min-h-[85vh] max-h-[95vh]"
+                        exit={{ opacity: 0, scale: 0.96, y: 15 }}
+                        className="bg-white/95 dark:bg-[#12141c]/95 backdrop-blur-2xl rounded-3xl border border-black/[0.08] dark:border-white/10 shadow-apple-2xl w-full max-w-5xl overflow-hidden flex flex-col min-h-[85vh] max-h-[95vh]"
                     >
                         {/* Header */}
-                        <div className="flex items-center justify-between p-5 border-b border-black/[0.06] dark:border-white/10 bg-black/[0.02] dark:bg-[#181a24]">
-                            <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 flex items-center gap-3 tracking-tight">
-                                <span className="p-1.5 bg-teal-500/10 dark:bg-teal-500/20 text-teal-700 dark:text-teal-300 rounded-xl text-base">🎓</span>
-                                <span>Training Studio (LoRA & Full Fine-Tune)</span>
-                            </h2>
+                        <div className="flex items-center justify-between p-5 border-b border-black/[0.06] dark:border-white/10 bg-black/[0.01] dark:bg-white/[0.02]">
+                            <div className="flex items-center gap-3">
+                                <span className="p-2 rounded-2xl bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20 text-base font-bold">
+                                    🎓
+                                </span>
+                                <div>
+                                    <h2 className="text-base font-bold text-slate-900 dark:text-slate-100 tracking-tight">
+                                        LoRA & Foundation Training Studio
+                                    </h2>
+                                    <p className="text-[11px] font-mono text-slate-400">
+                                        Dataset Audio Tokenization · LoRA Rank Adapters · Checkpoints
+                                    </p>
+                                </div>
+                            </div>
                             <button
                                 onClick={onClose}
-                                className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+                                className="p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
                             >
                                 <X className="w-5 h-5" />
                             </button>
                         </div>
 
-                        {/* Tabs */}
-                        <div className="flex border-b border-black/[0.06] dark:border-white/10 bg-black/[0.01] dark:bg-[#12141c] p-2 gap-2">
+                        {/* Segmented Tabs Bar */}
+                        <div className="flex border-b border-black/[0.06] dark:border-white/10 bg-black/[0.01] dark:bg-[#0f1118] p-2 gap-2">
                             {tabs.map(tab => (
                                 <button
                                     key={tab.id}
                                     onClick={() => setActiveTab(tab.id)}
                                     className={`flex-1 py-2 text-xs font-semibold rounded-xl transition-all flex items-center justify-center gap-2 ${activeTab === tab.id
-                                        ? 'bg-white dark:bg-white/15 shadow-apple-sm text-teal-700 dark:text-teal-300 font-bold'
+                                        ? 'bg-white dark:bg-white/15 shadow-apple-sm text-teal-700 dark:text-teal-300 font-bold border border-black/[0.04] dark:border-white/10'
                                         : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 hover:bg-black/[0.03] dark:hover:bg-white/5'
-                                        } `}
+                                        }`}
                                 >
                                     {tab.icon}
                                     <span>{tab.label}</span>
@@ -509,83 +505,83 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
                             ))}
                         </div>
 
-                        {/* Content */}
-                        <div className="flex-1 overflow-y-auto p-6 bg-white dark:bg-[#161824] text-slate-800 dark:text-slate-200">
+                        {/* Content Body */}
+                        <div className="flex-1 overflow-y-auto p-6 bg-slate-50/50 dark:bg-[#141620] text-slate-800 dark:text-slate-200">
                             {error && (
-                                <div className="mb-4 p-3 bg-red-50 border border-red-200 rounded-lg text-red-700 text-sm flex items-center gap-2">
-                                    <AlertCircle className="w-4 h-4" />
-                                    {error}
+                                <div className="mb-4 p-3.5 bg-rose-500/10 border border-rose-500/20 rounded-2xl text-rose-600 dark:text-rose-400 text-xs flex items-center gap-2.5 font-medium">
+                                    <AlertCircle className="w-4 h-4 flex-shrink-0" />
+                                    <span>{error}</span>
                                 </div>
                             )}
 
                             {/* Dataset Tab */}
                             {activeTab === 'dataset' && (
                                 <div className="space-y-6">
-                                    {/* Create Dataset */}
-                                    <div className="bg-gradient-to-r from-teal-50 to-cyan-50 rounded-lg p-4 border border-teal-100">
-                                        <h4 className="text-sm font-bold text-teal-800 mb-3 flex items-center gap-2">
-                                            <FolderPlus className="w-4 h-4" />
-                                            Create New Dataset
+                                    {/* Create Dataset Card */}
+                                    <div className="bg-white/80 dark:bg-[#181a24]/90 rounded-2xl p-5 border border-black/[0.06] dark:border-white/10 shadow-apple-sm space-y-4 backdrop-blur-xl">
+                                        <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 flex items-center gap-2 uppercase tracking-wider">
+                                            <FolderPlus className="w-4 h-4 text-teal-500" />
+                                            <span>Create New Dataset</span>
                                         </h4>
-                                        <div className="grid grid-cols-2 gap-3">
+                                        <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                             <input
                                                 type="text"
                                                 value={newDatasetName}
                                                 onChange={(e) => setNewDatasetName(e.target.value)}
-                                                placeholder="Dataset name (e.g., Afrobeat Collection)"
-                                                className="px-3 py-2 border border-teal-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none text-sm bg-white"
+                                                placeholder="Dataset name (e.g., Afrobeat Master Series)"
+                                                className="w-full apple-input text-xs"
                                             />
                                             <input
                                                 type="text"
                                                 value={newDatasetStyles}
                                                 onChange={(e) => setNewDatasetStyles(e.target.value)}
-                                                placeholder="Target styles (comma-separated)"
-                                                className="px-3 py-2 border border-teal-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none text-sm bg-white"
+                                                placeholder="Target style tags (e.g., Afrobeat, Highlife, Horns)"
+                                                className="w-full apple-input text-xs"
                                             />
                                         </div>
                                         <button
                                             onClick={handleCreateDataset}
                                             disabled={isCreatingDataset || !newDatasetName.trim()}
-                                            className="mt-3 px-4 py-2 bg-teal-500 hover:bg-teal-600 text-slate-950 font-bold text-sm rounded-md transition-all disabled:opacity-50 flex items-center gap-2"
+                                            className="px-4 py-2 bg-teal-500 hover:bg-teal-400 disabled:opacity-40 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-sm flex items-center gap-2 active:scale-95"
                                         >
-                                            {isCreatingDataset ? <Loader2 className="w-4 h-4 animate-spin" /> : <FolderPlus className="w-4 h-4" />}
-                                            Create Dataset
+                                            {isCreatingDataset ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FolderPlus className="w-3.5 h-3.5" />}
+                                            <span>Create Dataset</span>
                                         </button>
                                     </div>
 
                                     {/* Edit Dataset Modal */}
                                     {editingDataset && (
-                                        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                                            <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-md">
-                                                <h4 className="text-lg font-bold text-slate-800 mb-4">Edit Dataset</h4>
+                                        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-fade-in">
+                                            <div className="bg-white/95 dark:bg-[#141620]/95 backdrop-blur-2xl border border-black/[0.08] dark:border-white/10 rounded-3xl p-6 w-full max-w-md shadow-apple-2xl space-y-4">
+                                                <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100">Edit Dataset</h4>
                                                 <div className="space-y-3">
                                                     <input
                                                         type="text"
                                                         value={editName}
                                                         onChange={(e) => setEditName(e.target.value)}
                                                         placeholder="Dataset name"
-                                                        className="w-full px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none"
+                                                        className="w-full apple-input text-xs"
                                                     />
                                                     <input
                                                         type="text"
                                                         value={editStyles}
                                                         onChange={(e) => setEditStyles(e.target.value)}
                                                         placeholder="Styles (comma-separated)"
-                                                        className="w-full px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none"
+                                                        className="w-full apple-input text-xs"
                                                     />
                                                 </div>
-                                                <div className="flex justify-end gap-2 mt-4">
+                                                <div className="flex justify-end gap-2 pt-2">
                                                     <button
                                                         onClick={() => setEditingDataset(null)}
-                                                        className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-md"
+                                                        className="px-3.5 py-1.5 rounded-xl bg-black/[0.04] dark:bg-white/5 text-slate-700 dark:text-slate-300 font-bold text-xs hover:bg-black/[0.08] dark:hover:bg-white/10"
                                                     >
                                                         Cancel
                                                     </button>
                                                     <button
                                                         onClick={handleSaveEdit}
-                                                        className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded-md font-bold transition-all shadow-md"
+                                                        className="px-4 py-1.5 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl text-xs transition-all shadow-sm"
                                                     >
-                                                        Save
+                                                        Save Changes
                                                     </button>
                                                 </div>
                                             </div>
@@ -594,75 +590,69 @@ export const TrainingStudio: React.FC<TrainingStudioProps> = ({ isOpen, onClose,
 
                                     {/* Lyrics Editor Modal */}
                                     {editingLyrics && (
-                                        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                                            <div className="bg-white rounded-lg shadow-xl p-6 w-full max-w-lg">
-                                                <h4 className="text-lg font-bold text-slate-800 mb-2">Edit Lyrics / Caption</h4>
-                                                <p className="text-sm text-slate-500 mb-4">File: {editingLyrics.filename}</p>
+                                        <div className="fixed inset-0 z-[110] flex items-center justify-center bg-black/60 backdrop-blur-md p-4 animate-fade-in">
+                                            <div className="bg-white/95 dark:bg-[#141620]/95 backdrop-blur-2xl border border-black/[0.08] dark:border-white/10 rounded-3xl p-6 w-full max-w-lg shadow-apple-2xl space-y-4">
+                                                <div>
+                                                    <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100">Edit Audio Lyrics & Caption</h4>
+                                                    <p className="text-[11px] font-mono text-slate-400 mt-0.5">{editingLyrics.filename}</p>
+                                                </div>
                                                 <textarea
                                                     value={editingLyrics.caption}
                                                     onChange={(e) => setEditingLyrics({ ...editingLyrics, caption: e.target.value })}
-                                                    placeholder="Enter lyrics or caption...
-
-[Verse]
-Example lyrics here...
-
-[Chorus]
-More lyrics..."
-                                                    rows={10}
-                                                    className="w-full px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none font-mono text-sm"
+                                                    placeholder="[Verse]&#10;Add synchronized lyrics or acoustic prompt descriptors..."
+                                                    rows={8}
+                                                    className="w-full apple-input text-xs font-mono p-3 leading-relaxed"
                                                 />
-                                                <p className="text-xs text-slate-400 mt-2">
-                                                    Tip: Use [Verse], [Chorus], [Bridge] sections for best results
-                                                </p>
-                                                <div className="flex justify-end gap-2 mt-4">
+                                                <div className="flex justify-end gap-2 pt-2">
                                                     <button
                                                         onClick={() => setEditingLyrics(null)}
-                                                        className="px-4 py-2 text-slate-600 hover:bg-slate-100 rounded-md"
+                                                        className="px-3.5 py-1.5 rounded-xl bg-black/[0.04] dark:bg-white/5 text-slate-700 dark:text-slate-300 font-bold text-xs"
                                                     >
                                                         Cancel
                                                     </button>
                                                     <button
                                                         onClick={handleSaveLyrics}
-                                                        className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded-md font-bold transition-all shadow-md"
+                                                        className="px-4 py-1.5 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold rounded-xl text-xs shadow-sm"
                                                     >
-                                                        Save
+                                                        Save Stanzas
                                                     </button>
                                                 </div>
                                             </div>
                                         </div>
                                     )}
 
-                                    {/* Dataset List */}
-                                    <div className="grid grid-cols-2 gap-3">
+                                    {/* Dataset Selector Grid */}
+                                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                         {datasets.map(ds => (
                                             <div
                                                 key={ds.id}
-                                                className={`p-4 rounded-lg border transition-all relative group shadow-sm ${selectedDataset?.id === ds.id
-                                                    ? 'border-cyan-400 bg-cyan-50/50 ring-2 ring-cyan-200'
-                                                    : 'border-white/50 bg-white/40 hover:border-cyan-200 hover:bg-white/60'
+                                                onClick={() => setSelectedDataset(ds)}
+                                                className={`p-4 rounded-2xl border transition-all relative group cursor-pointer ${selectedDataset?.id === ds.id
+                                                    ? 'border-teal-500/60 bg-teal-500/10 dark:bg-teal-500/10 shadow-apple-sm'
+                                                    : 'border-black/[0.06] dark:border-white/10 bg-white/70 dark:bg-[#181a24]/70 hover:border-black/[0.12] dark:hover:border-white/20'
                                                     }`}
                                             >
-                                                <button
-                                                    onClick={() => setSelectedDataset(ds)}
-                                                    className="w-full text-left"
-                                                >
-                                                    <h5 className="font-medium text-slate-800">{ds.name}</h5>
-                                                    <p className="text-xs text-slate-500 mt-1">
-                                                        {ds.audio_files.length} files • {ds.styles.join(', ') || 'No styles'}
+                                                <div className="pr-12">
+                                                    <h5 className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                                                        <Database size={13} className="text-teal-500" />
+                                                        <span>{ds.name}</span>
+                                                    </h5>
+                                                    <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 font-mono">
+                                                        {ds.audio_files.length} audio tracks • {ds.styles.join(', ') || 'No style tags'}
                                                     </p>
-                                                </button>
-                                                <div className="absolute top-2 right-2 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                </div>
+                                                <div className="absolute top-3 right-3 flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); handleEditDataset(ds); }}
-                                                        className="p-1.5 text-slate-400 hover:text-cyan-600 hover:bg-cyan-50 rounded"
-                                                        title="Edit"
+                                                        className="p-1.5 text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 hover:bg-black/5 dark:hover:bg-white/10 rounded-lg transition-colors"
+                                                        title="Edit Dataset"
                                                     >
                                                         <Edit2 className="w-3.5 h-3.5" />
                                                     </button>
                                                     <button
                                                         onClick={(e) => { e.stopPropagation(); handleDeleteDataset(ds.id); }}
-                                                        className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded"
-                                                        title="Delete"
+                                                        className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors"
+                                                        title="Delete Dataset"
                                                     >
                                                         <Trash2 className="w-3.5 h-3.5" />
                                                     </button>
@@ -671,25 +661,35 @@ More lyrics..."
                                         ))}
                                     </div>
 
-                                    {/* Selected Dataset Upload */}
+                                    {/* Selected Dataset Upload & Files */}
                                     {selectedDataset && (
-                                        <div className="border border-slate-200 rounded-lg p-4 bg-white">
-                                            <h4 className="font-medium text-slate-800 mb-1 flex items-center gap-2">
-                                                <Music className="w-4 h-4 text-cyan-600" />
-                                                {selectedDataset.name}
-                                            </h4>
-                                            <div className="text-sm text-slate-500 mb-3 ml-6 flex gap-2">
-                                                {selectedDataset.styles.map((style, i) => (
-                                                    <span key={i} className="bg-gradient-to-r from-fuchsia-50 to-cyan-50 border border-cyan-100 text-slate-600 px-2 py-0.5 rounded-full text-xs font-mono">
-                                                        {style}
-                                                    </span>
-                                                ))}
-                                                {selectedDataset.styles.length === 0 && <span className="italic opacity-50">No target styles set</span>}
+                                        <div className="border border-black/[0.06] dark:border-white/10 rounded-2xl p-5 bg-white/80 dark:bg-[#181a24]/90 shadow-apple-sm space-y-4 backdrop-blur-xl">
+                                            <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-black/[0.04] dark:border-white/5 pb-3">
+                                                <div>
+                                                    <h4 className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                                                        <Music className="w-4 h-4 text-teal-500" />
+                                                        <span>{selectedDataset.name}</span>
+                                                    </h4>
+                                                    <div className="flex flex-wrap gap-1 mt-1.5">
+                                                        {selectedDataset.styles.map((style, i) => (
+                                                            <span key={i} className="bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20 px-2 py-0.5 rounded-md text-[10px] font-mono font-bold">
+                                                                {style}
+                                                            </span>
+                                                        ))}
+                                                    </div>
+                                                </div>
+                                                <div className={`px-2.5 py-1 rounded-xl text-xs font-mono font-bold flex items-center gap-1.5 ${selectedDataset.audio_files.length >= 5
+                                                    ? 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20'
+                                                    : 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-500/20'
+                                                    }`}>
+                                                    {selectedDataset.audio_files.length >= 5 ? <CheckCircle2 className="w-3.5 h-3.5" /> : <AlertCircle className="w-3.5 h-3.5" />}
+                                                    <span>{selectedDataset.audio_files.length}/5 files required</span>
+                                                </div>
                                             </div>
 
-                                            {/* Upload Zone */}
+                                            {/* Upload Dropzone */}
                                             <div
-                                                className="border-2 border-dashed border-slate-200 rounded-lg p-6 text-center hover:border-teal-400 transition-colors cursor-pointer bg-slate-50"
+                                                className="border-2 border-dashed border-black/[0.08] dark:border-white/10 rounded-2xl p-6 text-center hover:border-teal-500/60 transition-colors cursor-pointer bg-black/[0.01] dark:bg-white/[0.01] group"
                                                 onDragOver={(e) => e.preventDefault()}
                                                 onDrop={(e) => {
                                                     e.preventDefault();
@@ -697,9 +697,9 @@ More lyrics..."
                                                 }}
                                                 onClick={() => document.getElementById('audio-upload')?.click()}
                                             >
-                                                <Upload className="w-8 h-8 text-slate-400 mx-auto mb-2" />
-                                                <p className="text-sm text-slate-600">Drag & drop audio files or click to browse</p>
-                                                <p className="text-xs text-slate-400 mt-1">MP3, WAV, FLAC + matching .txt lyrics files</p>
+                                                <Upload className="w-7 h-7 text-slate-400 group-hover:text-teal-500 mx-auto mb-2 transition-colors" />
+                                                <p className="text-xs font-bold text-slate-800 dark:text-slate-200">Drag & drop training audio files here or click to browse</p>
+                                                <p className="text-[11px] text-slate-400 mt-1 font-mono">WAV, MP3, FLAC (48kHz recommended) + optional .txt lyrics files</p>
                                                 <input
                                                     id="audio-upload"
                                                     type="file"
@@ -709,80 +709,73 @@ More lyrics..."
                                                     onChange={(e) => handleFileUpload(e.target.files)}
                                                 />
                                                 {Object.keys(uploadProgress).length > 0 && (
-                                                    <div className="mt-2 flex items-center gap-2 text-teal-600 text-xs">
-                                                        <Loader2 className="w-3 h-3 animate-spin" />
-                                                        Uploading {Object.keys(uploadProgress).length} file(s)...
+                                                    <div className="mt-3 flex items-center justify-center gap-2 text-teal-600 dark:text-teal-400 text-xs font-mono font-bold">
+                                                        <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                                                        <span>Uploading {Object.keys(uploadProgress).length} file(s)...</span>
                                                     </div>
                                                 )}
                                             </div>
 
                                             {/* File List */}
-                                            <div className="mt-4 space-y-2 max-h-40 overflow-y-auto">
-                                                {selectedDataset.audio_files.map((af, i) => (
-                                                    <div key={i} className="flex items-center justify-between px-3 py-2 bg-slate-50 rounded text-sm group">
-                                                        <span className="text-slate-700 truncate flex-1">{af.filename}</span>
-                                                        <span
-                                                            className="text-xs text-slate-400 mr-2 truncate max-w-[150px] cursor-pointer hover:text-teal-500"
-                                                            onClick={() => setEditingLyrics({ filename: af.filename, caption: af.caption })}
-                                                            title="Click to edit lyrics"
-                                                        >
-                                                            {af.caption || '(no lyrics)'}
-                                                        </span>
-                                                        <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                                                            <button
-                                                                onClick={() => handlePlayAudio(af.filename)}
-                                                                className={`p-1 rounded ${playingFile === af.filename ? 'text-green-600 bg-green-50' : 'text-slate-300 hover:text-green-500 hover:bg-green-50'}`}
-                                                                title={playingFile === af.filename ? 'Stop' : 'Play'}
-                                                            >
-                                                                {playingFile === af.filename ? <Square className="w-3.5 h-3.5" /> : <Play className="w-3.5 h-3.5" />}
-                                                            </button>
-                                                            <button
+                                            {selectedDataset.audio_files.length > 0 && (
+                                                <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                                                    {selectedDataset.audio_files.map((af, i) => (
+                                                        <div key={i} className="flex items-center justify-between px-3 py-2 bg-black/[0.02] dark:bg-white/[0.03] rounded-xl border border-black/[0.04] dark:border-white/5 text-xs group">
+                                                            <div className="flex items-center gap-2 truncate flex-1 pr-2">
+                                                                <Music size={13} className="text-teal-500 flex-shrink-0" />
+                                                                <span className="text-slate-800 dark:text-slate-200 truncate font-mono text-[11px]">{af.filename}</span>
+                                                            </div>
+                                                            <span
+                                                                className="text-[10px] font-mono text-slate-400 truncate max-w-[180px] cursor-pointer hover:text-teal-500 mr-2"
                                                                 onClick={() => setEditingLyrics({ filename: af.filename, caption: af.caption })}
-                                                                className="p-1 text-slate-300 hover:text-teal-500 hover:bg-teal-50 rounded"
-                                                                title="Edit lyrics"
+                                                                title="Click to edit lyrics caption"
                                                             >
-                                                                <Edit2 className="w-3.5 h-3.5" />
-                                                            </button>
-                                                            <button
-                                                                onClick={() => handleDeleteAudio(af.filename)}
-                                                                className="p-1 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded"
-                                                                title="Remove file"
-                                                            >
-                                                                <Trash2 className="w-3.5 h-3.5" />
-                                                            </button>
+                                                                {af.caption || '(click to add lyrics)'}
+                                                            </span>
+                                                            <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                                <button
+                                                                    onClick={() => handlePlayAudio(af.filename)}
+                                                                    className={`p-1.5 rounded-lg ${playingFile === af.filename ? 'text-teal-500 bg-teal-500/10' : 'text-slate-400 hover:text-teal-500 hover:bg-black/5 dark:hover:bg-white/10'}`}
+                                                                    title={playingFile === af.filename ? 'Stop' : 'Play'}
+                                                                >
+                                                                    {playingFile === af.filename ? <Square className="w-3 h-3" /> : <Play className="w-3 h-3" />}
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => setEditingLyrics({ filename: af.filename, caption: af.caption })}
+                                                                    className="p-1.5 text-slate-400 hover:text-teal-500 hover:bg-black/5 dark:hover:bg-white/10 rounded-lg"
+                                                                    title="Edit Lyrics"
+                                                                >
+                                                                    <Edit2 className="w-3 h-3" />
+                                                                </button>
+                                                                <button
+                                                                    onClick={() => handleDeleteAudio(af.filename)}
+                                                                    className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg"
+                                                                    title="Remove File"
+                                                                >
+                                                                    <Trash2 className="w-3 h-3" />
+                                                                </button>
+                                                            </div>
                                                         </div>
-                                                    </div>
-                                                ))}
-                                            </div>
+                                                    ))}
+                                                </div>
+                                            )}
 
-                                            {/* Validation */}
-                                            <div className={`mt - 4 p - 3 rounded - lg text - sm flex items - center gap - 2 ${selectedDataset.audio_files.length >= 5
-                                                ? 'bg-green-50 text-green-700 border border-green-200'
-                                                : 'bg-amber-50 text-amber-700 border border-amber-200'
-                                                } `}>
-                                                {selectedDataset.audio_files.length >= 5
-                                                    ? <CheckCircle2 className="w-4 h-4" />
-                                                    : <AlertCircle className="w-4 h-4" />
-                                                }
-                                                {selectedDataset.audio_files.length}/5 files (minimum required)
-                                            </div>
-
-                                            {/* Re-process Button */}
+                                            {/* Preprocess Tokenizer Button */}
                                             {selectedDataset.audio_files.length > 0 && (
                                                 <button
                                                     onClick={handlePreprocessDataset}
                                                     disabled={isPreprocessing}
-                                                    className="mt-3 w-full py-2.5 bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-600 hover:to-orange-600 text-white rounded-lg text-sm font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-50 disabled:cursor-wait"
+                                                    className="w-full py-2.5 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 border border-black/[0.06] dark:border-white/10 text-slate-800 dark:text-slate-200 rounded-xl text-xs font-bold transition-all flex items-center justify-center gap-2 disabled:opacity-50"
                                                 >
                                                     {isPreprocessing ? (
                                                         <>
-                                                            <Loader2 className="w-4 h-4 animate-spin" />
-                                                            Processing...
+                                                            <Loader2 className="w-3.5 h-3.5 animate-spin text-teal-500" />
+                                                            <span>Tokenizing RVQ Discrete Audio...</span>
                                                         </>
                                                     ) : (
                                                         <>
-                                                            <Cpu className="w-4 h-4" />
-                                                            Re-process Dataset
+                                                            <Cpu className="w-3.5 h-3.5 text-teal-500" />
+                                                            <span>Tokenize RVQ Discrete Audio</span>
                                                         </>
                                                     )}
                                                 </button>
@@ -792,272 +785,184 @@ More lyrics..."
                                 </div>
                             )}
 
-                            {/* Training Tab */}
+                            {/* Training Config Tab */}
                             {activeTab === 'training' && (
                                 <div className="space-y-6">
                                     {!selectedDataset ? (
-                                        <div className="text-center py-12 text-slate-400">
-                                            <Database className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                                            <p>Select a dataset first in the Dataset tab</p>
+                                        <div className="text-center py-16 text-slate-400">
+                                            <Database className="w-12 h-12 mx-auto mb-3 opacity-40 text-teal-500" />
+                                            <p className="text-xs font-medium">Select or create a dataset first in the Dataset Prep tab</p>
                                         </div>
                                     ) : (
                                         <>
                                             {/* Method Selection */}
                                             <div className="space-y-3">
-                                                <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center">
-                                                    Training Method
-                                                    <HelpTooltip text="LoRA: Fast, memory-efficient adapter training. Creates a small file that modifies the base model. Full: Trains entire model weights for best quality but requires more VRAM and produces larger files." />
+                                                <label className="text-xs font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center">
+                                                    Training Architecture
+                                                    <HelpTooltip text="LoRA: Fast, memory-efficient adapter training. Creates a ~100MB rank adapter. Full: Trains entire 3B model weights." />
                                                 </label>
-                                                <div className="grid grid-cols-2 gap-3">
+                                                <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                                                     <button
                                                         onClick={() => setTrainingMethod('lora')}
-                                                        className={`p - 4 rounded - lg border text - left transition - all shadow-sm ${trainingMethod === 'lora'
-                                                            ? 'border-cyan-400 bg-cyan-50 ring-2 ring-cyan-200'
-                                                            : 'border-slate-200 bg-white hover:border-cyan-300'
-                                                            } `}
+                                                        className={`p-4 rounded-2xl border text-left transition-all ${trainingMethod === 'lora'
+                                                            ? 'border-teal-500/60 bg-teal-500/10 shadow-apple-sm'
+                                                            : 'border-black/[0.06] dark:border-white/10 bg-white/70 dark:bg-[#181a24]/70'
+                                                            }`}
                                                     >
-                                                        <h5 className="font-medium text-slate-800">⚡ LoRA</h5>
-                                                        <p className="text-xs text-slate-500 mt-1">Fast • ~16GB VRAM • ~100MB output</p>
+                                                        <h5 className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                                                            <Sparkles size={14} className="text-teal-500" />
+                                                            <span>LoRA Adapter (Recommended)</span>
+                                                        </h5>
+                                                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Fast • Low VRAM • ~100MB checkpoint</p>
                                                     </button>
                                                     <button
                                                         onClick={() => setTrainingMethod('full')}
-                                                        className={`p - 4 rounded - lg border text - left transition - all shadow-sm ${trainingMethod === 'full'
-                                                            ? 'border-cyan-400 bg-cyan-50 ring-2 ring-cyan-200'
-                                                            : 'border-slate-200 bg-white hover:border-cyan-300'
-                                                            } `}
+                                                        className={`p-4 rounded-2xl border text-left transition-all ${trainingMethod === 'full'
+                                                            ? 'border-teal-500/60 bg-teal-500/10 shadow-apple-sm'
+                                                            : 'border-black/[0.06] dark:border-white/10 bg-white/70 dark:bg-[#181a24]/70'
+                                                            }`}
                                                     >
-                                                        <h5 className="font-medium text-slate-800">🔥 Full Fine-Tune</h5>
-                                                        <p className="text-xs text-slate-500 mt-1">Best quality • ~24GB+ VRAM • ~6GB output</p>
+                                                        <h5 className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center gap-1.5">
+                                                            <Cpu size={14} className="text-teal-500" />
+                                                            <span>Full Parameter Fine-Tune</span>
+                                                        </h5>
+                                                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1">Comprehensive weights • ~24GB+ VRAM required</p>
                                                     </button>
                                                 </div>
                                             </div>
 
-                                            {/* Parameters */}
-                                            <div className="grid grid-cols-3 gap-4">
+                                            {/* Hyperparameters Grid */}
+                                            <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                                                 <div>
-                                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center">
+                                                    <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center">
                                                         Epochs
-                                                        <HelpTooltip text="Number of times the model sees the entire dataset. More epochs = better learning but risk of overfitting. Start with 3-5, increase if results aren't capturing your style." />
+                                                        <HelpTooltip text="Number of passes through dataset. Recommended: 5-10." />
                                                     </label>
                                                     <input
                                                         type="number"
                                                         value={epochs}
                                                         onChange={(e) => setEpochs(Number(e.target.value))}
                                                         min={1}
-                                                        max={10}
-                                                        className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none"
+                                                        max={30}
+                                                        className="w-full mt-2 apple-input text-xs"
                                                     />
                                                 </div>
                                                 <div>
-                                                    <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center">
+                                                    <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center">
                                                         Learning Rate
-                                                        <HelpTooltip text="How fast the model adapts to your data. Lower = stable but slow. Higher = fast but unstable. Recommended: 0.0001 for LoRA, 0.00005 for Full." />
+                                                        <HelpTooltip text="Step size for gradient descent. Recommended: 0.0003 for LoRA." />
                                                     </label>
                                                     <input
                                                         type="number"
                                                         value={learningRate}
                                                         onChange={(e) => setLearningRate(Number(e.target.value))}
                                                         step={0.00001}
-                                                        className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none"
+                                                        className="w-full mt-2 apple-input text-xs"
                                                     />
                                                 </div>
                                                 {trainingMethod === 'lora' && (
                                                     <div>
-                                                        <label className="text-xs font-bold text-slate-500 uppercase tracking-wider flex items-center">
+                                                        <label className="text-[11px] font-bold text-slate-500 dark:text-slate-400 uppercase tracking-wider flex items-center">
                                                             LoRA Rank
-                                                            <HelpTooltip text="Complexity of the LoRA adapter. Higher rank = more expressive but larger file. 8 is good for most styles. Use 16-32 for complex multi-style training." />
+                                                            <HelpTooltip text="Dimensional rank of LoRA weights (8, 16, 32)." />
                                                         </label>
                                                         <input
                                                             type="number"
                                                             value={loraRank}
                                                             onChange={(e) => setLoraRank(Number(e.target.value))}
                                                             min={4}
-                                                            max={32}
-                                                            className="w-full mt-2 px-3 py-2 border border-slate-200 rounded-md focus:ring-2 focus:ring-teal-400 focus:outline-none"
+                                                            max={64}
+                                                            className="w-full mt-2 apple-input text-xs"
                                                         />
                                                     </div>
                                                 )}
                                             </div>
 
-                                            {/* Start Training */}
+                                            {/* Start Training CTA */}
                                             <button
                                                 onClick={handleStartTraining}
                                                 disabled={selectedDataset.audio_files.length < 5}
-                                                className="w-full py-3 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-600 hover:to-cyan-600 text-slate-950 font-bold rounded-lg text-sm transition-all disabled:opacity-50 disabled:cursor-not-allowed flex items-center justify-center gap-2 shadow-md shadow-teal-500/20"
+                                                className="w-full py-3 bg-teal-500 hover:bg-teal-400 disabled:opacity-40 text-slate-950 font-bold rounded-2xl text-xs transition-all shadow-md shadow-teal-500/20 flex items-center justify-center gap-2 active:scale-95"
                                             >
-                                                <Play className="w-4 h-4" />
-                                                Start Training on "{selectedDataset.name}"
+                                                <Play className="w-4 h-4 fill-current" />
+                                                <span>Start Training on "{selectedDataset.name}"</span>
                                             </button>
                                         </>
                                     )}
                                 </div>
                             )}
 
-                            {/* Jobs Tab */}
+                            {/* Jobs Monitor Tab */}
                             {activeTab === 'jobs' && (
                                 <div className="space-y-4">
                                     {isLoadingJobs ? (
-                                        <div className="flex items-center justify-center py-12">
+                                        <div className="flex items-center justify-center py-16">
                                             <Loader2 className="w-6 h-6 animate-spin text-teal-500" />
                                         </div>
                                     ) : jobs.length === 0 ? (
-                                        <div className="text-center py-12 text-slate-400">
-                                            <Settings2 className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                                            <p>No training jobs yet</p>
+                                        <div className="text-center py-16 text-slate-400">
+                                            <Settings2 className="w-12 h-12 mx-auto mb-3 opacity-40" />
+                                            <p className="text-xs font-medium">No training jobs active or recorded</p>
                                         </div>
                                     ) : (
                                         jobs.map(job => {
                                             const dataset = datasets.find(d => d.id === job.dataset_id);
-                                            const displayName = job.dataset_name || dataset?.name || 'Unknown Dataset';
+                                            const displayName = job.dataset_name || dataset?.name || 'Dataset';
                                             return (
-                                                <div key={job.id} className="p-4 bg-white border border-slate-200 rounded-lg">
+                                                <div key={job.id} className="p-4 bg-white/80 dark:bg-[#181a24]/90 border border-black/[0.06] dark:border-white/10 rounded-2xl shadow-apple-sm space-y-3 backdrop-blur-xl">
                                                     <div className="flex items-center justify-between">
                                                         <div>
-                                                            <h5 className="font-medium text-slate-800 flex items-center gap-2">
-                                                                <span className="text-lg">{job.config.method === 'lora' ? '⚡' : '🔥'}</span>
-                                                                {displayName}
+                                                            <h5 className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                                                                <span>{job.config.method === 'lora' ? '⚡' : '🔥'}</span>
+                                                                <span>{displayName}</span>
                                                             </h5>
-                                                            <p className="text-xs text-slate-500 mt-0.5">
+                                                            <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
                                                                 {job.config.method.toUpperCase()} • {job.config.epochs} epochs • LR: {job.config.learning_rate}
                                                             </p>
-                                                            {dataset?.styles && dataset.styles.length > 0 && (
-                                                                <div className="flex flex-wrap gap-1 mt-1">
-                                                                    {dataset.styles.slice(0, 3).map((style, i) => (
-                                                                        <span key={i} className="text-[10px] bg-teal-50 text-teal-700 px-1.5 py-0.5 rounded-full border border-teal-100 font-medium">
-                                                                            {style}
-                                                                        </span>
-                                                                    ))}
-                                                                    {dataset.styles.length > 3 && (
-                                                                        <span className="text-[10px] text-slate-400">+{dataset.styles.length - 3} more</span>
-                                                                    )}
-                                                                </div>
-                                                            )}
                                                         </div>
                                                         <div className="flex items-center gap-2">
-                                                            <span className={`px-2 py-1 rounded-full text-xs font-bold ${job.status === 'completed' ? 'bg-green-100 text-green-700' :
-                                                                job.status === 'running' ? 'bg-blue-100 text-blue-700' :
-                                                                    job.status === 'preprocessing' ? 'bg-cyan-100 text-cyan-700' :
-                                                                        job.status === 'failed' ? 'bg-red-100 text-red-700' :
-                                                                            'bg-slate-100 text-slate-700'
+                                                            <span className={`px-2.5 py-0.5 rounded-full text-[10px] font-mono font-bold ${job.status === 'completed' ? 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20' :
+                                                                job.status === 'running' ? 'bg-sky-500/10 text-sky-700 dark:text-sky-300 border border-sky-500/20 animate-pulse' :
+                                                                    job.status === 'preprocessing' ? 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 border border-cyan-500/20' :
+                                                                        job.status === 'failed' ? 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/20' :
+                                                                            'bg-black/5 dark:bg-white/5 text-slate-500'
                                                                 }`}>
-                                                                {job.status}
+                                                                {job.status.toUpperCase()}
                                                             </span>
-                                                            {/* Timestamp */}
-                                                            {(job.created_at || job.started_at) && (
-                                                                <span className="text-[10px] text-slate-400">
-                                                                    {formatTimestamp(job.started_at || job.created_at)}
-                                                                </span>
-                                                            )}
                                                             {(job.status === 'running' || job.status === 'preprocessing') && (
                                                                 <button
                                                                     onClick={() => handleCancelJob(job.id)}
-                                                                    className="px-2 py-1 text-xs font-bold bg-amber-100 text-amber-700 hover:bg-amber-200 rounded transition-colors"
-                                                                    title="Cancel training"
+                                                                    className="px-2.5 py-1 text-[11px] font-bold bg-amber-500/10 text-amber-700 dark:text-amber-400 hover:bg-amber-500/20 rounded-xl transition-colors"
                                                                 >
                                                                     Cancel
                                                                 </button>
                                                             )}
                                                             <button
                                                                 onClick={() => handleDeleteJob(job.id)}
-                                                                className="p-1.5 text-slate-300 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                                                                title="Delete job"
+                                                                className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors"
                                                             >
-                                                                <Trash2 className="w-4 h-4" />
+                                                                <Trash2 className="w-3.5 h-3.5" />
                                                             </button>
                                                         </div>
                                                     </div>
+
                                                     {(job.status === 'running' || job.status === 'preprocessing') && (
-                                                        <div className="mt-3">
-                                                            <div className="h-2 bg-slate-100 rounded-full overflow-hidden">
+                                                        <div className="space-y-1.5">
+                                                            <div className="h-2 bg-black/[0.04] dark:bg-white/5 rounded-full overflow-hidden">
                                                                 <div
-                                                                    className={`h-full transition-all ${job.status === 'preprocessing'
-                                                                        ? 'bg-gradient-to-r from-cyan-400 to-blue-400'
-                                                                        : 'bg-gradient-to-r from-teal-500 to-cyan-500'
-                                                                        }`}
+                                                                    className="h-full bg-gradient-to-r from-teal-500 to-cyan-500 transition-all duration-300"
                                                                     style={{ width: `${job.progress}%` }}
                                                                 />
                                                             </div>
-                                                            <div className="flex justify-between items-center mt-1">
-                                                                <p className="text-xs text-slate-500">
-                                                                    {job.message || (job.status === 'preprocessing' ? 'Preparing data...' : `Epoch ${job.current_epoch}/${job.total_epochs} • ${job.progress}%`)}
-                                                                </p>
-                                                                <div className="flex items-center gap-3">
-                                                                    {/* Elapsed Time */}
-                                                                    {job.started_at && (
-                                                                        <p className="text-[10px] text-slate-400">
-                                                                            ⏱ {formatElapsedTime(job.started_at)}
-                                                                        </p>
-                                                                    )}
-                                                                    {/* ETA */}
+                                                            <div className="flex justify-between items-center text-[10px] font-mono text-slate-400">
+                                                                <span>{job.message || `Epoch ${job.current_epoch}/${job.total_epochs} • ${job.progress}%`}</span>
+                                                                <div className="flex items-center gap-2">
+                                                                    <span>⏱ {formatElapsedTime(job.started_at)}</span>
                                                                     {job.started_at && job.progress > 0 && job.progress < 100 && (
-                                                                        <p className="text-[10px] text-cyan-600 font-medium">
-                                                                            ETA: {formatETA(job.started_at, job.progress)}
-                                                                        </p>
+                                                                        <span className="text-teal-600 dark:text-teal-400 font-bold">
+                                                                            ETA {formatETA(job.started_at, job.progress)}
+                                                                        </span>
                                                                     )}
-                                                                    {/* Loss */}
-                                                                    {job.status === 'running' && job.current_loss != null && (
-                                                                        <p className="text-xs font-mono text-slate-400">
-                                                                            Loss: <span className="text-slate-600 font-bold">{job.current_loss.toFixed(4)}</span>
-                                                                        </p>
-                                                                    )}
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                    {/* Error Display for Failed Jobs */}
-                                                    {job.status === 'failed' && (job.error || job.message) && (
-                                                        <div className="mt-3 p-3 bg-red-50 border border-red-200 rounded-lg">
-                                                            <div className="flex items-start gap-2">
-                                                                <AlertCircle className="w-4 h-4 text-red-500 flex-shrink-0 mt-0.5" />
-                                                                <div className="flex-1 min-w-0">
-                                                                    <p className="text-xs font-bold text-red-700">Training Failed</p>
-                                                                    <p className="text-xs text-red-600 mt-1 break-words whitespace-pre-wrap font-mono">
-                                                                        {job.error || job.message || 'Unknown error occurred'}
-                                                                    </p>
-                                                                </div>
-                                                            </div>
-                                                        </div>
-                                                    )}
-                                                    {/* Completed Job Summary */}
-                                                    {job.status === 'completed' && (
-                                                        <div className="mt-3 p-3 bg-green-50 border border-green-200 rounded-lg">
-                                                            <div className="grid grid-cols-2 md:grid-cols-4 gap-3 text-xs">
-                                                                {/* Duration */}
-                                                                <div>
-                                                                    <span className="text-slate-500">Duration</span>
-                                                                    <p className="font-bold text-slate-700">
-                                                                        {job.started_at && job.completed_at ? (() => {
-                                                                            const start = new Date(job.started_at).getTime();
-                                                                            const end = new Date(job.completed_at).getTime();
-                                                                            const mins = Math.floor((end - start) / 60000);
-                                                                            const secs = Math.floor(((end - start) % 60000) / 1000);
-                                                                            return mins > 0 ? `${mins}m ${secs}s` : `${secs}s`;
-                                                                        })() : '--'}
-                                                                    </p>
-                                                                </div>
-                                                                {/* Loss */}
-                                                                <div>
-                                                                    <span className="text-slate-500">Loss</span>
-                                                                    <p className="font-bold text-slate-700">
-                                                                        {job.initial_loss != null && job.final_loss != null ? (
-                                                                            <span>
-                                                                                {job.initial_loss.toFixed(3)} → {job.final_loss.toFixed(3)}
-                                                                                <span className="text-green-600 ml-1">
-                                                                                    ({((1 - job.final_loss / job.initial_loss) * 100).toFixed(0)}% ↓)
-                                                                                </span>
-                                                                            </span>
-                                                                        ) : job.final_loss != null ? job.final_loss.toFixed(4) : '--'}
-                                                                    </p>
-                                                                </div>
-                                                                {/* Epochs */}
-                                                                <div>
-                                                                    <span className="text-slate-500">Epochs</span>
-                                                                    <p className="font-bold text-slate-700">{job.config?.epochs || job.total_epochs}</p>
-                                                                </div>
-                                                                {/* LoRA Rank */}
-                                                                <div>
-                                                                    <span className="text-slate-500">LoRA Rank</span>
-                                                                    <p className="font-bold text-slate-700">{job.config?.lora_rank || '--'}</p>
                                                                 </div>
                                                             </div>
                                                         </div>
@@ -1069,52 +974,50 @@ More lyrics..."
                                 </div>
                             )}
 
-                            {/* Models Tab */}
+                            {/* Checkpoints Tab */}
                             {activeTab === 'models' && (
-                                <div className="space-y-4">
+                                <div className="space-y-3">
                                     {checkpoints.length === 0 ? (
-                                        <div className="text-center py-12 text-slate-400">
-                                            <Package className="w-12 h-12 mx-auto mb-3 opacity-50" />
-                                            <p>No trained models yet</p>
+                                        <div className="text-center py-16 text-slate-400">
+                                            <Package className="w-12 h-12 mx-auto mb-3 opacity-40 text-teal-500" />
+                                            <p className="text-xs font-medium">No LoRA checkpoints trained yet</p>
                                         </div>
                                     ) : (
                                         checkpoints.map(ckpt => (
-                                            <div key={ckpt.id} className={`p-4 bg-white border rounded-lg flex items-center justify-between ${ckpt.is_active ? 'border-teal-300 ring-2 ring-teal-100' : 'border-slate-200'}`}>
+                                            <div key={ckpt.id} className={`p-4 bg-white/80 dark:bg-[#181a24]/90 border rounded-2xl flex items-center justify-between backdrop-blur-xl shadow-apple-sm ${ckpt.is_active ? 'border-teal-500/60 ring-2 ring-teal-500/20' : 'border-black/[0.06] dark:border-white/10'}`}>
                                                 <div>
-                                                    <h5 className="font-medium text-slate-800 flex items-center gap-2">
-                                                        {ckpt.name}
+                                                    <h5 className="font-bold text-xs text-slate-900 dark:text-slate-100 flex items-center gap-2">
+                                                        <span>{ckpt.name}</span>
                                                         {ckpt.is_active && (
-                                                            <span className="px-2 py-0.5 bg-green-100 text-green-700 text-xs rounded-full font-bold flex items-center gap-1">
-                                                                <span className="w-1.5 h-1.5 rounded-full bg-green-500 animate-pulse"></span>
+                                                            <span className="px-2 py-0.5 bg-teal-500/10 text-teal-700 dark:text-teal-300 text-[10px] rounded-full font-bold font-mono border border-teal-500/20 flex items-center gap-1">
+                                                                <span className="w-1.5 h-1.5 rounded-full bg-teal-500 animate-pulse" />
                                                                 ACTIVE
                                                             </span>
                                                         )}
                                                     </h5>
-                                                    <p className="text-xs text-slate-500">
-                                                        {ckpt.method} • {ckpt.styles.join(', ')} • {(ckpt.size_bytes / 1024 / 1024).toFixed(1)}MB
-                                                        {ckpt.created_at && <span className="ml-1">• {formatTimestamp(ckpt.created_at)}</span>}
+                                                    <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
+                                                        {ckpt.method.toUpperCase()} • {ckpt.styles.join(', ')} • {(ckpt.size_bytes / 1024 / 1024).toFixed(1)} MB {ckpt.created_at && `• ${formatTimestamp(ckpt.created_at)}`}
                                                     </p>
                                                 </div>
                                                 <div className="flex items-center gap-2">
                                                     {ckpt.is_active ? (
                                                         <button
                                                             onClick={handleDeactivateCheckpoint}
-                                                            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded text-xs font-bold transition-all shadow-sm"
-                                                            title="Switch back to base model"
+                                                            className="px-3 py-1.5 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 rounded-xl text-xs font-bold transition-all"
                                                         >
                                                             Deactivate
                                                         </button>
                                                     ) : (
                                                         <button
                                                             onClick={() => handleActivateCheckpoint(ckpt.id)}
-                                                            className="px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded text-xs font-bold transition-all shadow-sm"
+                                                            className="px-3.5 py-1.5 bg-teal-500 hover:bg-teal-400 text-slate-950 rounded-xl text-xs font-bold transition-all shadow-sm active:scale-95"
                                                         >
-                                                            Activate
+                                                            Activate Adapter
                                                         </button>
                                                     )}
                                                     <button
                                                         onClick={() => handleDeleteCheckpoint(ckpt.id)}
-                                                        className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded"
+                                                        className="p-1.5 text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors"
                                                     >
                                                         <Trash2 className="w-4 h-4" />
                                                     </button>

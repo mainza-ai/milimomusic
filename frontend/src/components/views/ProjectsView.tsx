@@ -19,6 +19,7 @@ import {
   X
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
+import { AppFooter } from '../ui/AppFooter';
 
 interface ProjectsViewProps {
   allJobs: Job[];
@@ -1000,6 +1001,9 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           </div>
         </div>
       )}
+
+      {/* Global Creator Footer */}
+      <AppFooter />
     </div>
   );
 };

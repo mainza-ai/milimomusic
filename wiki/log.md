@@ -494,3 +494,21 @@ Completely eliminated all visual collisions and standardized the pro-grade trans
    - `AudioPlayer.tsx`: History card suite (Return to Start/Previous `|<<`, Rewind 10s, Hero Play/Pause, Advance 10s, Next Track `>>|`, Repeat, Speed, Volume, Inpaint, Download, Scrubber).
 3. **Verification**:
    - 100% Pytest pass rate (59/59 in 5.47s) and clean Vite production build (1.68s).
+
+## [2026-08-21] create | Apple UI Polish, Training Studio Re-theme & Creator Attribution
+Executed comprehensive UX/UI cosmetic enhancements aligning the application with Apple Pro standards:
+1. **LoRA & Foundation Training Studio Modernization (`TrainingStudio.tsx`)**:
+   - Re-themed the entire modal into Apple Studio Glassmorphism (`backdrop-blur-2xl`, adaptive Light/Dark mode backgrounds, subtle border radii, Studio Teal & Cyan accents, zero purple/fuchsia).
+   - Upgraded Dataset Prep, Training Configuration, Jobs Monitor, and Checkpoint Manager with real-time ETA, elapsed time calculation, and discrete audio RVQ tokenization workflows.
+2. **De-Clustered Songs Library Layout (`SongsView.tsx`)**:
+   - Replaced multi-row tag stacking with compact inline micro-pills with overflow `+N` hover badge.
+   - Converted bulky badge indicators into sleek Apple micro-chips (`MIDI Ready` and `4 Stems`).
+   - Standardized single-row horizontal actions toolbar and added interactive vinyl disc album thumbnails.
+3. **Music Videos "In Development" Status (`MusicVideosView.tsx`, `App.tsx`)**:
+   - Added an amber/teal `In Development` status badge in the header and sidebar navigation.
+   - Added an informational notice detailing the upcoming text-to-video / audio-reactive diffusion pipeline (Wan2.1 / CogVideoX).
+4. **Global Creator Attribution (`AppFooter.tsx`)**:
+   - Created `AppFooter.tsx` stating `"Milimo Music · Created by Mainza Kangombe"` and embedded it across all primary views (`Explore`, `Songs`, `Playlists`, `Projects`, `Profile`, `Music Videos`).
+5. **Verification**:
+   - Clean Vite production build with zero TypeScript or styling warnings.
+

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { type Job } from '../../api';
 import { Award, Mic, Layers, ShieldCheck, Heart } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
+import { AppFooter } from '../ui/AppFooter';
 
 interface ProfileViewProps {
     songs: Job[];
@@ -191,6 +192,9 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ songs, onPlaySong, onO
                     ))}
                 </div>
             </div>
+
+            {/* Global Creator Footer */}
+            <AppFooter />
         </div>
     );
 };

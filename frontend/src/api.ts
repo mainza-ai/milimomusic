@@ -594,11 +594,12 @@ export const trainingApi = {
         const res = await axios.get(`${API_BASE_URL}/training/datasets/${id}`);
         return res.data.dataset;
     },
-    uploadAudio: async (datasetId: string, file: File, caption: string): Promise<void> => {
+    uploadAudio: async (datasetId: string, file: File, caption: string = ''): Promise<{ filename: string; caption: string }> => {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('caption', caption);
-        await axios.post(`${API_BASE_URL}/training/datasets/${datasetId}/audio`, formData);
+        const res = await axios.post(`${API_BASE_URL}/training/datasets/${datasetId}/audio`, formData);
+        return res.data.audio_file;
     },
     deleteAudio: async (datasetId: string, filename: string): Promise<void> => {
         await axios.delete(`${API_BASE_URL}/training/datasets/${datasetId}/audio/${encodeURIComponent(filename)}`);

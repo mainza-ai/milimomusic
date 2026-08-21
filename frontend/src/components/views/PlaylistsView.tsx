@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { type Job } from '../../api';
 import { Plus, ListMusic, Play, Music2, FolderPlus, Trash2 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
+import { AppFooter } from '../ui/AppFooter';
 
 interface PlaylistsViewProps {
     songs: Job[];
@@ -344,6 +345,9 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                     )}
                 </div>
             </div>
+
+            {/* Global Creator Footer */}
+            <AppFooter />
         </div>
     );
 };

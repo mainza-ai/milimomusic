@@ -1,7 +1,8 @@
 import React, { useState } from 'react';
 import { type Job } from '../../api';
-import { Play, Film, Wand2 } from 'lucide-react';
+import { Play, Film, Wand2, Construction, AlertCircle } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
+import { AppFooter } from '../ui/AppFooter';
 
 interface MusicVideosViewProps {
     songs: Job[];
@@ -36,19 +37,37 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay 
     };
 
     return (
-        <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
-            {/* Header */}
-            <div>
-                <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-3">
-                    <span className="p-2 rounded-2xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
-                        🎬
-                    </span>
-                    <span>AI Music Video Studio</span>
-                </h1>
-                <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-                    Generate audio-reactive visual storyboards, WhisperX synchronized lyrics, and video prompts
-                </p>
-            </div>
+        <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 flex flex-col justify-between min-h-full">
+            <div className="space-y-6">
+                {/* Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
+                    <div>
+                        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-3">
+                            <span className="p-2 rounded-2xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
+                                🎬
+                            </span>
+                            <span>AI Music Video Studio</span>
+                            <span className="px-2.5 py-1 text-[11px] font-mono font-bold rounded-full bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 flex items-center gap-1">
+                                <Construction size={12} />
+                                In Development
+                            </span>
+                        </h1>
+                        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
+                            Generate audio-reactive visual storyboards, WhisperX synchronized lyrics, and video prompts
+                        </p>
+                    </div>
+                </div>
+
+                {/* Development Notice Banner */}
+                <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 flex items-start gap-3 text-xs text-amber-800 dark:text-amber-300">
+                    <AlertCircle size={18} className="flex-shrink-0 mt-0.5 text-amber-500" />
+                    <div className="space-y-1">
+                        <p className="font-bold">Neural Video Synthesis Pipeline Under Active Development</p>
+                        <p className="text-slate-600 dark:text-slate-400 leading-relaxed">
+                            Full text-to-video and audio-reactive diffusion pipelines (integrating Wan2.1 and CogVideoX) are currently in active research & engineering. You can currently preview prompt storyboarding and audio-reactive timeline scheduling below.
+                        </p>
+                    </div>
+                </div>
 
             {/* Studio Workspace */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
@@ -167,6 +186,10 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay 
                     </GlassCard>
                 </div>
             </div>
+            </div>
+
+            {/* Global Creator Footer */}
+            <AppFooter />
         </div>
     );
 };

@@ -609,6 +609,22 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         rafRef.current = requestAnimationFrame(tick);
     };
 
+    // ── Transport watchdog ──────────────────────────────────────────────────
+    // While playing, the playhead's rAF chain MUST be alive. If anything ever
+    // silently kills it again (the way the old stopSources did on seek), this
+    // restarts it within ~500ms and leaves a console breadcrumb so the cause
+    // is observable instead of a mystery frozen playhead.
+    useEffect(() => {
+        const iv = window.setInterval(() => {
+            if (isPlayingRef.current && !rafRef.current) {
+                console.warn('[Milimo DAW] transport watchdog: playhead loop was dead while playing — restarted.');
+                startPlayheadLoop();
+            }
+        }, 500);
+        return () => window.clearInterval(iv);
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, []);
+
     // Push mix state (vol/mute/solo/pan/master) into the graph nodes.
     useEffect(() => {
         applyMixParams();

@@ -28,7 +28,7 @@ Created by **[Mainza Kangombe](https://www.linkedin.com/in/mainza-kangombe-62142
 
 ## 🌟 Overview
 
-**Milimo Music** is an open-source, production-grade AI music generation platform and digital audio workstation (DAW). It bridges the gap between state-of-the-art generative audio models and multitrack studio workflows — transforming natural language prompts and structured lyrics into 48kHz stereo masters, note-level polyphonic MIDI, dynamic Grand Staff sheet music, isolated neural stems, synchronized acoustic karaoke, and voice-converted audio.
+**Milimo Music** is an open-source AI music generation platform and digital audio workstation (DAW). It bridges the gap between state-of-the-art generative audio models and multitrack studio workflows — transforming natural language prompts and structured lyrics into mastered stereo tracks, note-level polyphonic MIDI, dynamic Grand Staff sheet music, isolated neural stems, synchronized acoustic karaoke, and voice conversion tools.
 
 ```mermaid
 graph LR
@@ -46,7 +46,8 @@ graph LR
 ## ✨ Key Features
 
 ### 🎧 Generative Audio Engine & Pluggable Providers
-- **MiniMax Music 3 Default Engine**: Conditioned on structured multi-section captions (`[Intro]`, `[Verse]`, `[Chorus]`, `[Solo]`, `[Outro]`) and acoustic style descriptors. Runs native **Apple Silicon MLX weight inference** (`mlx-community/MiniMax-Music3-bf16`) with automatic multi-platform CPU/CUDA fallbacks.
+- **MiniMax Music 3 Default Engine**: Conditioned on structured multi-section captions (`[Intro]`, `[Verse]`, `[Chorus]`, `[Solo]`, `[Outro]`) and acoustic style descriptors. Runs native **Apple Silicon MLX weight inference** (`mlx-community/MiniMax-Music3-bf16`).
+  > **Platform note:** generation currently requires Apple Silicon (MLX). On Windows/Linux the studio (DAW, transcription, mastering, agents) works fully — but *generation* falls back to a clearly-labeled placeholder synthesizer, never silent fakery.
 ### 🤖 AI Co-Writer, Prompt Enhancer & Caption Rewriter
 - **Multi-Provider LLM Integration**: Native support for **NVIDIA NIM** (Llama 3.1/3.3, Nemotron, DeepSeek, Qwen), **OpenCode Go**, **DeepSeek**, **OpenAI**, **Google Gemini**, and local inference engines (**OMLX** for Apple Silicon and **Ollama**).
 - **Dynamic Model Selection**: Live model discovery querying hosted APIs directly with zero hardcoded constraints.
@@ -103,7 +104,7 @@ graph LR
 
 ### Prerequisites
 - **Python 3.10+** (Recommended: Python 3.12 via Conda)
-- **Node.js 18+** & npm
+- **Node.js ≥ 20.19** & npm (Vite 7 requirement)
 - **Hardware**: macOS with Apple Silicon (M1/M2/M3/M4) or Linux/Windows with CUDA GPU
 
 ### 1. Clone Repository & Setup Conda

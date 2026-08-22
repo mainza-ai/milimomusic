@@ -221,6 +221,20 @@ export interface SessionMessageCreate {
     preset_data_json?: string;
 }
 
+export interface ModelDownloadStatus {
+    id: string;
+    repo_id: string;
+    status: 'queued' | 'downloading' | 'completed' | 'cancelled' | 'error';
+    total_files: number;
+    files_done: number;
+    current_file: string;
+    received_bytes: number;
+    total_bytes: number;
+    progress_percent: number | null;
+    local_dir: string;
+    error: string;
+}
+
 export interface ModelVariant {
     id: string;
     name: string;
@@ -475,6 +489,17 @@ export const modelsApi = {
     getModelTree: async (): Promise<ModelVariant[]> => {
         const res = await axios.get(`${API_BASE_URL}/models/tree`);
         return res.data.models;
+    },
+    startModelDownload: async (repoId: string): Promise<ModelDownloadStatus> => {
+        const res = await axios.post(`${API_BASE_URL}/models/download`, { repo_id: repoId });
+        return res.data;
+    },
+    getModelDownload: async (downloadId: string): Promise<ModelDownloadStatus> => {
+        const res = await axios.get(`${API_BASE_URL}/models/downloads/${downloadId}`);
+        return res.data;
+    },
+    cancelModelDownload: async (downloadId: string): Promise<void> => {
+        await axios.post(`${API_BASE_URL}/models/downloads/${downloadId}/cancel`);
     },
     getCapabilities: async (): Promise<GenerationCapabilities[]> => {
         const res = await axios.get(`${API_BASE_URL}/models/capabilities`);

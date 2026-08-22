@@ -172,6 +172,7 @@ class GenerationRequest(SQLModel):
     is_instrumental: Optional[bool] = False
     structured_caption: Optional[Dict[str, str]] = None
     voice_profile_id: Optional[str] = None
+    mastered_path: Optional[str] = None   # B8 fix: mastering result stored SEPARATELY — original master never clobbered
 
     @field_validator('tags', mode='before')
     @classmethod
@@ -271,3 +272,120 @@ class VoiceProfileCreate(SQLModel):
 class MasteringRequest(SQLModel):
     target_lufs: float = -14.0
     reference_job_id: Optional[str] = None
+
+
+# ---------------------------------------------------------------------------
+# AI Agent Foundation — identity, assignment, releases, run ledger
+# (wiki/concepts/artist-profiles-vision.md · wiki/concepts/agent-foundation.md)
+# ---------------------------------------------------------------------------
+class ArtistProfile(SQLModel, table=True):
+    """The unit of creative identity: unlimited per project, agents assigned per artist."""
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    project_id: Optional[str] = Field(default=None, index=True)
+    name: str
+    bio: str = ""
+    lore_json: str = "{}"                 # structured world/identity document (World Builder owns)
+    tags: str = ""                        # default style DNA for this artist
+    cover_image_path: Optional[str] = None
+    default_provider: Optional[str] = None   # optional per-artist LLM override
+    default_model: Optional[str] = None
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class AgentAssignment(SQLModel, table=True):
+    """Which agent serves an artist — data, not code. Per-artist model overrides ride here."""
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    profile_id: str = Field(..., index=True)
+    role: str                             # e.g. world_builder | experiencer | songwriter | producer
+    agent_name: str                       # registry key (app.agents.registry.AGENTS)
+    model_provider: Optional[str] = None  # override chain head for this assignment
+    model: Optional[str] = None
+    config_json: str = "{}"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class Release(SQLModel, table=True):
+    """An album/EP container. Tracks (Jobs) attach via release_id."""
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    profile_id: str = Field(..., index=True)
+    title: str
+    description: str = ""
+    status: str = "planned"               # planned | in_progress | completed
+    vision_json: str = "{}"               # ExperiencerVision / orchestrator artifacts
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class AgentRun(SQLModel, table=True):
+    """Ledger of every agent execution: status, I/O, typed errors, usage."""
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    agent_name: str = Field(..., index=True)
+    status: str = Field(default="running", index=True)  # running|succeeded|failed|cancelled
+    input_json: str = "{}"
+    output_json: str = ""
+    error_type: str = ""
+    error_message: str = ""
+    tokens_in: int = 0
+    tokens_out: int = 0
+    latency_ms: int = 0
+    attempts_json: str = "[]"             # per-attempt records from the resilience policy
+    session_id: Optional[str] = Field(default=None, index=True)
+    project_id: Optional[str] = Field(default=None, index=True)
+    profile_id: Optional[str] = Field(default=None, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    finished_at: Optional[datetime] = None
+
+
+class ArtistProfileCreate(SQLModel):
+    project_id: Optional[str] = None
+    name: str
+    bio: str = ""
+    tags: str = ""
+    cover_image_path: Optional[str] = None
+    image_prompt: Optional[str] = None
+    default_provider: Optional[str] = None
+    default_model: Optional[str] = None
+
+
+class ArtistProfileUpdate(SQLModel):
+    name: Optional[str] = None
+    bio: Optional[str] = None
+    tags: Optional[str] = None
+    cover_image_path: Optional[str] = None
+    image_prompt: Optional[str] = None
+    default_provider: Optional[str] = None
+    default_model: Optional[str] = None
+
+
+class AgentAssignmentCreate(SQLModel):
+    role: str
+    agent_name: str
+    model_provider: Optional[str] = None
+    model: Optional[str] = None
+    config_json: str = "{}"
+
+
+class AgentAssignmentSet(SQLModel):
+    """Replace-all semantics for an artist's crew (idempotent, no drift)."""
+
+    assignments: List[AgentAssignmentCreate]
+
+
+class AgentRunRequest(SQLModel):
+    """Generic agent invocation envelope; `input` is validated against the agent's schema."""
+
+    input: Dict[str, Any]
+    session_id: Optional[str] = None
+    project_id: Optional[str] = None
+    profile_id: Optional[str] = None
+
+
+class ReleaseCreate(SQLModel):
+    profile_id: str
+    title: str
+    description: str = ""

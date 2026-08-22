@@ -1,6 +1,6 @@
-import React, { useState, useEffect } from 'react';
-import { Cpu, Download, CheckCircle2, X, Activity } from 'lucide-react';
-import { modelsApi, type ModelVariant, type HardwareProfile } from '../../api';
+import React, { useState, useEffect, useRef } from 'react';
+import { Cpu, Download, CheckCircle2, X, Activity, AlertTriangle, Loader2 } from 'lucide-react';
+import { modelsApi, type ModelVariant, type HardwareProfile, type ModelDownloadStatus } from '../../api';
 
 interface ModelsManagerModalProps {
     isOpen: boolean;
@@ -10,7 +10,9 @@ interface ModelsManagerModalProps {
 export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, onClose }) => {
     const [models, setModels] = useState<ModelVariant[]>([]);
     const [hardware, setHardware] = useState<HardwareProfile | null>(null);
-    const [downloadingId, setDownloadingId] = useState<string | null>(null);
+    const [download, setDownload] = useState<ModelDownloadStatus | null>(null);
+    const [downloadError, setDownloadError] = useState<string>('');
+    const pollRef = useRef<number | undefined>(undefined);
 
     const loadData = async () => {
         try {
@@ -29,15 +31,36 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
         if (isOpen) {
             loadData();
         }
+        return () => window.clearInterval(pollRef.current);
     }, [isOpen]);
 
-    const handleDownload = async (modelId: string) => {
-        setDownloadingId(modelId);
-        setTimeout(() => {
-            setDownloadingId(null);
-            loadData();
-        }, 2000);
+    const handleDownload = async (repoId: string) => {
+        setDownloadError('');
+        try {
+            const started = await modelsApi.startModelDownload(repoId);
+            setDownload(started);
+            // Poll the REAL download ledger until it settles.
+            window.clearInterval(pollRef.current);
+            pollRef.current = window.setInterval(async () => {
+                try {
+                    const s = await modelsApi.getModelDownload(started.id);
+                    setDownload(s);
+                    if (['completed', 'cancelled', 'error'].includes(s.status)) {
+                        window.clearInterval(pollRef.current);
+                        if (s.status === 'completed') loadData(); // refresh tree
+                    }
+                } catch { /* transient poll error — next tick retries */ }
+            }, 800);
+        } catch (e: any) {
+            setDownloadError(e?.response?.data?.detail?.error?.message
+                || e?.response?.data?.detail
+                || e?.message
+                || 'Download failed to start.');
+        }
     };
+
+    const busy = !!download && ['queued', 'downloading'].includes(download.status);
+    const pct = download?.progress_percent;
 
     if (!isOpen) return null;
 
@@ -144,11 +167,11 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                             ) : (
                                                 <button
                                                     onClick={() => handleDownload(m.id)}
-                                                    disabled={downloadingId === m.id}
-                                                    className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-all shadow-sm active:scale-95"
+                                                    disabled={busy}
+                                                    className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-50"
                                                 >
-                                                    <Download size={13} />
-                                                    <span>{downloadingId === m.id ? 'Downloading...' : 'Download'}</span>
+                                                    {busy ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
+                                                    <span>{busy ? 'Downloading…' : 'Download'}</span>
                                                 </button>
                                             )}
                                         </div>
@@ -156,6 +179,44 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                 </div>
                             ))}
                         </div>
+
+                        {/* REAL download progress — server-tracked, per-file, cancellable */}
+                        {download && (
+                            <div className={`mx-6 mb-4 p-4 rounded-2xl border space-y-2 ${
+                                download.status === 'error'
+                                    ? 'bg-rose-500/10 border-rose-500/30'
+                                    : download.status === 'completed'
+                                    ? 'bg-teal-500/10 border-teal-500/30'
+                                    : 'bg-black/[0.03] dark:bg-white/5 border-black/[0.06] dark:border-white/10'
+                            }`}>
+                                <div className="flex items-center justify-between gap-3">
+                                    <span className="text-xs font-bold text-slate-800 dark:text-slate-200 truncate flex items-center gap-2">
+                                        {download.status === 'error' && <AlertTriangle size={14} className="text-rose-500" />}
+                                        {download.status === 'completed' && <CheckCircle2 size={14} className="text-teal-500" />}
+                                        {download.status === 'downloading' && <Loader2 size={14} className="animate-spin text-teal-500" />}
+                                        {download.repo_id}
+                                    </span>
+                                    <span className="text-[10px] font-mono uppercase tracking-wider text-slate-500">
+                                        {download.status}
+                                        {pct !== null && ` · ${pct}%`}
+                                    </span>
+                                </div>
+                                {pct !== null && download.status === 'downloading' && (
+                                    <div className="w-full h-1.5 bg-black/[0.06] dark:bg-white/10 rounded-full overflow-hidden">
+                                        <div
+                                            className="h-full bg-gradient-to-r from-teal-500 to-cyan-400 rounded-full transition-all duration-500"
+                                            style={{ width: `${pct}%` }}
+                                        />
+                                    </div>
+                                )}
+                                {download.status === 'downloading' && download.current_file && (
+                                    <p className="text-[10px] font-mono text-slate-400 truncate">{download.current_file} · file {download.files_done + 1}/{download.total_files}</p>
+                                )}
+                                {(download.status === 'error' || downloadError) && (
+                                    <p className="text-[11px] text-rose-600 dark:text-rose-400">{download.error || downloadError}</p>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             </div>

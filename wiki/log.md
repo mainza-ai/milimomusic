@@ -658,3 +658,68 @@ lore/memory. Includes hierarchy model, album production flow, data-model gap ana
 (ArtistProfile/AgentAssignment/Release/agent_runs/world_state all missing today),
 runtime demands, creative-flywheel thesis, open questions for the owner. Creates:
 concepts/artist-profiles-vision.md.
+
+## [2026-08-22] create | Agent Runtime Core + The Experiencer (implemented)
+Agent Foundation Phase B-D landed per owner go-ahead ("Experiencer = imagination
+engine: expands album concept into a lived journey that seeds each song").
+NEW backend/app/core/llm_contracts.py (typed errors G7, LLMResult usage envelope G5,
+extract_json_object) · generate_chat(messages) added to all 3 adapters (G1 message API;
+Ollama native /api/chat; Gemini system_instruction+role mapping; usage captured) ·
+agents/runtime/{context,policy,usage} (ResiliencePolicy = single failover authority w/
+parse-failover + async to_thread G2) · agents/experiencer/{schemas,persona,agent}
+(AlbumBrief→ExperiencerVision contract) · registry.py · models.py += ArtistProfile/
+AgentAssignment/Release/AgentRun (+Job.artist_profile_id/release_id migration) ·
+surface: GET /agents, POST /agents/{name}/run, GET /agents/runs/{id}, profiles CRUD +
+assignments replace-all + releases · frontend Batch A: B1 voice-convert fix,
+root ErrorBoundary, safeJsonParse adoption.
+VERIFIED: 9 hermetic runtime tests (failover/quota/auth-skip/parse-failover/all-fail/
+shortfall reporting) + full 80-test suite green · tsc+build green · LIVE end-to-end
+smoke: brief → NVIDIA timeout → OMLX failover → valid ExperiencerVision
+(journey/arc/3 seeds/motifs), 761+1137 tokens captured, AgentRun ledger persisted.
+Creates: core/, agents/ packages; tests/test_agents_runtime.py.
+
+## [2026-08-22] create | Transport correctness wave — playhead root causes fixed
+User-reported frozen playhead investigated empirically (7 headless-Chromium probe
+scripts against live dev+preview servers). Root causes found & fixed:
+(1) stopSources() cancelled the UI tick's rAF → every seek-while-playing froze the
+playhead forever (audio continued); UI loop lifecycle now separate from audio nodes.
+(2) isLoopingRef was NEVER synced from toggle state — looping had silently never
+engaged; sync effect added.
+(3) Loop-wrap branches returned without re-queuing the frame — first wrap killed the
+tick; every branch now re-queues (only true end-of-track exits).
+Plus: transport WATCHDOG (self-heals dead rAF within ~500ms + console breadcrumb),
+DAW always opens on Listen home (mode excluded from per-track session persistence),
+SessionWorkspace keyed by job.id (no cross-track state bleed), A-B loop verified with
+5 consecutive clean wraps, seek/pause/resume matrix green, zero false-positive
+watchdog warnings. All fixes proven via scripted browser probes (scrubber samples,
+line-style deltas, ledger inspection).
+
+## [2026-08-22] create | Phase 1 Security + Phase 2/3 batch (implemented)
+SECURITY (Phase 1): optional bearer auth via MILIMO_AUTH_TOKEN (header or ?auth= for
+EventSource; /health + docs + static exempt; wired app-wide at FastAPI construction) ·
+CORS allowlist from MILIMO_CORS_ORIGINS (default localhost origins, credentials off —
+kills the wildcard+credentials combo) · bind defaults to 127.0.0.1 with
+HOST/MILIMO_HOST+PORT/MILIMO_PORT env wiring · global exception handler (uniform
+envelope, zero internal leakage) · all 7 detail=str(e) leaks replaced · rate limiter
+middleware on expensive route groups (MILIMO_RATE_LIMIT_PER_MIN, per-IP sliding window)
+· uploads hardened at 3 endpoints: ext whitelist, streamed size caps (MAX_*_UPLOAD_MB),
+magic-byte sniff, randomized containment-safe names, SVG excluded (A7), dataset_id
+UUID-validated (A4). Verified live: 401 without token / 200 with / health exempt.
+OPS (Phase 3 quick wins): boot reconciliation (orphaned queued/processing jobs →
+failed "Interrupted by server restart") · complete cascade delete via _delete_job_artifacts
+(instrument stems, mastered/, converted_vocals/, tokens, covers, peaks cache — old code
+orphaned them) · gpu_lock acquired for WHOLE generation pipeline (was inpainting-only).
+MAKE IT REAL: B1 voice-convert fixed · mastering REWRITTEN — real Matchering w/
+reference track OR pyloudnorm LUFS normalization to -14 target, measured lufs returned,
+mastered_path column (B8 no-clobber), failures honest (503 unavailable / 500 DSP-failed,
+original untouched, partial outputs deleted); matchering+pyloudnorm added to requirements
+and installed · model downloads REAL (B2): POST /models/download streams HF snapshot
+per-file with true byte progress + cancel-between-files + disk precheck (507);
+ModelsManagerModal wired to polling progress UI replacing the setTimeout fake.
+README truth pass: production-grade claim softened, CPU/CUDA fallback phrasing corrected
+(Apple Silicon required for generation; other platforms get labeled placeholder),
+Node ≥20.19. .env.example documents all new vars.
+TESTS: tests/test_security_ops.py — 15 cases (auth matrix incl. query-param + exemptions,
+upload type/content/cap/traversal rejection, reconciliation, cascade sweep, rate limit).
+Full backend suite: 95 passed. Frontend tsc+build green. Auth enforcement verified LIVE
+(401/200/exempt against running server).

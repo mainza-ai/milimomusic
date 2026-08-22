@@ -22,6 +22,7 @@ import {
 import { API_BASE_URL, getStemMeta } from '../../api';
 import type { Job, TimedLine, StemsMap, NoteEvent } from '../../api';
 import { pushHotkeyScope, isTextEntryTarget, hasModifier } from '../../utils/hotkeyScope';
+import { safeJsonParse } from '../../utils/safeJsonParse';
 import { ArrangeTimeline } from './ArrangeTimeline';
 import { PianoRoll } from './PianoRoll';
 import { NotationViewer } from './NotationViewer';
@@ -86,24 +87,20 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     // These were parsed INLINE on every render; during playback the workspace
     // re-renders ~12Hz, re-parsing potentially megabyte note/lyric JSON each
     // tick. That alone could stall the main thread.
-    const beatGrid = useMemo<{ bpm?: number; beats_per_bar?: number }>(() => job.beat_grid_json
-        ? (typeof job.beat_grid_json === 'string' ? JSON.parse(job.beat_grid_json) : job.beat_grid_json)
-        : {}, [job.beat_grid_json]);
+    const beatGrid = useMemo<{ bpm?: number; beats_per_bar?: number }>(
+        () => safeJsonParse(job.beat_grid_json, {}, 'beat_grid_json'), [job.beat_grid_json]);
     const bpm = beatGrid.bpm || 120;
     const beatsPerBar = Number(beatGrid.beats_per_bar) > 0 ? Number(beatGrid.beats_per_bar) : 4;
     const barDuration = (60 / bpm) * beatsPerBar;
 
-    const parsedStems: StemsMap = useMemo(() => job.stems_json
-        ? (typeof job.stems_json === 'string' ? JSON.parse(job.stems_json) : job.stems_json)
-        : {}, [job.stems_json]);
+    const parsedStems: StemsMap = useMemo(
+        () => safeJsonParse(job.stems_json, {} as StemsMap, 'stems_json'), [job.stems_json]);
 
-    const timedLyrics = useMemo<TimedLine[]>(() => job.timed_lyrics_json
-        ? (typeof job.timed_lyrics_json === 'string' ? JSON.parse(job.timed_lyrics_json) : job.timed_lyrics_json)
-        : [], [job.timed_lyrics_json]);
+    const timedLyrics = useMemo<TimedLine[]>(
+        () => safeJsonParse<TimedLine[]>(job.timed_lyrics_json, [], 'timed_lyrics_json'), [job.timed_lyrics_json]);
 
-    const notes = useMemo<NoteEvent[]>(() => job.notes_json
-        ? (typeof job.notes_json === 'string' ? JSON.parse(job.notes_json) : job.notes_json)
-        : [], [job.notes_json]);
+    const notes = useMemo<NoteEvent[]>(
+        () => safeJsonParse<NoteEvent[]>(job.notes_json, [], 'notes_json'), [job.notes_json]);
 
     // DAW playback channels — TWO genuine stem sources the user can switch between:
     //   1. Per-Instrument (MuScriptor) -> dynamic, one channel per distinct instrument

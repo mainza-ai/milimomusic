@@ -5,6 +5,7 @@ from typing import List, Optional, Dict, Any, Type
 import json
 import re
 import random
+import time
 from abc import ABC, abstractmethod
 import os
 from datetime import datetime
@@ -26,6 +27,7 @@ from .lyrics_schemas import LyricsResponse
 from .lyrics_engine import StructuredLyricsEngine
 from .lyrics_utils import LyricsDOM
 from .style_registry import StyleRegistry, OFFICIAL_STYLES
+from app.core.llm_contracts import LLMResult, classify_llm_error
 
 logger = logging.getLogger(__name__)
 
@@ -187,6 +189,44 @@ class OllamaProvider(LLMProvider):
              raw_response = raw_response.replace("```", "")
         return raw_response
 
+    def generate_chat(self, messages: List[Dict[str, str]], model: str, **kwargs) -> LLMResult:
+        """Native Ollama /api/chat: real multi-turn roles + system prompt.
+
+        Returns an LLMResult envelope carrying token usage (prompt_eval_count /
+        eval_count) instead of dropping it.
+        """
+        started = time.monotonic()
+        temperature = kwargs.get("options", {}).get("temperature", 0.7)
+        try:
+            resp = requests.post(
+                f"{self.base_url}/api/chat",
+                json={
+                    "model": model,
+                    "messages": messages,
+                    "stream": False,
+                    "options": kwargs.get("options", {"temperature": temperature}),
+                },
+                timeout=kwargs.get("timeout", (3.0, 60.0)),
+            )
+            if resp.status_code != 200:
+                raise Exception(f"Ollama Error ({resp.status_code}): {resp.text}")
+            data = resp.json()
+            content = _strip_thinking(data.get("message", {}).get("content", ""))
+            usage = {}
+            if data.get("prompt_eval_count"):
+                usage["prompt_tokens"] = int(data["prompt_eval_count"])
+            if data.get("eval_count"):
+                usage["completion_tokens"] = int(data["eval_count"])
+            return LLMResult(
+                content=content,
+                provider="ollama",
+                model=model,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                usage=usage,
+            )
+        except Exception as e:
+            raise classify_llm_error("ollama", e) from e
+
 class OpenAIProvider(LLMProvider):
     def __init__(self, api_key: str, base_url: Optional[str] = None, timeout: float = 30.0):
         if OpenAI is None:
@@ -281,6 +321,39 @@ class OpenAIProvider(LLMProvider):
         if is_openrouter and "400" in str(e):
             logger.warning(f"OpenRouter model {model} failed. This might be due to model deprecation.")
 
+    def generate_chat(self, messages: List[Dict[str, str]], model: str, **kwargs) -> LLMResult:
+        """Native OpenAI-compatible chat: real roles (system/user/assistant).
+
+        Works across all seven OpenAI-shaped providers by construction. Usage
+        is captured from the completion envelope — the old layer discarded it.
+        """
+        started = time.monotonic()
+        try:
+            response = self.client.chat.completions.create(
+                model=model,
+                messages=messages,
+                temperature=kwargs.get("options", {}).get("temperature", 0.7),
+            )
+            content = getattr(response.choices[0].message, "content", "") or ""
+            usage: Dict[str, int] = {}
+            if getattr(response, "usage", None):
+                u = response.usage
+                usage = {
+                    "prompt_tokens": getattr(u, "prompt_tokens", 0) or 0,
+                    "completion_tokens": getattr(u, "completion_tokens", 0) or 0,
+                    "total_tokens": getattr(u, "total_tokens", 0) or 0,
+                }
+            return LLMResult(
+                content=_strip_thinking(content),
+                provider="openai-compatible",
+                model=model,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                usage=usage,
+            )
+        except Exception as e:
+            self._handle_error(e, model)
+            raise classify_llm_error("openai-compatible", e) from e
+
 class GeminiProvider(LLMProvider):
     def __init__(self, api_key: str):
         if genai is None:
@@ -336,6 +409,55 @@ class GeminiProvider(LLMProvider):
          # Future: Use `response_schema` in config if supported by pydantic mapping.
          json_data = self.generate_json(prompt, model, **kwargs)
          return response_format.model_validate(json_data)
+
+    def generate_chat(self, messages: List[Dict[str, str]], model: str, **kwargs) -> LLMResult:
+        """Native Gemini chat: system role → system_instruction; assistant→model.
+
+        Usage captured from usage_metadata (prompt/candidates/total token counts).
+        """
+        started = time.monotonic()
+        try:
+            system_parts: List[str] = []
+            contents: List[Dict[str, Any]] = []
+            for m in messages:
+                role = m.get("role", "user")
+                text = m.get("content", "")
+                if role == "system":
+                    system_parts.append(text)
+                else:
+                    contents.append({
+                        "role": "model" if role == "assistant" else "user",
+                        "parts": [{"text": text}],
+                    })
+            if not contents:
+                raise ValueError("Gemini requires at least one non-system message.")
+
+            response = self.client.models.generate_content(
+                model=model,
+                contents=contents,
+                config=types.GenerateContentConfig(
+                    system_instruction="\n\n".join(system_parts) or None,
+                    temperature=kwargs.get("options", {}).get("temperature", 0.7),
+                ),
+            )
+            content = _strip_thinking(response.text or "")
+            usage: Dict[str, int] = {}
+            um = getattr(response, "usage_metadata", None)
+            if um:
+                usage = {
+                    "prompt_tokens": getattr(um, "prompt_token_count", 0) or 0,
+                    "completion_tokens": getattr(um, "candidates_token_count", 0) or 0,
+                    "total_tokens": getattr(um, "total_token_count", 0) or 0,
+                }
+            return LLMResult(
+                content=content,
+                provider="gemini",
+                model=model,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                usage=usage,
+            )
+        except Exception as e:
+            raise classify_llm_error("gemini", e) from e
 
 # ---------------------------------------------------------------------------
 # MiniMax Music 3 caption rewriter — official music-caption-rewriter port.

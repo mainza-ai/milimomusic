@@ -6,6 +6,7 @@ import {
 import { API_BASE_URL, trackApi } from '../../api';
 import type { Job, NoteEvent } from '../../api';
 import { pushHotkeyScope, isTextEntryTarget } from '../../utils/hotkeyScope';
+import { safeJsonParse } from '../../utils/safeJsonParse';
 
 interface PianoRollProps {
     job: Job;
@@ -88,11 +89,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
     const lastSchedulePosRef = useRef(0);
 
     // Parse transcribed note events
-    const initialNotes: NoteEvent[] = job.notes_json
-        ? typeof job.notes_json === 'string'
-            ? JSON.parse(job.notes_json)
-            : job.notes_json
-        : [];
+    const initialNotes: NoteEvent[] = safeJsonParse<NoteEvent[]>(job.notes_json, [], 'notes_json');
 
     const [notesList, setNotesList] = useState<NoteEvent[]>(initialNotes);
 
@@ -124,9 +121,8 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
     // invalidates prior undo state. (Pre-existing v1 pattern.)
     useEffect(() => {
         if (job.notes_json) {
-            const parsed = typeof job.notes_json === 'string' ? JSON.parse(job.notes_json) : job.notes_json;
             // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional prop→state sync
-            setNotesList(parsed);
+            setNotesList(safeJsonParse<NoteEvent[]>(job.notes_json, [], 'notes_json'));
             setSelectedNotes(new Set());
             undoRef.current = [];
             redoStackRef.current = [];
@@ -144,11 +140,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
 
     // Real beat grid (BPM + beats per bar) drives the measure ruler AND the
     // musical snap grid.
-    const beatGrid = job.beat_grid_json
-        ? typeof job.beat_grid_json === 'string'
-            ? JSON.parse(job.beat_grid_json)
-            : job.beat_grid_json
-        : {};
+    const beatGrid = safeJsonParse<Record<string, number>>(job.beat_grid_json, {}, 'beat_grid_json');
     const bpm = Number(beatGrid.bpm) > 0 ? Number(beatGrid.bpm) : 120;
     const beatsPerMeasure = Number(beatGrid.beats_per_bar) > 0 ? Number(beatGrid.beats_per_bar) : 4;
     const measureDuration = (60 / bpm) * beatsPerMeasure; // seconds per bar

@@ -8,8 +8,12 @@ os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import logging
+logger = logging.getLogger("milimo.main")
 import json
 import re
+import time
+import shutil
+import threading
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
@@ -40,7 +44,7 @@ from app.services.voice_service import voice_service
 from app.transcription.muscriptor_provider import muscriptor_provider
 from app.transcription.real_separator import separate_sources
 from app.transcription.instrument_stems import render_instrument_parts
-from app.transcription.mastering import mastering_engine
+from app.transcription.mastering import master_track
 from app.transcription.karaoke import lyric_sync_engine
 from app.providers.registry import provider_registry
 from app.models import (
@@ -65,7 +69,29 @@ from app.models import (
     SessionMessage,
     SessionMessageCreate,
     CoverPromptRequest,
-    CoverImageRequest
+    CoverImageRequest,
+    ArtistProfile,
+    ArtistProfileCreate,
+    ArtistProfileUpdate,
+    AgentAssignment,
+    AgentAssignmentSet,
+    AgentAssignmentCreate,
+    Release,
+    ReleaseCreate,
+    AgentRun,
+    AgentRunRequest
+)
+from app.agents.registry import AGENTS, get_agent, list_agents
+from app.agents.runtime.context import RunContext
+from app.agents.runtime.policy import ResiliencePolicy
+from app.core.llm_contracts import (
+    AllProvidersFailedError,
+    LLMAuthError,
+    LLMBadModelError,
+    LLMParseError,
+    LLMQuotaError,
+    LLMTimeoutError,
+    LLMUpstreamError,
 )
 
 # Database
@@ -99,7 +125,10 @@ def create_db_and_tables():
             "structured_caption_json": "TEXT",
             "voice_profile_id": "VARCHAR",
             "project_id": "VARCHAR",
-            "session_id": "VARCHAR"
+            "session_id": "VARCHAR",
+            "artist_profile_id": "VARCHAR",
+            "release_id": "VARCHAR",
+            "mastered_path": "TEXT"
         }
         for col, col_type in new_columns.items():
             if col not in existing_cols:
@@ -124,25 +153,80 @@ def create_db_and_tables():
         session.commit()
 
 
+def reconcile_orphan_jobs() -> int:
+    """Boot-time crash recovery: jobs left queued/processing by a previous
+    process can never finish — mark them failed with an honest reason."""
+    with Session(engine) as session:
+        orphans = session.exec(
+            select(Job).where(Job.status.in_([JobStatus.QUEUED, JobStatus.PROCESSING]))
+        ).all()
+        for job in orphans:
+            job.status = JobStatus.FAILED
+            job.error_msg = "Interrupted by server restart."
+            session.add(job)
+        session.commit()
+        if orphans:
+            logger.warning(f"Reconciled {len(orphans)} orphaned job(s) after restart.")
+        return len(orphans)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     create_db_and_tables()
+    reconcile_orphan_jobs()
     await music_service.initialize()
     yield
     event_manager.shutdown()
     music_service.shutdown_all()
 
 
-app = FastAPI(lifespan=lifespan, title="Milimo Music v2 API — AI Music Production DAW")
+from app.core.security import require_auth
+from app.core.ratelimit import enforce_rate_limit
+app = FastAPI(lifespan=lifespan, title="Milimo Music v2 API — AI Music Production DAW",
+              dependencies=[Depends(require_auth)])
 
-# CORS
+# ── Security posture (Phase 1) ──────────────────────────────────────────────
+# Auth: optional bearer token via MILIMO_AUTH_TOKEN. Unset = open localhost dev.
+# CORS: explicit allowlist from MILIMO_CORS_ORIGINS; sane localhost default
+# WITHOUT credentials (the wildcard+credentials combo was spec-invalid).
+_cors_env = (os.environ.get("MILIMO_CORS_ORIGINS") or "").strip()
+if _cors_env:
+    _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+    _cors_credentials = True
+else:
+    _cors_origins = ["http://localhost:5173", "http://localhost:4173"]
+    _cors_credentials = False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Every route requires the bearer token when MILIMO_AUTH_TOKEN is set;
+# exemptions (/health, docs, static media) live inside the dependency itself.
+from fastapi import Depends  # noqa: E402  (kept beside usage for clarity)
+from starlette.requests import Request  # noqa: E402
+from starlette.responses import JSONResponse  # noqa: E402
+
+# Rate limiting on expensive routes (agents/generation/uploads/mastering).
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    return await enforce_rate_limit(request, call_next)
+
+
+# Global exception handler: uniform envelope, no internal leakage (G-class fix).
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception(f"Unhandled error on {request.method} {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"error": {"code": "internal_error", "message": "Unexpected server error."}},
+    )
+
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
@@ -151,7 +235,7 @@ from starlette.requests import Request
 
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    print(f"Validation error: {exc.errors()}")
+    logger.warning(f"Validation error on {request.method} {request.url.path}: {exc.errors()}")
     return await request_validation_exception_handler(request, exc)
 
 
@@ -234,7 +318,7 @@ def create_voice_profile(req: VoiceProfileCreate):
         )
         return {"profile": profile}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail={"error": {"code": "invalid_request", "message": str(e)}})
 
 
 @app.delete("/voice/profiles/{profile_id}")
@@ -251,15 +335,13 @@ def delete_voice_profile(profile_id: str):
 async def transcribe_uploaded_audio(file: UploadFile = File(...)):
     """
     Import user audio file into the DAW, separating stems and generating MIDI/MusicXML.
+    Uploads are hardened: extension whitelist, size cap, magic-byte sniff,
+    randomized containment-safe filename (audit A4 fix).
     """
     import uuid
     job_id = str(uuid.uuid4())
-    filename = f"{job_id}_{file.filename}"
-    upload_path = os.path.join("generated_audio", filename)
-
-    content = await file.read()
-    with open(upload_path, "wb") as f:
-        f.write(content)
+    from app.core.uploads import save_upload
+    upload_path, safe_name = await save_upload(file, "generated_audio", kind="audio")
 
     # 1. Real neural source separation (BS-Roformer) on the uploaded audio
     loop = asyncio.get_running_loop()
@@ -312,6 +394,11 @@ async def transcribe_uploaded_audio(file: UploadFile = File(...)):
         session.refresh(job)
 
     return {"job_id": job.id, "job": job}
+
+
+def job_audio_public(job: Job) -> str:
+    """Public (/audio/...) URL of a job's master — the canonical stored form."""
+    return job.audio_path or ""
 
 
 def get_job_by_id(session: Session, job_id_input: Any) -> Optional[Job]:
@@ -438,25 +525,51 @@ def export_track_asset(job_id: str, export_format: str):
 
 @app.post("/mastering/match/{job_id}")
 async def apply_reference_mastering(job_id: UUID, req: MasteringRequest = MasteringRequest()):
-    """Apply Matchering reference mastering to track."""
+    """Real mastering: Matchering against a reference track, or honest -14 LUFS
+    normalization when no reference is given. Never overwrites the original
+    master — results land in `mastered_path` (B8 fix)."""
     with Session(engine) as session:
         job = session.get(Job, job_id)
         if not job or not job.audio_path:
-            raise HTTPException(status_code=404, detail="Track not found")
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Track not found"}})
 
-        result = await mastering_engine.match_master(
-            target_audio_path=job.audio_path,
-            reference_audio_path=None,
+        reference_public = None
+        if req.reference_job_id:
+            ref_job = get_job_by_id(session, str(req.reference_job_id))
+            if not ref_job or not ref_job.audio_path:
+                raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Reference track not found"}})
+            reference_public = ref_job.audio_path
+
+    try:
+        result = await master_track(
             job_id=str(job_id),
-            target_lufs=req.target_lufs
+            target_audio_path_public=job_audio_public(job),
+            reference_audio_path_public=reference_public,
+            target_lufs=req.target_lufs,
         )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail={"error": {"code": "file_missing", "message": str(e)}})
+    except RuntimeError as e:
+        logger.error(f"Mastering unavailable for {job_id}: {e}")
+        raise HTTPException(status_code=503, detail={"error": {"code": "mastering_unavailable", "message": str(e)}})
+    except Exception as e:
+        logger.error(f"Mastering failed for {job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": "mastering_failed", "message": "Mastering DSP failed — the original track is untouched."}})
 
-        job.audio_path = result.mastered_audio_path
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        job.mastered_path = result.mastered_audio_path
         session.add(job)
         session.commit()
-        session.refresh(job)
 
-        return {"status": "mastered", "audio_path": job.audio_path, "lufs": result.target_lufs}
+    return {
+        "status": "mastered",
+        "method": result.method,
+        "audio_path": result.mastered_audio_path,
+        "original_audio_path": job_audio_public(job),
+        "lufs": result.measured_lufs,
+        "target_lufs": result.target_lufs,
+    }
 
 
 @app.get("/tracks/{job_id}/sheets")
@@ -545,6 +658,370 @@ def get_track_peaks(job_id: str, buckets: int = 240):
     except Exception:
         pass  # cache write is best-effort; recompute next time
     return payload
+
+
+# ---------------------------------------------------------------------------
+# AI Agent Foundation — surface layer
+# (wiki/concepts/agent-foundation.md §runtime · artist-profiles-vision.md)
+# ---------------------------------------------------------------------------
+
+_AGENT_ERROR_MAP = {
+    LLMAuthError: (502, "upstream_auth"),
+    LLMQuotaError: (429, "upstream_quota"),
+    LLMTimeoutError: (504, "upstream_timeout"),
+    LLMBadModelError: (400, "bad_model"),
+    LLMParseError: (502, "upstream_parse"),
+    AllProvidersFailedError: (502, "all_providers_failed"),
+    LLMUpstreamError: (502, "upstream_error"),
+}
+
+
+def _agent_error_response(exc: Exception) -> HTTPException:
+    """Uniform error envelope for the agent surface: {error:{code,message}}."""
+    for etype, (status, code) in _AGENT_ERROR_MAP.items():
+        if isinstance(exc, etype):
+            detail = {"error": {"code": code, "message": str(exc)}}
+            if hasattr(exc, "attempts"):
+                detail["error"]["attempts"] = exc.attempts
+            return HTTPException(status_code=status, detail=detail)
+    logger.error(f"Unhandled agent error: {exc}", exc_info=True)
+    return HTTPException(status_code=500, detail={
+        "error": {"code": "internal_error", "message": "Agent run failed unexpectedly."}
+    })
+
+
+@app.get("/agents")
+def list_available_agents():
+    """Registry listing with input schemas — self-describing agent surface."""
+    return {"agents": list_agents()}
+
+
+@app.post("/agents/{agent_name}/run")
+async def run_agent(agent_name: str, payload: AgentRunRequest):
+    """Execute a registered agent once, persisting a full AgentRun ledger row.
+
+    The experiencer is single-step (seconds), so it runs to completion in-request;
+    multi-step orchestrations (album runs) will return run_id immediately and
+    stream progress over /events keyed by run_id.
+    """
+    try:
+        entry = get_agent(agent_name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail={
+            "error": {"code": "unknown_agent", "message": f"No agent registered as '{agent_name}'."}
+        })
+
+    try:
+        validated_input = entry.input_schema.model_validate(payload.input or {})
+    except Exception as e:
+        raise HTTPException(status_code=422, detail={
+            "error": {"code": "invalid_input", "message": str(e)}
+        })
+
+    ctx = RunContext(
+        agent_name=agent_name,
+        session_id=payload.session_id,
+        project_id=payload.project_id,
+        artist_profile_id=payload.profile_id,
+    )
+
+    with Session(engine) as session:
+        run_row = AgentRun(
+            agent_name=agent_name,
+            status="running",
+            input_json=json.dumps(payload.input or {}, default=str),
+            session_id=payload.session_id,
+            project_id=payload.project_id,
+            profile_id=payload.profile_id,
+        )
+        session.add(run_row)
+        session.commit()
+        session.refresh(run_row)
+        run_id = str(run_row.id)
+
+    started = time.monotonic()
+    try:
+        result = await entry.agent.run(validated_input, ctx, ResiliencePolicy())
+    except Exception as exc:
+        exc_response = _agent_error_response(exc)
+        err_detail = getattr(exc_response, "detail", {})
+        err_meta = err_detail.get("error", {}) if isinstance(err_detail, dict) else {}
+        attempts_json = json.dumps(err_meta.get("attempts", []), default=str)
+        with Session(engine) as session:
+            row = session.get(AgentRun, UUID(run_id))
+            row.status = "failed"
+            row.error_type = err_meta.get("code", "internal_error")
+            row.error_message = str(exc)[:2000]
+            row.attempts_json = attempts_json
+            row.finished_at = datetime.now(timezone.utc)
+            session.add(row)
+            session.commit()
+        raise exc_response
+
+    latency_ms = int((time.monotonic() - started) * 1000)
+    output = result.output.model_dump(mode="json") if hasattr(result.output, "model_dump") else str(result.output)
+    with Session(engine) as session:
+        row = session.get(AgentRun, UUID(run_id))
+        row.status = "succeeded"
+        row.output_json = json.dumps({
+            "output": output,
+            "shortfall_notes": getattr(result, "shortfall_notes", ""),
+        }, default=str)
+        row.tokens_in = getattr(result, "tokens_in", 0)
+        row.tokens_out = getattr(result, "tokens_out", 0)
+        row.latency_ms = getattr(result, "latency_ms", latency_ms)
+        row.attempts_json = json.dumps([a.to_dict() for a in getattr(result, "attempts", [])], default=str)
+        row.finished_at = datetime.now(timezone.utc)
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+
+    return {"run": row, "result": output}
+
+
+@app.get("/agents/runs/{run_id}")
+def get_agent_run(run_id: UUID):
+    with Session(engine) as session:
+        row = session.get(AgentRun, run_id)
+        if not row:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Run not found."}})
+        return {"run": row}
+
+
+# ---------------------------------------------------------------------------
+# Model download manager — REAL streamed HF downloads (B2), no fake spinners.
+# Per-file progress via hf_hub_download loop; resumable by construction
+# (hf cache resumes partial files); cancel honored between files.
+# ---------------------------------------------------------------------------
+_model_downloads: Dict[str, Dict[str, Any]] = {}
+_download_cancels: Dict[str, threading.Event] = {}
+_REPO_ID_RE = re.compile(r"^[\w.-]+/[\w.\-]+$")
+
+
+def _models_root() -> str:
+    root = os.environ.get("MODEL_DIRECTORY", os.path.join("data", "models"))
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
+class ModelDownloadRequest(SQLModel):
+    repo_id: str
+
+
+@app.post("/models/download")
+async def start_model_download(payload: ModelDownloadRequest, background_tasks: BackgroundTasks):
+    from huggingface_hub import HfApi
+
+    if not _REPO_ID_RE.match(payload.repo_id or ""):
+        raise HTTPException(status_code=400, detail={"error": {"code": "bad_repo_id", "message": "repo_id must look like 'org/model'."}})
+
+    try:
+        info = await asyncio.to_thread(
+            lambda: HfApi().model_info(repo_id=payload.repo_id, files_metadata=True)
+        )
+    except Exception as e:
+        logger.warning(f"Model metadata fetch failed for {payload.repo_id}: {e}")
+        raise HTTPException(status_code=400, detail={"error": {"code": "repo_not_found", "message": f"Could not resolve '{payload.repo_id}' on Hugging Face: {e}"}})
+
+    files = [(s.rfilename, int(s.size or 0)) for s in (info.siblings or []) if s.size]
+    total_bytes = sum(sz for _, sz in files)
+    local_dir = os.path.join(_models_root(), payload.repo_id.replace("/", "__"))
+
+    disk = shutil.disk_usage(_models_root())
+    if total_bytes and disk.free < int(total_bytes * 1.1) + 512 * 1024 * 1024:
+        raise HTTPException(status_code=507, detail={
+            "error": {"code": "insufficient_disk",
+                      "message": f"Download needs ~{total_bytes / 1e9:.1f} GB; only {disk.free / 1e9:.1f} GB free."}})
+
+    download_id = str(uuid.uuid4())
+    _model_downloads[download_id] = {
+        "id": download_id, "repo_id": payload.repo_id, "status": "queued",
+        "total_files": len(files), "files_done": 0, "current_file": "",
+        "received_bytes": 0, "total_bytes": total_bytes,
+        "local_dir": os.path.abspath(local_dir), "error": "",
+    }
+    cancel_event = threading.Event()
+    _download_cancels[download_id] = cancel_event
+    background_tasks.add_task(_model_download_worker, download_id, payload.repo_id, local_dir, files, cancel_event)
+    return _snapshot_download(download_id)
+
+
+@app.get("/models/downloads/{download_id}")
+def get_model_download(download_id: str):
+    snap = _snapshot_download(download_id)
+    if not snap:
+        raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Download not found."}})
+    return snap
+
+
+@app.post("/models/downloads/{download_id}/cancel")
+def cancel_model_download(download_id: str):
+    ev = _download_cancels.get(download_id)
+    rec = _model_downloads.get(download_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Download not found."}})
+    if ev is not None:
+        ev.set()
+    return {"id": download_id, "status": rec["status"], "cancel_requested": True}
+
+
+def _snapshot_download(download_id: str) -> Optional[Dict[str, Any]]:
+    rec = _model_downloads.get(download_id)
+    if not rec:
+        return None
+    pct = round(100 * rec["received_bytes"] / rec["total_bytes"]) if rec["total_bytes"] else None
+    return {**rec, "progress_percent": pct}
+
+
+def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files: List[Any], cancel_event: threading.Event):
+    from huggingface_hub import hf_hub_download
+
+    rec = _model_downloads[download_id]
+    rec["status"] = "downloading"
+    try:
+        for fname, size in files:
+            if cancel_event.is_set():
+                rec["status"] = "cancelled"
+                return
+            rec["current_file"] = fname
+            hf_hub_download(repo_id=repo_id, filename=fname, local_dir=local_dir)
+            rec["files_done"] += 1
+            rec["received_bytes"] += size
+        rec["status"] = "completed"
+        rec["current_file"] = ""
+    except Exception as e:
+        rec["status"] = "error"
+        rec["error"] = str(e)[:500]
+        logger.error(f"Model download {download_id} failed: {e}")
+
+
+@app.get("/profiles")
+def list_artist_profiles(project_id: Optional[str] = None):
+    with Session(engine) as session:
+        stmt = select(ArtistProfile)
+        if project_id:
+            stmt = stmt.where(ArtistProfile.project_id == project_id)
+        profiles = session.exec(stmt.order_by(ArtistProfile.created_at.desc())).all()
+        return {"profiles": profiles}
+
+
+@app.post("/profiles")
+def create_artist_profile(payload: ArtistProfileCreate):
+    with Session(engine) as session:
+        profile = ArtistProfile(**payload.model_dump())
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+        return profile
+
+
+@app.get("/profiles/{profile_id}")
+def get_artist_profile(profile_id: UUID):
+    with Session(engine) as session:
+        profile = session.get(ArtistProfile, profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
+        assignments = session.exec(
+            select(AgentAssignment).where(AgentAssignment.profile_id == str(profile.id))
+        ).all()
+        releases = session.exec(
+            select(Release).where(Release.profile_id == str(profile.id)).order_by(Release.created_at.desc())
+        ).all()
+        return {"profile": profile, "assignments": assignments, "releases": releases}
+
+
+@app.patch("/profiles/{profile_id}")
+def update_artist_profile(profile_id: UUID, payload: ArtistProfileUpdate):
+    with Session(engine) as session:
+        profile = session.get(ArtistProfile, profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
+        updates = payload.model_dump(exclude_unset=True)
+        for k, v in updates.items():
+            setattr(profile, k, v)
+        profile.updated_at = datetime.now(timezone.utc)
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+        return profile
+
+
+@app.delete("/profiles/{profile_id}")
+def delete_artist_profile(profile_id: UUID):
+    with Session(engine) as session:
+        profile = session.get(ArtistProfile, profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
+        # Cascade: assignments die with the profile; Jobs/Releases keep history
+        # but lose the pointer target (soft-dangling by design — discography is
+        # historical fact and must survive identity deletion).
+        assignments = session.exec(
+            select(AgentAssignment).where(AgentAssignment.profile_id == str(profile.id))
+        ).all()
+        for a in assignments:
+            session.delete(a)
+        session.delete(profile)
+        session.commit()
+        return {"status": "deleted", "id": str(profile_id)}
+
+
+@app.put("/profiles/{profile_id}/assignments")
+def set_artist_assignments(profile_id: UUID, payload: AgentAssignmentSet):
+    """Replace the artist's entire crew atomically (no drift, no partial state)."""
+    with Session(engine) as session:
+        profile = session.get(ArtistProfile, profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
+        for name in {a.agent_name for a in payload.assignments}:
+            if name not in AGENTS:
+                raise HTTPException(status_code=400, detail={
+                    "error": {"code": "unknown_agent", "message": f"No agent registered as '{name}'."}
+                })
+        existing = session.exec(
+            select(AgentAssignment).where(AgentAssignment.profile_id == str(profile.id))
+        ).all()
+        for a in existing:
+            session.delete(a)
+        created = []
+        for spec in payload.assignments:
+            row = AgentAssignment(
+                profile_id=str(profile_id),
+                role=spec.role,
+                agent_name=spec.agent_name,
+                model_provider=spec.model_provider,
+                model=spec.model,
+                config_json=spec.config_json,
+            )
+            session.add(row)
+            created.append(row)
+        profile.updated_at = datetime.now(timezone.utc)
+        session.add(profile)
+        session.commit()
+        for r in created:
+            session.refresh(r)
+        return {"assignments": created}
+
+
+@app.post("/releases")
+def create_release(payload: ReleaseCreate):
+    with Session(engine) as session:
+        profile = session.get(ArtistProfile, UUID(payload.profile_id))
+        if not profile:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
+        release = Release(profile_id=str(payload.profile_id), title=payload.title, description=payload.description)
+        session.add(release)
+        session.commit()
+        session.refresh(release)
+        return release
+
+
+@app.get("/profiles/{profile_id}/releases")
+def list_releases(profile_id: UUID):
+    with Session(engine) as session:
+        releases = session.exec(
+            select(Release).where(Release.profile_id == str(profile_id)).order_by(Release.created_at.desc())
+        ).all()
+        return {"releases": releases}
 
 
 @app.post("/tracks/{job_id}/midi")
@@ -686,7 +1163,8 @@ def update_llm_config(config: LLMConfigUpdate):
             LLMService.update_config("omlx", config.omlx.model_dump(exclude_unset=True))
         return LLMService.get_config()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Route failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": "internal_error", "message": "Unexpected server error."}})
 
 
 @app.post("/config/fetch-models")
@@ -788,20 +1266,13 @@ def generate_cover_prompt(req: CoverPromptRequest):
 
 @app.post("/upload/image")
 async def upload_cover_image(file: UploadFile = File(...)):
-    """Upload custom image asset (PNG, JPG, WEBP, SVG) for project or song cover art."""
-    import uuid
-    import shutil
-    
-    ext = os.path.splitext(file.filename)[1].lower() or ".jpg"
-    if ext not in [".jpg", ".jpeg", ".png", ".webp", ".svg"]:
-        raise HTTPException(status_code=400, detail="Unsupported image format. Use PNG, JPG, WEBP, or SVG.")
-        
-    filename = f"cover_{uuid.uuid4().hex[:12]}{ext}"
-    dest_path = os.path.join("data", "covers", filename)
-    
-    with open(dest_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-        
+    """Upload custom cover art (PNG/JPG/WEBP). SVG excluded (stored-XSS, audit A7);
+    content sniffed against magic bytes; size capped; name randomized."""
+    from app.core.uploads import save_upload
+    dest_path, filename = await save_upload(
+        file, os.path.join("data", "covers"), kind="image"
+    )
+
     return {
         "url": f"/covers/{filename}",
         "filename": filename,
@@ -1057,7 +1528,7 @@ def add_custom_style(style: StyleCreate):
         created = registry.add_custom_style(style.name, style.description)
         return {"style": created.to_dict()}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail={"error": {"code": "invalid_request", "message": str(e)}})
 
 
 @app.delete("/styles/custom/{name}")
@@ -1132,14 +1603,29 @@ def get_dataset(dataset_id: str):
 
 @app.post("/training/datasets/{dataset_id}/audio")
 async def upload_audio(dataset_id: str, file: UploadFile = File(...), caption: str = Form(...)):
+    # dataset_id must be a UUID (audit A4: it was concatenated into write paths)
     try:
-        content = await file.read()
+        dataset_uuid = UUID(dataset_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": "bad_dataset_id", "message": "dataset_id must be a UUID."}})
+
+    from app.core.uploads import save_upload
+    saved_path, safe_name = await save_upload(file, os.path.join("data", "datasets", dataset_id, "tmp"), kind="audio")
+
+    try:
+        with open(saved_path, "rb") as f:
+            content = f.read()
         audio_file = fine_tuning_service.add_audio_file(
-            dataset_id, file.filename, caption, content
+            str(dataset_uuid), safe_name, caption, content
         )
         return {"audio_file": {"filename": audio_file.filename, "caption": audio_file.caption}}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail={"error": {"code": "invalid_dataset", "message": str(e)}})
+    finally:
+        try:
+            os.remove(saved_path)
+        except OSError:
+            pass
 
 
 @app.get("/training/datasets/{dataset_id}/audio/{filename}")
@@ -1189,7 +1675,7 @@ def create_training_job(config: TrainingConfigRequest):
         job = fine_tuning_service.create_training_job(training_config)
         return {"job": job.to_dict()}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail={"error": {"code": "invalid_request", "message": str(e)}})
 
 
 @app.get("/training/jobs")
@@ -1245,7 +1731,8 @@ async def generate_lyrics(req: LyricsRequest):
         lyrics = await LLMService.generate_lyrics_async(req.topic, req.model_name, req.seed_lyrics, req.tags)
         return {"lyrics": sanitize_lyrics(lyrics)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Route failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": "internal_error", "message": "Unexpected server error."}})
 
 
 @app.post("/generate/lyrics-chat")
@@ -1264,7 +1751,8 @@ async def chat_with_lyrics(req: LyricsChatRequest):
             result["lyrics"] = sanitize_lyrics(result["lyrics"])
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Route failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": "internal_error", "message": "Unexpected server error."}})
 
 
 class ProducerComposeRequest(BaseModel):
@@ -1340,7 +1828,8 @@ async def producer_compose(req: ProducerComposeRequest):
     except HTTPException:
         raise
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Route failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": "internal_error", "message": "Unexpected server error."}})
 
 
 # --- Music Generation & Track Extensions ---
@@ -1597,7 +2086,7 @@ async def voice_convert_job(job_id: str, body: dict = Body(...)):
         target_vocal = stems.get("vocals", job.audio_path).lstrip("/")
         
         out_vocal = f"generated_audio/{job.id}_svc_{voice_profile_id}.wav"
-        await voice_service.convert_voice(target_vocal, voice_profile_id, out_vocal)
+        await voice_service.convert_vocals(target_vocal, voice_profile_id, out_vocal)
         
         new_job = Job(
             prompt=f"Voice Converted ({voice_profile_id}): {job.prompt}",
@@ -1641,48 +2130,57 @@ def download_track(job_id: str):
 
 
 @app.delete("/jobs/{job_id}")
+def _delete_job_artifacts(job_id_str: str, audio_public_path: Optional[str] = None) -> int:
+    """Remove EVERY artifact belonging to a job (Phase 3 cascade completion).
+
+    The old implementation removed only the master + 4 fixed stems, orphaning
+    instrument stems, mastered/, converted_vocals/, tokens, covers and peaks.
+    """
+    import glob
+
+    removed = 0
+    patterns = [
+        f"generated_audio/stems/{job_id_str}_*.wav",
+        f"generated_audio/mastered/{job_id_str}*",
+        f"generated_audio/converted_vocals/{job_id_str}_*.wav",
+        f"generated_tokens/{job_id_str}*",
+        f"generated_audio/{job_id_str}.mid",
+        f"generated_audio/{job_id_str}.musicxml",
+        f"data/covers/{job_id_str}*",
+    ]
+    if audio_public_path:
+        master_name = os.path.basename(audio_public_path)
+        patterns.append(f"generated_audio/{master_name}")
+        stem = os.path.splitext(master_name)[0]
+        patterns.append(os.path.join("generated_audio", ".peaks", f"{stem}.*.json"))
+
+    for pattern in patterns:
+        for path in glob.glob(pattern):
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+                    removed += 1
+            except OSError as e:
+                logger.warning(f"Cascade delete skipped {path}: {e}")
+    return removed
+
+
 def delete_job(job_id: str):
     music_service.cancel_job(str(job_id))
-    
+
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        
+
         job_id_str = str(job.id)
+        audio_public = job.audio_path
 
-        # Delete physical audio file
-        if job.audio_path:
-            filename = job.audio_path.replace("/audio/", "")
-            file_path = f"generated_audio/{filename}"
-            if os.path.exists(file_path):
-                try:
-                    os.remove(file_path)
-                except Exception as e:
-                    logger.warning(f"Error deleting file {file_path}: {e}")
-
-        # Delete MIDI, MusicXML, and Stems
-        for ext in [".mid", ".musicxml"]:
-            aux_path = f"generated_audio/{job_id_str}{ext}"
-            if os.path.exists(aux_path):
-                try:
-                    os.remove(aux_path)
-                except Exception:
-                    pass
-
-        # Delete separated stem WAVs
-        for stem_name in ["vocals", "drums", "bass", "other", "instrumental"]:
-            stem_path = f"generated_audio/stems/{job_id_str}_{stem_name}.wav"
-            if os.path.exists(stem_path):
-                try:
-                    os.remove(stem_path)
-                except Exception:
-                    pass
-
-        # Remove from database and commit
+        # Remove from database first (fast), then sweep artifacts.
         session.delete(job)
         session.commit()
-            
+
+    _delete_job_artifacts(job_id_str, audio_public)
     return {"status": "deleted", "id": job_id_str}
 
 
@@ -1876,4 +2374,7 @@ async def events():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, timeout_graceful_shutdown=1)
+    # Security default: bind loopback. LAN exposure = explicit opt-in via HOST env.
+    host = os.environ.get("HOST") or os.environ.get("MILIMO_HOST") or "127.0.0.1"
+    port = int(os.environ.get("PORT") or os.environ.get("MILIMO_PORT") or 8000)
+    uvicorn.run(app, host=host, port=port, timeout_graceful_shutdown=5)

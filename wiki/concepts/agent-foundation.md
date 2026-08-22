@@ -10,6 +10,16 @@ aliases: [agent runtime, AgentRuntime, llm audit]
 
 # AI Agent Foundation — LLM Layer Investigation
 
+> [!IMPORTANT] **Implementation status (2026-08-22): Runtime core + first agent LIVE.**
+> Landed: core/llm_contracts (typed errors G7, usage envelope G5) · message-level
+> `generate_chat` on all 3 adapters (G1) · agents/runtime (ResiliencePolicy with
+> parse-failover, async discipline G2; RunContext; RunUsage) · registry ·
+> experiencer agent (AlbumBrief→ExperiencerVision) · AgentRun/ArtistProfile/
+> AgentAssignment/Release tables · /agents + /profiles surface · 9 hermetic tests,
+> full suite green · live smoke verified failover (NVIDIA timeout → OMLX success).
+> Remaining below: streaming (G9), memory summarization beyond history window (G4),
+> world_state tools (G3), prompt registry formalization (G8).
+
 Investigation of the LLM configuration layer as the foundation for AI agents
 (songwriter, world builder, experiencer/critic…), feeding the larger vision in
 [Artist Profiles & Album Agents](artist-profiles-vision.md). All findings verified

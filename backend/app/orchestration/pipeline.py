@@ -14,6 +14,7 @@ from sqlmodel import Session, select
 
 from app.models import Job, JobStatus, GenerationRequest
 from app.providers.registry import provider_registry
+from app.services.music_service import music_service
 from app.transcription.muscriptor_provider import muscriptor_provider
 from app.transcription.real_separator import separate_sources, unload_model
 from app.transcription.instrument_stems import render_instrument_parts
@@ -42,9 +43,24 @@ class GenerateAndTranscribePipeline:
     ):
         """
         Execute the full production pipeline for a generation request.
+        The GPU lock is acquired for the WHOLE run — generation, separation and
+        transcription all contend for the same device (previously only
+        inpainting took this lock, so concurrent runs raced unsynchronized).
         """
         job_id_str = str(job_id)
         logger.info(f"Starting orchestration pipeline for job {job_id_str}")
+        async with music_service.gpu_lock:
+            return await self._run_locked(job_id, req, engine, event_manager, cancel_event)
+
+    async def _run_locked(
+        self,
+        job_id: UUID,
+        req: GenerationRequest,
+        engine: Any,
+        event_manager: Any,
+        cancel_event: Optional[Any] = None
+    ):
+        job_id_str = str(job_id)
 
         # Update DB status: PROCESSING
         with Session(engine) as session:

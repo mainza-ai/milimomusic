@@ -4,6 +4,7 @@ import './index.css';
 import App from './App.tsx';
 import { ThemeProvider } from './context/ThemeContext.tsx';
 import { AudioEngineProvider } from './context/AudioEngineContext.tsx';
+import { ErrorBoundary } from './components/ErrorBoundary.tsx';
 
 window.addEventListener('unhandledrejection', (event) => {
   if (event.reason?.name === 'AbortError') {
@@ -13,10 +14,12 @@ window.addEventListener('unhandledrejection', (event) => {
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
-    <ThemeProvider>
-      <AudioEngineProvider>
-        <App />
-      </AudioEngineProvider>
-    </ThemeProvider>
+    <ErrorBoundary>
+      <ThemeProvider>
+        <AudioEngineProvider>
+          <App />
+        </AudioEngineProvider>
+      </ThemeProvider>
+    </ErrorBoundary>
   </StrictMode>,
 );

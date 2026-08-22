@@ -2,6 +2,7 @@ import React, { useMemo, useState } from 'react';
 import { FileText, Download, ZoomIn, ZoomOut, Printer, FileDown, X } from 'lucide-react';
 import { API_BASE_URL, trackApi, type SheetScoreItem } from '../../api';
 import type { Job, NoteEvent } from '../../api';
+import { safeJsonParse } from '../../utils/safeJsonParse';
 
 interface NotationViewerProps {
     job: Job;
@@ -111,7 +112,7 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
     const [isLoadingSheets, setIsLoadingSheets] = useState(false);
 
     const rawNotes: NoteEvent[] = useMemo(
-        () => (job.notes_json ? (typeof job.notes_json === 'string' ? JSON.parse(job.notes_json) : job.notes_json) : []),
+        () => safeJsonParse<NoteEvent[]>(job.notes_json, [], 'notes_json'),
         [job.notes_json]
     );
 
@@ -129,7 +130,7 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
     }, [rawNotes, selectedInstrument]);
 
     const beatGrid = useMemo(
-        () => (job.beat_grid_json ? (typeof job.beat_grid_json === 'string' ? JSON.parse(job.beat_grid_json) : job.beat_grid_json) : {}),
+        () => safeJsonParse<Record<string, number>>(job.beat_grid_json, {}, 'beat_grid_json'),
         [job.beat_grid_json]
     );
     const bpm = Number(beatGrid.bpm) > 0 ? Number(beatGrid.bpm) : 120;

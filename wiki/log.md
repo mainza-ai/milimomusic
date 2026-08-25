@@ -723,3 +723,92 @@ TESTS: tests/test_security_ops.py — 15 cases (auth matrix incl. query-param + 
 upload type/content/cap/traversal rejection, reconciliation, cascade sweep, rate limit).
 Full backend suite: 95 passed. Frontend tsc+build green. Auth enforcement verified LIVE
 (401/200/exempt against running server).
+
+## [2026-08-22] update | Live E2E hardening — constrained decoding + timeout authority
+Full-stack verification against running servers exposed two production gaps in the
+agent runtime, both fixed and live-verified:
+(1) OpenAI-compatible adapters ignored policy timeouts (SDK client default + internal
+retries let NVIDIA eat 137s before failover). Policy timeout now AUTHORITATIVE per
+attempt via client.with_options(timeout, max_retries=0).
+(2) Prompt-and-pray JSON unreliable on small local models (Llama-3.2-3B parse failures).
+Added CONSTRAINED DECODING: force_json=True → Ollama format:"json", OpenAI-compat
+response_format json_object, Gemini response_mime_type. Plus per-provider parse-repair
+budget (default 2 corrective round-trips carrying assistant's broken output back with
+error feedback — Co-Writer pattern) recorded honestly in usage ledger. Also fixed:
+stray route decorator had shadowed DELETE /jobs/{id} behind _delete_job_artifacts
+(cascade delete unreachable via API); mastered_path initially added to wrong class;
+detached-instance bug in mastering persistence.
+E2E RESULT: NVIDIA timeout@60s → OMLX+constrained-JSON SUCCEEDED (77s total,
+757→814 tokens) · Matchering reference mode verified (matched ref loudness -18.56)
+· loudness-normalize peak-guard honesty verified (returns measured -17.97 +
+peak_limited=true + explanatory note instead of clipping or faking) · cascade delete
+verified across hyphenated+hex id forms via live API · uploads/auth/rate-limit/
+profiles/assignments/releases all green against running servers.
+
+## [2026-08-22] update | Default model → NVIDIA Nemotron Super 120B
+.env: NVIDIA_MODEL=nvidia/nemotron-3-super-120b-a12b (provider already nvidia).
+Policy per-attempt timeout now env-configurable via MILIMO_AGENT_TIMEOUT (default 60s;
+set 240s for large instruct models). LIVE VERIFIED: Experiencer run against
+nemotron-3-super-120b-a12b succeeded FIRST ATTEMPT in 36.4s, 790→3841 tokens —
+4-phase arc, 3 fully-formed experience-grounded seeds w/ per-seed style tags,
+recurring motif set. No failover needed; quality dramatically above 3B local fallback.
+
+
+## [2026-08-22] create | Album Orchestrator Plan (R1–R4)
+Deep-investigation plan: seed→song parameter map (story_seed→topic clean; tags need
+validate+genre-first; working_title/mood/energy synthesized into steering prose),
+friction traps (duration 30s default, voice_profile_id silent drop, hidden producer
+rewrite, dual error conventions), run-lifecycle gaps + R1–R4 phases with locked
+decisions (gated albums, energy-scaled durations 120-240s, warn-and-proceed crew).
+Creates: concepts/album-orchestrator-plan.md.
+
+## [2026-08-22] create | R1+R2a+R2b implemented — auth loop, schema completions, run lifecycle
+R1: axios Authorization interceptor (localStorage milimo_auth_token) · EventSource ?auth=
+· connectToEvents extraEventTypes param · XFF limiter deferred (noted) · stray root
+generated_tokens/ removed · MILIMO_AGENT_TIMEOUT documented.
+R2a: Job.release_id + Job.voice_profile_id model fields (were silently dropped) ·
+EventManager queues bounded maxsize=512 (stalled-client memory fix; QueueFull handler
+now live) · AgentRun orchestration columns (parent_run_id/state_json/progress/budget_json) ·
+reconcile_orphan_agent_runs wired into lifespan (running→interrupted on boot).
+R2b: agents/orchestrator package (RunRegistry threading.Event cancels, BudgetState,
+AlbumRunHandle) · run_registry wired into app lifecycle teardown · POST /agents/runs/
+{id}/cancel live-verified both paths (live task + DB-row fallback).
+Frontend: ArtistsView subscribes to run_progress via extraEventTypes for live stage text.
+VERIFIED: 96/96 tests green · tsc+build green · cancel route live-tested both branches.
+Creates: app/agents/orchestrator/__init__.py, core security/ratelimit wiring finalized,
+tests/test_security_ops.py expanded coverage confirmed.
+
+## [2026-08-25] create | R4 Songwriter bridge + Album Orchestrator — LIVE
+SongwriterAgent (persona w/ explicit JSON contract — models invented keys without it;
+title made optional) · bridge.py create_track_from_seed (sanitize → genre-first tag
+ordering via KNOWN_GENRES · energy_to_duration_s 120-240s · steering prose synthesis ·
+rewrite_caption · explicit seed/duration · Job(release_id) → await generate_task).
+AlbumOrchestrator (album.py): gated-by-default autopilot toggle, state_json cursor,
+BudgetState deadline caps, RunRegistry cancel between steps, resume endpoint,
+persisted-vision free reuse. Routes: POST /releases/{id}/produce, /agents/runs/{id}/resume.
+Migrations: agentrun orchestration columns (model fields were missing too — SQLModel
+doesn't ALTER; both fixed). Bugs fixed live: or-chain returning {} instead of None
+(vision step silently skipped), journey_title vs album_title, release.profile_id link,
+bridge engine late-binding, error-handler crash-safety (attempts are dicts).
+VERIFIED LIVE: vision persisted to release.vision_json; gated pause awaiting_approval;
+resume approved; songwriter wrote 'Ignition Hymn' via nvidia nemotron (genre-first tags
+'Synthwave,...', 174s energy-scaled); MiniMax generation launched, release-linked.
+Creates: agents/songwriter/*, agents/orchestrator/{album,bridge}.py, experiencer_bridge.py.
+Tests: 101 passed (+5 album bridge pure-logic).
+
+## [2026-08-25] create | Lifecycle leak solidification — orphan-work guards + instance lock
+Incident: MLX generation thread kept burning 99% GPU after its job row was marked
+FAILED (threads can't be preempted mid-call; cancel only checked pre-dispatch).
+Root-cause map: L1 uninterruptible inference thread · L2 zombie resurrection
+(pipeline unconditionally rewrote COMPLETED over external FAILED) · L3 fire-and-forget
+create_task GC risk · L4 no single-instance guard (two boots = double GPU + reconcile
+fought live jobs) · L5 silent shutdown · /events verified CLEAN.
+FIXES: _abort_if_terminal guards at pre-generation/post-generation/finalize pipeline
+checkpoints (fresh DB read each time) · provider discards audio if cancel fired during
+thread · spawn_background_task strong-ref registry in main.py · core/instance_lock.py
+PID lockfile w/ stale-steal grace, atexit release, MILIMO_ALLOW_MULTI_INSTANCE escape
+hatch — wired into lifespan (os._exit(3) on conflict) · shutdown_all reports stragglers.
+TESTS: test_lifecycle_guards.py ×5 (failed-job abort, processing pass-through,
+cancel-event honor, second-holder refusal, stale steal). Suite: 106 passed.
+LIVE VERIFIED: lock refuses second boot; incident scenario replayed — post-generation
+guard discards orphaned work instead of resurrecting.

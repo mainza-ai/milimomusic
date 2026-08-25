@@ -28,6 +28,7 @@ class MasteringResult:
     method: str                   # "matchering" | "loudness_normalize"
     measured_lufs: float
     target_lufs: float
+    peak_limited: bool = False    # True when peak headroom prevented reaching target
 
 
 def _local_path(public_or_local: str) -> str:
@@ -82,16 +83,22 @@ def _loudness_normalize_sync(target_path: str, output_path: str, target_lufs: fl
     normalized = data * (10.0 ** (gain_db / 20.0))
 
     # True-peak guard: never allow intersample clipping from the gain stage.
+    # When headroom runs out we STOP SHORT of the loudness target and report
+    # peak_limited=True — a real limiter/compressor stage is required to close
+    # the remaining gap, and pretending otherwise would be dishonest DSP.
     peak = float(np.max(np.abs(normalized))) if normalized.size else 0.0
+    peak_limited = False
     if peak > 0.999:
         normalized = normalized * (0.999 / peak)
+        peak_limited = True
 
     sf.write(output_path, normalized, sr, subtype="FLOAT")
     final_mono = normalized.mean(axis=1)
     try:
-        return float(meter.integrated_loudness(final_mono))
+        final_lufs = float(meter.integrated_loudness(final_mono))
     except ValueError:
-        return target_lufs
+        final_lufs = target_lufs
+    return final_lufs, peak_limited
 
 
 async def master_track(
@@ -114,20 +121,20 @@ async def master_track(
 
     has_reference = bool(reference_audio_path_public)
 
-    def work() -> float:
+    def work() -> tuple[float, bool]:
         if has_reference:
             ref_path = _local_path(reference_audio_path_public)
             if not os.path.exists(ref_path):
                 raise FileNotFoundError(f"Reference file missing: {reference_audio_path_public}")
             logger.info(f"Mastering {job_id}: Matchering against reference {os.path.basename(ref_path)}")
             _matchering_sync(local_target, ref_path, output_path)
-            return _measure_lufs(output_path)
+            return _measure_lufs(output_path), False
         else:
             logger.info(f"Mastering {job_id}: LUFS normalization to {target_lufs}")
             return _loudness_normalize_sync(local_target, output_path, target_lufs)
 
     try:
-        measured = await asyncio.to_thread(work)
+        measured, peak_limited = await asyncio.to_thread(work)
     except ImportError as e:
         # Dependency genuinely absent → honest unavailability, never a fake file.
         raise RuntimeError(f"Mastering dependency unavailable: {e}") from e
@@ -146,6 +153,7 @@ async def master_track(
         method="matchering" if has_reference else "loudness_normalize",
         measured_lufs=round(measured, 2),
         target_lufs=target_lufs,
+        peak_limited=peak_limited,
     )
 
 

@@ -490,6 +490,15 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     wav_path,
                     steps,
                 )
+                # The blocking inference thread cannot be interrupted mid-call.
+                # If cancellation arrived during those minutes, DISCARD the
+                # output instead of letting dead work flow downstream.
+                if cancel_event is not None and cancel_event.is_set():
+                    try:
+                        os.remove(wav_path)
+                    except OSError:
+                        pass
+                    raise asyncio.CancelledError("Cancelled during inference; audio discarded")
                 used_real_inference = True
                 logger.info("Real MiniMax Music 3 inference produced audio at %s", wav_path)
             except Exception as e:

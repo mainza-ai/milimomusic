@@ -1,5 +1,12 @@
 import axios from 'axios';
 
+// Phase-1 auth loop closure: attach optional bearer token to every request.
+axios.interceptors.request.use((config) => {
+    const token = localStorage.getItem('milimo_auth_token');
+    if (token) config.headers.Authorization = `Bearer ${token}`;
+    return config;
+});
+
 // API base is configurable via Vite env; defaults to local backend for development.
 const API_BASE_URL: string = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
 
@@ -457,11 +464,13 @@ export const api = {
         return `${API_BASE_URL}/download_track/${jobId}`;
     },
 
-    connectToEvents: (onMessage: (event: MessageEvent) => void) => {
-        const eventSource = new EventSource(`${API_BASE_URL}/events`);
+    connectToEvents: (onMessage: (event: MessageEvent) => void, extraEventTypes: string[] = []) => {
+        const token = localStorage.getItem('milimo_auth_token') || '';
+        const url = token ? `${API_BASE_URL}/events?auth=${encodeURIComponent(token)}` : `${API_BASE_URL}/events`;
+        const eventSource = new EventSource(url);
         eventSource.onmessage = onMessage;
-        eventSource.addEventListener("job_update", onMessage);
-        eventSource.addEventListener("job_progress", onMessage);
+        [...new Set(["job_update", "job_progress", ...extraEventTypes])]
+            .forEach(t => eventSource.addEventListener(t, onMessage));
         return eventSource;
     },
 
@@ -861,4 +870,126 @@ export const trackApi = {
         const res = await axios.post(`${API_BASE_URL}/tracks/${jobId}/realign_lyrics`, { lyrics });
         return res.data;
     }
+};
+
+// ── AI Agents & Artist Profiles (agent foundation surface) ──────────────────
+export interface AgentInfo {
+    name: string;
+    display_name: string;
+    description: string;
+    input_schema: Record<string, unknown>;
+}
+
+export interface ArtistProfileT {
+    id: string;
+    project_id: string | null;
+    name: string;
+    bio: string;
+    lore_json: string;
+    tags: string;
+    cover_image_path: string | null;
+    default_provider: string | null;
+    default_model: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface AgentAssignmentT {
+    id: string;
+    profile_id: string;
+    role: string;
+    agent_name: string;
+    model_provider: string | null;
+    model: string | null;
+    config_json: string;
+}
+
+export interface ReleaseT {
+    id: string;
+    profile_id: string;
+    title: string;
+    description: string;
+    status: string;
+    vision_json: string;
+    created_at: string;
+}
+
+export interface ProfileDetail {
+    profile: ArtistProfileT;
+    assignments: AgentAssignmentT[];
+    releases: ReleaseT[];
+}
+
+export interface ExperiencerSeed {
+    working_title: string;
+    mood: string;
+    story_seed: string;
+    suggested_style_tags: string[];
+    energy: number;
+    placement_hint: string;
+}
+
+export interface ExperiencerVision {
+    journey_title: string;
+    concept_statement: string;
+    life_journey_narrative: string;
+    emotional_arc: { position: number; label: string; intensity: number; description?: string }[];
+    song_seeds: ExperiencerSeed[];
+    recurring_motifs: string[];
+    listener_experience_notes: string;
+}
+
+export interface AgentRunEnvelope {
+    run: {
+        id: string;
+        agent_name: string;
+        status: string;
+        tokens_in: number;
+        tokens_out: number;
+        latency_ms: number;
+        attempts_json: string;
+        output_json: string;
+    };
+    result: unknown;
+}
+
+export const agentsApi = {
+    listAgents: async (): Promise<AgentInfo[]> => {
+        const res = await axios.get(`${API_BASE_URL}/agents`);
+        return res.data.agents;
+    },
+    runAgent: async (name: string, body: { input: Record<string, unknown>; session_id?: string; project_id?: string; profile_id?: string }): Promise<AgentRunEnvelope> => {
+        const res = await axios.post(`${API_BASE_URL}/agents/${name}/run`, body);
+        return res.data;
+    },
+};
+
+export const profilesApi = {
+    list: async (projectId?: string): Promise<ArtistProfileT[]> => {
+        const res = await axios.get(`${API_BASE_URL}/profiles`, { params: projectId ? { project_id: projectId } : {} });
+        return res.data.profiles;
+    },
+    create: async (body: { name: string; bio?: string; tags?: string; project_id?: string }): Promise<ArtistProfileT> => {
+        const res = await axios.post(`${API_BASE_URL}/profiles`, body);
+        return res.data;
+    },
+    get: async (id: string): Promise<ProfileDetail> => {
+        const res = await axios.get(`${API_BASE_URL}/profiles/${id}`);
+        return res.data;
+    },
+    update: async (id: string, body: Partial<Pick<ArtistProfileT, 'name' | 'bio' | 'tags'>>): Promise<ArtistProfileT> => {
+        const res = await axios.patch(`${API_BASE_URL}/profiles/${id}`, body);
+        return res.data;
+    },
+    delete: async (id: string): Promise<void> => {
+        await axios.delete(`${API_BASE_URL}/profiles/${id}`);
+    },
+    setAssignments: async (id: string, assignments: { role: string; agent_name: string; model_provider?: string; model?: string }[]): Promise<AgentAssignmentT[]> => {
+        const res = await axios.put(`${API_BASE_URL}/profiles/${id}/assignments`, { assignments });
+        return res.data.assignments;
+    },
+    createRelease: async (body: { profile_id: string; title: string; description?: string; }): Promise<ReleaseT> => {
+        const res = await axios.post(`${API_BASE_URL}/releases`, body);
+        return res.data;
+    },
 };

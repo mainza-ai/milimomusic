@@ -20,7 +20,10 @@ class EventManager:
         return cls._instance
 
     def subscribe(self):
-        q = asyncio.Queue()
+        # Bounded: a stalled SSE client must not accumulate every frame during
+        # hours-long runs. Drops stale progress frames on overflow; terminal
+        # states are recovered by polling.
+        q = asyncio.Queue(maxsize=512)
         self.subscribers.append(q)
         return q
 
@@ -127,10 +130,16 @@ class MusicService:
         return False
 
     def shutdown_all(self):
-        """Cancel all active jobs."""
-        logger.info(f"Shutting down MusicService. Cancelling {len(self.active_jobs)} active jobs.")
+        """Signal every active job to cancel. NOTE: threads already inside a
+        blocking MLX call cannot be preempted — the pipeline's terminal-state
+        guards discard their outputs when they surface. Returns job count."""
+        n = len(self.active_jobs)
+        if n:
+            logger.warning(f"MusicService shutdown: signalling {n} active job(s): "
+                           f"{list(self.active_jobs.keys())}")
         for job_id, event in list(self.active_jobs.items()):
             event.set()
+        return n
 
 
 music_service = MusicService()

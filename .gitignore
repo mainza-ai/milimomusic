@@ -65,3 +65,6 @@ frontend/.env.local
 # Internal Developer Docs
 devs/
 devs/**
+
+# runtime artifacts
+backend/.milimo.lock

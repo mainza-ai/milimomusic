@@ -25,6 +25,7 @@ import { useAudioEngine } from './context/AudioEngineContext';
 
 // Dedicated Reference IA Views
 import { SongsView } from './components/views/SongsView';
+import { ArtistsView } from './components/views/ArtistsView';
 import { PlaylistsView } from './components/views/PlaylistsView';
 import { ProjectsView } from './components/views/ProjectsView';
 import { MusicVideosView } from './components/views/MusicVideosView';
@@ -42,6 +43,7 @@ import {
   FolderKanban,
   Video,
   User,
+  Users,
   Mic,
   GraduationCap,
   Cpu,
@@ -70,6 +72,7 @@ import {
 export type NavView =
   | 'explore'
   | 'songs'
+  | 'artists'
   | 'projects'
   | 'playlists'
   | 'videos'
@@ -911,6 +914,7 @@ function App() {
               { id: 'explore', label: 'Explore & Create', icon: Compass },
               { id: 'songs', label: 'Songs', icon: Music },
               { id: 'projects', label: 'Projects', icon: FolderKanban },
+              { id: 'artists', label: 'Artists', icon: Users },
               { id: 'playlists', label: 'Playlists', icon: ListMusic },
               { id: 'videos', label: 'Music videos', icon: Video, badge: 'In Dev' },
               { id: 'profile', label: 'Profile', icon: User },
@@ -1364,6 +1368,8 @@ function App() {
             onDelete={handleDeleteJob}
             onSelectTrack={handleSelectTrack}
           />
+        ) : currentNav === 'artists' ? (
+          <ArtistsView />
         ) : currentNav === 'projects' ? (
           <ProjectsView
             allJobs={history}

@@ -53,6 +53,9 @@ class Job(SQLModel, table=True):
     # Project & Session Association
     project_id: Optional[str] = Field(default=None, index=True)
     session_id: Optional[str] = Field(default=None, index=True)
+    mastered_path: Optional[str] = None   # B8: mastering result stored separately — original master never clobbered
+    release_id: Optional[str] = Field(default=None, index=True)
+    voice_profile_id: Optional[str] = Field(default=None)  # persisted per track
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_msg: Optional[str] = None
@@ -172,7 +175,6 @@ class GenerationRequest(SQLModel):
     is_instrumental: Optional[bool] = False
     structured_caption: Optional[Dict[str, str]] = None
     voice_profile_id: Optional[str] = None
-    mastered_path: Optional[str] = None   # B8 fix: mastering result stored SEPARATELY — original master never clobbered
 
     @field_validator('tags', mode='before')
     @classmethod
@@ -334,6 +336,11 @@ class AgentRun(SQLModel, table=True):
     tokens_out: int = 0
     latency_ms: int = 0
     attempts_json: str = "[]"             # per-attempt records from the resilience policy
+    # Orchestration columns (album runner): resume cursor, hierarchy, budgets.
+    parent_run_id: Optional[str] = Field(default=None, index=True)
+    state_json: str = "{}"
+    progress: int = 0
+    budget_json: str = "{}"
     session_id: Optional[str] = Field(default=None, index=True)
     project_id: Optional[str] = Field(default=None, index=True)
     profile_id: Optional[str] = Field(default=None, index=True)

@@ -25,6 +25,26 @@ from app.services.voice_service import voice_service
 logger = logging.getLogger(__name__)
 
 
+def _job_status(engine, job_id) -> Optional[str]:
+    """Fresh DB read — the single source of truth for lifecycle decisions."""
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        return job.status.value if job else None
+
+
+def _abort_if_terminal(engine, job_id, cancel_event=None, stage: str = "") -> None:
+    """Raise CancelledError when the job is cancelled/failed/interrupted or the
+    cancel event fired. Called BETWEEN heavy steps so orphaned work can never
+    resurrect a dead job or burn GPU after external termination."""
+    if cancel_event is not None and cancel_event.is_set():
+        raise asyncio.CancelledError("Cancelled by request")
+    status = _job_status(engine, job_id)
+    terminal = {"failed", "cancelled", "interrupted"}
+    if status in terminal:
+        raise asyncio.CancelledError(
+            f"Job already terminal ({status}); aborting {stage} stage")
+
+
 class GenerateAndTranscribePipeline:
     _instance = None
 
@@ -87,6 +107,7 @@ class GenerateAndTranscribePipeline:
             })
 
             provider = provider_registry.get_provider(req.model_provider)
+            _abort_if_terminal(engine, job_id, cancel_event, stage="pre-generation")
 
             def _gen_progress(step: int, total: int, msg: str):
                 prog_pct = min(40, int(15 + (step / max(1, total)) * 25))
@@ -114,6 +135,10 @@ class GenerateAndTranscribePipeline:
                 cancel_event=cancel_event,
                 structured_caption=req.structured_caption or None
             )
+
+            # Orphan-work guard: the blocking inference thread cannot be
+            # interrupted mid-call — discard its output if we woke up dead.
+            _abort_if_terminal(engine, job_id, cancel_event, stage="post-generation")
 
             # Update DB with audio path (and producer-enhanced inputs).
             with Session(engine) as session:
@@ -265,6 +290,8 @@ class GenerateAndTranscribePipeline:
                 )
             except Exception as e:  # never let per-instrument rendering sink the job
                 logger.warning(f"Per-instrument stem rendering skipped for {job_id_str}: {e}")
+
+            _abort_if_terminal(engine, job_id, cancel_event, stage="finalize")
 
             # Finalize DB Record
             with Session(engine) as session:

@@ -14,6 +14,7 @@ import re
 import time
 import shutil
 import threading
+import uuid
 from datetime import datetime, timezone
 from contextlib import asynccontextmanager
 
@@ -149,8 +150,40 @@ def create_db_and_tables():
                     session.exec(text(f"ALTER TABLE project ADD COLUMN {col} {col_type};"))
                 except Exception as e:
                     print(f"Migration notice for project.{col}: {e}")
-                    
+
+        # Automatic Migration for agentrun table (orchestration columns)
+        existing_run_cols = {row[1] for row in session.exec(text("PRAGMA table_info(agentrun);")).all()}
+        run_columns = {
+            "parent_run_id": "VARCHAR",
+            "state_json": "TEXT DEFAULT '{}'",
+            "progress": "INTEGER DEFAULT 0",
+            "budget_json": "TEXT DEFAULT '{}'",
+        }
+        for col, col_type in run_columns.items():
+            if col not in existing_run_cols:
+                try:
+                    session.exec(text(f"ALTER TABLE agentrun ADD COLUMN {col} {col_type};"))
+                except Exception as e:
+                    print(f"Migration notice for agentrun.{col}: {e}")
+
         session.commit()
+
+
+def reconcile_orphan_agent_runs() -> int:
+    with Session(engine) as session:
+        orphans = session.exec(
+            select(AgentRun).where(AgentRun.status == "running")
+        ).all()
+        for run in orphans:
+            run.status = "interrupted"
+            run.error_type = "interrupted"
+            run.error_message = "Interrupted by server restart."
+            run.finished_at = datetime.now(timezone.utc)
+            session.add(run)
+        session.commit()
+        if orphans:
+            logger.warning(f"Reconciled {len(orphans)} orphaned agent run(s).")
+        return len(orphans)
 
 
 def reconcile_orphan_jobs() -> int:
@@ -172,16 +205,43 @@ def reconcile_orphan_jobs() -> int:
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not acquire_instance_lock():
+        # Another live backend owns the GPU/DB. Hard-fail the boot.
+        import sys as _sys
+        _sys.stderr.write("REFUSING TO START: another instance holds the lock.\n")
+        os._exit(3)
+
     create_db_and_tables()
     reconcile_orphan_jobs()
+    reconcile_orphan_agent_runs()
     await music_service.initialize()
     yield
+    run_registry.shutdown_all()
+    active = music_service.shutdown_all()
+    if active:
+        logger.warning(f"{active} generation(s) were still active at shutdown; "
+                       "their threads cannot be preempted mid-inference — outputs "
+                       "will be discarded by terminal-state guards.")
     event_manager.shutdown()
-    music_service.shutdown_all()
+    release_instance_lock()
 
 
 from app.core.security import require_auth
+from app.core.instance_lock import acquire_instance_lock, release_instance_lock
+from app.agents.orchestrator import RunRegistry
 from app.core.ratelimit import enforce_rate_limit
+run_registry = RunRegistry()
+
+# Strong references to fire-and-forget tasks. Python GC can collect an
+# unreferenced task MID-FLIGHT — album runs would vanish nondeterministically.
+_background_tasks: set = set()
+
+
+def spawn_background_task(coro) -> asyncio.Task:
+    task = asyncio.get_running_loop().create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
 app = FastAPI(lifespan=lifespan, title="Milimo Music v2 API — AI Music Production DAW",
               dependencies=[Depends(require_auth)])
 
@@ -528,11 +588,13 @@ async def apply_reference_mastering(job_id: UUID, req: MasteringRequest = Master
     """Real mastering: Matchering against a reference track, or honest -14 LUFS
     normalization when no reference is given. Never overwrites the original
     master — results land in `mastered_path` (B8 fix)."""
+    audio_public = ""
     with Session(engine) as session:
         job = session.get(Job, job_id)
         if not job or not job.audio_path:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Track not found"}})
 
+        audio_public = job.audio_path  # plain str — safe beyond this block
         reference_public = None
         if req.reference_job_id:
             ref_job = get_job_by_id(session, str(req.reference_job_id))
@@ -543,7 +605,7 @@ async def apply_reference_mastering(job_id: UUID, req: MasteringRequest = Master
     try:
         result = await master_track(
             job_id=str(job_id),
-            target_audio_path_public=job_audio_public(job),
+            target_audio_path_public=audio_public,
             reference_audio_path_public=reference_public,
             target_lufs=req.target_lufs,
         )
@@ -558,18 +620,25 @@ async def apply_reference_mastering(job_id: UUID, req: MasteringRequest = Master
 
     with Session(engine) as session:
         job = session.get(Job, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Track deleted during mastering."}})
         job.mastered_path = result.mastered_audio_path
         session.add(job)
         session.commit()
 
-    return {
+    resp = {
         "status": "mastered",
         "method": result.method,
         "audio_path": result.mastered_audio_path,
-        "original_audio_path": job_audio_public(job),
+        "original_audio_path": audio_public,
         "lufs": result.measured_lufs,
         "target_lufs": result.target_lufs,
+        "peak_limited": getattr(result, "peak_limited", False),
     }
+    if getattr(result, "peak_limited", False):
+        resp["note"] = ("Target LUFS not fully reached: peak headroom exhausted. "
+                        "Apply a limiter/compressor stage (or lower the target) to close the gap.")
+    return resp
 
 
 @app.get("/tracks/{job_id}/sheets")
@@ -786,6 +855,23 @@ def get_agent_run(run_id: UUID):
         if not row:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Run not found."}})
         return {"run": row}
+
+
+@app.post("/agents/runs/{run_id}/cancel")
+def cancel_agent_run(run_id: UUID):
+    """Cancel a running agent/album run. Falls back to marking the DB row
+    cancelled when no live task exists (mirrors /jobs/{id}/cancel)."""
+    live_cancelled = run_registry.cancel(str(run_id))
+    with Session(engine) as session:
+        row = session.get(AgentRun, run_id)
+        if not row:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Run not found."}})
+        if row.status == "running":
+            row.status = "cancelled"
+            row.finished_at = datetime.now(timezone.utc)
+            session.add(row)
+            session.commit()
+    return {"id": str(run_id), "status": "cancelling" if live_cancelled else "cancelled", "live": live_cancelled}
 
 
 # ---------------------------------------------------------------------------
@@ -1013,6 +1099,68 @@ def create_release(payload: ReleaseCreate):
         session.commit()
         session.refresh(release)
         return release
+
+
+@app.post("/releases/{release_id}/produce")
+async def produce_release(release_id: UUID, payload: dict):
+    """Album Orchestrator: vision → per-seed songwriter+generation children.
+
+    Gated-by-default (pauses after each track; approve via /agents/runs/{id}/resume).
+    body: {"autopilot": bool, "budget": {"deadline_s"?: float}}"""
+    from app.agents.orchestrator import BudgetState
+    from app.agents.orchestrator.album import AlbumOrchestrator
+
+    autopilot = bool((payload or {}).get("autopilot", False))
+    caps = (payload or {}).get("budget") or {}
+    budget = BudgetState(
+        deadline_s=float(caps["deadline_s"]) if caps.get("deadline_s") else None,
+    )
+
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        parent = AgentRun(agent_name="album_orchestrator", status="queued",
+                          input_json=json.dumps({"release_id": str(release_id), "autopilot": autopilot}),
+                          budget_json=json.dumps({"caps": {"deadline_s": budget.deadline_s}}))
+        session.add(parent)
+        session.commit()
+        session.refresh(parent)
+
+    orchestrator = AlbumOrchestrator(run_registry, event_manager.publish)
+    spawn_background_task(orchestrator.execute(
+        parent_run_id=parent.id, release_id=release_id,
+        autopilot=autopilot, engine=engine, budget=budget))
+    return {"run_id": str(parent.id), "status": "queued", "autopilot": autopilot}
+
+
+@app.post("/agents/runs/{run_id}/resume")
+async def resume_agent_run(run_id: UUID, payload: dict = None):
+    """Approve + continue a gated album run (or re-kick an interrupted one).
+    Cursor state_json decides what still needs doing."""
+    from app.agents.orchestrator.album import AlbumOrchestrator
+
+    with Session(engine) as session:
+        run = session.get(AgentRun, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Run not found."}})
+        if run.status not in ("awaiting_approval", "interrupted"):
+            raise HTTPException(status_code=409, detail={"error": {"code": "invalid_state",
+                "message": f"Run is '{run.status}'; only awaiting_approval/interrupted runs can resume."}})
+        try:
+            cfg = json.loads(run.input_json or "{}")
+        except Exception:
+            cfg = {}
+        release_id = UUID(cfg["release_id"])
+        run.status = "running"
+        session.add(run); session.commit()
+
+    orchestrator = AlbumOrchestrator(run_registry, event_manager.publish)
+    spawn_background_task(orchestrator.execute(
+        parent_run_id=run_id, release_id=release_id,
+        autopilot=bool((payload or {}).get("autopilot", False)),
+        engine=engine))
+    return {"run_id": str(run_id), "status": "resumed"}
 
 
 @app.get("/profiles/{profile_id}/releases")
@@ -2129,7 +2277,6 @@ def download_track(job_id: str):
         return FileResponse(file_path, media_type="audio/mpeg", filename=download_name)
 
 
-@app.delete("/jobs/{job_id}")
 def _delete_job_artifacts(job_id_str: str, audio_public_path: Optional[str] = None) -> int:
     """Remove EVERY artifact belonging to a job (Phase 3 cascade completion).
 
@@ -2139,15 +2286,21 @@ def _delete_job_artifacts(job_id_str: str, audio_public_path: Optional[str] = No
     import glob
 
     removed = 0
-    patterns = [
-        f"generated_audio/stems/{job_id_str}_*.wav",
-        f"generated_audio/mastered/{job_id_str}*",
-        f"generated_audio/converted_vocals/{job_id_str}_*.wav",
-        f"generated_tokens/{job_id_str}*",
-        f"generated_audio/{job_id_str}.mid",
-        f"generated_audio/{job_id_str}.musicxml",
-        f"data/covers/{job_id_str}*",
-    ]
+    # Different pipeline stages persist under different id forms:
+    # masters/stems/instruments use str(uuid) (hyphenated); MuScriptor outputs
+    # (tokens/sheets/MIDI/XML) use clean 32-hex. Sweep BOTH.
+    id_forms = {job_id_str, job_id_str.replace("-", "")}
+    patterns: List[str] = []
+    for form in id_forms:
+        patterns += [
+            f"generated_audio/stems/{form}_*.wav",
+            f"generated_audio/mastered/{form}*",
+            f"generated_audio/converted_vocals/{form}_*.wav",
+            f"generated_tokens/{form}*",
+            f"generated_audio/{form}.mid",
+            f"generated_audio/{form}.musicxml",
+            f"data/covers/{form}*",
+        ]
     if audio_public_path:
         master_name = os.path.basename(audio_public_path)
         patterns.append(f"generated_audio/{master_name}")
@@ -2165,6 +2318,7 @@ def _delete_job_artifacts(job_id_str: str, audio_public_path: Optional[str] = No
     return removed
 
 
+@app.delete("/jobs/{job_id}")
 def delete_job(job_id: str):
     music_service.cancel_job(str(job_id))
 

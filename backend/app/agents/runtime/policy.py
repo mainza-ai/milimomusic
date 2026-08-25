@@ -34,6 +34,10 @@ from app.core.llm_contracts import (
 from app.agents.runtime.usage import AttemptRecord, RunUsage
 
 
+class _RetrySameProvider(Exception):
+    """Internal: parse failed but repair budget remains on THIS provider."""
+
+
 @dataclass
 class ModelProfile:
     """One candidate slot in the failover chain."""
@@ -63,8 +67,9 @@ _LOCAL_ORDER = ["omlx", "ollama", "lmstudio"]
 
 
 class ResiliencePolicy:
-    def __init__(self, chain: Optional[Sequence[ModelProfile]] = None):
+    def __init__(self, chain: Optional[Sequence[ModelProfile]] = None, parse_retries: int = 2):
         self._explicit_chain: Optional[List[ModelProfile]] = list(chain) if chain else None
+        self.parse_retries = max(0, parse_retries)
 
     # ------------------------------------------------------------------
     # Chain resolution
@@ -148,11 +153,20 @@ class ResiliencePolicy:
         profiles: Optional[Sequence[ModelProfile]] = None,
         temperature: Optional[float] = None,
         max_providers: int = 5,
-        timeout: float = 60.0,
+        timeout: Optional[float] = None,
     ) -> PolicyOutcome:
+        # Per-attempt ceiling. Large instruct models (120B-class) need real
+        # headroom for long structured output — env-configurable so testing
+        # and production can tune independently of code.
+        if timeout is None:
+            try:
+                timeout = float(os.environ.get("MILIMO_AGENT_TIMEOUT", "60"))
+            except ValueError:
+                timeout = 60.0
         """Run `messages` through the chain until one provider returns JSON
-        that validates against `schema`. Parse failures fail over like any
-        other transient error."""
+        that validates against `schema`. Parse failures consume a per-provider
+        repair budget (corrective round-trip) BEFORE failing over; every call
+        is recorded for usage accounting."""
         chain = list(profiles) if profiles is not None else self.resolve_chain()
         chain = chain[:max(1, max_providers)]
         usage = RunUsage()
@@ -169,46 +183,71 @@ class ResiliencePolicy:
 
             provider = self._instantiate(profile)
             started = asyncio.get_event_loop().time()
-            try:
-                # OFF the event loop (gap G2): the sync SDK call runs in a
-                # worker thread; kwargs pass straight through to generate_chat.
-                result: LLMResult = await asyncio.to_thread(
-                    provider.generate_chat,
-                    messages,
-                    model,
-                    options={"temperature": temperature or profile.temperature},
-                    timeout=timeout,
-                )
-                latency_ms = int((asyncio.get_event_loop().time() - started) * 1000)
-                parsed = schema.model_validate(extract_json_object(result.content))
-                attempt = AttemptRecord(
-                    provider=profile.provider, model=model, ok=True,
-                    latency_ms=result.latency_ms or latency_ms,
-                    tokens_in=result.tokens_in, tokens_out=result.tokens_out,
-                )
-                usage.add(attempt)
-                return PolicyOutcome(
-                    content=result.content,
-                    structured=parsed,
-                    result=result,
-                    attempts=usage.attempts,
-                )
-            except Exception as exc:  # noqa: BLE001 — classified below
-                latency_ms = int((asyncio.get_event_loop().time() - started) * 1000)
-                typed = exc if isinstance(exc, (
-                    LLMAuthError, LLMBadModelError, LLMQuotaError, LLMParseError
-                )) else _classify(exc, profile.provider)
-                usage.add(AttemptRecord(
-                    provider=profile.provider, model=model, ok=False,
-                    latency_ms=latency_ms,
-                    error_type=type(typed).__name__,
-                    error_message=str(typed),
-                ))
-                # Auth / bad-model: this provider cannot work — move on NOW.
-                if isinstance(typed, (LLMAuthError, LLMBadModelError)):
-                    continue
-                # Quota / upstream / parse: brief backoff before next provider.
-                await asyncio.sleep(min(0.4 * (index + 1), 2.0))
+            call_messages = messages
+            repairs_left = self.parse_retries
+
+            while True:
+                try:
+                    # OFF the event loop (gap G2): sync SDK call in a worker
+                    # thread; kwargs pass straight through to generate_chat.
+                    result: LLMResult = await asyncio.to_thread(
+                        provider.generate_chat,
+                        call_messages,
+                        model,
+                        options={"temperature": temperature or profile.temperature},
+                        timeout=timeout,
+                        force_json=True,  # constrained decoding at the provider
+                    )
+                    latency_ms = int((asyncio.get_event_loop().time() - started) * 1000)
+
+                    try:
+                        parsed = schema.model_validate(extract_json_object(result.content))
+                    except Exception as pe:
+                        usage.add(AttemptRecord(
+                            provider=profile.provider, model=model, ok=False,
+                            latency_ms=latency_ms, error_type="LLMParseError",
+                            error_message=f"{profile.provider}: {pe}",
+                        ))
+                        if repairs_left > 0:
+                            repairs_left -= 1
+                            call_messages = list(call_messages) + [
+                                {"role": "assistant", "content": result.content},
+                                {"role": "user", "content":
+                                    "Your previous response was not valid JSON "
+                                    f"({type(pe).__name__}). Return ONLY the corrected JSON object — no prose, "
+                                    "no markdown fences, escape all quotes inside string values."},
+                            ]
+                            continue  # corrective round-trip: SAME provider
+                        break  # repair budget exhausted → next provider
+
+                    attempt = AttemptRecord(
+                        provider=profile.provider, model=model, ok=True,
+                        latency_ms=result.latency_ms or latency_ms,
+                        tokens_in=result.tokens_in, tokens_out=result.tokens_out,
+                    )
+                    usage.add(attempt)
+                    return PolicyOutcome(
+                        content=result.content,
+                        structured=parsed,
+                        result=result,
+                        attempts=usage.attempts,
+                    )
+
+                except Exception as exc:  # noqa: BLE001 — classified below
+                    latency_ms = int((asyncio.get_event_loop().time() - started) * 1000)
+                    typed = exc if isinstance(exc, (
+                        LLMAuthError, LLMBadModelError, LLMQuotaError
+                    )) else _classify(exc, profile.provider)
+                    usage.add(AttemptRecord(
+                        provider=profile.provider, model=model, ok=False,
+                        latency_ms=latency_ms,
+                        error_type=type(typed).__name__,
+                        error_message=str(typed),
+                    ))
+                    if isinstance(typed, (LLMAuthError, LLMBadModelError)):
+                        break  # provider cannot work — next provider NOW
+                    await asyncio.sleep(min(0.4 * (index + 1), 2.0))
+                    break  # transient — next provider
 
         raise AllProvidersFailedError(
             "All LLM providers in the resilience chain failed.",

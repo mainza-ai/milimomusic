@@ -197,15 +197,18 @@ class OllamaProvider(LLMProvider):
         """
         started = time.monotonic()
         temperature = kwargs.get("options", {}).get("temperature", 0.7)
+        body = {
+            "model": model,
+            "messages": messages,
+            "stream": False,
+            "options": kwargs.get("options", {"temperature": temperature}),
+        }
+        if kwargs.get("force_json"):
+            body["format"] = "json"  # native constrained decoding
         try:
             resp = requests.post(
                 f"{self.base_url}/api/chat",
-                json={
-                    "model": model,
-                    "messages": messages,
-                    "stream": False,
-                    "options": kwargs.get("options", {"temperature": temperature}),
-                },
+                json=body,
                 timeout=kwargs.get("timeout", (3.0, 60.0)),
             )
             if resp.status_code != 200:
@@ -329,11 +332,23 @@ class OpenAIProvider(LLMProvider):
         """
         started = time.monotonic()
         try:
-            response = self.client.chat.completions.create(
+            # Policy-supplied timeout is AUTHORITATIVE per attempt: bypass the
+            # client-level default AND the SDK's internal retries (which used
+            # to let one provider eat 3× its budget before failover).
+            client = self.client
+            if kwargs.get("timeout"):
+                client = client.with_options(timeout=float(kwargs["timeout"]), max_retries=0)
+            create_kwargs = dict(
                 model=model,
                 messages=messages,
                 temperature=kwargs.get("options", {}).get("temperature", 0.7),
             )
+            if kwargs.get("force_json"):
+                # Constrained decoding where supported; providers lacking
+                # json_object mode may 400 — classified as BadModel/Upstream
+                # by the caller's classifier and failed over like any error.
+                create_kwargs["response_format"] = {"type": "json_object"}
+            response = client.chat.completions.create(**create_kwargs)
             content = getattr(response.choices[0].message, "content", "") or ""
             usage: Dict[str, int] = {}
             if getattr(response, "usage", None):
@@ -438,6 +453,7 @@ class GeminiProvider(LLMProvider):
                 config=types.GenerateContentConfig(
                     system_instruction="\n\n".join(system_parts) or None,
                     temperature=kwargs.get("options", {}).get("temperature", 0.7),
+                    response_mime_type="application/json" if kwargs.get("force_json") else None,
                 ),
             )
             content = _strip_thinking(response.text or "")

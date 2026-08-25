@@ -125,17 +125,46 @@ async def test_quota_failure_fails_over_to_next_provider(patch_provider_factory)
 
 
 @pytest.mark.asyncio
-async def test_parse_failure_fails_over_like_transient(patch_provider_factory):
-    bad_json = FakeProvider([{"content": "I am sorry, I cannot comply. {broken"}])
-    good = FakeProvider([{"content": VALID_VISION_JSON}])
-    patch_provider_factory({"alpha": bad_json, "beta": good})
+async def test_parse_repair_retries_same_provider_then_succeeds(patch_provider_factory):
+    # First call breaks JSON; corrective round-trip succeeds on SAME provider.
+    repairable = FakeProvider([
+        {"content": "Sure! {\"broken\": true"},
+        {"content": VALID_VISION_JSON},
+    ])
+    fallback = FakeProvider([])  # must never be reached
+    patch_provider_factory({"alpha": repairable, "beta": fallback})
 
     outcome = await ResiliencePolicy().run_structured(
         [{"role": "user", "content": "go"}], ExperiencerVision,
         profiles=_profiles("alpha", "beta"),
     )
-    assert outcome.attempts[0].ok is False
-    assert outcome.attempts[0].error_type == "LLMParseError"
+    assert outcome.structured.journey_title == "Neon Exodus"
+    assert len(repairable.calls) == 2  # original + one repair round-trip
+    # The corrective turn must carry the assistant's broken output back to it.
+    assert any(m["role"] == "assistant" and "broken" in m.get("content", "")
+               for m in repairable.calls[1])
+    assert fallback.calls == []
+
+
+@pytest.mark.asyncio
+async def test_parse_failure_fails_over_when_repairs_exhausted(patch_provider_factory):
+    always_bad = FakeProvider([
+        {"content": "{broken one"},
+        {"content": "{broken two"},
+        {"content": "{broken three"},   # initial + 2 repairs exhausted
+    ])
+    good = FakeProvider([{"content": VALID_VISION_JSON}])
+    patch_provider_factory({"alpha": always_bad, "beta": good})
+
+    outcome = await ResiliencePolicy().run_structured(
+        [{"role": "user", "content": "go"}], ExperiencerVision,
+        profiles=_profiles("alpha", "beta"),
+    )
+    # alpha consumed: initial + 2 repairs = 3 calls, all recorded as failures
+    alpha_failures = [a for a in outcome.attempts if a.provider == "alpha" and not a.ok]
+    assert len(alpha_failures) == 3
+    assert all(a.error_type == "LLMParseError" for a in alpha_failures)
+    # beta rescued the run
     assert outcome.structured.listener_experience_notes != ""
 
 

@@ -145,15 +145,22 @@ class ProducerService:
         model: str | None = None,
     ) -> dict:
         """Enhance weak inputs via the real LLM producer; return ready-to-use inputs.
+        Accepts tags as str OR list (GenerationRequest's validator may pass either).
 
         Returns dict with keys: prompt, lyrics, tags, title, enhanced(bool).
         Only the fields the producer actually improved differ from the inputs —
         if the prompt is already rich and lyrics are present, inputs pass through
         unchanged (no wasted LLM calls, no surprises).
         """
-        enhanced_prompt = (prompt or "").strip()
+        def _as_tag_str(v) -> str:
+            """GenerationRequest's validator may hand us tags as list OR str."""
+            if isinstance(v, (list, tuple)):
+                return ", ".join(str(x).strip() for x in v if str(x).strip())
+            return str(v or "").strip()
+
+        enhanced_prompt = _as_tag_str(prompt)
         enhanced_lyrics = (lyrics or "").strip()
-        enhanced_tags = (tags or "").strip()
+        enhanced_tags = _as_tag_str(tags)
 
         needs_prompt = self._prompt_is_weak(prompt)
         needs_lyrics = self._lyrics_inadequate(lyrics)
@@ -176,7 +183,7 @@ class ProducerService:
             # 1) Let the producer turn the concept into a rich musical direction.
             derived = self.llm.enhance_prompt(enhanced_prompt or "A brand new song", model)
             topic = (derived or {}).get("topic") or enhanced_prompt
-            derived_tags = (derived or {}).get("tags") or enhanced_tags
+            derived_tags = _as_tag_str((derived or {}).get("tags")) or enhanced_tags
             topic = topic.strip().strip('"').strip("'")
             derived_tags = derived_tags.strip()
 

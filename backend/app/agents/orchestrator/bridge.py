@@ -118,7 +118,9 @@ async def create_track_from_seed(
     structured_caption = caption_result.get("structured_caption") or {}
 
     # 4) Explicit duration + seed (defaults are traps: 30s / randomized).
-    duration_ms = energy_to_duration_s(float(seed.get("energy", 0.5))) * 1000
+    import os as _os
+    _cap_s = int(_os.environ.get("MILIMO_MAX_DURATION_S", "240"))
+    duration_ms = min(energy_to_duration_s(float(seed.get("energy", 0.5))), _cap_s) * 1000
     seed_val = random.randint(0, 2**32 - 1)
 
     req = GenerationRequest(

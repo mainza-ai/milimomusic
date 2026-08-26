@@ -964,6 +964,34 @@ export const agentsApi = {
     },
 };
 
+export interface AgentRunRow {
+    id: string;
+    agent_name: string;
+    status: string;
+    progress?: number;
+    error_message?: string;
+    state_json?: string;
+}
+
+export const albumApi = {
+    produce: async (releaseId: string, autopilot: boolean): Promise<{ run_id: string; status: string; autopilot: boolean }> => {
+        const res = await axios.post(`${API_BASE_URL}/releases/${releaseId}/produce`, { autopilot });
+        return res.data;
+    },
+    resume: async (runId: string, autopilot = false): Promise<{ run_id: string; status: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/agents/runs/${runId}/resume`, { autopilot });
+        return res.data;
+    },
+    cancelRun: async (runId: string): Promise<{ id: string; status: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/agents/runs/${runId}/cancel`, {});
+        return res.data;
+    },
+    getRun: async (runId: string): Promise<AgentRunRow> => {
+        const res = await axios.get(`${API_BASE_URL}/agents/runs/${runId}`);
+        return res.data.run;
+    },
+};
+
 export const profilesApi = {
     list: async (projectId?: string): Promise<ArtistProfileT[]> => {
         const res = await axios.get(`${API_BASE_URL}/profiles`, { params: projectId ? { project_id: projectId } : {} });

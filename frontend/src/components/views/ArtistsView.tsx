@@ -4,7 +4,7 @@ import {
     Mic2, UserCog, Disc3, CheckCircle2, AlertTriangle, X, Copy
 } from 'lucide-react';
 import {
-    agentsApi, profilesApi, api,
+    agentsApi, profilesApi, albumApi, api,
     type AgentInfo, type ArtistProfileT,
     type ProfileDetail, type ExperiencerVision, type AgentRunEnvelope
 } from '../../api';
@@ -37,6 +37,39 @@ export const ArtistsView: React.FC = () => {
 
     // release create
     const [newReleaseTitle, setNewReleaseTitle] = useState('');
+
+    // Album production run
+    interface AlbumRunState {
+        runId: string;
+        releaseTitle: string;
+        status: string;
+        progress: number;
+        message: string;
+    }
+    const [albumRun, setAlbumRun] = useState<AlbumRunState | null>(null);
+    const albumRunIdRef = useRef<string | null>(null);
+
+    const startAlbum = async (releaseId: string, title: string) => {
+        try {
+            const res = await albumApi.produce(releaseId, false);
+            albumRunIdRef.current = res.run_id;
+            setAlbumRun({ runId: res.run_id, releaseTitle: title, status: 'queued', progress: 0, message: 'Imagining the journey…' });
+        } catch {
+            setAlbumRun({ runId: '-', releaseTitle: title, status: 'failed', progress: 0, message: 'Could not start album run.' });
+        }
+    };
+
+    const approveNextTrack = async () => {
+        if (!albumRun || albumRun.runId === '-') return;
+        setAlbumRun(r => r ? { ...r, status: 'running', message: 'Approved — producing next track…' } : r);
+        await albumApi.resume(albumRun.runId).catch(() => null);
+    };
+
+    const cancelAlbum = async () => {
+        if (!albumRun || albumRun.runId === '-') return;
+        await albumApi.cancelRun(albumRun.runId).catch(() => null);
+        setAlbumRun(r => r ? { ...r, status: 'cancelling', message: 'Cancelling…' } : r);
+    };
 
     // Experiencer run
     const [briefTitle, setBriefTitle] = useState('');
@@ -160,6 +193,34 @@ export const ArtistsView: React.FC = () => {
         }, ['run_progress']);
         return () => es.close();
     }, [runPhase]);
+
+    // Album run: live events + polling fallback.
+    useEffect(() => {
+        const es = api.connectToEvents((event: MessageEvent) => {
+            try {
+                const d = JSON.parse(event.data);
+                if (!albumRunIdRef.current || d.run_id !== albumRunIdRef.current) return;
+                setAlbumRun(prev => prev ? ({
+                    ...prev,
+                    status: ['done', 'failed', 'cancelled', 'budget_exceeded'].includes(d.phase)
+                        ? d.phase : (d.phase === 'awaiting_approval' ? 'awaiting_approval' : prev.status),
+                    progress: typeof d.progress === 'number' ? d.progress : prev.progress,
+                    message: d.message ? String(d.message) : prev.message,
+                }) : prev);
+            } catch { /* non-JSON frame */ }
+        }, ['run_progress', 'run_update']);
+        return () => es.close();
+    }, []);
+
+    const albumActive = !!albumRun && ['queued', 'running', 'awaiting_approval', 'cancelling'].includes(albumRun.status);
+    useEffect(() => {
+        if (!albumActive || !albumRun || albumRun.runId === '-') return;
+        const t = setInterval(async () => {
+            const row = await albumApi.getRun(albumRun.runId).catch(() => null);
+            if (row) setAlbumRun(prev => prev ? ({ ...prev, status: row.status, progress: row.progress ?? prev.progress }) : prev);
+        }, 5000);
+        return () => clearInterval(t);
+    }, [albumActive, albumRun?.runId]);
 
     const startRunTimer = () => {
         setElapsed(0);
@@ -516,6 +577,29 @@ export const ArtistsView: React.FC = () => {
             {/* Releases */}
             <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 space-y-3">
                 <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2"><Disc3 size={13} /> Releases</h2>
+                    {albumRun && (
+                        <div className={`p-2.5 rounded-xl border ${albumRun.status === 'failed' ? 'border-red-500/30 bg-red-500/5'
+                            : albumRun.status === 'done' ? 'border-emerald-500/30 bg-emerald-500/5'
+                            : 'border-fuchsia-500/30 bg-fuchsia-500/5'}`}>
+                            <div className="flex items-center justify-between gap-2 mb-1">
+                                <span className="text-[11px] font-bold text-slate-800 dark:text-slate-100 truncate">Album · {albumRun.releaseTitle}</span>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                    {albumRun.status === 'awaiting_approval' && (
+                                        <button onClick={approveNextTrack}
+                                            className="text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400 transition-colors">Approve next track</button>)}
+                                    {['queued', 'running', 'awaiting_approval', 'cancelling'].includes(albumRun.status) && (
+                                        <button onClick={cancelAlbum}
+                                            className="text-[10px] font-bold px-2 py-1 rounded-lg bg-red-500/10 text-red-600 hover:bg-red-500 hover:text-slate-950 transition-colors">Cancel</button>)}
+                                </div>
+                            </div>
+                            <div className="w-full h-1.5 rounded-full bg-black/[0.06] dark:bg-white/10 overflow-hidden mb-1">
+                                <div className="h-full rounded-full bg-gradient-to-r from-teal-400 to-fuchsia-500 transition-all duration-500" style={{ width: `${Math.max(3, albumRun.progress)}%` }} />
+                            </div>
+                            <p className="text-[10px] text-slate-500 dark:text-slate-400 truncate">
+                                {albumRun.status} · {albumRun.progress}% · {albumRun.message}
+                            </p>
+                        </div>
+                    )}
                 <div className="flex items-center gap-2">
                     <input value={newReleaseTitle} onChange={e => setNewReleaseTitle(e.target.value)}
                         placeholder="New release title…" className="apple-input text-xs flex-1"
@@ -537,7 +621,12 @@ export const ArtistsView: React.FC = () => {
                 ) : detail.releases.map(r => (
                     <div key={r.id} className="flex items-center justify-between p-2.5 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/5">
                         <span className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">{r.title}</span>
-                        <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/5 text-slate-500">{r.status}</span>
+                        <div className="flex items-center gap-1.5 shrink-0">
+                            <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/5 text-slate-500">{r.status}</span>
+                            <button onClick={() => startAlbum(r.id, r.title)} disabled={albumActive}
+                                className="text-[10px] font-bold px-2 py-1 rounded-lg bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 hover:bg-fuchsia-500 hover:text-slate-950 transition-colors disabled:opacity-40"
+                                title="Produce this album (gated: pauses after each track)">Produce</button>
+                        </div>
                     </div>
                 ))}
             </section>

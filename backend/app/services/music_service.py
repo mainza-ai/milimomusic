@@ -1,5 +1,6 @@
 import asyncio
 import os
+import time
 import torch
 import logging
 from typing import Optional, Any
@@ -70,6 +71,7 @@ class MusicService:
             cls._instance.gpu_lock = asyncio.Lock()
             cls._instance.is_loading = False
             cls._instance.active_jobs = {} # Map job_id -> threading.Event
+            cls._instance.job_started_monotonic = {}
         return cls._instance
 
     async def initialize(self, model_path: str = None, version: str = "3B"):
@@ -108,6 +110,7 @@ class MusicService:
         job_id_str = str(job_id)
         cancel_event = threading.Event()
         self.active_jobs[job_id_str] = cancel_event
+        self.job_started_monotonic[job_id_str] = time.monotonic()
 
         from app.orchestration.pipeline import pipeline_orchestrator
         try:
@@ -119,6 +122,7 @@ class MusicService:
                 cancel_event=cancel_event
             )
         finally:
+            self.job_started_monotonic.pop(job_id_str, None)
             if job_id_str in self.active_jobs:
                 del self.active_jobs[job_id_str]
 
@@ -128,6 +132,14 @@ class MusicService:
             self.active_jobs[job_id].set()
             return True
         return False
+
+    def active_status(self) -> dict:
+        """Elapsed per active job. ETA derives from measured RTF (~130x M3 Max)."""
+        out = {}
+        for jid, started in self.job_started_monotonic.items():
+            out[jid] = {"elapsed_s": int(time.monotonic() - started)}
+        return {"active": len(self.active_jobs), "jobs": out,
+                "rtf_estimate": float(os.environ.get("MILIMO_RTF_ESTIMATE", "3"))}
 
     def shutdown_all(self):
         """Signal every active job to cancel. NOTE: threads already inside a

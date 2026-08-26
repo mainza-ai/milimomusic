@@ -812,3 +812,39 @@ TESTS: test_lifecycle_guards.py ×5 (failed-job abort, processing pass-through,
 cancel-event honor, second-holder refusal, stale steal). Suite: 106 passed.
 LIVE VERIFIED: lock refuses second boot; incident scenario replayed — post-generation
 guard discards orphaned work instead of resurrecting.
+
+## [2026-08-25] create | R2c complete — album UI controls + E2E in flight
+ArtistsView: Produce button per release (gated default) · album run banner with
+progress bar, live stage messages (SSE run_progress/run_update), Approve-next-track +
+Cancel controls · 5s polling fallback for missed events · api.ts albumApi
+(produce/resume/cancelRun/getRun). tsc+build green.
+E2E bug found+fixed: producer_service crashed on list-typed tags from
+GenerationRequest validator ('list' has no strip) — _as_tag_str normalization added.
+E2E status: gated pause→resume worked; 'Ignition Hymn' v2 generating — sampler shows
+process deep in mlx/metal frames (GPU-bound, healthy). Guards ensure clean terminal
+state either way. Backend on PID 76600 w/ instance lock active.
+
+## [2026-08-25] create | GPU root cause + hooked local inference (true cancel/progress)
+FORENSICS: no zombies — GPU 99% was legitimate MiniMax Music 3 MLX inference.
+Cost model: AR decode = duration×25 frames of Qwen3-36L/h4096 (batch=2 CFG) + DiT
+flow + vocoder. Measured RTF ≈130x realtime (60s track = 2h11m wall today).
+174s track ≈ 6h. Product-blocking latency, NOT a leak.
+FIXES: minimax_local_hooks.py re-implements ~80 lines of orchestration over library
+kernels — per-frame cancel checks (CHECK_EVERY=25) + progress callbacks every 100
+frames w/ live ETA · provider passes cancel_event+progress through executor ·
+GenerationCancelled re-raised (never falls back to fake synth) · MILIMO_MAX_DURATION_S
+cap (default 60s) enforced in route + album bridge · MILIMO_FLOW_STEPS knob ·
+/health generation block (active jobs, elapsed, RTF estimate).
+VERIFIED LIVE: 30s job → cancel mid-AR-loop → GenerationCancelled raised in 2s,
+GPU 0%, job FAILED honestly, NO fallback synth attempted. 106 tests pass.
+
+## [2026-08-25] create | Performance consensus — RTF corrected 130x→2.5x, C1 enabled
+LIVE MEASUREMENT via hooked progress stream: 12 frames/s → RTF ≈2.5x (30s track
+completed in ~80s). Prior 130x estimate was confounded (queue/competition).
+Defaults corrected: MILIMO_MAX_DURATION_S 60→240 · MILIMO_RTF_ESTIMATE 130→3.
+C1 ENABLED: all quantizations exist upstream (4bit/6bit/8bit/mxfp8/mxfp4);
+MILIMO_MINIMAX_SNAPSHOT env selects snapshot. Fixed self.snapshot_path init
+(regression from patch misplacement — caught by E2E, repaired, provider boots).
+E2E: gated produce→resume→songwriter→174s generation PROCESSING at wrap; guards +
+hooks active throughout. 106 tests green. Seamlessness chain verified:
+produce API → SSE progress (frames/s + ETA) → cancel preemption → artifacts.

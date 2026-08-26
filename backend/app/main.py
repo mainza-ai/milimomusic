@@ -317,6 +317,7 @@ def health_check():
     active_caps = provider_registry.get_active_capabilities()
     return {
         "status": "ok",
+        "generation": music_service.active_status(),
         "active_provider": active_caps.provider_id,
         "display_name": active_caps.display_name,
         "version": active_caps.version

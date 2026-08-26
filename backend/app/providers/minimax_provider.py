@@ -8,6 +8,8 @@ import os
 import re
 import json
 import asyncio
+
+from app.providers.minimax_local_hooks import GenerationCancelled
 import logging
 import math
 import threading
@@ -99,20 +101,28 @@ def run_real_minimax_inference(
     seed: Optional[int],
     output_path: str,
     steps: int = 24,
+    cancel_event=None,
+    progress_cb=None,
 ) -> str:
-    """Run genuine MiniMax Music 3 weight inference, writing a WAV to output_path."""
+    """Genuine MiniMax Music 3 inference with cancellation + progress hooks.
+
+    Uses our hooked orchestration (app.providers.minimax_local_hooks): the
+    upstream loop is uninterruptible and silent for hour-scale jobs."""
     import random
+    from app.providers.minimax_local_hooks import generate_music_hooked
     model = _load_minimax_model(snapshot_path)
     clean_seed = int(seed) if seed is not None and int(seed) >= 0 else random.randint(0, 2147483647)
-    _mx_generate_music(
+    flow_steps = int(os.environ.get("MILIMO_FLOW_STEPS", str(steps)))
+    generate_music_hooked(
+        model=model,
         caption=prompt,
         lyrics=lyrics or "",
-        model=model,
-        duration=duration_sec,
-        steps=steps,
+        duration_sec=duration_sec,
+        steps=max(1, min(30, flow_steps)),
         seed=clean_seed,
         output_path=output_path,
-        verbose=False,
+        cancel_event=cancel_event,
+        progress_cb=progress_cb,
     )
     return output_path
 
@@ -254,7 +264,12 @@ def synthesize_dynamic_audio_waveform(duration_sec: float, seed: Optional[int], 
 
 class MiniMaxMusic3Provider(GenerationProvider):
     def __init__(self, snapshot_path: Optional[str] = None):
-        self.snapshot_path = snapshot_path or os.environ.get("MINIMAX_MODEL_PATH", DEFAULT_MINIMAX_SNAPSHOT)
+        self.snapshot_path = (
+            os.environ.get("MILIMO_MINIMAX_SNAPSHOT")   # C1: 4bit/6bit/8bit/mxfp*
+            or snapshot_path
+            or os.environ.get("MINIMAX_MODEL_PATH")
+            or DEFAULT_MINIMAX_SNAPSHOT
+        )
         self.config = {}
         self.model = None
         self._is_loaded = False
@@ -479,6 +494,10 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 steps = min(30, max(10, int(duration_sec / 2)))
                 if progress_callback:
                     progress_callback(1, 3, f"MiniMax Music 3: Running real MLX inference ({steps} steps) on Apple Silicon...")
+                def _hooked_progress(frac: float, msg: str):
+                    if progress_callback:
+                        progress_callback(1, 3, f"MiniMax Music 3: {msg} [{int(frac * 100)}%]")
+
                 await loop.run_in_executor(
                     None,
                     run_real_minimax_inference,
@@ -489,6 +508,8 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     seed,
                     wav_path,
                     steps,
+                    cancel_event,
+                    _hooked_progress,
                 )
                 # The blocking inference thread cannot be interrupted mid-call.
                 # If cancellation arrived during those minutes, DISCARD the
@@ -501,6 +522,9 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     raise asyncio.CancelledError("Cancelled during inference; audio discarded")
                 used_real_inference = True
                 logger.info("Real MiniMax Music 3 inference produced audio at %s", wav_path)
+            except GenerationCancelled:
+                # Cancellation is NOT an inference failure — never fall back.
+                raise asyncio.CancelledError("Cancelled during local inference")
             except Exception as e:
                 fallback_reason = str(e)
                 logger.warning(f"Real MiniMax inference failed ({e}); falling back to procedural waveform.", exc_info=True)

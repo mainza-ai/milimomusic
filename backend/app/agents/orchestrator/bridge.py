@@ -123,8 +123,14 @@ async def create_track_from_seed(
     duration_ms = min(energy_to_duration_s(float(seed.get("energy", 0.5))), _cap_s) * 1000
     seed_val = random.randint(0, 2**32 - 1)
 
+    # Rich prompt prevents producer-enhancement from rewriting the
+    # songwriter's curated tags/prompt after the fact (friction F6).
+    rich_prompt = (
+        f"{draft.title}. {build_steering_prose(seed)}. "
+        f"Style: {tags_str}. Album: {album_context.get('album_title', '')}"
+    )
     req = GenerationRequest(
-        prompt=draft.title or str(seed.get("working_title", "Untitled")),
+        prompt=rich_prompt,
         lyrics=clean_lyrics,
         title=draft.title,
         duration_ms=duration_ms,

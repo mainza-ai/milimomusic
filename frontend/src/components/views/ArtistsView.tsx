@@ -1,3 +1,4 @@
+import { toast } from '../../utils/toast';
 import React, { useState, useEffect, useRef } from 'react';
 import {
     Users, Plus, ArrowLeft, Trash2, Save, Loader2, Sparkles,
@@ -155,7 +156,7 @@ export const ArtistsView: React.FC = () => {
     const addCrewMember = async () => {
         if (!detail) return;
         if (detail.assignments.some(a => a.role === crewRole)) {
-            alert(`This artist already has a ${crewRole} assigned. Remove them first.`);
+            toast(String(`This artist already has a ${crewRole} assigned. Remove them first.`), "error");
             return;
         }
         try {

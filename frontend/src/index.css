@@ -91,3 +91,4 @@ body {
     @apply bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/[0.1] rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-500 transition-all;
   }
 }
+@keyframes milimo-toast-in{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}

@@ -2,13 +2,12 @@ name: CI
 on: [push, pull_request]
 jobs:
   backend:
-    runs-on: ubuntu-latest
+    runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with: { python-version: '3.12' }
-      - name: Install test-only deps (full requirements need macOS/local paths)
-        run: pip install pytest pytest-asyncio httpx "sqlmodel>=0.0.16" pydantic pyyaml
+      - run: pip install -r backend/requirements.txt
       - run: cd backend && python -m pytest tests/ -q
   frontend:
     runs-on: ubuntu-latest
@@ -17,3 +16,4 @@ jobs:
       - uses: actions/setup-node@v4
         with: { node-version: '20' }
       - run: cd frontend && npm install --no-audit --no-fund && npx tsc -b && npm run build
+  # frontend job pending platform-clean lockfile (darwin-arm64 rollup pin) — tracked in backlog

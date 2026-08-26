@@ -35,6 +35,6 @@ pytest>=8.0.0
 pytest-asyncio>=0.23.0
 
 # Local Package Dependencies
--e ../muscriptor
+-e ./muscriptor
 matchering>=2.0.6,<3
 pyloudnorm>=0.1.1

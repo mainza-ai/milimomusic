@@ -233,6 +233,14 @@ class AlbumOrchestrator:
                 self._emit(handle.run_id, {"phase": "budget_exceeded",
                                            "message": run.error_message}, event="run_update")
             except Exception as exc:
+                # Honest ledger: which seed died, so resume/UI can show gaps.
+                try:
+                    cur = self._load_state(run)
+                    cur.setdefault("failed_seeds", []).append(
+                        {"error": str(exc)[:300], "at": run.progress})
+                    self._save_state(session, run, cur)
+                except Exception:
+                    pass
                 # Error handling must NEVER crash the task (that would strand
                 # the row at 'running'). Attempts summary best-effort.
                 try:

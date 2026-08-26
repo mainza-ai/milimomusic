@@ -172,4 +172,11 @@ async def create_track_from_seed(
     with Session(eng) as session:
         final = session.get(Job, job_id)
         session.refresh(final)
+        # Pipeline catches generation errors internally (marks FAILED, returns).
+        # Truth must propagate to the album ledger — never count a failed track.
+        if str(final.status).lower() not in ("completed", "jobstatus.completed"):
+            raise RuntimeError(
+                f"Track '{req.title}' did not complete (status={final.status}"
+                f"{': ' + str(final.error_msg)[:120] if getattr(final, 'error_msg', None) else ''})"
+            )
         return final

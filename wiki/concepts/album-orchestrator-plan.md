@@ -89,7 +89,7 @@ release status transitions, minimal progress UI.
 | R2b run lifecycle | DONE | RunRegistry cancels · /agents/runs/{id}/cancel+resume · BudgetState · strong-ref task spawning |
 | R2c frontend drawer | PARTIAL | ArtistsView subscribes run_progress (live stage text); full drawer pending |
 | R3 artist domain | PARTIAL | overrides verified live; role enum validation, Toasts, deep-links pending |
-| R4 songwriter+album | LIVE-BACKEND | SongwriterAgent (explicit JSON contract) · bridge create_track_from_seed · AlbumOrchestrator gated/autopilot · vision free-reuse · routes produce/resume — 'Ignition Hymn' written & queued live; full-audio completion pending stable server |
+| R4 songwriter+album | **PROVEN E2E** | First complete agent-made track landed 2026-08-25: songwriter→generation(174s, hooked inference)→transcription→stems, release-linked, all artifacts. UI Produce button live. Remaining: autopilot full 5-seed album |
 | Lifecycle solidification | DONE | _abort_if_terminal ×3 pipeline checkpoints · provider orphan-audio discard · instance lock (PID lockfile) · shutdown reporting — see log 2026-08-25 |
 
 **Remaining:** full-album audio E2E on owner-run server · frontend Produce button + run drawer · R3 polish items · mlx_audio step-callback preemption (upstream).

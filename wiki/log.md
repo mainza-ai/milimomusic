@@ -848,3 +848,15 @@ MILIMO_MINIMAX_SNAPSHOT env selects snapshot. Fixed self.snapshot_path init
 E2E: gated produce→resume→songwriter→174s generation PROCESSING at wrap; guards +
 hooks active throughout. 106 tests green. Seamlessness chain verified:
 produce API → SSE progress (frames/s + ETA) → cancel preemption → artifacts.
+
+## [2026-08-25] create | MILESTONE — first complete agent-made track
+'Ignition Hymn' COMPLETED through the full autonomous pipeline: gated produce →
+resume → songwriter (nemotron) → hooked local inference (174s, live progress,
+release-linked) → transcription → stems. All artifacts verified in DB
+(audio/midi/musicxml/stems). Album run parked awaiting_approval @20% (1/5).
+R4 backend + lifecycle + performance work all CONFIRMED by this landing.
+
+## [2026-08-25] lint | session wrap — docs current
+Plan status table updated; performance consensus (RTF 2.5x) recorded; remaining
+work: autopilot remaining 4 seeds, R3 polish (role enum/Toasts/deep-links),
+quantization eval via MILIMO_MINIMAX_SNAPSHOT.

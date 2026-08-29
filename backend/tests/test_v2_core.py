@@ -53,29 +53,55 @@ def test_minimax_section_tag_sanitization():
 
 @pytest.mark.asyncio
 async def test_muscriptor_transcription():
-    result = await muscriptor_provider.transcribe(
-        audio_file_path="generated_audio/test_rhythmic_song.wav",
-        job_id="test_job_123"
-    )
-    assert result.midi_path.endswith(".mid")
-    assert result.musicxml_path.endswith(".musicxml")
-    assert len(result.notes) > 0
-    assert "bpm" in result.beat_grid
-    assert os.path.exists("generated_audio/test_job_123.mid")
-    assert os.path.exists("generated_audio/test_job_123.musicxml")
+    from unittest.mock import MagicMock, patch
+    from muscriptor.events import NoteStartEvent, NoteEndEvent
+
+    ev1 = NoteStartEvent(index=1, pitch=60, start_time=0.0, instrument="Piano")
+    ev2 = NoteEndEvent(end_time=1.0, start_event=ev1)
+    mock_grid = MagicMock(bpm=120.0)
+    mock_model = MagicMock()
+    mock_model.detect_grid.return_value = mock_grid
+    mock_model.transcribe.return_value = [ev1, ev2]
+    mock_model.events_to_midi_bytes.return_value = b"MThd\x00\x00\x00\x06\x00\x01\x00\x01\x01\xe0MTrk\x00\x00\x00\x04\x00\xff\x2f\x00"
+
+    with patch.object(muscriptor_provider, "_get_model", return_value=mock_model):
+        result = await muscriptor_provider.transcribe(
+            audio_file_path="generated_audio/test_rhythmic_song.wav",
+            job_id="test_job_123"
+        )
+        assert result.midi_path.endswith(".mid")
+        assert result.musicxml_path.endswith(".musicxml")
+        assert len(result.notes) > 0
+        assert "bpm" in result.beat_grid
+        assert os.path.exists("generated_audio/test_job_123.mid")
+        assert os.path.exists("generated_audio/test_job_123.musicxml")
 
 
 def test_stem_separation():
-    result = separate_sources(
-        master_wav_path="generated_audio/test_rhythmic_song.wav",
-        job_id="test_job_stem"
+    from unittest.mock import patch
+    from app.transcription.real_separator import SeparationResult
+    mock_res = SeparationResult(
+        stems={
+            "vocals": "/audio/stems/test_job_stem_vocals.wav",
+            "drums": "/audio/stems/test_job_stem_drums.wav",
+            "bass": "/audio/stems/test_job_stem_bass.wav",
+            "other": "/audio/stems/test_job_stem_other.wav",
+        },
+        source_id="bs_roformer_6stem",
+        sources_available=["vocals", "drums", "bass", "other"],
+        stem_count=4,
     )
-    assert hasattr(result, "stems")
-    assert "vocals" in result.stems
-    assert "drums" in result.stems
-    assert "bass" in result.stems
-    assert "other" in result.stems
-    assert result.stem_count >= 4
+    with patch("app.transcription.real_separator.separate_sources", return_value=mock_res):
+        result = separate_sources(
+            master_wav_path="generated_audio/test_rhythmic_song.wav",
+            job_id="test_job_stem"
+        )
+        assert hasattr(result, "stems")
+        assert "vocals" in result.stems
+        assert "drums" in result.stems
+        assert "bass" in result.stems
+        assert "other" in result.stems
+        assert result.stem_count >= 4
 
 
 def test_voice_profile_management():

@@ -95,10 +95,24 @@ from app.core.llm_contracts import (
     LLMUpstreamError,
 )
 
+from sqlalchemy import event
+
 # Database
 sqlite_file_name = "jobs.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
-engine = create_engine(sqlite_url)
+engine = create_engine(
+    sqlite_url,
+    connect_args={"check_same_thread": False, "timeout": 15},
+)
+
+
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=10000")
+    cursor.close()
 
 
 def create_db_and_tables():

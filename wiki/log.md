@@ -860,3 +860,11 @@ R4 backend + lifecycle + performance work all CONFIRMED by this landing.
 Plan status table updated; performance consensus (RTF 2.5x) recorded; remaining
 work: autopilot remaining 4 seeds, R3 polish (role enum/Toasts/deep-links),
 quantization eval via MILIMO_MINIMAX_SNAPSHOT.
+
+## [2026-08-29] fix | CI & Packaging Stabilization, Tag Cohesion, SQLite WAL & Playwright E2E
+- **CI & Packaging Fixed**: Repaired invalid dependency versions in `muscriptor/pyproject.toml` (`fastapi>=0.109.0`, `uvicorn>=0.27.0`, `httpx>=0.27.0`, `python-multipart>=0.0.9`); removed `@rollup/rollup-darwin-arm64` pin from `frontend/package.json` dependencies and regenerated clean lockfile; restored matrix GitHub Actions CI workflow for backend + frontend.
+- **Songwriter Tag Cohesion (F6)**: Added `backend/tests/test_tag_cohesion.py` verifying genre-first sorting, prompt steering prose, and tag preservation across `bridge.py`.
+- **Database Concurrency & Crash Recovery**: Configured SQLAlchemy connection listener in `main.py` with `PRAGMA journal_mode=WAL`, `PRAGMA synchronous=NORMAL`, and `PRAGMA busy_timeout=10000`; added `backend/tests/test_album_recovery.py` verifying `AlbumOrchestrator` skips already completed seeds on resume.
+- **Playwright Browser E2E**: Configured `frontend/playwright.config.ts` and `frontend/e2e/workspace.spec.ts` with test scripts covering Landing hero, Composer, LLM settings masking, and DAW navigation.
+- **Test Suite Green**: 114/114 backend tests passing, frontend TypeScript compilation & build 100% clean.
+

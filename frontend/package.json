@@ -7,11 +7,11 @@
   "scripts": {
     "dev": "vite",
     "build": "tsc -b && vite build",
+    "test:e2e": "playwright test",
     "lint": "eslint .",
     "preview": "vite preview"
   },
   "dependencies": {
-    "@rollup/rollup-darwin-arm64": "4.62.4",
     "axios": "^1.13.2",
     "clsx": "^2.1.1",
     "framer-motion": "^12.27.1",
@@ -23,6 +23,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.39.1",
+    "@playwright/test": "^1.62.1",
     "@types/node": "^24.10.1",
     "@types/react": "^19.2.5",
     "@types/react-dom": "^19.2.3",

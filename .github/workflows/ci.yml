@@ -3,8 +3,8 @@ on: [push, pull_request]
 
 jobs:
   backend:
-    runs-on: macos-14
-    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
     steps:
       - uses: actions/checkout@v4
         with:
@@ -15,7 +15,7 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip setuptools wheel
-          python -m pip install "numpy>=1.26.0" "torch>=2.0.0"
+          python -m pip install "numpy>=1.26.0" "torch>=2.0.0" "torchaudio>=2.0.0" --index-url https://download.pytorch.org/whl/cpu
           pip install -r backend/requirements.txt
       - name: Run Backend Tests
         run: |

@@ -15,7 +15,7 @@ pydantic-graph
 
 # Audio Processing, DSP & Dynamic Stems
 numpy>=1.24
-soundfile>=0.14.0
+soundfile>=0.12.0
 soxr>=1.1.0
 torch>=2.0
 torchaudio>=2.0
@@ -24,7 +24,7 @@ audio-separator>=0.28.0
 # Neural Transcription, Beat Tracking & Notation
 mido>=1.3.3
 beat-this>=1.1.0
-rotary-embedding-torch>=0.9.1
+rotary-embedding-torch>=0.6.0
 einops>=0.4
 safetensors>=0.4
 huggingface_hub>=0.13

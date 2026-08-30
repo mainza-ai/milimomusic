@@ -94,6 +94,8 @@ function App() {
   const [isGenerating, setIsGenerating] = useState(false);
   const [isGeneratingLyrics, setIsGeneratingLyrics] = useState(false);
   const [activeWorkspaceJob, setActiveWorkspaceJob] = useState<Job | null>(null);
+  // Deep-link payload for the Artists section (?view=artists&id=<profile>)
+  const [artistLinkId, setArtistLinkId] = useState<string | null>(null);
 
   // Studio Sessions & Multi-Turn Chat State
   const [sessions, setSessions] = useState<StudioSession[]>([]);
@@ -395,6 +397,7 @@ function App() {
         .catch(() => setCurrentNav('explore'));
     } else if (viewParam && viewParam !== 'explore') {
       setCurrentNav(viewParam);
+      if (viewParam === 'artists') setArtistLinkId(params.get('id'));
     }
 
     refreshActiveCheckpoint();
@@ -480,6 +483,7 @@ function App() {
         }
       } else if (viewParam) {
         setCurrentNav(viewParam);
+        if (viewParam === 'artists') setArtistLinkId(params.get('id'));
       }
     };
 
@@ -1371,7 +1375,7 @@ function App() {
           />
         ) : currentNav === 'artists' ? (
           <ErrorBoundary sectionName="Artists">
-            <ArtistsView />
+            <ArtistsView initialProfileId={artistLinkId} />
           </ErrorBoundary>
         ) : currentNav === 'projects' ? (
           <ProjectsView

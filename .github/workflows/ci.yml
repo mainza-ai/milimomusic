@@ -37,3 +37,24 @@ jobs:
           npx tsc -b
           npm run build
 
+  frontend-e2e:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Install Frontend
+        run: |
+          cd frontend
+          npm install --no-audit --no-fund
+      - name: Install Playwright Chromium
+        run: |
+          cd frontend
+          npx playwright install --with-deps chromium
+      - name: Run Playwright E2E
+        run: |
+          cd frontend
+          npx playwright test
+

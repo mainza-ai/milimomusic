@@ -883,3 +883,33 @@ guided create stepper, list thumbnails. Servers rebuilt.
 Tracklist UI (expand per release: status rollup, per-track artifact chips audio/
 midi/xml/stems/mastered, real-inference badge, status dots) · crew role enum
 enforced server-side (422 + allowed list). 114 tests, build green, servers live.
+
+## [2026-08-29] create | Artist Production Gap Report & Plan
+Evidence-based audit of the artist domain at the production bar: 29 numbered gaps
+(7×P0 integrity: tracklist retry dupes, Release.status unwritten, no produce
+concurrency guard, orphaned releases on profile delete, 5 residual silent catches,
+SSE cross-talk, broken saveState; P1: release lifecycle API, dead crew-override
+chain, unwired lore_json, no run recovery/autopilot/per-seed retry/pagination;
+P2: A/B/C UX remainder incl. duplicate-thumbnail render bug; P3: D-phase systemic
++ CI has no e2e job). Phased plan E–H with exit criteria filed at
+concepts/artist-production-gap-report.md; supersedes A–D phase list where conflicting.
+
+## [2026-08-29] create | Artist Phases E–H shipped
+Phase E (integrity): tracklist retry dedupe via slot cursor (release_state.py),
+Release.status transitions written by orchestrator, 409 produce guard, profile-delete
+cascade (block active runs → delete releases → detach jobs), last silent catches →
+toasts, SSE run_id filter, identity save error state, duplicate-thumbnail render bug,
+Job.artist_profile_id declared (was missing vs migration/bridge). Phase F (lifecycle
+& crew): GET/PATCH/DELETE /releases + UI rename/delete, crew override chain live
+(assignment → profile default → active provider via ResiliencePolicy chain_head,
+pinned-model chips in crew UI), lore_json end-to-end (PATCH + experiencer grounding +
+detail editor), album-run recovery on reload, autopilot toggle, per-seed retry
+endpoint + cursor winner promotion, with_stats aggregate, pagination (profiles/
+releases/runs), dead image_prompt removed. Phase G (UX): 4-step guided create
+stepper w/ style chips + project selector, list sort/skeletons/empty-CTA/list
+semantics + stats rows, run-history panel, ?view=artists&id= deep-links, dirty-guard
+nav, Studio handoff from tracklist. Phase H (systemic): useValidatedForm hook,
+focus-trap + Escape on create modal, 5 artist Playwright specs + frontend-e2e CI job,
+project-scoping validation on profile create. Verification: 152 backend tests,
+5/5 artist E2E, tsc+build green. workspace.spec 2 failures pre-exist (repro on clean
+HEAD; not artist scope).

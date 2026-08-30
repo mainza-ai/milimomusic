@@ -65,6 +65,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [AI Agent Foundation](concepts/agent-foundation.md) — LLM layer investigation + AgentRuntime proposal for multi-agent support.
 - [Artist Profiles & Album Agents](concepts/artist-profiles-vision.md) — the ultimate vision: per-project artist identities with assigned agent crews producing full albums.
 - [Album Orchestrator Plan](concepts/album-orchestrator-plan.md) — R1–R4 build plan: seed→song mapping, run lifecycle engine, gated album execution.
+- [Artist Production Gap Report](concepts/artist-production-gap-report.md) — evidence-based artist-domain audit (P0 integrity → P3 systemic) with phased production plan E–H.
 
 ## Reports
 

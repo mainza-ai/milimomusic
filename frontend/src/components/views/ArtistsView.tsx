@@ -1,16 +1,17 @@
 import { toast } from '../../utils/toast';
 import { API_BASE_URL } from '../../api';
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
     Users, Plus, ArrowLeft, Trash2, Save, Loader2, Sparkles,
-    Mic2, UserCog, Disc3, CheckCircle2, AlertTriangle, X, Copy
+    Mic2, UserCog, Disc3, CheckCircle2, AlertTriangle, X, Copy, History
 } from 'lucide-react';
 import {
-    agentsApi, profilesApi, albumApi, coverApi, api, releaseApi,
+    agentsApi, profilesApi, albumApi, coverApi, api, releaseApi, projectApi, styleApi,
     type ReleaseTracksT,
-    type AgentInfo, type ArtistProfileT, type ProfileStats, type AgentRunRow,
+    type AgentInfo, type ArtistProfileT, type ProfileStats, type AgentRunRow, type Project, type Style,
     type ProfileDetail, type ExperiencerVision, type AgentRunEnvelope
 } from '../../api';
+import { useValidatedForm } from '../../hooks/useValidatedForm';
 
 const ROLES = ['world_builder', 'experiencer', 'songwriter', 'producer'];
 const ROLE_LABELS: Record<string, string> = {
@@ -28,17 +29,32 @@ const fmtUtcDate = (ts?: string | null): string => {
     } catch { return ts.slice(0, 10); }
 };
 
-export const ArtistsView: React.FC = () => {
+interface ArtistsViewProps {
+    /** Deep-link support: ?view=artists&id=<profile> lands on that artist. */
+    initialProfileId?: string | null;
+}
+
+export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) => {
     const [profiles, setProfiles] = useState<ArtistProfileT[]>([]);
     const [stats, setStats] = useState<Record<string, ProfileStats>>({});
     const [isLoadingList, setIsLoadingList] = useState(true);
     const [detail, setDetail] = useState<ProfileDetail | null>(null);
     const [isDetailLoading, setIsDetailLoading] = useState(false);
-    // eslint-disable-next-line @typescript-eslint/no-unused-vars -- gates future detail spinner
+    // Guided create (A1): 4-step modal — identity, bio, tags, cover.
     const [isCreateOpen, setIsCreateOpen] = useState(false);
-    const [newName, setNewName] = useState('');
-    const [newBio, setNewBio] = useState('');
-    const [newTags, setNewTags] = useState('');
+    const [createStep, setCreateStep] = useState(0);
+    const [createProjectId, setCreateProjectId] = useState('');
+    const [createCover, setCreateCover] = useState<File | null>(null);
+    const [createCoverPreview, setCreateCoverPreview] = useState('');
+    const [createBusy, setCreateBusy] = useState(false);
+    const [projects, setProjects] = useState<Project[]>([]);
+    const [styleChips, setStyleChips] = useState<Style[]>([]);
+    const createForm = useValidatedForm({ name: '', bio: '', tags: '' }, {
+        name: v => (!v.trim() ? 'Give the artist a name.' : v.trim().length < 2 ? 'At least 2 characters.' : null),
+        bio: v => (v.trim().length > 0 && v.trim().length < 20
+            ? 'Give the bio a little more for the crew to ground on (20+ chars).' : null),
+        tags: () => null,
+    });
     const [agentsRegistry, setAgentsRegistry] = useState<AgentInfo[]>([]);
 
     // identity edit state
@@ -131,6 +147,7 @@ export const ArtistsView: React.FC = () => {
 
     const openProfile = async (id: string) => {
         setIsDetailLoading(true);
+        syncArtistUrl(id);
         try {
             const d = await profilesApi.get(id);
             setDetail(d);
@@ -142,11 +159,10 @@ export const ArtistsView: React.FC = () => {
             setRunError('');
             albumRunIdRef.current = null;
             setAlbumRun(null);
-            // Run recovery: an in-flight album run survives page reloads —
-            // reattach its banner instead of leaving it invisible.
-            agentsApi.listRuns(d.profile.id, 50).then(async (envelope: { runs: AgentRunRow[]; total: number }) => {
-                const active = envelope.runs.find((r: AgentRunRow) => r.agent_name === 'album_orchestrator'
-                    && ['queued', 'running', 'awaiting_approval'].includes(r.status));
+            // Run history (C5) + active-run recovery in one ledger fetch.
+            agentsApi.listRuns(d.profile.id, 50).then(async ({ runs }) => {
+                setRunHistory(runs.slice(0, 10));
+                const active = envelope_active(runs);
                 if (!active) return;
                 const full = await albumApi.getRun(active.id).catch(() => null);
                 let releaseTitle = 'This album';
@@ -166,21 +182,75 @@ export const ArtistsView: React.FC = () => {
         }
     };
 
+    /** Hand the finished track to the main studio (full player + DAW view). */
+    const openInStudio = (jobId: string) => {
+        try {
+            const url = new URL(window.location.href);
+            url.searchParams.set('view', 'track-detail');
+            url.searchParams.set('track', jobId);
+            window.history.pushState({ view: 'track-detail', trackId: jobId }, '', url.toString());
+            window.dispatchEvent(new PopStateEvent('popstate'));
+        } catch { /* deep-link best effort */ }
+    };
+
+    /** The album run a reload should reattach to, if any. */
+    const envelope_active = (runs: AgentRunRow[]) => runs.find(r => r.agent_name === 'album_orchestrator'
+        && ['queued', 'running', 'awaiting_approval'].includes(r.status));
+
     const refreshDetail = () => detail && openProfile(detail.profile.id);
 
-    const handleCreate = async () => {
-        if (!newName.trim()) return;
+    const openCreateModal = () => {
+        setCreateStep(0);
+        createForm.reset();
+        setCreateProjectId('');
+        setCreateCover(null);
+        setCreateCoverPreview('');
+        setIsCreateOpen(true);
+        projectApi.listProjects().then(setProjects).catch(console.error);
+        styleApi.getStyles().then(s => setStyleChips(s.filter(st => st.type !== 'trained').slice(0, 10))).catch(console.error);
+    };
+
+    const toggleChip = (chip: string) => {
+        const current = createForm.values.tags;
+        const parts = current.split(',').map(s => s.trim()).filter(Boolean);
+        const idx = parts.findIndex(s => s.toLowerCase() === chip.toLowerCase());
+        if (idx >= 0) parts.splice(idx, 1);
+        else parts.push(chip);
+        createForm.setField('tags', parts.join(', '));
+    };
+
+    const submitCreate = async () => {
+        createForm.markSubmitAttempted();
+        if (!createForm.values.name.trim()) { setCreateStep(0); return; }
+        setCreateBusy(true);
         try {
-            if (newName.trim().length < 2) { toast("Artist name needs at least 2 characters.", "error"); return; }
-            if (newBio.trim().length > 0 && newBio.trim().length < 20) { toast("Give the bio a little more for the crew to ground on (20+ chars).", "error"); return; }
-            const p = await profilesApi.create({ name: newName.trim(), bio: newBio.trim(), tags: newTags.trim() });
+            let p = await profilesApi.create({
+                name: createForm.values.name.trim(),
+                bio: createForm.values.bio.trim(),
+                tags: createForm.values.tags.trim(),
+                ...(createProjectId ? { project_id: createProjectId } : {}),
+            });
+            if (createCover) {
+                try {
+                    const { url } = await coverApi.uploadCoverImage(createCover);
+                    p = await profilesApi.setCover(p.id, url);
+                } catch {
+                    toast('Artist created, but the cover upload failed — add it from their page.', 'error');
+                }
+            }
             setProfiles(prev => [p, ...prev]);
             setIsCreateOpen(false);
-            setNewName(''); setNewBio(''); setNewTags('');
+            createForm.reset();
+            setCreateStep(0);
+            setCreateCover(null);
+            setCreateCoverPreview('');
+            setCreateProjectId('');
+            toast(`${p.name} created.`, 'success');
             openProfile(p.id);
-        } catch (e) {
-            const err = e as any;
-            toast(String(err?.response?.data?.detail?.error?.message || err?.message || 'Create failed'), 'error');
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Create failed'), 'error');
+        } finally {
+            setCreateBusy(false);
         }
     };
 
@@ -193,6 +263,43 @@ export const ArtistsView: React.FC = () => {
         catch (e: any) { toast(String(e?.response?.data?.detail?.error?.message || 'Failed to load tracks'), 'error'); }
     };
     const [search, setSearch] = useState('');
+    const [sortBy, setSortBy] = useState<'activity' | 'name'>('activity');
+    const [runHistory, setRunHistory] = useState<AgentRunRow[]>([]);
+
+    const visibleProfiles = useMemo(() => {
+        const needle = search.toLowerCase();
+        const filtered = profiles.filter(p => (p.name + ' ' + p.tags + ' ' + p.bio).toLowerCase().includes(needle));
+        return [...filtered].sort((a, b) => {
+            if (sortBy === 'name') return a.name.localeCompare(b.name);
+            const la = stats[a.id]?.last_activity || a.updated_at || '';
+            const lb = stats[b.id]?.last_activity || b.updated_at || '';
+            return lb.localeCompare(la);
+        });
+    }, [profiles, search, sortBy, stats]);
+
+    // ── Deep-link + URL truth (C6): the URL always reflects the open artist ──
+    const syncArtistUrl = (profileId: string | null) => {
+        try {
+            const url = new URL(window.location.href);
+            if (profileId) url.searchParams.set('id', profileId);
+            else url.searchParams.delete('id');
+            window.history.replaceState({}, '', url.toString());
+        } catch { /* URL sync is best-effort */ }
+    };
+
+    useEffect(() => {
+        if (initialProfileId && (!detail || detail.profile.id !== initialProfileId)) {
+            openProfile(initialProfileId);
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [initialProfileId]);
+
+    const closeDetail = () => {
+        // Dirty-guard (C3): identity edits must not vanish silently.
+        if (identityDirty && !window.confirm('You have unsaved identity changes. Discard them?')) return;
+        setDetail(null);
+        syncArtistUrl(null);
+    };
     const [coverBusy, setCoverBusy] = useState(false);
     const uploadCover = async (file: File) => {
         if (!detail) return;
@@ -277,6 +384,29 @@ export const ArtistsView: React.FC = () => {
             toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Could not remove crew member'), 'error');
         }
     };
+
+    // ── Modal a11y (D2): focus trap + Escape for the create dialog ──────────
+    const createModalRef = useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+        if (!isCreateOpen) return;
+        const el = createModalRef.current;
+        if (!el) return;
+        const focusables = () => Array.from(
+            el.querySelectorAll<HTMLElement>('input, textarea, select, button, [href]'),
+        ).filter(f => !f.hasAttribute('disabled') && f.offsetParent !== null);
+        const handler = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && !createBusy) { setIsCreateOpen(false); return; }
+            if (e.key !== 'Tab') return;
+            const items = focusables();
+            if (items.length === 0) return;
+            const first = items[0];
+            const last = items[items.length - 1];
+            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
+            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
+        };
+        document.addEventListener('keydown', handler);
+        return () => document.removeEventListener('keydown', handler);
+    }, [isCreateOpen, createBusy]);
 
     // ── Experiencer run ────────────────────────────────────────────────────
     // Live stage text for experiencer runs via SSE run_progress events.
@@ -456,7 +586,7 @@ export const ArtistsView: React.FC = () => {
                         </div>
                     </div>
                     <button
-                        onClick={() => setIsCreateOpen(true)}
+                        onClick={openCreateModal}
                         className="px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-md shadow-teal-500/20 active:scale-[0.98] transition-all"
                     >
                         <Plus size={14} /> New Artist
@@ -464,7 +594,18 @@ export const ArtistsView: React.FC = () => {
                 </div>
 
                 {isLoadingList ? (
-                    <div className="py-16 flex justify-center"><Loader2 size={22} className="animate-spin text-teal-500" /></div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" role="list" aria-label="Loading artists">
+                        {[0, 1, 2, 3, 4, 5].map(i => (
+                            <div key={i} className="p-5 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] space-y-3" role="presentation">
+                                <div className="flex items-center gap-3">
+                                    <div className="w-10 h-10 rounded-xl bg-slate-200 dark:bg-white/10 animate-pulse" />
+                                    <div className="h-3.5 w-24 rounded bg-slate-200 dark:bg-white/10 animate-pulse" />
+                                </div>
+                                <div className="h-2.5 w-full rounded bg-slate-200 dark:bg-white/10 animate-pulse" />
+                                <div className="h-2.5 w-2/3 rounded bg-slate-200 dark:bg-white/10 animate-pulse" />
+                            </div>
+                        ))}
+                    </div>
                 ) : profiles.length === 0 ? (
                     <div className="py-20 text-center space-y-3">
                         <Users size={36} className="mx-auto text-slate-300 dark:text-slate-600" />
@@ -472,73 +613,211 @@ export const ArtistsView: React.FC = () => {
                         <p className="text-xs text-slate-500 dark:text-slate-400 max-w-sm mx-auto">
                             Create an artist profile, assign their AI crew, and let the Experiencer imagine their first album.
                         </p>
+                        <button onClick={openCreateModal}
+                            className="mt-1 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 active:scale-[0.98] transition-all">
+                            <Plus size={14} /> Create your first artist
+                        </button>
                     </div>
                 ) : (
-                    <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        <div className="flex items-center gap-2 mb-2">
+                    <div>
+                        <div className="flex items-center gap-2 mb-3">
                             <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search artists, styles…" className="apple-input text-xs flex-1" aria-label="Search artists" />
-                            {search && <button onClick={() => setSearch('')} className="text-[10px] font-bold text-slate-400 hover:text-slate-600" aria-label="Clear search">Clear</button>}
+                            <select value={sortBy} onChange={e => setSortBy(e.target.value as 'activity' | 'name')}
+                                className="apple-input !py-1.5 !px-2 text-[11px] font-mono w-auto" aria-label="Sort artists">
+                                <option value="activity">Recent activity</option>
+                                <option value="name">Name</option>
+                            </select>
                         </div>
-                        {profiles.filter(p => (p.name + ' ' + p.tags + ' ' + p.bio).toLowerCase().includes(search.toLowerCase())).map(p => (
-                            <button
-                                key={p.id}
-                                onClick={() => openProfile(p.id)}
-                                className="text-left p-5 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm hover:shadow-apple-md backdrop-blur-xl transition-all hover:-translate-y-0.5"
-                            >
-                                <div className="flex items-center gap-3">
-                                    {p.cover_image_path ? (
-                                        <img src={`${API_BASE_URL}${p.cover_image_path}`} alt="" className="w-10 h-10 rounded-xl object-cover border border-black/10 dark:border-white/10" />
-                                    ) : (
-                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-400/40 to-fuchsia-500/40 flex items-center justify-center"><UserCog size={16} className="text-slate-500" /></div>
-                                    )}
-                                    <h3 className="text-sm font-extrabold text-slate-900 dark:text-white truncate">{p.name}</h3>
-                                </div>
-                                <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 min-h-[2em]">
-                                    {p.bio || 'No bio yet.'}
-                                </p>
-                                {p.tags && (
-                                    <div className="flex flex-wrap gap-1 mt-2">
-                                        {p.tags.split(',').slice(0, 4).map(t => t.trim()).filter(Boolean).map(t => (
-                                            <span key={t} className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20">{t}</span>
-                                        ))}
-                                    </div>
-                                )}
-                                {stats[p.id] && (
-                                    <div className="flex items-center gap-2 mt-2 text-[10px] font-mono text-slate-400">
-                                        <span>{stats[p.id].crew_count} crew</span>
-                                        <span aria-hidden="true">·</span>
-                                        <span>{stats[p.id].release_count} releases</span>
-                                        {stats[p.id].last_activity && (
-                                            <>
-                                                <span aria-hidden="true">·</span>
-                                                <span>active {fmtUtcDate(stats[p.id].last_activity)}</span>
-                                            </>
+                        {visibleProfiles.length === 0 ? (
+                            <p className="text-xs text-slate-500 italic py-8 text-center">No artists match “{search}”.</p>
+                        ) : (
+                            <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4" role="list" aria-label="Artist profiles">
+                                {visibleProfiles.map(p => (
+                                    <button
+                                        key={p.id}
+                                        role="listitem"
+                                        aria-label={`Open artist ${p.name}`}
+                                        onClick={() => openProfile(p.id)}
+                                        className="text-left p-5 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm hover:shadow-apple-md backdrop-blur-xl transition-all hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-teal-500/60 outline-none"
+                                    >
+                                        <div className="flex items-center gap-3">
+                                            {p.cover_image_path ? (
+                                                <img src={`${API_BASE_URL}${p.cover_image_path}`} alt="" className="w-10 h-10 rounded-xl object-cover border border-black/10 dark:border-white/10" />
+                                            ) : (
+                                                <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-400/40 to-fuchsia-500/40 flex items-center justify-center"><UserCog size={16} className="text-slate-500" /></div>
+                                            )}
+                                            <h3 className="text-sm font-extrabold text-slate-900 dark:text-white truncate">{p.name}</h3>
+                                        </div>
+                                        <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 min-h-[2em]">
+                                            {p.bio || 'No bio yet.'}
+                                        </p>
+                                        {p.tags && (
+                                            <div className="flex flex-wrap gap-1 mt-2">
+                                                {p.tags.split(',').slice(0, 4).map(t => t.trim()).filter(Boolean).map(t => (
+                                                    <span key={t} className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20">{t}</span>
+                                                ))}
+                                            </div>
                                         )}
-                                    </div>
-                                )}
-                            </button>
-                        ))}
+                                        {stats[p.id] && (
+                                            <div className="flex items-center gap-2 mt-2 text-[10px] font-mono text-slate-400">
+                                                <span>{stats[p.id].crew_count} crew</span>
+                                                <span aria-hidden="true">·</span>
+                                                <span>{stats[p.id].release_count} releases</span>
+                                                {stats[p.id].last_activity && (
+                                                    <>
+                                                        <span aria-hidden="true">·</span>
+                                                        <span>active {fmtUtcDate(stats[p.id].last_activity)}</span>
+                                                    </>
+                                                )}
+                                            </div>
+                                        )}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                     </div>
                 )}
 
-                {/* Create modal */}
+                {/* Guided create stepper (A1): identity → bio → tags → cover */}
                 {isCreateOpen && (
                     <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
-                        onMouseDown={e => { if (e.target === e.currentTarget) setIsCreateOpen(false); }}>
-                        <div className="w-full max-w-md rounded-3xl bg-white dark:bg-[#141620] border border-black/10 dark:border-white/10 shadow-apple-2xl p-6 space-y-4 animate-scale-up">
-                            <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">New Artist Profile</h3>
-                            <input autoFocus value={newName} onChange={e => setNewName(e.target.value)}
-                                placeholder="Artist name" className="apple-input text-sm" />
-                            <textarea value={newBio} onChange={e => setNewBio(e.target.value)} rows={3}
-                                placeholder="Bio / identity — who is this artist?" className="apple-input text-xs" />
-                            <input value={newTags} onChange={e => setNewTags(e.target.value)}
-                                placeholder="Style tags, comma-separated" className="apple-input text-xs font-mono" />
-                            <div className="flex justify-end gap-2 pt-1">
-                                <button onClick={() => setIsCreateOpen(false)} className="px-3 py-1.5 text-xs font-bold rounded-xl text-slate-500 hover:text-slate-800 dark:hover:text-slate-200">Cancel</button>
-                                <button onClick={handleCreate} disabled={!newName.trim()}
-                                    className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs disabled:opacity-40 active:scale-[0.98] transition-all">
-                                    Create Artist
-                                </button>
+                        role="dialog" aria-modal="true" aria-label="Create artist profile"
+                        onMouseDown={e => { if (e.target === e.currentTarget && !createBusy) setIsCreateOpen(false); }}>
+                        <div ref={createModalRef} className="w-full max-w-md rounded-3xl bg-white dark:bg-[#141620] border border-black/10 dark:border-white/10 shadow-apple-2xl p-6 space-y-4 animate-scale-up">
+                            <div className="flex items-center justify-between">
+                                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">New Artist Profile</h3>
+                                <div className="flex items-center gap-1.5" aria-label={`Step ${createStep + 1} of 4`}>
+                                    {[0, 1, 2, 3].map(i => (
+                                        <span key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === createStep ? 'bg-teal-500 w-4' : i < createStep ? 'bg-teal-500/50' : 'bg-slate-300 dark:bg-slate-600'}`} />
+                                    ))}
+                                </div>
+                            </div>
+
+                            {createStep === 0 && (
+                                <div className="space-y-3">
+                                    <label className="block">
+                                        <span className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-1">Artist name</span>
+                                        <input autoFocus value={createForm.values.name}
+                                            onChange={e => createForm.setField('name', e.target.value)}
+                                            onBlur={() => createForm.markTouched('name')}
+                                            placeholder="e.g. Nalo Rivers" className="apple-input text-sm" />
+                                        {createForm.showError('name') && (
+                                            <span className="text-[10px] text-rose-500 font-mono mt-1 block" role="alert">{createForm.showError('name')}</span>
+                                        )}
+                                    </label>
+                                    <label className="block">
+                                        <span className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-1">Project (optional)</span>
+                                        <select value={createProjectId} onChange={e => setCreateProjectId(e.target.value)}
+                                            className="apple-input text-xs" aria-label="Owning project">
+                                            <option value="">No project — standalone artist</option>
+                                            {projects.map(pr => <option key={pr.id} value={pr.id}>{pr.name}</option>)}
+                                        </select>
+                                    </label>
+                                </div>
+                            )}
+
+                            {createStep === 1 && (
+                                <div className="space-y-2">
+                                    <label className="block">
+                                        <span className="flex items-center justify-between mb-1">
+                                            <span className="text-[10px] font-mono font-bold uppercase text-slate-400">Bio / identity</span>
+                                            <span className={`text-[10px] font-mono ${createForm.values.bio.trim().length > 0 && createForm.values.bio.trim().length < 20 ? 'text-amber-500' : 'text-slate-400'}`}>{createForm.values.bio.trim().length} chars</span>
+                                        </span>
+                                        <textarea value={createForm.values.bio} rows={4}
+                                            onChange={e => createForm.setField('bio', e.target.value)}
+                                            onBlur={() => createForm.markTouched('bio')}
+                                            placeholder="Who is this artist? Where do they come from, what do they sound like, what do they care about?" className="apple-input text-xs" />
+                                        {createForm.showError('bio') && (
+                                            <span className="text-[10px] text-rose-500 font-mono mt-1 block" role="alert">{createForm.showError('bio')}</span>
+                                        )}
+                                    </label>
+                                    <button type="button" onClick={() => createForm.setField('bio', 'Raised between two cities and a river of late-night radio. Writes about distance, memory, and the small hours. Voice like worn velvet over steady drums.')}
+                                        className="text-[10px] font-bold text-teal-600 dark:text-teal-400 hover:underline">
+                                        Use an example
+                                    </button>
+                                </div>
+                            )}
+
+                            {createStep === 2 && (
+                                <div className="space-y-2">
+                                    <label className="block">
+                                        <span className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-1">Style tags (comma-separated)</span>
+                                        <input value={createForm.values.tags}
+                                            onChange={e => createForm.setField('tags', e.target.value)}
+                                            placeholder="e.g. indie folk, warm, fingerpicked guitar" className="apple-input text-xs font-mono" />
+                                    </label>
+                                    {styleChips.length > 0 && (
+                                        <div className="flex flex-wrap gap-1.5 pt-1">
+                                            {styleChips.map(s => {
+                                                const active = createForm.values.tags.toLowerCase().includes(s.name.toLowerCase());
+                                                return (
+                                                    <button key={s.name} type="button" onClick={() => toggleChip(s.name)}
+                                                        className={`text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors ${active
+                                                            ? 'bg-teal-500 text-slate-950 border-teal-500'
+                                                            : 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-500/20 hover:bg-teal-500/20'}`}>
+                                                        {s.name}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    )}
+                                </div>
+                            )}
+
+                            {createStep === 3 && (
+                                <div className="space-y-3">
+                                    <span className="text-[10px] font-mono font-bold uppercase text-slate-400 block">Identity image (optional)</span>
+                                    <div className="flex items-center gap-3">
+                                        {createCoverPreview ? (
+                                            <img src={createCoverPreview} alt="Cover preview" className="w-14 h-14 rounded-2xl object-cover border border-black/10 dark:border-white/10" />
+                                        ) : (
+                                            <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-teal-400/30 to-fuchsia-500/30 flex items-center justify-center"><UserCog size={20} className="text-slate-500" /></div>
+                                        )}
+                                        <label className="text-[10px] font-bold px-2 py-1.5 rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 transition-colors cursor-pointer">
+                                            {createCover ? 'Change image' : 'Choose image'}
+                                            <input type="file" accept="image/*" className="hidden"
+                                                onChange={e => {
+                                                    const f = e.target.files?.[0];
+                                                    if (f) {
+                                                        setCreateCover(f);
+                                                        setCreateCoverPreview(URL.createObjectURL(f));
+                                                    }
+                                                }} />
+                                        </label>
+                                        {createCover && (
+                                            <button type="button" onClick={() => { setCreateCover(null); setCreateCoverPreview(''); }}
+                                                className="text-[10px] font-bold text-slate-400 hover:text-rose-500">Remove</button>
+                                        )}
+                                    </div>
+                                    <p className="text-[10px] text-slate-400">You can always add this later from the artist's page.</p>
+                                </div>
+                            )}
+
+                            <div className="flex justify-between items-center pt-1">
+                                {createStep > 0 ? (
+                                    <button onClick={() => setCreateStep(s => s - 1)} disabled={createBusy}
+                                        className="px-3 py-1.5 text-xs font-bold rounded-xl text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 disabled:opacity-40">
+                                        Back
+                                    </button>
+                                ) : (
+                                    <button onClick={() => setIsCreateOpen(false)} disabled={createBusy}
+                                        className="px-3 py-1.5 text-xs font-bold rounded-xl text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 disabled:opacity-40">
+                                        Cancel
+                                    </button>
+                                )}
+                                {createStep < 3 ? (
+                                    <button onClick={() => setCreateStep(s => s + 1)}
+                                        disabled={createStep === 0 ? !!createForm.errors.name : createStep === 1 ? !!createForm.errors.bio : false}
+                                        className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs disabled:opacity-40 active:scale-[0.98] transition-all">
+                                        Next
+                                    </button>
+                                ) : (
+                                    <button onClick={submitCreate} disabled={createBusy || !!createForm.errors.name || !!createForm.errors.bio}
+                                        className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs disabled:opacity-40 active:scale-[0.98] transition-all">
+                                        {createBusy ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
+                                        Create Artist
+                                    </button>
+                                )}
                             </div>
                         </div>
                     </div>
@@ -555,7 +834,7 @@ export const ArtistsView: React.FC = () => {
             {/* Header */}
             <div className="flex items-start justify-between gap-4 mb-6">
                 <div className="flex items-center gap-3 min-w-0">
-                    <button onClick={() => setDetail(null)}
+                    <button onClick={closeDetail} aria-label="Back to artists"
                         className="p-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] text-slate-600 dark:text-slate-300">
                         <ArrowLeft size={15} />
                     </button>
@@ -914,6 +1193,11 @@ export const ArtistsView: React.FC = () => {
                                                     className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 hover:bg-amber-500 hover:text-slate-950 transition-colors"
                                                     title="Reproduce this track from its seed">Retry</button>
                                             )}
+                                            {tr.status === 'completed' && (
+                                                <button onClick={() => openInStudio(tr.id)}
+                                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-sky-500/15 text-sky-600 dark:text-sky-300 hover:bg-sky-500 hover:text-slate-950 transition-colors"
+                                                    title="Open this track in the studio (full playback, DAW, transcription)">Studio</button>
+                                            )}
                                             <span className={`w-1.5 h-1.5 rounded-full ${tr.status === 'completed' ? 'bg-emerald-500' : tr.status === 'failed' ? 'bg-red-500' : 'bg-amber-400'}`} title={tr.status} />
                                         </div>
                                     </div>
@@ -922,6 +1206,37 @@ export const ArtistsView: React.FC = () => {
                         )}
                     </div>
                 )}
+            </section>
+
+            {/* Run history (C5): this artist's agent ledger — newest first. */}
+            <section className="mt-5 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5">
+                <details>
+                    <summary className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2 cursor-pointer select-none">
+                        <History size={13} /> Run History {runHistory.length > 0 && <span className="font-mono normal-case">({runHistory.length})</span>}
+                    </summary>
+                    {runHistory.length === 0 ? (
+                        <p className="text-xs text-slate-500 italic py-2">No agent runs yet — visions and album production will appear here.</p>
+                    ) : (
+                        <div className="mt-3 space-y-1.5" role="list" aria-label="Agent run history">
+                            {runHistory.map(r => (
+                                <div key={r.id} role="listitem" className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/5">
+                                    <div className="flex items-center gap-2 min-w-0">
+                                        <span className={`w-1.5 h-1.5 rounded-full shrink-0 ${r.status === 'succeeded' ? 'bg-emerald-500' : r.status === 'failed' ? 'bg-red-500' : ['queued', 'running', 'awaiting_approval'].includes(r.status) ? 'bg-amber-400 animate-pulse' : 'bg-slate-400'}`} title={r.status} />
+                                        <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200 capitalize truncate">{ROLE_LABELS[r.agent_name] || r.agent_name}</span>
+                                        {r.error_message && (
+                                            <span className="text-[9px] font-mono text-rose-500 truncate" title={r.error_message}>{r.error_message.slice(0, 60)}</span>
+                                        )}
+                                    </div>
+                                    <div className="flex items-center gap-2 shrink-0 font-mono text-[9px] text-slate-400">
+                                        {(r.tokens_out ?? 0) > 0 && <span>{(r.tokens_out ?? 0).toLocaleString()} out</span>}
+                                        {!!r.latency_ms && <span>{(r.latency_ms / 1000).toFixed(1)}s</span>}
+                                        <span>{fmtUtcDate(r.created_at)}</span>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </details>
             </section>
         </div>
     );

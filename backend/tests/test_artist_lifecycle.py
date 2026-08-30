@@ -307,6 +307,36 @@ def test_profile_releases_pagination_shape(client, artist_fixture):
     assert any(str(r["id"]) == rid for r in data["releases"])
 
 
+# ---------------------------------------------------------------- project scoping (H28)
+
+def test_profile_create_validates_project_exists(client):
+    out = client.post("/profiles", json={"name": "Scoped Artist", "project_id": str(uuid.uuid4())})
+    assert out.status_code == 404
+    assert out.json()["detail"]["error"]["code"] == "not_found"
+
+    out = client.post("/profiles", json={"name": "Scoped Artist", "project_id": "not-a-uuid"})
+    assert out.status_code == 422
+
+    from app.models import Project
+    with Session(app_engine) as session:
+        project = Project(name=f"PRJ-{uuid.uuid4().hex[:6]}")
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+        project_id = str(project.id)
+    try:
+        out = client.post("/profiles", json={"name": "Scoped Artist", "project_id": project_id})
+        assert out.status_code == 200
+        pid = out.json()["id"]
+        client.delete(f"/profiles/{pid}")
+    finally:
+        with Session(app_engine) as session:
+            project = session.get(Project, uuid.UUID(project_id))
+            if project:
+                session.delete(project)
+                session.commit()
+
+
 # ---------------------------------------------------------------- single-seed retry
 
 def test_retry_endpoint_rejects_non_failed_job(client, artist_fixture):

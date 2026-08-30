@@ -1100,6 +1100,14 @@ async def set_profile_cover(profile_id: UUID, payload: dict):
 @app.post("/profiles")
 def create_artist_profile(payload: ArtistProfileCreate):
     with Session(engine) as session:
+        # Project scoping enforcement: a profile may only point at a real project.
+        if payload.project_id:
+            try:
+                pid = UUID(payload.project_id)
+            except (ValueError, AttributeError):
+                raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "project_id must be a valid UUID."}})
+            if not session.get(Project, pid):
+                raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Project not found for this profile."}})
         profile = ArtistProfile(**payload.model_dump())
         session.add(profile)
         session.commit()

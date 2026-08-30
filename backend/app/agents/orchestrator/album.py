@@ -102,6 +102,13 @@ class AlbumOrchestrator:
 
             state = self._load_state(run)
             completed_seeds: List[int] = state.get("completed_seeds", [])
+            # Crew flags ride the run's input_json (opt-in per produce run).
+            try:
+                _cfg = json.loads(run.input_json or "{}")
+            except Exception:
+                _cfg = {}
+            _crew = _cfg.get("crew") if isinstance(_cfg.get("crew"), dict) else {}
+            crew_flags = {"stylist": bool(_crew.get("stylist")), "critic": bool(_crew.get("critic"))}
             # Cursor → caller brief → previously persisted release vision (free reuse).
             persisted_vision = None
             if getattr(release, "vision_json", None):
@@ -175,6 +182,7 @@ class AlbumOrchestrator:
 
                     state.pop("awaiting_approval_at", None)
                     current_slot = idx
+                    review_sink: Dict[str, Any] = {}
                     track_start = time.monotonic()
                     self._emit(handle.run_id, {
                         "step": idx + 1, "total_steps": total,
@@ -195,6 +203,8 @@ class AlbumOrchestrator:
                         project_id=str(getattr(release, "project_id", None) or "") or None,
                         provider_name="minimax_music3",
                         voice_profile_id=artist_voice,
+                        crew_flags=crew_flags,
+                        review_sink=review_sink,
                         ctx=ctx, policy=policy,
                         engine=eng,
                         progress_cb=lambda phase, msg, i=idx, t=total: self._emit(
@@ -209,6 +219,8 @@ class AlbumOrchestrator:
                     # Slot cursor: seed index → winning Job. The tracklist
                     # endpoint resolves superseded retries against this.
                     state.setdefault("slot_jobs", {})[str(idx)] = str(job.id)
+                    if review_sink.get("review"):
+                        state.setdefault("reviews", {})[str(idx)] = review_sink["review"]
                     # Budget: deadline + wall-clock enforced per track; token
                     # totals arrive from child ledger rows at resume points.
                     breach = handle.budget.consume(
@@ -360,6 +372,9 @@ async def retry_single_seed(
             chain_head=resolve_chain_head(session, str(getattr(release, "profile_id", "") or "") or None, "songwriter"))
         retry_profile = session.get(ArtistProfile, uuidlib.UUID(str(release.profile_id))) if getattr(release, "profile_id", None) else None
         retry_voice = getattr(retry_profile, "voice_profile_id", None) or None
+        _crew = cfg.get("crew") if isinstance(cfg.get("crew"), dict) else {}
+        crew_flags = {"stylist": bool(_crew.get("stylist")), "critic": bool(_crew.get("critic"))}
+        review_sink: Dict[str, Any] = {}
         try:
             ctx = RunContext(
                 agent_name="songwriter", run_id=str(parent_run_id),
@@ -382,6 +397,8 @@ async def retry_single_seed(
                 project_id=str(getattr(release, "project_id", None) or "") or None,
                 provider_name="minimax_music3",
                 voice_profile_id=retry_voice,
+                crew_flags=crew_flags,
+                review_sink=review_sink,
                 ctx=ctx, policy=policy, engine=eng,
                 progress_cb=lambda phase, msg: emit(
                     handle.run_id,
@@ -402,6 +419,8 @@ async def retry_single_seed(
                         if seed_slot not in completed:
                             completed.append(seed_slot)
                         st["completed_seeds"] = completed
+                        if review_sink.get("review"):
+                            st.setdefault("reviews", {})[str(seed_slot)] = review_sink["review"]
                         retried_failure = str(cfg.get("job_id") or "")
                         bucket = st.setdefault("failed_jobs", {}).setdefault(str(seed_slot), [])
                         st["failed_jobs"][str(seed_slot)] = [j for j in bucket if j != retried_failure]

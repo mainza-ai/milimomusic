@@ -18,6 +18,10 @@ from app.agents.runtime.context import RunContext
 from app.agents.runtime.policy import ResiliencePolicy
 from app.agents.songwriter.agent import SONGWRITER_AGENT
 from app.agents.songwriter.schemas import SongDraft
+from app.agents.stylist.agent import STYLIST_AGENT
+from app.agents.stylist.schemas import StylistBrief
+from app.agents.critic.agent import CRITIC_AGENT
+from app.agents.critic.schemas import CriticBrief
 from app.models import GenerationRequest, Job
 from app.services.lyrics_graph import sanitize_lyrics
 
@@ -89,6 +93,8 @@ async def create_track_from_seed(
     project_id: Optional[str],
     provider_name: str = "minimax_music3",
     voice_profile_id: Optional[str] = None,
+    crew_flags: Optional[Dict[str, bool]] = None,
+    review_sink: Optional[Dict[str, Any]] = None,
     ctx: Optional[RunContext] = None,
     policy: Optional[ResiliencePolicy] = None,
     engine=None,
@@ -115,6 +121,103 @@ async def create_track_from_seed(
             f"({len(clean_lyrics)} chars after sanitize)."
         )
     tags_list = order_tags_genre_first(draft.style_tags)
+
+    # 2.5) Crew (optional, per-run flags). Everything here degrades gracefully:
+    # a crew agent failing must NEVER kill the track — record and proceed.
+    flags = crew_flags or {}
+
+    if flags.get("stylist"):
+        step("stylist", "Refining style tags…")
+        try:
+            styling = await STYLIST_AGENT.run(
+                StylistBrief(
+                    seed=seed, draft=draft.model_dump(),
+                    artist_name=str(album_context.get("artist_name") or ""),
+                    album_title=str(album_context.get("album_title") or ""),
+                    artist_lore=str(album_context.get("artist_lore") or ""),
+                ),
+                ctx, policy,
+            )
+            refined = order_tags_genre_first(styling.output.style_tags)
+            if refined:
+                tags_list = refined
+        except Exception as exc:  # noqa: BLE001 — crew failures never kill the track
+            logger.warning("[bridge] stylist failed; keeping songwriter tags: %s", exc)
+
+    if flags.get("critic"):
+        step("critic", "Reviewing the draft…")
+        review: Dict[str, Any]
+        try:
+            critic_result = await CRITIC_AGENT.run(
+                CriticBrief(seed=seed, draft=draft.model_dump()), ctx, policy,
+            )
+            critique: Critique = critic_result.output
+            review = {
+                "verdict": critique.verdict,
+                "score": critique.score,
+                "notes": critique.notes,
+                "contradictions": critique.contradictions,
+            }
+            if critique.verdict == "revise":
+                step("songwriter", "Revising from critic notes…")
+                try:
+                    revised_seed = {
+                        **seed,
+                        "revision_notes": critique.notes,
+                        "contradictions_to_avoid": critique.contradictions,
+                    }
+                    v2: SongDraft = await SONGWRITER_AGENT.run(revised_seed, album_context, ctx, policy)
+                    clean2 = sanitize_lyrics(v2.lyrics)
+                    if len(clean2) >= 30:
+                        draft, clean_lyrics = v2, clean2
+                        tags_list = order_tags_genre_first(v2.style_tags) or tags_list
+                        if flags.get("stylist"):
+                            try:
+                                styling2 = await STYLIST_AGENT.run(
+                                    StylistBrief(
+                                        seed=seed, draft=v2.model_dump(),
+                                        artist_name=str(album_context.get("artist_name") or ""),
+                                        album_title=str(album_context.get("album_title") or ""),
+                                        artist_lore=str(album_context.get("artist_lore") or ""),
+                                    ),
+                                    ctx, policy,
+                                )
+                                tags_list = order_tags_genre_first(styling2.output.style_tags) or tags_list
+                            except Exception as exc:  # noqa: BLE001
+                                logger.warning("[bridge] post-revision stylist failed: %s", exc)
+                    else:
+                        logger.warning(
+                            "[bridge] revision unusable (%d chars) — keeping original draft", len(clean2))
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[bridge] revision failed — keeping original draft: %s", exc)
+                # Bounded: re-review the final draft exactly once, whatever it is.
+                try:
+                    re_review = await CRITIC_AGENT.run(
+                        CriticBrief(
+                            seed=seed, draft=draft.model_dump(),
+                            revision_context="Second review after one revision round.",
+                        ),
+                        ctx, policy,
+                    )
+                    critique = re_review.output
+                    review = {
+                        "verdict": critique.verdict,
+                        "score": critique.score,
+                        "notes": critique.notes,
+                        "contradictions": critique.contradictions,
+                    }
+                except Exception as exc:  # noqa: BLE001
+                    logger.warning("[bridge] re-review failed: %s", exc)
+            if review_sink is not None:
+                review_sink["review"] = review
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("[bridge] critic failed — proceeding unreviewed: %s", exc)
+            if review_sink is not None:
+                review_sink["review"] = {
+                    "verdict": "unavailable", "score": None,
+                    "notes": str(exc)[:200], "contradictions": [],
+                }
+
     tags_str = ", ".join(tags_list)
 
     # 3) Professional structured caption (never raises; falls back honestly).

@@ -1523,7 +1523,17 @@ def release_tracks(release_id: UUID):
             .order_by(AgentRun.created_at.desc())
         ).all()
         out = []
+        # 3A: critic verdicts (if the album run collected any) join by slot.
+        reviews: Dict[str, Any] = {}
+        if album_runs:
+            try:
+                _rv = json.loads(album_runs[0].state_json or "{}").get("reviews")
+                if isinstance(_rv, dict):
+                    reviews = _rv
+            except Exception:
+                reviews = {}
         for j, seed_slot in resolve_track_rows(rows, album_runs, str(release_id)):
+            review = reviews.get(str(seed_slot)) if seed_slot is not None else None
             out.append({
                 "id": str(j.id), "title": j.title, "status": j.status.value if hasattr(j.status, "value") else str(j.status),
                 "duration_ms": j.duration_ms, "seed": j.seed, "seed_slot": seed_slot,
@@ -1531,6 +1541,7 @@ def release_tracks(release_id: UUID):
                               "musicxml": j.musicxml_path, "stems": j.stems_json,
                               "mastered": j.mastered_path},
                 "used_real_inference": not bool(j.used_fallback_synth),
+                "review": review,
                 "created_at": str(j.created_at),
             })
         done = sum(1 for r in out if r["status"] == "completed")
@@ -1627,6 +1638,12 @@ async def retry_release_track(release_id: UUID, job_id: UUID):
         if target is None:
             raise HTTPException(status_code=422, detail={"error": {"code": "not_retryable",
                 "message": "Only failed album track attempts can be retried."}})
+        # Retry inherits the album run's crew flags.
+        try:
+            album_cfg = json.loads(target[0].input_json or "{}")
+        except Exception:
+            album_cfg = {}
+        crew = album_cfg.get("crew") if isinstance(album_cfg.get("crew"), dict) else {}
 
         parent = AgentRun(agent_name="track_retry", status="queued",
                           profile_id=str(release.profile_id),
@@ -1636,6 +1653,7 @@ async def retry_release_track(release_id: UUID, job_id: UUID):
                               "job_id": str(job_id),
                               "seed_slot": target[1],
                               "album_run_id": str(target[0].id),
+                              "crew": crew,
                           }))
         session.add(parent)
         session.commit()
@@ -1679,8 +1697,12 @@ async def produce_release(release_id: UUID, payload: dict):
         if active:
             raise HTTPException(status_code=409, detail={"error": {"code": "run_active",
                 "message": f"An album run is already {active[0].status} for this release — resume or cancel it before producing again."}})
+        # Crew flags (opt-in): stylist refines tags pre-generation; critic gates
+        # the draft with one bounded revision. Default OFF — cost control.
+        crew_in = (payload or {}).get("crew") if isinstance((payload or {}).get("crew"), dict) else {}
+        crew = {"stylist": bool(crew_in.get("stylist")), "critic": bool(crew_in.get("critic"))}
         parent = AgentRun(agent_name="album_orchestrator", status="queued",
-                          input_json=json.dumps({"release_id": str(release_id), "autopilot": autopilot}),
+                          input_json=json.dumps({"release_id": str(release_id), "autopilot": autopilot, "crew": crew}),
                           profile_id=str(release.profile_id),
                           release_id=str(release_id),
                           budget_json=json.dumps({"caps": {"deadline_s": budget.deadline_s}}))

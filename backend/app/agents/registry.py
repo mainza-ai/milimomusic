@@ -14,6 +14,10 @@ from app.agents.experiencer.agent import EXPERIENCER_AGENT
 from app.agents.experiencer.schemas import AlbumBrief
 from app.agents.world_builder.agent import WORLD_BUILDER_AGENT
 from app.agents.world_builder.schemas import WorldBuilderBrief
+from app.agents.stylist.agent import STYLIST_AGENT
+from app.agents.stylist.schemas import StylistBrief
+from app.agents.critic.agent import CRITIC_AGENT
+from app.agents.critic.schemas import CriticBrief
 
 
 @dataclass
@@ -33,6 +37,16 @@ AGENTS: Dict[str, AgentEntry] = {
         agent=WORLD_BUILDER_AGENT,
         input_schema=WorldBuilderBrief,
         description=WORLD_BUILDER_AGENT.description,
+    ),
+    STYLIST_AGENT.name: AgentEntry(
+        agent=STYLIST_AGENT,
+        input_schema=StylistBrief,
+        description=STYLIST_AGENT.description,
+    ),
+    CRITIC_AGENT.name: AgentEntry(
+        agent=CRITIC_AGENT,
+        input_schema=CriticBrief,
+        description=CRITIC_AGENT.description,
     ),
 }
 

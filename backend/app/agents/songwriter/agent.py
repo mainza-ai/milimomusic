@@ -35,13 +35,22 @@ class SongwriterAgent:
                 "\nARTIST WORLD LORE (canonical history — stay consistent with it)\n"
                 f"{album_context['artist_lore']}\n"
             )
+        revision_block = ""
+        if seed.get("revision_notes"):
+            avoid = seed.get("contradictions_to_avoid") or []
+            revision_block = (
+                "\nREVISION REQUEST (the critic rejected the previous draft — fix these)\n"
+                f"- Notes: {seed['revision_notes']}\n"
+                + (f"- Must NOT contradict: {'; '.join(str(a) for a in avoid)}\n" if avoid else "")
+                + "\n"
+            )
         user = (
             f"ALBUM CONTEXT\n"
             f"- Album: {album_context.get('album_title', '(untitled)')}\n"
             f"- Concept: {album_context.get('album_concept', '')}\n"
             f"- Artist: {album_context.get('artist_name', '(unnamed)')}\n"
             f"- Arc position: {placement}\n"
-            f"{lore_block}\n"
+            f"{lore_block}{revision_block}\n"
             f"THE SEED (write THIS song)\n"
             f"- Working title: {seed.get('working_title', '')}\n"
             f"- Mood: {seed.get('mood', '')}\n"

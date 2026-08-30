@@ -973,10 +973,11 @@ export const agentsApi = {
     },
 };
 
+export interface TrackReview { verdict: 'pass' | 'revise' | 'concern' | 'unavailable'; score?: number | null; notes?: string; contradictions?: string[]; }
 export interface ReleaseTrackT {
     id: string; title: string | null; status: string; duration_ms: number;
     seed: number | null; seed_slot?: number | null; artifacts: Record<string, string | null>;
-    used_real_inference: boolean; created_at: string;
+    used_real_inference: boolean; review?: TrackReview | null; created_at: string;
 }
 // `status` = release lifecycle (planned|in_progress|completed); `rollup` = track completion rollup (completed|partial|pending)
 export interface ReleaseTracksT { release_id: string; title: string; tracks: ReleaseTrackT[]; succeeded: number; total: number; status: string; rollup: string; }
@@ -997,8 +998,12 @@ export interface AgentRunRow {
 export interface ProfileStats { crew_count: number; release_count: number; last_activity: string | null; }
 
 export const albumApi = {
-    produce: async (releaseId: string, autopilot: boolean, budget?: { deadline_s?: number }): Promise<{ run_id: string; status: string; autopilot: boolean }> => {
-        const res = await axios.post(`${API_BASE_URL}/releases/${releaseId}/produce`, { autopilot, ...(budget ? { budget } : {}) });
+    produce: async (releaseId: string, autopilot: boolean, opts?: { budget?: { deadline_s?: number }; crew?: { stylist?: boolean; critic?: boolean } }): Promise<{ run_id: string; status: string; autopilot: boolean }> => {
+        const res = await axios.post(`${API_BASE_URL}/releases/${releaseId}/produce`, {
+            autopilot,
+            ...(opts?.budget ? { budget: opts.budget } : {}),
+            ...(opts?.crew ? { crew: opts.crew } : {}),
+        });
         return res.data;
     },
     resume: async (runId: string, autopilot = false): Promise<{ run_id: string; status: string }> => {

@@ -109,11 +109,17 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     const [autopilot, setAutopilot] = useState(false);
     // B3: wall-clock budget cap handed to the orchestrator (off = uncapped)
     const [budgetMin, setBudgetMin] = useState<'off' | '15' | '30' | '60'>('off');
+    // 3A: optional crew agents for this run (cost control — default off)
+    const [crewStylist, setCrewStylist] = useState(false);
+    const [crewCritic, setCrewCritic] = useState(false);
 
     const startAlbum = async (releaseId: string, title: string) => {
         try {
             const budget = budgetMin === 'off' ? undefined : { deadline_s: Number(budgetMin) * 60 };
-            const res = await albumApi.produce(releaseId, autopilot, budget);
+            const res = await albumApi.produce(releaseId, autopilot, {
+                budget,
+                crew: { stylist: crewStylist, critic: crewCritic },
+            });
             albumRunIdRef.current = res.run_id;
             setAlbumRun({ runId: res.run_id, releaseTitle: title, status: 'queued', progress: 0, message: 'Imagining the journey…' });
         } catch (e: any) {
@@ -1341,6 +1347,19 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                         <option value="60">60 min</option>
                     </select>
                 </label>
+                <div className="flex items-center gap-3 text-[10px] font-mono text-slate-500 dark:text-slate-400 select-none">
+                    <span className="uppercase tracking-wider">Crew (extra LLM calls/track):</span>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" checked={crewStylist} onChange={e => setCrewStylist(e.target.checked)}
+                            className="accent-teal-500 w-3 h-3" aria-label="Stylist crew agent" />
+                        Stylist
+                    </label>
+                    <label className="flex items-center gap-1.5 cursor-pointer">
+                        <input type="checkbox" checked={crewCritic} onChange={e => setCrewCritic(e.target.checked)}
+                            className="accent-teal-500 w-3 h-3" aria-label="Critic crew agent" />
+                        Critic
+                    </label>
+                </div>
                 {detail.releases.length === 0 ? (
                     <p className="text-xs text-slate-500 italic py-1">No releases yet.</p>
                 ) : detail.releases.map(r => (
@@ -1409,7 +1428,18 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                 {tracks.tracks.map((tr, idx) => (
                                     <div key={tr.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-white/60 dark:bg-white/[0.04] border border-black/[0.04] dark:border-white/5">
                                         <div className="min-w-0">
-                                            <p className="text-[11px] font-bold text-slate-800 dark:text-slate-100 truncate">{tr.title || '(untitled)'}</p>
+                                            <p className="text-[11px] font-bold text-slate-800 dark:text-slate-100 truncate">
+                                                {tr.title || '(untitled)'}
+                                                {tr.review && tr.review.verdict !== 'unavailable' && (
+                                                    <span className={`ml-1.5 text-[9px] font-mono uppercase px-1 py-0.5 rounded ${
+                                                        tr.review.verdict === 'pass' ? 'bg-emerald-500/15 text-emerald-600'
+                                                            : tr.review.verdict === 'concern' ? 'bg-amber-500/15 text-amber-600'
+                                                                : 'bg-slate-500/15 text-slate-500'}`}
+                                                        title={tr.review.notes || ''}>
+                                                        {tr.review.verdict}{typeof tr.review.score === 'number' ? ` ${Math.round(tr.review.score * 100)}%` : ''}
+                                                    </span>
+                                                )}
+                                            </p>
                                             <p className="text-[9px] text-slate-500 font-mono">
                                                 {Math.round(tr.duration_ms / 1000)}s · {tr.seed_slot != null ? `slot ${tr.seed_slot + 1}` : `seed ${tr.seed ?? '—'}`} · {tr.used_real_inference ? 'real inference' : 'fallback'}
                                             </p>

@@ -993,3 +993,22 @@ section (instance lock, env reference, WAL backup guidance);
 artist-phases-execution-spec marked superseded. Verification: 167 backend
 tests, 9/9 playwright, tsc + build green. Commits: 06d6877 (3A),
 dc359f5 (3B), Wave-3-close commit.
+
+## [2026-08-29] lint | Real-world test: two-track album through the live UI
+Full-stack run against live servers (backend :8000, frontend :5174, real NVIDIA
+LLM for agents, real pipeline; generation via the product's honest procedural
+fallback — MINIMAX_MODEL_PATH=/nonexistent — because real inference is ~130x RTF
+≈ hours/track on this machine). Driven through the REAL UI with Playwright:
+guided stepper created artist "Nova Vale" → crew assignment → Experiencer
+Studio run (track target 2, real LLM vision) → Save as Release → autopilot
+produce → orchestrator succeeded → release completed. Verified: vision carried
+exactly 2 seeds and produced exactly 2 tracks ("Midnight Vault", "Dawn
+Elevator"), both completed with audio+MIDI+MusicXML+stems artifacts on disk,
+lifecycle planned→in_progress→completed, tracklist 2/2, in-app play engages the
+audio player, Studio handoff opens track-detail, reorder persists new order,
+release art generation, run-history aggregates (2 runs · 100% success · p50
+20.1s), zero page JS errors. Product fix driven by the test: Save-as-release
+now persists the ExperiencerVision (fe4bdc7) — previously produce re-imagined
+with the default 5 seeds, making a 2-track EP impossible. Note: test backend
+runs with fallback env + CORS for :5174; owner's original dev server (3h17m
+uptime, pre-Wave-3 code) was replaced per the instance-lock workflow.

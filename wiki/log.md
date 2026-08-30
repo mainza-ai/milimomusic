@@ -1012,3 +1012,35 @@ now persists the ExperiencerVision (fe4bdc7) — previously produce re-imagined
 with the default 5 seeds, making a 2-track EP impossible. Note: test backend
 runs with fallback env + CORS for :5174; owner's original dev server (3h17m
 uptime, pre-Wave-3 code) was replaced per the instance-lock workflow.
+
+## [2026-08-30] fix | Real-LLM crew failures diagnosed + fixed (live debugging)
+The real-inference album runs surfaced crew failures the unit tests could not:
+NVIDIA Nemotron answered every call, but (1) Critique.score was REQUIRED and
+real models omitted it → parse-failover → "all providers failed"; (2) the
+Stylist schema demanded key "style_tags" while real models return the natural
+key "tags" → same death. Fixes: score optional (honest None), StylingChoice
+accepts AliasChoices("style_tags","tags") with min_length 1, WorldLore fields
+tolerant, personas pin exact JSON keys, and the bridge's crew warnings now
+include per-provider attempts (the bare "all failed" warning hid the cause).
+Config (local only): OPENCODE_API_KEY in .env (gitignored; user-provided,
+rotate if shared), opencode model deepseek-ai/deepseek-v4-flash-0731 as
+failover, omlx model → the local 35B Qwen (Llama-3.2-3B was too weak for
+structured JSON). Live verification: REAL MiniMax inference (29.5GB model
+resident, used_real_inference=true, 10s tracks via MILIMO_MAX_DURATION_S=10)
+with crew ON — Stylist tags applied (modular/tape/reverb refinement) and
+Critic verdict "pass 0.88" recorded and joined to the tracklist. 170 backend
+tests green. Note: interrupted runs in the dev DB are from mid-generation
+backend restarts during testing (boot reconciliation marked them honestly).
+
+## [2026-08-30] lint | Wiki sync after real-LLM verification
+Synthesis pages now reflect the artist domain: overview gained the artist-section
+capability bullet; architecture's layer diagram includes AgentRuntime/Album
+Orchestrator/Release Lifecycle and the crew LLM usage; v2 roadmap status notes
+the artist domain completion; backend-api lists the artist endpoint surface;
+voice-service cross-links the artist voice linkage (A1). artist-domain gained
+the real-LLM verification block (real MiniMax inference + crew verdicts pass
+0.88 + the two live-found schema hardenings) and the vision-handoff note;
+artist-crew-agents gained the real-model hardening section (optional score,
+tags alias, persona key pinning, attempts diagnostics, LLM chain). Album
+orchestrator plan R4 remaining-note updated (real inference verified on short
+tracks; full-length = owner-hardware run).

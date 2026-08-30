@@ -2,7 +2,7 @@
 title: Milimo Music — Architecture
 type: overview
 created: 2026-08-19
-updated: 2026-08-20
+updated: 2026-08-30
 sources: [sources/heartlib-bible.md, sources/readme.md, sources/v2-refactor-plan.md]
 tags: [architecture, system, backend, frontend, minimax, muscriptor, daw]
 ---
@@ -25,13 +25,15 @@ Milimo Music is a full-featured open-source AI music generation and production D
 │  BACKEND (FastAPI / SQLModel / SQLite WAL)  :8000                      │
 │  ProviderRegistry · GenerateAndTranscribePipeline · MuScriptorProvider │
 │  StemSeparator · MatcheringEngine · LyricSyncEngine · VoiceService     │
+│ AgentRuntime (4 crew agents) · Album Orchestrator · Release Lifecycle  │
 └─────────────┬───────────────────────────┬──────────────────────────────┘
               │                           │
   ┌───────────▼────────────┐  ┌───────────▼────────────┐  ┌──────────────▼────────────┐
   │  GENERATION PROVIDERS  │  │  TRANSCRIPTION ENGINE  │  │  LLM PROVIDERS            │
   │  MiniMax Music 3 (Def) │  │  MuScriptor (MT3)      │  │  Ollama / OpenAI / Gemini │
   │  HeartMuLa-3B (Legacy) │  │  MIDI + MusicXML +     │  │  DeepSeek / Claude        │
-  │  Capability manifests  │  │  Note events + Stems   │  │  (Lyrics, Co-Writer graph)│
+  │  Capability manifests  │  │  Note events + Stems   │  │  (Lyrics, Co-Writer graph,│
+│   artist crew + critic)   │
   └────────────────────────┘  └────────────────────────┘  └───────────────────────────┘
 ```
 

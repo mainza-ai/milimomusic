@@ -3,7 +3,7 @@ title: Artist Domain — Current State
 type: concept
 tags: [artists, crew, albums, releases, voice, production, reference]
 created: 2026-08-29
-updated: 2026-08-29
+updated: 2026-08-30
 sources: [artist-phases-execution-spec.md, artist-section-audit.md]
 aliases: [artist domain, artists current state]
 ---
@@ -49,6 +49,20 @@ The [Album Orchestrator](album-orchestrator-plan.md) wraps this: gated produce
 (pause/approve per track) or autopilot, budget deadline, resume cursor in
 `state_json` (`slot_jobs` + `completed_seeds` + `failed_jobs` + `reviews`), WAL
 crash recovery, 409 guards against concurrent runs, single-seed retry.
+
+> [!NOTE] **Real-LLM verification (2026-08-30).** Albums were produced end-to-end
+> on this stack with real agents (NVIDIA Nemotron 120B) and **real MiniMax Music 3
+> inference** (29.5GB bf16 resident; short tracks via `MILIMO_MAX_DURATION_S=10`
+> because full-length runs are ~130× RTF ≈ hours). Crew tags applied and Critic
+> verdicts (`pass 0.88`) recorded and joined to tracklist rows. Two real-model
+> schema bugs were found and fixed live: `Critique.score` is now optional and
+> `StylingChoice` accepts the natural key `tags` (via `AliasChoices`) — real
+> models omit numeric fields and rename keys, so crew schemas must tolerate
+> honest output. Crew failure warnings carry per-provider attempt details.
+
+**Vision handoff:** the Experiencer Studio's "Save as Release" persists the full
+vision onto the release, so `produce` uses its exact seeds and track count —
+a 2-track EP is producible (previously produce re-imagined with the default 5).
 
 ## Key endpoints
 

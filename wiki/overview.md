@@ -2,7 +2,7 @@
 title: Milimo Music — Overview
 type: overview
 created: 2026-08-19
-updated: 2026-08-20
+updated: 2026-08-30
 sources: [sources/readme.md, sources/v2-refactor-plan.md]
 tags: [milimo, product, music-generation, daw, transcription]
 aliases: [Milimo]
@@ -37,6 +37,10 @@ category from black-box generators like Suno.
   ([Matchering](entities/matchering-mastering.md)).
 - **Studio workflow & AI Co-Writer** — project folders (BPM/key/tags), multi-provider LLM,
   agentic lyrics engine ([AI Co-Writer](entities/ai-cowriter.md)).
+- **Artist section** — persistent artist identities with assigned AI crews ([Artist Crew
+  Agents](entities/artist-crew-agents.md)): World-Builder lore canon, Experiencer visions,
+  Stylist tag curation, Critic quality gates, per-artist model overrides and singing voice,
+  and gated album production with resume/budget/retry ([Artist Domain](concepts/artist-domain.md)).
 - **Voice Training Studio** — offline SVC + vocal timbre tuning with consent enforcement
   ([Voice Studio](entities/voice-service.md)).
 

@@ -2,7 +2,7 @@
 title: Voice Studio (SVC)
 type: entity
 created: 2026-08-20
-updated: 2026-08-20
+updated: 2026-08-30
 tags: [voice, svc, rvc, cloning, consent, singing]
 aliases: [VoiceService, Voice Training Studio, SVC]
 ---
@@ -39,3 +39,8 @@ a voice profile and select a "Sing as…" voice in the Composer.
 ## Related pages
 - [Session workspace](session-workspace.md) | [Orchestration pipeline](../concepts/generation-pipeline.md)
 - [Backend & API](backend-api.md) | [Stem separator](stem-separator.md) | [Roadmap (v2)](../roadmap.md)
+
+
+---
+
+**Artist linkage (A1, 2026-08-29):** an [artist profile](../concepts/artist-domain.md) can link a voice profile (`ArtistProfile.voice_profile_id`); album tracks resolved from that profile run SVC conversion automatically, degrading gracefully if the profile is deleted.

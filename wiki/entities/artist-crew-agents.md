@@ -3,7 +3,7 @@ title: Artist Crew Agents
 type: entity
 tags: [agents, crew, artists, world-builder, stylist, critic, experiencer]
 created: 2026-08-29
-updated: 2026-08-29
+updated: 2026-08-30
 sources: []
 aliases: [crew agents, the crew, artist agents]
 ---
@@ -49,6 +49,25 @@ songwriter draft → sanitize → [stylist: refine tags] → [critic: review]
 - **Persistence:** critic verdicts land in the album run cursor
   (`state_json.reviews[slot]`) and join onto [tracklist rows](../concepts/artist-domain.md)
   by `seed_slot`; stylist tags need no extra persistence (baked into the Job's rich prompt).
+
+## Real-model hardening (learned live, 2026-08-30)
+
+Real LLMs break rigid schemas in two predictable ways — both bit us in live album
+runs and both are now fixed:
+
+- **Optional numeric fields**: real models omit `score`. `Critique.score` is
+  optional (`None` = honest "no score") — a missing number must never invalidate
+  an otherwise good review.
+- **Natural key drift**: real models return `{"tags": [...]}` for the stylist.
+  `StylingChoice.style_tags` accepts `AliasChoices("style_tags", "tags")`.
+- `WorldLore` fields all carry defaults (partial docs validate).
+- Personas pin exact JSON keys ("never rename them").
+- Crew failure warnings include per-provider attempts (rate limit vs timeout vs
+  auth is visible in the log, not a bare "all failed").
+
+**LLM chain**: NVIDIA Nemotron 120B (primary) → OpenCode DeepSeek-v4-flash →
+local OMLX (35B Qwen) / Ollama / LM Studio. All four crew agents verified live
+against real model inference (stylist tags applied; critic `pass 0.88` recorded).
 
 ## Related
 [Artist Domain](../concepts/artist-domain.md) · [Agent Foundation](../concepts/agent-foundation.md) ·

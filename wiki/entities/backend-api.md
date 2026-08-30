@@ -2,7 +2,7 @@
 title: Backend & API
 type: entity
 created: 2026-08-19
-updated: 2026-08-20
+updated: 2026-08-30
 sources: [sources/readme.md, sources/training-studio-guide.md, sources/inpainting-debug.md]
 tags: [backend, fastapi, sqlmodel, api, sse, sqlite]
 aliases: [Backend, FastAPI backend]
@@ -50,6 +50,11 @@ The **backend** is Milimo Music's Python API layer — **FastAPI** with **SQLMod
 - `POST /models/active/{provider_id}` — set the active generation provider.
 
 ## Voice endpoints (`/voice/*`)
+- **Artist domain** — full surface documented in [Artist Domain](../concepts/artist-domain.md):
+  `GET/POST/PATCH/DELETE /profiles[...]` (+ `?with_stats`, `?q`, cover, lore generation),
+  `PUT /profiles/{id}/assignments` (role enum + provider validation),
+  `GET/POST/PATCH/DELETE /releases[...]` (+ `track-order`, `tracks`, `produce`, per-track `retry`),
+  `GET /agents/runs[.../stats]` (ledger + aggregates), `DELETE /agents/runs` (retention prune).
 - `GET/POST /voice/profiles`, `DELETE /voice/profiles/{id}` —
   see [Voice Studio (SVC)](voice-service.md).
 

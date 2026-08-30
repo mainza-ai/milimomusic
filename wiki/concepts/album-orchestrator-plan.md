@@ -3,7 +3,7 @@ title: Album Orchestrator — Implementation Plan (R1–R4)
 type: concept
 tags: [plan, agents, orchestrator, album, run-lifecycle]
 created: 2026-08-22
-updated: 2026-08-25
+updated: 2026-08-30
 sources: [agent-foundation.md, artist-profiles-vision.md]
 aliases: [r2 plan, album pipeline plan]
 ---
@@ -92,7 +92,7 @@ release status transitions, minimal progress UI.
 | R4 songwriter+album | **PROVEN E2E** | First complete agent-made track landed 2026-08-25: songwriter→generation(174s, hooked inference)→transcription→stems, release-linked, all artifacts. UI Produce button live. Remaining: autopilot full 5-seed album |
 | Lifecycle solidification | DONE | _abort_if_terminal ×3 pipeline checkpoints · provider orphan-audio discard · instance lock (PID lockfile) · shutdown reporting — see log 2026-08-25 |
 
-**Remaining:** full-album audio E2E on owner-run server (autopilot exists, gated+un-gated flows verified) · mlx_audio step-callback preemption (upstream). Everything else closed 2026-08-29 — see [Artist Domain](artist-domain.md).
+**Remaining:** full-LENGTH album audio E2E on owner-run server (real model inference verified 2026-08-30 with short tracks via `MILIMO_MAX_DURATION_S`; full-length runs are ~130× RTF ≈ hours) · mlx_audio step-callback preemption (upstream). Everything else closed — see [Artist Domain](artist-domain.md).
 
 ## Related
 [Artist Profiles & Album Agents](artist-profiles-vision.md) · [Agent Foundation](agent-foundation.md)

@@ -18,6 +18,7 @@ const ROLE_LABELS: Record<string, string> = {
     world_builder: 'World Builder', experiencer: 'Experiencer',
     songwriter: 'Songwriter', producer: 'Producer', stylist: 'Stylist', critic: 'Critic',
 };
+const LLM_PROVIDERS = ['nvidia', 'deepseek', 'openai', 'gemini', 'openrouter', 'opencode', 'omlx', 'ollama', 'lmstudio'];
 
 type RunPhase = 'idle' | 'running' | 'done' | 'error';
 
@@ -57,16 +58,21 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     });
     const [agentsRegistry, setAgentsRegistry] = useState<AgentInfo[]>([]);
 
-    // identity edit state
-    const [editName, setEditName] = useState('');
-    const [editBio, setEditBio] = useState('');
-    const [editTags, setEditTags] = useState('');
+    // identity edit state (D3: shared validated form pattern)
+    const identityForm = useValidatedForm({ name: '', bio: '', tags: '' }, {
+        name: v => (!v.trim() ? 'Name cannot be empty.' : v.trim().length < 2 ? 'At least 2 characters.' : null),
+        bio: () => null,
+        tags: () => null,
+    });
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [saveError, setSaveError] = useState('');
 
     // crew add row
     const [crewRole, setCrewRole] = useState('experiencer');
     const [crewAgent, setCrewAgent] = useState('experiencer');
+    // Per-assignment model override (item #9): assignment > artist default > global.
+    const [crewProvider, setCrewProvider] = useState('');
+    const [crewModel, setCrewModel] = useState('');
 
     // release create
     const [newReleaseTitle, setNewReleaseTitle] = useState('');
@@ -151,9 +157,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
         try {
             const d = await profilesApi.get(id);
             setDetail(d);
-            setEditName(d.profile.name);
-            setEditBio(d.profile.bio);
-            setEditTags(d.profile.tags);
+            identityForm.setAll({ name: d.profile.name, bio: d.profile.bio, tags: d.profile.tags });
             setVision(null);
             setRunPhase('idle');
             setRunError('');
@@ -287,9 +291,20 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
         } catch { /* URL sync is best-effort */ }
     };
 
+    const prevDeepLinkRef = useRef<string | null | undefined>(undefined);
     useEffect(() => {
+        const prev = prevDeepLinkRef.current;
+        prevDeepLinkRef.current = initialProfileId ?? null;
         if (initialProfileId && (!detail || detail.profile.id !== initialProfileId)) {
             openProfile(initialProfileId);
+        } else if (typeof prev === 'string' && initialProfileId === null && detail) {
+            // Popstate back to the artists list — the URL no longer carries the
+            // id, so the detail must close to match (dirty-guard still applies).
+            if (!identityDirty || window.confirm('You have unsaved identity changes. Discard them?')) {
+                setDetail(null);
+            } else {
+                syncArtistUrl(detail.profile.id);
+            }
         }
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [initialProfileId]);
@@ -318,7 +333,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     };
 
     const identityDirty = !!detail && (
-        editName !== detail.profile.name || editBio !== detail.profile.bio || editTags !== detail.profile.tags);
+        identityForm.values.name !== detail.profile.name || identityForm.values.bio !== detail.profile.bio || identityForm.values.tags !== detail.profile.tags);
     useEffect(() => {
         if (!identityDirty) return;
         const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
@@ -327,12 +342,12 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     }, [identityDirty]);
 
     const handleSaveIdentity = async () => {
-        if (!detail) return;
+        if (!detail || !identityForm.isValid) return;
         setSaveState('saving');
         setSaveError('');
         try {
             const updated = await profilesApi.update(detail.profile.id, {
-                name: editName.trim(), bio: editBio, tags: editTags
+                name: identityForm.values.name.trim(), bio: identityForm.values.bio, tags: identityForm.values.tags
             });
             setDetail({ ...detail, profile: updated });
             setProfiles(prev => prev.map(p => p.id === updated.id ? updated : p));
@@ -365,8 +380,16 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
         try {
             await profilesApi.setAssignments(detail.profile.id, [
                 ...detail.assignments.map(a => ({ role: a.role, agent_name: a.agent_name })),
-                { role: crewRole, agent_name: crewAgent }
+                {
+                    role: crewRole, agent_name: crewAgent,
+                    ...(crewProvider ? {
+                        model_provider: crewProvider,
+                        ...(crewModel.trim() ? { model: crewModel.trim() } : {}),
+                    } : {}),
+                },
             ]);
+            setCrewProvider('');
+            setCrewModel('');
             refreshDetail();
         } catch (e: any) {
             toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Could not add crew member'), 'error');
@@ -543,11 +566,15 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     // Release edit state (F8: full release lifecycle in the UI)
     const [editReleaseId, setEditReleaseId] = useState<string | null>(null);
     const [editReleaseTitle, setEditReleaseTitle] = useState('');
+    const [editReleaseDesc, setEditReleaseDesc] = useState('');
 
     const handleRenameRelease = async (rid: string) => {
         if (!editReleaseTitle.trim()) return;
         try {
-            const updated = await releaseApi.update(rid, { title: editReleaseTitle.trim() });
+            const updated = await releaseApi.update(rid, {
+                title: editReleaseTitle.trim(),
+                description: editReleaseDesc.trim(),
+            });
             setDetail(d => d ? { ...d, releases: d.releases.map(r => r.id === rid ? updated : r) } : d);
             setEditReleaseId(null);
         } catch (e: any) {
@@ -867,15 +894,20 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                             onChange={e => { const f = e.target.files?.[0]; if (f) uploadCover(f); }} />
                     </label>
                 </div>
-                <input value={editName} onChange={e => setEditName(e.target.value)} placeholder="Artist name" className="apple-input text-sm font-bold" />
-                <textarea value={editBio} onChange={e => setEditBio(e.target.value)} rows={3}
-                    placeholder="Bio — who is this artist? The crew reads this for grounding." className="apple-input text-xs" />
-                <input value={editTags} onChange={e => setEditTags(e.target.value)}
-                    placeholder="Style tags, comma-separated" className="apple-input text-xs font-mono" />
+                <input value={identityForm.values.name} onChange={e => identityForm.setField('name', e.target.value)}
+                    onBlur={() => identityForm.markTouched('name')}
+                    placeholder="Artist name" className="apple-input text-sm font-bold" aria-label="Artist name" />
+                {identityForm.showError('name') && (
+                    <span className="text-[10px] text-rose-500 font-mono block -mt-1" role="alert">{identityForm.showError('name')}</span>
+                )}
+                <textarea value={identityForm.values.bio} onChange={e => identityForm.setField('bio', e.target.value)} rows={3}
+                    placeholder="Bio — who is this artist? The crew reads this for grounding." className="apple-input text-xs" aria-label="Artist bio" />
+                <input value={identityForm.values.tags} onChange={e => identityForm.setField('tags', e.target.value)}
+                    placeholder="Style tags, comma-separated" className="apple-input text-xs font-mono" aria-label="Artist style tags" />
                 <div className="flex justify-end items-center gap-2">
                     {saveState === 'saving' && <Loader2 size={13} className="animate-spin text-teal-500" />}
                     {saveState === 'saved' && <CheckCircle2 size={13} className="text-emerald-500" />}
-                    <button onClick={handleSaveIdentity} disabled={saveState === 'saving'}
+                    <button onClick={handleSaveIdentity} disabled={saveState === 'saving' || !identityDirty || !identityForm.isValid}
                         className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-colors disabled:opacity-50 ${saveState === 'error'
                             ? 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
                             : 'bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 border-black/[0.06] dark:border-white/10 text-slate-700 dark:text-slate-200'}`}>
@@ -927,7 +959,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                 ))}
                 <div className="flex items-center gap-2 pt-1">
                     <select value={crewRole} onChange={e => setCrewRole(e.target.value)} className="apple-input !py-1.5 !px-2 text-[11px] font-mono flex-1" aria-label="Crew role">
-                        {ROLES.map(r => <option key={r} value={r}>{r}</option>)}
+                        {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r] || r}</option>)}
                     </select>
                     <select value={crewAgent} onChange={e => setCrewAgent(e.target.value)} className="apple-input !py-1.5 !px-2 text-[11px] font-mono flex-1" aria-label="Agent">
                         {agentsRegistry.map(a => <option key={a.name} value={a.name}>{a.display_name}</option>)}
@@ -937,6 +969,24 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                         <Plus size={14} />
                     </button>
                 </div>
+                <details className="rounded-xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/5 px-3 py-2">
+                    <summary className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 cursor-pointer select-none">
+                        Model override for new assignment (optional)
+                    </summary>
+                    <div className="flex items-center gap-2 mt-2">
+                        <select value={crewProvider} onChange={e => setCrewProvider(e.target.value)}
+                            className="apple-input !py-1.5 !px-2 text-[10px] font-mono flex-1" aria-label="Override provider">
+                            <option value="">— artist default —</option>
+                            {LLM_PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
+                        </select>
+                        <input value={crewModel} onChange={e => setCrewModel(e.target.value)}
+                            placeholder="model id (optional)" aria-label="Override model"
+                            className="apple-input !py-1.5 !px-2 text-[10px] font-mono flex-1" />
+                    </div>
+                    <p className="text-[9px] font-mono text-slate-400 mt-1.5">
+                        Pinned here → attempted FIRST for this artist, global failover chain stays behind it.
+                    </p>
+                </details>
             </section>
 
             {/* Experiencer Studio */}
@@ -948,9 +998,10 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                     </p>
                 )}
                 <input value={briefTitle} onChange={e => setBriefTitle(e.target.value)} placeholder="Album title"
+                    aria-label="Album title"
                     className="apple-input text-sm font-bold" />
                 <textarea value={briefConcept} onChange={e => setBriefConcept(e.target.value)} rows={3}
-                    placeholder="Album concept — the premise the experiencer will live inside…" className="apple-input text-xs" />
+                    placeholder="Album concept — the premise the experiencer will live inside…" className="apple-input text-xs" aria-label="Album concept" />
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
                     <label className="space-y-1">
                         <span className="text-[10px] font-mono font-bold uppercase text-slate-400 block">Tracks</span>
@@ -1102,6 +1153,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                 <div className="flex items-center justify-between gap-2">
                     <input value={newReleaseTitle} onChange={e => setNewReleaseTitle(e.target.value)}
                         placeholder="New release title…" className="apple-input text-xs flex-1"
+                        aria-label="New release title"
                         onKeyDown={async e => {
                             if (e.key === 'Enter' && newReleaseTitle.trim()) {
                                 const r = await profilesApi.createRelease({ profile_id: detail.profile.id, title: newReleaseTitle.trim() }).catch((e) => { toast(String(e?.response?.data?.detail?.error?.message || e?.message || "Request failed"), "error"); return null; });
@@ -1129,6 +1181,10 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                 <input value={editReleaseTitle} onChange={e => setEditReleaseTitle(e.target.value)}
                                     onKeyDown={e => { if (e.key === 'Enter') handleRenameRelease(r.id); }}
                                     className="apple-input !py-1 text-xs flex-1" autoFocus aria-label="Release title" />
+                                <input value={editReleaseDesc} onChange={e => setEditReleaseDesc(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') handleRenameRelease(r.id); }}
+                                    placeholder="description (optional)" aria-label="Release description"
+                                    className="apple-input !py-1 text-[10px] flex-1" />
                                 <button onClick={() => handleRenameRelease(r.id)} disabled={!editReleaseTitle.trim()}
                                     className="text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400 disabled:opacity-40 transition-colors">Save</button>
                                 <button onClick={() => setEditReleaseId(null)}
@@ -1143,7 +1199,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                     )}
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
-                                    <button onClick={() => { setEditReleaseId(r.id); setEditReleaseTitle(r.title); }}
+                                    <button onClick={() => { setEditReleaseId(r.id); setEditReleaseTitle(r.title); setEditReleaseDesc(r.description || ''); }}
                                         className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
                                         title="Rename release" aria-label={`Rename ${r.title}`}>Edit</button>
                                     <button onClick={() => handleDeleteRelease(r.id, r.title)}

@@ -913,3 +913,18 @@ focus-trap + Escape on create modal, 5 artist Playwright specs + frontend-e2e CI
 project-scoping validation on profile create. Verification: 152 backend tests,
 5/5 artist E2E, tsc+build green. workspace.spec 2 failures pre-exist (repro on clean
 HEAD; not artist scope).
+
+## [2026-08-29] lint | Plan-vs-code diff closed 7 residual gaps
+Systematic comparison of artist-production-gap-report.md against implementation
+surfaced: (1) popstate back from ?view=artists&id= now closes detail (URL truth);
+(2) identity editor migrated to useValidatedForm (D3 fully adopted); (3) crew
+override EDITING UI shipped (provider select + model id, assignment >
+artist default > global); (4) backend validates override provider names against
+LLMService dispatch set (422); (5) release description editable in rename UI;
+(6) index backfill migration for job.release_id/artist_profile_id on pre-existing
+DBs (SQLModel index=True only applies to fresh tables); (7) aria-labels on
+placeholder-only inputs (identity, brief, releases). Remaining known scope, not
+gaps: in-app playback via Studio handoff only, World-Builder lore generation
+(needs new agent — vision), pagination UI controls (backend ready), shared Modal
+primitive refactor (inline trap shipped), 2 pre-existing workspace.spec failures.
+Verification: 153 backend tests, 5/5 artist E2E, tsc+build green.

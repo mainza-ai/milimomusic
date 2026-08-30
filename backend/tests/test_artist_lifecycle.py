@@ -166,6 +166,7 @@ class SyncClient:
     def get(self, url, **kw): return self._call("get", url, **kw)
     def post(self, url, **kw): return self._call("post", url, **kw)
     def patch(self, url, **kw): return self._call("patch", url, **kw)
+    def put(self, url, **kw): return self._call("put", url, **kw)
     def delete(self, url, **kw): return self._call("delete", url, **kw)
 
 
@@ -308,6 +309,21 @@ def test_profile_releases_pagination_shape(client, artist_fixture):
 
 
 # ---------------------------------------------------------------- project scoping (H28)
+
+def test_assignment_provider_validation(client, artist_fixture):
+    pid = artist_fixture["profile_id"]
+    out = client.put(f"/profiles/{pid}/assignments", json={
+        "assignments": [{"role": "producer", "agent_name": "experiencer", "model_provider": "skynet"}],
+    })
+    assert out.status_code == 422
+    assert "Unknown provider" in out.json()["detail"]["error"]["message"]
+
+    out = client.put(f"/profiles/{pid}/assignments", json={
+        "assignments": [{"role": "producer", "agent_name": "experiencer", "model_provider": "deepseek", "model": "m"}],
+    })
+    assert out.status_code == 200
+    assert out.json()["assignments"][0]["model_provider"] == "deepseek"
+
 
 def test_profile_create_validates_project_exists(client):
     out = client.post("/profiles", json={"name": "Scoped Artist", "project_id": str(uuid.uuid4())})

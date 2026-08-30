@@ -131,6 +131,14 @@ def create_db_and_tables():
         
         # Automatic Migration: check and add missing columns to job table
         existing_cols = {row[1] for row in session.exec(text("PRAGMA table_info(job);")).all()}
+        # Index backfill: fresh DBs get these via SQLModel index=True, but
+        # pre-existing tables only ever received the COLUMNS — queries filtering
+        # release_id/artist_profile_id would table-scan forever.
+        for index_stmt in (
+            "CREATE INDEX IF NOT EXISTS ix_job_release_id ON job (release_id)",
+            "CREATE INDEX IF NOT EXISTS ix_job_artist_profile_id ON job (artist_profile_id)",
+        ):
+            session.exec(text(index_stmt))
         new_columns = {
             "model_provider": "VARCHAR",
             "llm_model": "VARCHAR",
@@ -1195,9 +1203,16 @@ def delete_artist_profile(profile_id: UUID):
 @app.put("/profiles/{profile_id}/assignments")
 def set_artist_assignments(profile_id: UUID, payload: AgentAssignmentSet):
     ALLOWED_ROLES = {"experiencer", "songwriter", "producer", "stylist", "critic"}
+    # Providers an override may pin to — mirrors LLMService._get_provider's
+    # dispatch table. Unknown names would waste a failover attempt per run.
+    ALLOWED_PROVIDERS = {"nvidia", "deepseek", "openai", "gemini", "openrouter",
+                         "opencode", "omlx", "ollama", "lmstudio"}
     for a in (payload.assignments if hasattr(payload, "assignments") else []):
         if getattr(a, "role", "") not in ALLOWED_ROLES:
             raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": f"Unknown crew role '{a.role}'. Allowed: {sorted(ALLOWED_ROLES)}"}})
+        provider = getattr(a, "model_provider", None)
+        if provider and provider not in ALLOWED_PROVIDERS:
+            raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": f"Unknown provider '{provider}'. Allowed: {sorted(ALLOWED_PROVIDERS)}"}})
     """Replace the artist's entire crew atomically (no drift, no partial state)."""
     with Session(engine) as session:
         profile = session.get(ArtistProfile, profile_id)

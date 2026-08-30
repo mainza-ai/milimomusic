@@ -956,3 +956,8 @@ C3 ledger retention (MILIMO_RUN_RETENTION_DAYS default 30d sweep + DELETE
 (stylist/critic agents, LoRA links, Modal primitive, pagination UI,
 observability) stay conditional in artist-remaining-roadmap.md.
 Verification: 160 backend tests, 9/9 playwright, tsc + build green.
+
+## [2026-08-29] lint | Roadmap status header updated
+artist-remaining-roadmap.md marked: Waves 1+2 shipped; only Wave 3 /
+conditional items remain (stylist+critic agents, LoRA links, Modal
+primitive, pagination UI, observability, multi-worker ops note).

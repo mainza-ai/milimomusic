@@ -863,6 +863,25 @@ async def run_agent(agent_name: str, payload: AgentRunRequest):
     return {"run": row, "result": output}
 
 
+@app.get("/agents/runs")
+def list_agent_runs(profile_id: str = None, limit: int = 50):
+    """Run history ledger — newest first, optionally scoped to an artist."""
+    q = select(AgentRun)
+    if profile_id:
+        q = q.where(AgentRun.profile_id == profile_id)
+    q = q.order_by(AgentRun.created_at.desc()).limit(max(1, min(200, limit)))
+    with Session(engine) as session:
+        rows = session.exec(q).all()
+        return {"runs": [
+            {"id": str(r.id), "agent_name": r.agent_name, "status": r.status,
+             "progress": r.progress, "error_message": r.error_message,
+             "latency_ms": r.latency_ms, "tokens_in": r.tokens_in,
+             "tokens_out": r.tokens_out, "created_at": str(r.created_at),
+             "parent_run_id": r.parent_run_id}
+            for r in rows
+        ]}
+
+
 @app.get("/agents/runs/{run_id}")
 def get_agent_run(run_id: UUID):
     with Session(engine) as session:

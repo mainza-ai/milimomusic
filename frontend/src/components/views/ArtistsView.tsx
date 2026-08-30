@@ -159,6 +159,15 @@ export const ArtistsView: React.FC = () => {
         }
     };
 
+    const identityDirty = !!detail && (
+        editName !== detail.profile.name || editBio !== detail.profile.bio || editTags !== detail.profile.tags);
+    useEffect(() => {
+        if (!identityDirty) return;
+        const warn = (e: BeforeUnloadEvent) => { e.preventDefault(); e.returnValue = ''; };
+        window.addEventListener('beforeunload', warn);
+        return () => window.removeEventListener('beforeunload', warn);
+    }, [identityDirty]);
+
     const handleSaveIdentity = async () => {
         if (!detail) return;
         setSaveState('saving');

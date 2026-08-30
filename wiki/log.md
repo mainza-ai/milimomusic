@@ -873,3 +873,8 @@ quantization eval via MILIMO_MINIMAX_SNAPSHOT.
 User could not run artist section. Wiring verified correct; 3 causes: silent
 catches, sync blocking runs, stale bundle. Full gap list + 4-phase plan logged;
 no implementation without approval (approval given same day).
+
+## [2026-08-26] create | Artist Phase A: cover identity wired
+PATCH /profiles/{id}/cover + ArtistsView identity-image upload/display (detail
+header, busy states, honest toasts) · create-form validation live. Remaining A:
+guided create stepper, list thumbnails. Servers rebuilt.

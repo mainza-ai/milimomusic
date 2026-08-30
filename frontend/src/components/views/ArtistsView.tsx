@@ -1,11 +1,12 @@
 import { toast } from '../../utils/toast';
+import { API_BASE_URL } from '../../api';
 import React, { useState, useEffect, useRef } from 'react';
 import {
     Users, Plus, ArrowLeft, Trash2, Save, Loader2, Sparkles,
     Mic2, UserCog, Disc3, CheckCircle2, AlertTriangle, X, Copy
 } from 'lucide-react';
 import {
-    agentsApi, profilesApi, albumApi, api,
+    agentsApi, profilesApi, albumApi, coverApi, api,
     type AgentInfo, type ArtistProfileT,
     type ProfileDetail, type ExperiencerVision, type AgentRunEnvelope
 } from '../../api';
@@ -129,6 +130,23 @@ export const ArtistsView: React.FC = () => {
         } catch (e) {
             const err = e as any;
             toast(String(err?.response?.data?.detail?.error?.message || err?.message || 'Create failed'), 'error');
+        }
+    };
+
+    const [coverBusy, setCoverBusy] = useState(false);
+    const uploadCover = async (file: File) => {
+        if (!detail) return;
+        setCoverBusy(true);
+        try {
+            const { url } = await coverApi.uploadCoverImage(file);
+            const updated = await profilesApi.setCover(detail.profile.id, url);
+            setDetail({ ...detail, profile: updated });
+            setProfiles(prev => prev.map(pp => pp.id === updated.id ? updated : pp));
+            toast("Artist identity image updated.", "success");
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || "Cover upload failed"), "error");
+        } finally {
+            setCoverBusy(false);
         }
     };
 
@@ -398,6 +416,18 @@ export const ArtistsView: React.FC = () => {
             {/* Identity editor */}
             <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 space-y-3 mb-5">
                 <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2"><UserCog size={13} /> Identity</h2>
+                <div className="flex items-center gap-3 mb-2">
+                    {detail.profile.cover_image_path ? (
+                        <img src={`${API_BASE_URL}${detail.profile.cover_image_path}`} alt="" className="w-14 h-14 rounded-2xl object-cover border border-black/10 dark:border-white/10" />
+                    ) : (
+                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-teal-400/30 to-fuchsia-500/30 flex items-center justify-center"><UserCog size={20} className="text-slate-500" /></div>
+                    )}
+                    <label className="text-[10px] font-bold px-2 py-1.5 rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 transition-colors cursor-pointer">
+                        {coverBusy ? 'Uploading…' : (detail.profile.cover_image_path ? 'Change image' : 'Add identity image')}
+                        <input type="file" accept="image/*" className="hidden" disabled={coverBusy}
+                            onChange={e => { const f = e.target.files?.[0]; if (f) uploadCover(f); }} />
+                    </label>
+                </div>
                 <input value={editName} onChange={e => setEditName(e.target.value)} placeholder="Artist name" className="apple-input text-sm font-bold" />
                 <textarea value={editBio} onChange={e => setEditBio(e.target.value)} rows={3}
                     placeholder="Bio — who is this artist? The crew reads this for grounding." className="apple-input text-xs" />

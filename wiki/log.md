@@ -928,3 +928,13 @@ gaps: in-app playback via Studio handoff only, World-Builder lore generation
 (needs new agent — vision), pagination UI controls (backend ready), shared Modal
 primitive refactor (inline trap shipped), 2 pre-existing workspace.spec failures.
 Verification: 153 backend tests, 5/5 artist E2E, tsc+build green.
+
+## [2026-08-29] create | Artist Remaining Roadmap
+Post-E–H plan filed at concepts/artist-remaining-roadmap.md. P1 flagship: artist
+voice identity (voice_service + pipeline voice_profile_id exist, link is missing),
+World-Builder agent (lore surface ships, generation doesn't), lore→songwriter
+steering, indexed AgentRun.release_id lookups (guards currently JSON-parse scans),
+workspace.spec selector fix. P2: global-player playback, release track ordering,
+budget caps UI, per-release live chips, cover generation for profile+release,
+ledger retention. P3: stylist/critic agents, LoRA checkpoint links, Modal
+primitive, pagination UI, run observability. Sequenced into 3 waves with gates.

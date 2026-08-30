@@ -66,6 +66,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Artist Profiles & Album Agents](concepts/artist-profiles-vision.md) — the ultimate vision: per-project artist identities with assigned agent crews producing full albums.
 - [Album Orchestrator Plan](concepts/album-orchestrator-plan.md) — R1–R4 build plan: seed→song mapping, run lifecycle engine, gated album execution.
 - [Artist Production Gap Report](concepts/artist-production-gap-report.md) — evidence-based artist-domain audit (P0 integrity → P3 systemic) with phased production plan E–H.
+- [Artist Remaining Roadmap](concepts/artist-remaining-roadmap.md) — post-E–H plan: voice identity, World-Builder agent, indexed run lookups, playback/ordering/budget polish.
 
 ## Reports
 

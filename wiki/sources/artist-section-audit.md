@@ -26,3 +26,9 @@ P1 runnable+truthful (async runs, kill silent catches, tracklist endpoint+UI) �
 P2 release lifecycle (PATCH/DELETE/cascade/status transitions/ownership) →
 P3 crew+identity real (chain-head injection, role enum, lore/cover, run history) →
 P4 polish (states, E2E, a11y, SSE replay).
+
+# UI Gap Report addendum (2026-08-26) — approved for implementation
+Creation form = 3 bare inputs, console.error failures. List = plain rows, no
+identity/activity/states. Detail = no dirty-guard, no tracklist wiring, freeform
+roles, no deep-links. Systemic: no tokens/form-pattern/a11y/optimistic-updates.
+Phases: A creation+identity (2d) → B list (1.5d) → C detail (2d) → D systemic (2d).

@@ -1012,6 +1012,10 @@ export const profilesApi = {
     delete: async (id: string): Promise<void> => {
         await axios.delete(`${API_BASE_URL}/profiles/${id}`);
     },
+    setCover: async (id: string, coverImagePath: string): Promise<ArtistProfileT> => {
+        const res = await axios.patch(`${API_BASE_URL}/profiles/${id}/cover`, { cover_image_path: coverImagePath });
+        return res.data;
+    },
     setAssignments: async (id: string, assignments: { role: string; agent_name: string; model_provider?: string; model?: string }[]): Promise<AgentAssignmentT[]> => {
         const res = await axios.put(`${API_BASE_URL}/profiles/${id}/assignments`, { assignments });
         return res.data.assignments;

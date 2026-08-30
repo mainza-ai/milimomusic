@@ -119,13 +119,16 @@ export const ArtistsView: React.FC = () => {
     const handleCreate = async () => {
         if (!newName.trim()) return;
         try {
+            if (newName.trim().length < 2) { toast("Artist name needs at least 2 characters.", "error"); return; }
+            if (newBio.trim().length > 0 && newBio.trim().length < 20) { toast("Give the bio a little more for the crew to ground on (20+ chars).", "error"); return; }
             const p = await profilesApi.create({ name: newName.trim(), bio: newBio.trim(), tags: newTags.trim() });
             setProfiles(prev => [p, ...prev]);
             setIsCreateOpen(false);
             setNewName(''); setNewBio(''); setNewTags('');
             openProfile(p.id);
         } catch (e) {
-            console.error('Create profile failed', e);
+            const err = e as any;
+            toast(String(err?.response?.data?.detail?.error?.message || err?.message || 'Create failed'), 'error');
         }
     };
 

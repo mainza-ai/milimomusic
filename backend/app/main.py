@@ -1006,6 +1006,24 @@ def list_artist_profiles(project_id: Optional[str] = None):
         return {"profiles": profiles}
 
 
+@app.patch("/profiles/{profile_id}/cover")
+async def set_profile_cover(profile_id: UUID, payload: dict):
+    """Attach an uploaded image (via /upload/image) as the artist's visual identity."""
+    path = (payload or {}).get("cover_image_path", "").strip()
+    if not path or not path.startswith("/"):
+        raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "cover_image_path must be a public /image path from /upload/image."}})
+    with Session(engine) as session:
+        profile = session.get(ArtistProfile, profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
+        profile.cover_image_path = path
+        profile.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+        return profile
+
+
 @app.post("/profiles")
 def create_artist_profile(payload: ArtistProfileCreate):
     with Session(engine) as session:

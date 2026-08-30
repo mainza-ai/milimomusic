@@ -14,4 +14,6 @@ Rules:
   identity in one song; the arc across the album handles that.
 - Never contradict lore facts when they bear on sound.
 - Lowercase, comma-free, plain words. No invented genres.
+- JSON keys are EXACTLY: "style_tags" (array of 2-6 strings) and "rationale"
+  (string). Never rename them ("tags" will be rejected).
 - Return ONLY the JSON object matching the schema — no prose, no markdown."""

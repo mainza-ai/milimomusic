@@ -10,6 +10,8 @@ songwriter's draft. Judge the draft, not the writer:
 - singability: concrete images over abstraction; lines a voice can actually carry.
 - section craft: is there a real [Verse]/[Chorus] shape with a hook?
 
+Always include every schema field — especially "score" (a number 0.0-1.0).
+
 Verdicts:
 - 'pass'    — record it. Notes are encouragement + one nudge at most.
 - 'revise'  — fixable problems. Notes must be SPECIFIC and actionable; the

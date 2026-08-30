@@ -28,6 +28,21 @@ from app.services.lyrics_graph import sanitize_lyrics
 logger = logging.getLogger("milimo.agents.bridge")
 
 
+def _attempts_summary(exc: BaseException) -> str:
+    """Per-provider attempts for AllProvidersFailedError — a bare 'all failed'
+    warning hides the actual cause (rate limit vs timeout vs auth)."""
+    attempts = getattr(exc, "attempts", None) or []
+    if not attempts:
+        return ""
+    try:
+        detail = " | ".join(
+            f"{a.get('provider')}/{a.get('model')}: {a.get('error_type')}: {str(a.get('error_message'))[:90]}"
+            for a in attempts)
+        return " :: " + detail
+    except Exception:  # noqa: BLE001 — diagnostics must never throw
+        return ""
+
+
 class TrackProductionError(RuntimeError):
     """A created Job failed to complete generation; carries the Job row id so
     the orchestrator can pin the failure to its album seed slot."""
@@ -142,7 +157,8 @@ async def create_track_from_seed(
             if refined:
                 tags_list = refined
         except Exception as exc:  # noqa: BLE001 — crew failures never kill the track
-            logger.warning("[bridge] stylist failed; keeping songwriter tags: %s", exc)
+            logger.warning("[bridge] stylist failed; keeping songwriter tags: %s%s",
+                           exc, _attempts_summary(exc))
 
     if flags.get("critic"):
         step("critic", "Reviewing the draft…")
@@ -211,7 +227,8 @@ async def create_track_from_seed(
             if review_sink is not None:
                 review_sink["review"] = review
         except Exception as exc:  # noqa: BLE001
-            logger.warning("[bridge] critic failed — proceeding unreviewed: %s", exc)
+            logger.warning("[bridge] critic failed — proceeding unreviewed: %s%s",
+                           exc, _attempts_summary(exc))
             if review_sink is not None:
                 review_sink["review"] = {
                     "verdict": "unavailable", "score": None,

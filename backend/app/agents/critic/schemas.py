@@ -1,5 +1,5 @@
 """Critic contracts: seed + draft in, a bounded-verdict review out."""
-from typing import Any, Dict, List, Literal
+from typing import Any, Dict, List, Literal, Optional
 
 from pydantic import BaseModel, Field
 
@@ -16,9 +16,13 @@ class CriticBrief(BaseModel):
 
 
 class Critique(BaseModel):
-    """Pre-generation review. `revise` triggers exactly ONE bounded revision."""
+    """Pre-generation review. `revise` triggers exactly ONE bounded revision.
+
+    `score` is optional: real models frequently omit numeric fields, and a
+    missing score must degrade to 'no score' — never invalidate an otherwise
+    good review (that failure mode killed every crew review on 2026-08-30)."""
 
     verdict: Literal["pass", "revise", "concern"]
-    score: float = Field(..., ge=0, le=1, description="Overall fit/quality, 0-1.")
+    score: Optional[float] = Field(default=None, ge=0, le=1, description="Overall fit/quality, 0-1. Models that omit it degrade honestly.")
     notes: str = Field(..., description="Actionable, specific. On 'revise' these ARE the fix list.")
     contradictions: List[str] = Field(default_factory=list, description="Lore/world contradictions found, if any.")

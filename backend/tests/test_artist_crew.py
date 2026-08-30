@@ -313,3 +313,33 @@ def test_run_stats_aggregation(client, artist_fixture):
     # window filter drops nothing here (all within 30d), but must not error
     data_w = client.get(f"/agents/runs/stats?profile_id={pid}&window_days=1").json()
     assert "total" in data_w
+
+
+# ---------------------------------------------------------------- schema tolerance (real-model hardening)
+
+def test_critique_tolerates_missing_score():
+    """Real models omit numeric fields; a missing score must not kill the review."""
+    from app.agents.critic.schemas import Critique
+
+    c = Critique(verdict="pass", notes="strong fit")
+    assert c.score is None
+    c2 = Critique(verdict="concern", score=0.55, notes="n")
+    assert c2.score == 0.55
+
+
+def test_styling_choice_accepts_tags_alias():
+    """Real models return the natural key 'tags'; the schema must accept it."""
+    from app.agents.stylist.schemas import StylingChoice
+
+    s = StylingChoice.model_validate({"tags": ["synthwave", "warm"], "rationale": "r"})
+    assert s.style_tags == ["synthwave", "warm"]
+    s2 = StylingChoice.model_validate({"style_tags": ["indie folk"], "rationale": ""})
+    assert s2.style_tags == ["indie folk"]
+
+
+def test_world_lore_fields_are_tolerant():
+    """WorldLore must accept partial docs (real models omit fields)."""
+    from app.agents.world_builder.schemas import WorldLore
+
+    w = WorldLore()
+    assert w.origin_story == "" and w.musical_dna == []

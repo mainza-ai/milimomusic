@@ -67,8 +67,16 @@ _LOCAL_ORDER = ["omlx", "ollama", "lmstudio"]
 
 
 class ResiliencePolicy:
-    def __init__(self, chain: Optional[Sequence[ModelProfile]] = None, parse_retries: int = 2):
+    def __init__(
+        self,
+        chain: Optional[Sequence[ModelProfile]] = None,
+        parse_retries: int = 2,
+        chain_head: Optional[ModelProfile] = None,
+    ):
         self._explicit_chain: Optional[List[ModelProfile]] = list(chain) if chain else None
+        # Crew override (per-artist assignment/profile): pinned as the FIRST
+        # candidate; the auto-resolved global chain remains the failover.
+        self._chain_head: Optional[ModelProfile] = chain_head
         self.parse_retries = max(0, parse_retries)
 
     # ------------------------------------------------------------------
@@ -97,13 +105,23 @@ class ResiliencePolicy:
         active = (base.get("provider") or "").strip()
         chain: List[ModelProfile] = []
 
-        def push(provider: str) -> None:
+        def push(provider: str, model: Optional[str] = None) -> None:
             if not provider or any(p.provider == provider for p in chain):
                 return
             block = base.get(provider, {}) or {}
             chain.append(ModelProfile(
                 provider=provider,
-                model=(block.get("model") or "").strip() or None,
+                model=(model or block.get("model") or "").strip() or None,
+            ))
+
+        # Crew override rides first; push() keeps the rest of the chain
+        # duplicate-free (same-provider global entries are skipped).
+        if self._chain_head is not None:
+            head = self._chain_head
+            block = base.get(head.provider, {}) or {}
+            chain.append(ModelProfile(
+                provider=head.provider,
+                model=(head.model or block.get("model") or "").strip() or None,
             ))
 
         if active and (active in ("ollama", "lmstudio", "omlx") or self._has_credentials(base, active)):

@@ -26,6 +26,7 @@ import { useAudioEngine } from './context/AudioEngineContext';
 // Dedicated Reference IA Views
 import { SongsView } from './components/views/SongsView';
 import { ArtistsView } from './components/views/ArtistsView';
+import { ErrorBoundary } from './components/ErrorBoundary';
 import { PlaylistsView } from './components/views/PlaylistsView';
 import { ProjectsView } from './components/views/ProjectsView';
 import { MusicVideosView } from './components/views/MusicVideosView';
@@ -1369,7 +1370,9 @@ function App() {
             onSelectTrack={handleSelectTrack}
           />
         ) : currentNav === 'artists' ? (
-          <ArtistsView />
+          <ErrorBoundary sectionName="Artists">
+            <ArtistsView />
+          </ErrorBoundary>
         ) : currentNav === 'projects' ? (
           <ProjectsView
             allJobs={history}

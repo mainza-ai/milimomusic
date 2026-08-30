@@ -6,18 +6,31 @@ import {
     Mic2, UserCog, Disc3, CheckCircle2, AlertTriangle, X, Copy
 } from 'lucide-react';
 import {
-    agentsApi, profilesApi, albumApi, coverApi, api,
+    agentsApi, profilesApi, albumApi, coverApi, api, releaseApi,
     type ReleaseTracksT,
-    type AgentInfo, type ArtistProfileT,
+    type AgentInfo, type ArtistProfileT, type ProfileStats, type AgentRunRow,
     type ProfileDetail, type ExperiencerVision, type AgentRunEnvelope
 } from '../../api';
 
 const ROLES = ['world_builder', 'experiencer', 'songwriter', 'producer'];
+const ROLE_LABELS: Record<string, string> = {
+    world_builder: 'World Builder', experiencer: 'Experiencer',
+    songwriter: 'Songwriter', producer: 'Producer', stylist: 'Stylist', critic: 'Critic',
+};
 
 type RunPhase = 'idle' | 'running' | 'done' | 'error';
 
+/** Backend datetimes are naive UTC; make them honest local dates (Safari-safe). */
+const fmtUtcDate = (ts?: string | null): string => {
+    if (!ts) return '';
+    try {
+        return new Date(ts.replace(' ', 'T').slice(0, 23) + 'Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    } catch { return ts.slice(0, 10); }
+};
+
 export const ArtistsView: React.FC = () => {
     const [profiles, setProfiles] = useState<ArtistProfileT[]>([]);
+    const [stats, setStats] = useState<Record<string, ProfileStats>>({});
     const [isLoadingList, setIsLoadingList] = useState(true);
     const [detail, setDetail] = useState<ProfileDetail | null>(null);
     const [isDetailLoading, setIsDetailLoading] = useState(false);
@@ -32,7 +45,8 @@ export const ArtistsView: React.FC = () => {
     const [editName, setEditName] = useState('');
     const [editBio, setEditBio] = useState('');
     const [editTags, setEditTags] = useState('');
-    const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved'>('idle');
+    const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
+    const [saveError, setSaveError] = useState('');
 
     // crew add row
     const [crewRole, setCrewRole] = useState('experiencer');
@@ -51,14 +65,26 @@ export const ArtistsView: React.FC = () => {
     }
     const [albumRun, setAlbumRun] = useState<AlbumRunState | null>(null);
     const albumRunIdRef = useRef<string | null>(null);
+    const [autopilot, setAutopilot] = useState(false);
 
     const startAlbum = async (releaseId: string, title: string) => {
         try {
-            const res = await albumApi.produce(releaseId, false);
+            const res = await albumApi.produce(releaseId, autopilot);
             albumRunIdRef.current = res.run_id;
             setAlbumRun({ runId: res.run_id, releaseTitle: title, status: 'queued', progress: 0, message: 'Imagining the journey…' });
-        } catch {
-            setAlbumRun({ runId: '-', releaseTitle: title, status: 'failed', progress: 0, message: 'Could not start album run.' });
+        } catch (e: any) {
+            setAlbumRun({ runId: '-', releaseTitle: title, status: 'failed', progress: 0, message: '' });
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Could not start album run'), 'error');
+        }
+    };
+
+    const retryTrack = async (releaseId: string, jobId: string, title: string) => {
+        try {
+            const res = await releaseApi.retryTrack(releaseId, jobId);
+            albumRunIdRef.current = res.run_id;
+            setAlbumRun({ runId: res.run_id, releaseTitle: title || 'Track', status: 'queued', progress: 0, message: 'Reproducing failed track…' });
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Retry failed'), 'error');
         }
     };
 
@@ -85,14 +111,17 @@ export const ArtistsView: React.FC = () => {
     const [vision, setVision] = useState<ExperiencerVision | null>(null);
     const [elapsed, setElapsed] = useState(0);
     const elapsedTimer = useRef<number | undefined>(undefined);
+    const expRunIdRef = useRef<string | null>(null);
 
     useEffect(() => {
         (async () => {
             setIsLoadingList(true);
             try {
-                setProfiles(await profilesApi.list());
-            } catch (e) {
-                console.error(e);
+                const data = await profilesApi.list({ withStats: true, limit: 200 });
+                setProfiles(data.profiles);
+                setStats(data.stats || {});
+            } catch (e: any) {
+                toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Could not load artists'), 'error');
             } finally {
                 setIsLoadingList(false);
             }
@@ -111,6 +140,27 @@ export const ArtistsView: React.FC = () => {
             setVision(null);
             setRunPhase('idle');
             setRunError('');
+            albumRunIdRef.current = null;
+            setAlbumRun(null);
+            // Run recovery: an in-flight album run survives page reloads —
+            // reattach its banner instead of leaving it invisible.
+            agentsApi.listRuns(d.profile.id, 50).then(async (envelope: { runs: AgentRunRow[]; total: number }) => {
+                const active = envelope.runs.find((r: AgentRunRow) => r.agent_name === 'album_orchestrator'
+                    && ['queued', 'running', 'awaiting_approval'].includes(r.status));
+                if (!active) return;
+                const full = await albumApi.getRun(active.id).catch(() => null);
+                let releaseTitle = 'This album';
+                try {
+                    const cfg = JSON.parse(full?.input_json || '{}');
+                    releaseTitle = d.releases.find(r => r.id === cfg.release_id)?.title || releaseTitle;
+                } catch { /* input_json unreadable — generic title */ }
+                albumRunIdRef.current = active.id;
+                setAlbumRun({
+                    runId: active.id, releaseTitle,
+                    status: active.status, progress: active.progress || 0,
+                    message: 'Recovered an in-flight album run.',
+                });
+            }).catch(console.error);
         } finally {
             setIsDetailLoading(false);
         }
@@ -172,6 +222,7 @@ export const ArtistsView: React.FC = () => {
     const handleSaveIdentity = async () => {
         if (!detail) return;
         setSaveState('saving');
+        setSaveError('');
         try {
             const updated = await profilesApi.update(detail.profile.id, {
                 name: editName.trim(), bio: editBio, tags: editTags
@@ -179,18 +230,23 @@ export const ArtistsView: React.FC = () => {
             setDetail({ ...detail, profile: updated });
             setProfiles(prev => prev.map(p => p.id === updated.id ? updated : p));
             setSaveState('saved');
-            setTimeout(() => setSaveState('idle'), 2000);
-        } catch {
-            setSaveState('error' as never); // surfaced via button color below
-            setSaveState('idle');
+            setTimeout(() => setSaveState(s => (s === 'saved' ? 'idle' : s)), 2000);
+        } catch (e: any) {
+            setSaveState('error');
+            setSaveError(String(e?.response?.data?.detail?.error?.message || e?.message || 'Save failed — check your connection and retry.'));
         }
     };
 
     const handleDeleteProfile = async () => {
-        if (!detail || !window.confirm(`Delete artist "${detail.profile.name}"? Their crew assignments are removed; discography history remains.`)) return;
-        await profilesApi.delete(detail.profile.id).catch(console.error);
-        setProfiles(prev => prev.filter(p => p.id !== detail.profile.id));
-        setDetail(null);
+        if (!detail) return;
+        if (!window.confirm(`Delete artist "${detail.profile.name}"? Their crew is removed and album containers are deleted; finished tracks remain in Explore as standalone tracks.`)) return;
+        try {
+            await profilesApi.delete(detail.profile.id);
+            setProfiles(prev => prev.filter(p => p.id !== detail.profile.id));
+            setDetail(null);
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Delete failed'), 'error');
+        }
     };
 
     const addCrewMember = async () => {
@@ -205,8 +261,8 @@ export const ArtistsView: React.FC = () => {
                 { role: crewRole, agent_name: crewAgent }
             ]);
             refreshDetail();
-        } catch (e) {
-            console.error(e);
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Could not add crew member'), 'error');
         }
     };
 
@@ -217,18 +273,21 @@ export const ArtistsView: React.FC = () => {
         try {
             const updated = await profilesApi.setAssignments(detail.profile.id, remaining);
             setDetail({ ...detail, assignments: updated });
-        } catch (e) {
-            console.error(e);
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Could not remove crew member'), 'error');
         }
     };
 
     // ── Experiencer run ────────────────────────────────────────────────────
     // Live stage text for experiencer runs via SSE run_progress events.
+    // Filtered to THIS run's id — concurrent album/agent runs must not
+    // corrupt the stage readout.
     useEffect(() => {
         if (runPhase !== 'running') return;
         const es = api.connectToEvents((event: MessageEvent) => {
             try {
                 const d = JSON.parse(event.data);
+                if (expRunIdRef.current && d.run_id !== expRunIdRef.current) return;
                 if (d.message) setRunStage(String(d.message));
             } catch { /* non-JSON frame */ }
         }, ['run_progress']);
@@ -289,6 +348,7 @@ export const ArtistsView: React.FC = () => {
                 },
                 profile_id: detail.profile.id,
             });
+            expRunIdRef.current = envelope.run.id;
             const out = JSON.parse(envelope.run.output_json).output as ExperiencerVision;
             setVision(out);
             setRunPhase('done');
@@ -314,9 +374,66 @@ export const ArtistsView: React.FC = () => {
                 title: vision.journey_title,
                 description: vision.concept_statement,
             });
+            toast("Vision saved as a release.", "success");
             refreshDetail();
-        } catch (e) {
-            console.error(e);
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Could not save release'), 'error');
+        }
+    };
+
+    // World lore edit state (F10)
+    const [editLore, setEditLore] = useState('');
+    const [loreSaving, setLoreSaving] = useState(false);
+    useEffect(() => {
+        if (detail) {
+            try {
+                const raw = detail.profile.lore_json || '{}';
+                const parsed = JSON.parse(raw);
+                setEditLore(parsed && typeof parsed === 'object' ? JSON.stringify(parsed, null, 2) : String(raw));
+            } catch {
+                setEditLore(String(detail.profile.lore_json || ''));
+            }
+        }
+    }, [detail?.profile.id, detail?.profile.lore_json]);
+
+    const handleSaveLore = async () => {
+        if (!detail) return;
+        setLoreSaving(true);
+        try {
+            const updated = await profilesApi.update(detail.profile.id, { lore_json: editLore });
+            setDetail({ ...detail, profile: updated });
+            toast('World lore saved — the crew will ground on it.', 'success');
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Lore save failed'), 'error');
+        } finally {
+            setLoreSaving(false);
+        }
+    };
+
+    // Release edit state (F8: full release lifecycle in the UI)
+    const [editReleaseId, setEditReleaseId] = useState<string | null>(null);
+    const [editReleaseTitle, setEditReleaseTitle] = useState('');
+
+    const handleRenameRelease = async (rid: string) => {
+        if (!editReleaseTitle.trim()) return;
+        try {
+            const updated = await releaseApi.update(rid, { title: editReleaseTitle.trim() });
+            setDetail(d => d ? { ...d, releases: d.releases.map(r => r.id === rid ? updated : r) } : d);
+            setEditReleaseId(null);
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Rename failed'), 'error');
+        }
+    };
+
+    const handleDeleteRelease = async (rid: string, title: string) => {
+        if (!window.confirm(`Delete release "${title}"? Its finished tracks remain in Explore as standalone tracks.`)) return;
+        try {
+            await releaseApi.delete(rid);
+            setDetail(d => d ? { ...d, releases: d.releases.filter(r => r.id !== rid) } : d);
+            if (openTracks === rid) { setOpenTracks(null); setTracks(null); }
+            toast('Release deleted.', 'success');
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Delete failed'), 'error');
         }
     };
 
@@ -374,14 +491,7 @@ export const ArtistsView: React.FC = () => {
                                     ) : (
                                         <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-400/40 to-fuchsia-500/40 flex items-center justify-center"><UserCog size={16} className="text-slate-500" /></div>
                                     )}
-                                    <div className="flex items-center gap-3">
-                                    {p.cover_image_path ? (
-                                        <img src={`${API_BASE_URL}${p.cover_image_path}`} alt="" className="w-10 h-10 rounded-xl object-cover border border-black/10 dark:border-white/10" />
-                                    ) : (
-                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-400/40 to-fuchsia-500/40 flex items-center justify-center"><UserCog size={16} className="text-slate-500" /></div>
-                                    )}
                                     <h3 className="text-sm font-extrabold text-slate-900 dark:text-white truncate">{p.name}</h3>
-                                </div>
                                 </div>
                                 <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 min-h-[2em]">
                                     {p.bio || 'No bio yet.'}
@@ -391,6 +501,19 @@ export const ArtistsView: React.FC = () => {
                                         {p.tags.split(',').slice(0, 4).map(t => t.trim()).filter(Boolean).map(t => (
                                             <span key={t} className="text-[9px] font-mono px-1.5 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20">{t}</span>
                                         ))}
+                                    </div>
+                                )}
+                                {stats[p.id] && (
+                                    <div className="flex items-center gap-2 mt-2 text-[10px] font-mono text-slate-400">
+                                        <span>{stats[p.id].crew_count} crew</span>
+                                        <span aria-hidden="true">·</span>
+                                        <span>{stats[p.id].release_count} releases</span>
+                                        {stats[p.id].last_activity && (
+                                            <>
+                                                <span aria-hidden="true">·</span>
+                                                <span>active {fmtUtcDate(stats[p.id].last_activity)}</span>
+                                            </>
+                                        )}
                                     </div>
                                 )}
                             </button>
@@ -474,10 +597,33 @@ export const ArtistsView: React.FC = () => {
                     {saveState === 'saving' && <Loader2 size={13} className="animate-spin text-teal-500" />}
                     {saveState === 'saved' && <CheckCircle2 size={13} className="text-emerald-500" />}
                     <button onClick={handleSaveIdentity} disabled={saveState === 'saving'}
-                        className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 border border-black/[0.06] dark:border-white/10 text-xs font-bold text-slate-700 dark:text-slate-200 disabled:opacity-50">
+                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-colors disabled:opacity-50 ${saveState === 'error'
+                            ? 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
+                            : 'bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 border-black/[0.06] dark:border-white/10 text-slate-700 dark:text-slate-200'}`}>
                         <Save size={12} /> Save Identity
                     </button>
                 </div>
+                {saveState === 'error' && saveError && (
+                    <p className="text-[11px] font-mono text-rose-600 dark:text-rose-400" role="alert">{saveError}</p>
+                )}
+                {/* World Lore (F10): canonical artist document — read/edit, feeds agent grounding */}
+                <details className="rounded-xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/5 px-3 py-2">
+                    <summary className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 cursor-pointer select-none">
+                        World Lore {detail.profile.lore_json && detail.profile.lore_json !== '{}' ? '· set' : '· empty'}
+                    </summary>
+                    <textarea
+                        value={editLore}
+                        onChange={e => setEditLore(e.target.value)}
+                        rows={5}
+                        placeholder={'Structured lore as JSON or freeform text — the crew reads this as canonical history.\ne.g. {"hometown": "Lusaka", "era": "1970s"}'}
+                        className="apple-input !bg-transparent text-[11px] font-mono mt-2 w-full" aria-label="World lore" />
+                    <div className="flex justify-end mt-1">
+                        <button onClick={handleSaveLore} disabled={loreSaving}
+                            className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] dark:hover:bg-white/10 disabled:opacity-50 transition-colors">
+                            {loreSaving ? 'Saving…' : 'Save Lore'}
+                        </button>
+                    </div>
+                </details>
             </section>
 
             {/* Crew */}
@@ -488,8 +634,11 @@ export const ArtistsView: React.FC = () => {
                 ) : detail.assignments.map(a => (
                     <div key={a.id} className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/5">
                         <div className="min-w-0">
-                            <span className="text-xs font-extrabold text-slate-800 dark:text-slate-100 capitalize">{a.role}</span>
+                            <span className="text-xs font-extrabold text-slate-800 dark:text-slate-100">{ROLE_LABELS[a.role] || a.role}</span>
                             <span className="text-[10px] font-mono text-slate-400 ml-2">agent: {a.agent_name}</span>
+                            {a.model_provider && (
+                                <span className="text-[9px] font-mono text-teal-600 dark:text-teal-400 ml-2">pinned: {a.model_provider}{a.model ? `/${a.model}` : ''}</span>
+                            )}
                         </div>
                         <button onClick={() => removeCrewMember(a.id)} aria-label={`Remove ${a.role}`}
                             className="p-1 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors">
@@ -671,7 +820,7 @@ export const ArtistsView: React.FC = () => {
                             </p>
                         </div>
                     )}
-                <div className="flex items-center gap-2">
+                <div className="flex items-center justify-between gap-2">
                     <input value={newReleaseTitle} onChange={e => setNewReleaseTitle(e.target.value)}
                         placeholder="New release title…" className="apple-input text-xs flex-1"
                         onKeyDown={async e => {
@@ -687,18 +836,47 @@ export const ArtistsView: React.FC = () => {
                         }} className="p-2 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 transition-colors" aria-label="Create release"><Plus size={13} /></button>
                     )}
                 </div>
+                <label className="flex items-center gap-2 text-[10px] font-mono text-slate-500 dark:text-slate-400 select-none">
+                    <input type="checkbox" checked={autopilot} onChange={e => setAutopilot(e.target.checked)}
+                        className="accent-teal-500 w-3 h-3" aria-label="Autopilot mode" />
+                    Autopilot — produce every track without approval pauses (burns budget faster on failure)
+                </label>
                 {detail.releases.length === 0 ? (
                     <p className="text-xs text-slate-500 italic py-1">No releases yet.</p>
                 ) : detail.releases.map(r => (
-                    <div key={r.id} className="flex items-center justify-between p-2.5 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/5">
-                        <span className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">{r.title}</span>
-                        <div className="flex items-center gap-1.5 shrink-0">
-                            <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/5 text-slate-500">{r.status}</span>
-                            <button onClick={() => toggleTracks(r.id)} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] dark:hover:bg-white/10 transition-colors">{openTracks === r.id ? 'Hide tracks' : 'Tracks'}</button>
-                            <button onClick={() => startAlbum(r.id, r.title)} disabled={albumActive}
-                                className="text-[10px] font-bold px-2 py-1 rounded-lg bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 hover:bg-fuchsia-500 hover:text-slate-950 transition-colors disabled:opacity-40"
-                                title="Produce this album (gated: pauses after each track)">Produce</button>
-                        </div>
+                    <div key={r.id} className="flex items-center justify-between gap-2 p-2.5 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/5">
+                        {editReleaseId === r.id ? (
+                            <div className="flex items-center gap-1.5 flex-1 min-w-0">
+                                <input value={editReleaseTitle} onChange={e => setEditReleaseTitle(e.target.value)}
+                                    onKeyDown={e => { if (e.key === 'Enter') handleRenameRelease(r.id); }}
+                                    className="apple-input !py-1 text-xs flex-1" autoFocus aria-label="Release title" />
+                                <button onClick={() => handleRenameRelease(r.id)} disabled={!editReleaseTitle.trim()}
+                                    className="text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400 disabled:opacity-40 transition-colors">Save</button>
+                                <button onClick={() => setEditReleaseId(null)}
+                                    className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-500 hover:text-slate-700 transition-colors">Cancel</button>
+                            </div>
+                        ) : (
+                            <>
+                                <div className="min-w-0">
+                                    <span className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">{r.title}</span>
+                                    {r.status !== 'planned' && (
+                                        <span className={`ml-2 text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full ${r.status === 'completed' ? 'bg-emerald-500/15 text-emerald-600' : 'bg-sky-500/15 text-sky-600 dark:text-sky-300'}`}>{r.status}</span>
+                                    )}
+                                </div>
+                                <div className="flex items-center gap-1.5 shrink-0">
+                                    <button onClick={() => { setEditReleaseId(r.id); setEditReleaseTitle(r.title); }}
+                                        className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                                        title="Rename release" aria-label={`Rename ${r.title}`}>Edit</button>
+                                    <button onClick={() => handleDeleteRelease(r.id, r.title)}
+                                        className="text-[10px] font-bold px-2 py-1 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-slate-950 transition-colors"
+                                        title="Delete release" aria-label={`Delete ${r.title}`}>Delete</button>
+                                    <button onClick={() => toggleTracks(r.id)} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] dark:hover:bg-white/10 transition-colors">{openTracks === r.id ? 'Hide tracks' : 'Tracks'}</button>
+                                    <button onClick={() => startAlbum(r.id, r.title)} disabled={albumActive}
+                                        className="text-[10px] font-bold px-2 py-1 rounded-lg bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 hover:bg-fuchsia-500 hover:text-slate-950 transition-colors disabled:opacity-40"
+                                        title={autopilot ? 'Produce this album (autopilot: no pauses)' : 'Produce this album (gated: pauses after each track)'}>Produce</button>
+                                </div>
+                            </>
+                        )}
                     </div>
                 ))}
                 {openTracks && (
@@ -709,13 +887,20 @@ export const ArtistsView: React.FC = () => {
                             <>
                                 <div className="flex items-center justify-between">
                                     <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200">{tracks.title} · {tracks.succeeded}/{tracks.total} complete</span>
-                                    <span className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full ${tracks.status === 'completed' ? 'bg-emerald-500/15 text-emerald-600' : tracks.status === 'partial' ? 'bg-amber-500/15 text-amber-600' : 'bg-black/[0.04] dark:bg-white/5 text-slate-500'}`}>{tracks.status}</span>
+                                    <div className="flex items-center gap-1">
+                                        {tracks.status !== 'planned' && (
+                                            <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-600 dark:text-sky-300">{tracks.status}</span>
+                                        )}
+                                        <span className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full ${tracks.rollup === 'completed' ? 'bg-emerald-500/15 text-emerald-600' : tracks.rollup === 'partial' ? 'bg-amber-500/15 text-amber-600' : 'bg-black/[0.04] dark:bg-white/5 text-slate-500'}`}>{tracks.rollup}</span>
+                                    </div>
                                 </div>
                                 {tracks.tracks.map(tr => (
                                     <div key={tr.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-white/60 dark:bg-white/[0.04] border border-black/[0.04] dark:border-white/5">
                                         <div className="min-w-0">
                                             <p className="text-[11px] font-bold text-slate-800 dark:text-slate-100 truncate">{tr.title || '(untitled)'}</p>
-                                            <p className="text-[9px] text-slate-500 font-mono">{Math.round(tr.duration_ms / 1000)}s · seed {tr.seed ?? '—'} · {tr.used_real_inference ? 'real inference' : 'fallback'}</p>
+                                            <p className="text-[9px] text-slate-500 font-mono">
+                                                {Math.round(tr.duration_ms / 1000)}s · {tr.seed_slot != null ? `slot ${tr.seed_slot + 1}` : `seed ${tr.seed ?? '—'}`} · {tr.used_real_inference ? 'real inference' : 'fallback'}
+                                            </p>
                                         </div>
                                         <div className="flex items-center gap-1 shrink-0">
                                             {(['audio', 'midi', 'musicxml', 'stems', 'mastered'] as const).map(k =>
@@ -723,6 +908,11 @@ export const ArtistsView: React.FC = () => {
                                                     <a key={k} href={`${API_BASE_URL}${tr.artifacts[k]}`} target="_blank" rel="noreferrer"
                                                         className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 transition-colors">{k.slice(0, 4)}</a>
                                                 ) : null
+                                            )}
+                                            {tr.status === 'failed' && openTracks && (
+                                                <button onClick={() => retryTrack(openTracks, tr.id, tr.title || 'Track')}
+                                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 hover:bg-amber-500 hover:text-slate-950 transition-colors"
+                                                    title="Reproduce this track from its seed">Retry</button>
                                             )}
                                             <span className={`w-1.5 h-1.5 rounded-full ${tr.status === 'completed' ? 'bg-emerald-500' : tr.status === 'failed' ? 'bg-red-500' : 'bg-amber-400'}`} title={tr.status} />
                                         </div>

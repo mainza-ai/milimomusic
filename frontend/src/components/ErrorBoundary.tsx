@@ -3,6 +3,9 @@ import { Music, RefreshCw, Undo2, ChevronDown } from 'lucide-react';
 
 interface ErrorBoundaryProps {
     children: React.ReactNode;
+    /** Scoped boundary name (e.g. "Artists") shown in the crash card so the
+     *  user knows which section failed — the rest of the studio stays alive. */
+    sectionName?: string;
 }
 
 interface ErrorBoundaryState {
@@ -60,9 +63,13 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
                             <Music size={20} className="text-rose-500" />
                         </div>
                         <div>
-                            <h1 className="text-lg font-extrabold tracking-tight">The studio hit a wrong note</h1>
+                            <h1 className="text-lg font-extrabold tracking-tight">
+                                {this.props.sectionName ? `The ${this.props.sectionName} section hit a wrong note` : 'The studio hit a wrong note'}
+                            </h1>
                             <p className="text-xs text-slate-500 dark:text-slate-400 font-mono mt-0.5">
-                                A rendering error occurred — nothing was lost.
+                                {this.props.sectionName
+                                    ? `A rendering error occurred in ${this.props.sectionName} — nothing was lost.`
+                                    : 'A rendering error occurred — nothing was lost.'}
                             </p>
                         </div>
                     </div>

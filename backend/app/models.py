@@ -55,6 +55,7 @@ class Job(SQLModel, table=True):
     session_id: Optional[str] = Field(default=None, index=True)
     mastered_path: Optional[str] = None   # B8: mastering result stored separately — original master never clobbered
     release_id: Optional[str] = Field(default=None, index=True)
+    artist_profile_id: Optional[str] = Field(default=None, index=True)  # album provenance (declared: migration adds the column; bridge writes it)
     voice_profile_id: Optional[str] = Field(default=None)  # persisted per track
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -354,7 +355,6 @@ class ArtistProfileCreate(SQLModel):
     bio: str = ""
     tags: str = ""
     cover_image_path: Optional[str] = None
-    image_prompt: Optional[str] = None
     default_provider: Optional[str] = None
     default_model: Optional[str] = None
 
@@ -364,7 +364,7 @@ class ArtistProfileUpdate(SQLModel):
     bio: Optional[str] = None
     tags: Optional[str] = None
     cover_image_path: Optional[str] = None
-    image_prompt: Optional[str] = None
+    lore_json: Optional[str] = None   # structured world/identity document (World Builder domain)
     default_provider: Optional[str] = None
     default_model: Optional[str] = None
 
@@ -396,3 +396,11 @@ class ReleaseCreate(SQLModel):
     profile_id: str
     title: str
     description: str = ""
+
+
+class ReleaseUpdate(SQLModel):
+    """Partial release edit; `status` is validated against the transition table."""
+
+    title: Optional[str] = None
+    description: Optional[str] = None
+    status: Optional[str] = None

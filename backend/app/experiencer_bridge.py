@@ -11,6 +11,7 @@ from sqlmodel import Session
 from app.agents.experiencer.agent import EXPERIENCER_AGENT
 from app.agents.experiencer.schemas import AlbumBrief
 from app.agents.runtime.context import RunContext
+from app.agents.runtime.overrides import resolve_artist_grounding
 from app.agents.runtime.policy import ResiliencePolicy
 from app.models import AgentRun, ArtistProfile, Release
 
@@ -45,13 +46,21 @@ async def run_experiencer_for_release(
         status="running",
         input_json=brief.model_dump_json(),
         parent_run_id=parent_run_id,
+        profile_id=str(release.profile_id),
     )
     session.add(child)
     session.commit()
     session.refresh(child)
 
-    ctx = RunContext(agent_name="experiencer", run_id=str(child.id))
-    policy = ResiliencePolicy()
+    # Crew overrides + artist lore grounding for THIS artist's experiencer.
+    chain_head, artist_lore = resolve_artist_grounding(
+        session, str(release.profile_id), "experiencer")
+    ctx = RunContext(
+        agent_name="experiencer", run_id=str(child.id),
+        artist_profile_id=str(release.profile_id),
+        artist_lore=artist_lore or None,
+    )
+    policy = ResiliencePolicy(chain_head=chain_head)
     try:
         result = await EXPERIENCER_AGENT.run(brief, ctx, policy)
         vision = result.vision

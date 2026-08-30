@@ -31,7 +31,8 @@ class RunContext:
     # Attachment points (all optional today; the album vision fills them in)
     session_id: Optional[str] = None      # Ask-Producer chat thread
     project_id: Optional[str] = None       # owning project folder
-    artist_profile_id: Optional[str] = None  # future: identity + memory scope
+    artist_profile_id: Optional[str] = None  # identity + memory scope
+    artist_lore: Optional[str] = None      # structured world doc (lore_json) for grounding
 
     # Conversation memory window (oldest → newest). Empty for one-shot runs.
     history: List[Dict[str, str]] = field(default_factory=list)

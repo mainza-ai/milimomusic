@@ -962,14 +962,21 @@ export const agentsApi = {
         const res = await axios.post(`${API_BASE_URL}/agents/${name}/run`, body);
         return res.data;
     },
+    listRuns: async (profileId?: string, limit = 50): Promise<{ runs: AgentRunRow[]; total: number }> => {
+        const res = await axios.get(`${API_BASE_URL}/agents/runs`, {
+            params: { ...(profileId ? { profile_id: profileId } : {}), limit },
+        });
+        return res.data;
+    },
 };
 
 export interface ReleaseTrackT {
     id: string; title: string | null; status: string; duration_ms: number;
-    seed: number | null; artifacts: Record<string, string | null>;
+    seed: number | null; seed_slot?: number | null; artifacts: Record<string, string | null>;
     used_real_inference: boolean; created_at: string;
 }
-export interface ReleaseTracksT { release_id: string; title: string; tracks: ReleaseTrackT[]; succeeded: number; total: number; status: string; }
+// `status` = release lifecycle (planned|in_progress|completed); `rollup` = track completion rollup (completed|partial|pending)
+export interface ReleaseTracksT { release_id: string; title: string; tracks: ReleaseTrackT[]; succeeded: number; total: number; status: string; rollup: string; }
 export interface AgentRunRow {
     id: string;
     agent_name: string;
@@ -977,7 +984,14 @@ export interface AgentRunRow {
     progress?: number;
     error_message?: string;
     state_json?: string;
+    input_json?: string;
+    created_at?: string;
+    latency_ms?: number;
+    tokens_in?: number;
+    tokens_out?: number;
 }
+
+export interface ProfileStats { crew_count: number; release_count: number; last_activity: string | null; }
 
 export const albumApi = {
     produce: async (releaseId: string, autopilot: boolean): Promise<{ run_id: string; status: string; autopilot: boolean }> => {
@@ -999,9 +1013,14 @@ export const albumApi = {
 };
 
 export const profilesApi = {
-    list: async (projectId?: string): Promise<ArtistProfileT[]> => {
-        const res = await axios.get(`${API_BASE_URL}/profiles`, { params: projectId ? { project_id: projectId } : {} });
-        return res.data.profiles;
+    list: async (opts?: { projectId?: string; withStats?: boolean; limit?: number; offset?: number }): Promise<{ profiles: ArtistProfileT[]; total: number; stats?: Record<string, ProfileStats> }> => {
+        const params: Record<string, unknown> = {};
+        if (opts?.projectId) params.project_id = opts.projectId;
+        if (opts?.withStats) params.with_stats = 1;
+        if (opts?.limit) params.limit = opts.limit;
+        if (opts?.offset) params.offset = opts.offset;
+        const res = await axios.get(`${API_BASE_URL}/profiles`, { params });
+        return res.data;
     },
     create: async (body: { name: string; bio?: string; tags?: string; project_id?: string }): Promise<ArtistProfileT> => {
         const res = await axios.post(`${API_BASE_URL}/profiles`, body);
@@ -1011,7 +1030,7 @@ export const profilesApi = {
         const res = await axios.get(`${API_BASE_URL}/profiles/${id}`);
         return res.data;
     },
-    update: async (id: string, body: Partial<Pick<ArtistProfileT, 'name' | 'bio' | 'tags'>>): Promise<ArtistProfileT> => {
+    update: async (id: string, body: Partial<Pick<ArtistProfileT, 'name' | 'bio' | 'tags' | 'lore_json'>>): Promise<ArtistProfileT> => {
         const res = await axios.patch(`${API_BASE_URL}/profiles/${id}`, body);
         return res.data;
     },
@@ -1032,6 +1051,21 @@ export const profilesApi = {
     },
     createRelease: async (body: { profile_id: string; title: string; description?: string; }): Promise<ReleaseT> => {
         const res = await axios.post(`${API_BASE_URL}/releases`, body);
+        return res.data;
+    },
+};
+
+export const releaseApi = {
+    update: async (id: string, body: { title?: string; description?: string; status?: string }): Promise<ReleaseT> => {
+        const res = await axios.patch(`${API_BASE_URL}/releases/${id}`, body);
+        return res.data;
+    },
+    delete: async (id: string): Promise<{ status: string; jobs_detached: number }> => {
+        const res = await axios.delete(`${API_BASE_URL}/releases/${id}`);
+        return res.data;
+    },
+    retryTrack: async (releaseId: string, jobId: string): Promise<{ run_id: string; status: string; seed_slot: number }> => {
+        const res = await axios.post(`${API_BASE_URL}/releases/${releaseId}/tracks/${jobId}/retry`);
         return res.data;
     },
 };

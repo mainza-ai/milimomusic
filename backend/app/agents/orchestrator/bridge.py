@@ -23,6 +23,15 @@ from app.services.lyrics_graph import sanitize_lyrics
 
 logger = logging.getLogger("milimo.agents.bridge")
 
+
+class TrackProductionError(RuntimeError):
+    """A created Job failed to complete generation; carries the Job row id so
+    the orchestrator can pin the failure to its album seed slot."""
+
+    def __init__(self, message: str, job_id: str):
+        super().__init__(message)
+        self.job_id = job_id
+
 # MiniMax destructures tags positionally: [0]=genre, [1]=tempo/mood, [2:]=instruments.
 # Unsorted/exotic tags yield nonsense captions — ordering IS validation here.
 KNOWN_GENRES = {
@@ -181,8 +190,9 @@ async def create_track_from_seed(
         # Pipeline catches generation errors internally (marks FAILED, returns).
         # Truth must propagate to the album ledger — never count a failed track.
         if str(final.status).lower() not in ("completed", "jobstatus.completed"):
-            raise RuntimeError(
+            raise TrackProductionError(
                 f"Track '{req.title}' did not complete (status={final.status}"
-                f"{': ' + str(final.error_msg)[:120] if getattr(final, 'error_msg', None) else ''})"
+                f"{': ' + str(final.error_msg)[:120] if getattr(final, 'error_msg', None) else ''})",
+                job_id=job_id_str,
             )
         return final

@@ -35,7 +35,7 @@ from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import SQLModel, Session, create_engine, select, or_, text
-from typing import List, Optional, Dict, Any
+from typing import List, Optional, Dict, Any, Sequence
 from uuid import UUID
 
 from app.services.music_service import music_service, event_manager
@@ -79,11 +79,13 @@ from app.models import (
     AgentAssignmentCreate,
     Release,
     ReleaseCreate,
+    ReleaseUpdate,
     AgentRun,
     AgentRunRequest
 )
 from app.agents.registry import AGENTS, get_agent, list_agents
 from app.agents.runtime.context import RunContext
+from app.agents.runtime.overrides import resolve_artist_grounding
 from app.agents.runtime.policy import ResiliencePolicy
 from app.core.llm_contracts import (
     AllProvidersFailedError,
@@ -95,7 +97,14 @@ from app.core.llm_contracts import (
     LLMUpstreamError,
 )
 
-from sqlalchemy import event
+from sqlalchemy import event, func
+
+from app.release_state import (
+    ACTIVE_RUN_STATUSES,
+    album_run_release_id,
+    resolve_track_rows,
+    transition_release,
+)
 
 # Database
 sqlite_file_name = "jobs.db"
@@ -809,6 +818,14 @@ async def run_agent(agent_name: str, payload: AgentRunRequest):
         artist_profile_id=payload.profile_id,
     )
 
+    # Crew overrides + artist grounding: one DB round-trip before execution.
+    chain_head, artist_lore = None, ""
+    if payload.profile_id:
+        with Session(engine) as session:
+            chain_head, artist_lore = resolve_artist_grounding(session, payload.profile_id, agent_name)
+    if artist_lore:
+        ctx.artist_lore = artist_lore
+
     with Session(engine) as session:
         run_row = AgentRun(
             agent_name=agent_name,
@@ -825,7 +842,7 @@ async def run_agent(agent_name: str, payload: AgentRunRequest):
 
     started = time.monotonic()
     try:
-        result = await entry.agent.run(validated_input, ctx, ResiliencePolicy())
+        result = await entry.agent.run(validated_input, ctx, ResiliencePolicy(chain_head=chain_head))
     except Exception as exc:
         exc_response = _agent_error_response(exc)
         err_detail = getattr(exc_response, "detail", {})
@@ -864,13 +881,15 @@ async def run_agent(agent_name: str, payload: AgentRunRequest):
 
 
 @app.get("/agents/runs")
-def list_agent_runs(profile_id: str = None, limit: int = 50):
+def list_agent_runs(profile_id: str = None, limit: int = 50, offset: int = 0):
     """Run history ledger — newest first, optionally scoped to an artist."""
     q = select(AgentRun)
     if profile_id:
         q = q.where(AgentRun.profile_id == profile_id)
-    q = q.order_by(AgentRun.created_at.desc()).limit(max(1, min(200, limit)))
     with Session(engine) as session:
+        total = session.exec(select(func.count()).select_from(q.subquery())).one()
+        q = (q.order_by(AgentRun.created_at.desc())
+             .offset(max(0, offset)).limit(max(1, min(200, limit))))
         rows = session.exec(q).all()
         return {"runs": [
             {"id": str(r.id), "agent_name": r.agent_name, "status": r.status,
@@ -879,7 +898,7 @@ def list_agent_runs(profile_id: str = None, limit: int = 50):
              "tokens_out": r.tokens_out, "created_at": str(r.created_at),
              "parent_run_id": r.parent_run_id}
             for r in rows
-        ]}
+        ], "total": int(total[0]) if isinstance(total, Sequence) else int(total)}
 
 
 @app.get("/agents/runs/{run_id}")
@@ -1016,13 +1035,48 @@ def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files
 
 
 @app.get("/profiles")
-def list_artist_profiles(project_id: Optional[str] = None):
+def list_artist_profiles(
+    project_id: Optional[str] = None,
+    with_stats: int = 0,
+    limit: int = 100,
+    offset: int = 0,
+):
+    """List artist profiles. `with_stats=1` adds per-profile crew/release counts
+    and last-activity (the artist grid renders them without N detail fetches)."""
     with Session(engine) as session:
         stmt = select(ArtistProfile)
         if project_id:
             stmt = stmt.where(ArtistProfile.project_id == project_id)
-        profiles = session.exec(stmt.order_by(ArtistProfile.created_at.desc())).all()
-        return {"profiles": profiles}
+        total = session.exec(select(func.count()).select_from(stmt.subquery())).one()
+        profiles = session.exec(
+            stmt.order_by(ArtistProfile.created_at.desc())
+            .offset(max(0, offset)).limit(max(1, min(200, limit)))
+        ).all()
+        out: Dict[str, Any] = {"profiles": profiles, "total": int(total[0]) if isinstance(total, Sequence) else int(total)}
+        if with_stats and profiles:
+            ids = [str(p.id) for p in profiles]
+            stats = {pid: {"crew_count": 0, "release_count": 0, "last_activity": None} for pid in ids}
+            for pid, cnt in session.exec(
+                select(AgentAssignment.profile_id, func.count())
+                .where(AgentAssignment.profile_id.in_(ids))
+                .group_by(AgentAssignment.profile_id)
+            ).all():
+                if pid in stats:
+                    stats[pid]["crew_count"] = int(cnt)
+            for pid, cnt, latest in session.exec(
+                select(Release.profile_id, func.count(), func.max(Release.created_at))
+                .where(Release.profile_id.in_(ids))
+                .group_by(Release.profile_id)
+            ).all():
+                if pid in stats:
+                    stats[pid]["release_count"] = int(cnt)
+                    stats[pid]["last_activity"] = str(latest) if latest else None
+            for p in profiles:
+                prof_ts = str(p.updated_at) if p.updated_at else None
+                cur = stats[str(p.id)]["last_activity"]
+                stats[str(p.id)]["last_activity"] = max(prof_ts, cur) if (prof_ts and cur) else (prof_ts or cur)
+            out["stats"] = stats
+        return out
 
 
 @app.patch("/profiles/{profile_id}/cover")
@@ -1086,21 +1140,48 @@ def update_artist_profile(profile_id: UUID, payload: ArtistProfileUpdate):
 
 @app.delete("/profiles/{profile_id}")
 def delete_artist_profile(profile_id: UUID):
+    """Delete an artist identity with an explicit, tested cascade policy:
+
+    - Refuse (409) while any active run references the profile or one of its
+      releases — cancel the run first.
+    - Crew assignments die with the profile.
+    - Release containers are deleted; their Jobs are DETACHED (release_id and
+      artist_profile_id cleared) so finished tracks survive in Explore as
+      standalone history instead of dangling or disappearing.
+    """
     with Session(engine) as session:
         profile = session.get(ArtistProfile, profile_id)
         if not profile:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
-        # Cascade: assignments die with the profile; Jobs/Releases keep history
-        # but lose the pointer target (soft-dangling by design — discography is
-        # historical fact and must survive identity deletion).
-        assignments = session.exec(
-            select(AgentAssignment).where(AgentAssignment.profile_id == str(profile.id))
+        releases = session.exec(
+            select(Release).where(Release.profile_id == str(profile.id))
         ).all()
-        for a in assignments:
+        release_ids = {str(r.id) for r in releases}
+        # Block deletion while a run is live on this profile or its releases.
+        for run in session.exec(
+            select(AgentRun).where(AgentRun.status.in_(ACTIVE_RUN_STATUSES))
+        ).all():
+            on_profile = str(run.profile_id or "") == str(profile_id)
+            on_release = album_run_release_id(run) in release_ids
+            if on_profile or on_release:
+                raise HTTPException(status_code=409, detail={
+                    "error": {"code": "active_run",
+                              "message": f"An agent run is {run.status} for this artist — cancel it before deleting."}})
+        detached = 0
+        for a in session.exec(
+            select(AgentAssignment).where(AgentAssignment.profile_id == str(profile.id))
+        ).all():
             session.delete(a)
+        for rel in releases:
+            for job in session.exec(select(Job).where(Job.release_id == str(rel.id))).all():
+                job.release_id = None
+                job.artist_profile_id = None
+                session.add(job)
+                detached += 1
+            session.delete(rel)
         session.delete(profile)
         session.commit()
-        return {"status": "deleted", "id": str(profile_id)}
+        return {"status": "deleted", "id": str(profile_id), "releases_deleted": len(releases), "jobs_detached": detached}
 
 
 @app.put("/profiles/{profile_id}/assignments")
@@ -1157,9 +1238,84 @@ def create_release(payload: ReleaseCreate):
         return release
 
 
+@app.get("/releases/{release_id}")
+def get_release(release_id: UUID):
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        track_total = len(session.exec(select(Job.id).where(Job.release_id == str(release_id))).all())
+        active = any(
+            album_run_release_id(r) == str(release_id)
+            for r in session.exec(
+                select(AgentRun).where(AgentRun.agent_name == "album_orchestrator", AgentRun.status.in_(ACTIVE_RUN_STATUSES))
+            ).all()
+        )
+        return {"release": release, "track_total": track_total, "active_run": active}
+
+
+@app.patch("/releases/{release_id}")
+def update_release(release_id: UUID, payload: ReleaseUpdate):
+    """Rename / re-describe a release or move it through the status lifecycle."""
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        updates = payload.model_dump(exclude_unset=True)
+        new_status = updates.pop("status", None)
+        if new_status is not None:
+            try:
+                transition_release(release, str(new_status))
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail={"error": {"code": "invalid_transition", "message": str(e)}})
+        title = updates.get("title")
+        if title is not None and not str(title).strip():
+            raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "Release title cannot be empty."}})
+        for k, v in updates.items():
+            setattr(release, k, v)
+        release.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(release)
+        session.commit()
+        session.refresh(release)
+        return release
+
+
+@app.delete("/releases/{release_id}")
+def delete_release(release_id: UUID):
+    """Delete a release container. Its Jobs are DETACHED (release_id cleared,
+    artist provenance kept) so finished tracks survive in Explore. Refuses
+    while an album run is live on this release."""
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        active = [
+            r for r in session.exec(
+                select(AgentRun).where(AgentRun.agent_name == "album_orchestrator", AgentRun.status.in_(ACTIVE_RUN_STATUSES))
+            ).all()
+            if album_run_release_id(r) == str(release_id)
+        ]
+        if active:
+            raise HTTPException(status_code=409, detail={"error": {"code": "run_active",
+                "message": f"An album run is {active[0].status} for this release — cancel it before deleting."}})
+        detached = 0
+        for job in session.exec(select(Job).where(Job.release_id == str(release_id))).all():
+            job.release_id = None
+            session.add(job)
+            detached += 1
+        session.delete(release)
+        session.commit()
+        return {"status": "deleted", "id": str(release_id), "jobs_detached": detached}
+
+
 @app.get("/releases/{release_id}/tracks")
 def release_tracks(release_id: UUID):
-    """Tracklist with artifact inventory — the artist section's view of its music."""
+    """Tracklist with artifact inventory — the artist section's view of its music.
+
+    Retry deduplication: when an album orchestrator cursor exists for this
+    release, it decides which Job won each seed slot; superseded retry rows
+    are hidden while failed attempts without a winning replacement stay
+    visible. Non-orchestrated releases list every Job chronologically."""
     with Session(engine) as session:
         release = session.get(Release, release_id)
         if not release:
@@ -1167,11 +1323,16 @@ def release_tracks(release_id: UUID):
         rows = session.exec(
             select(Job).where(Job.release_id == str(release_id)).order_by(Job.created_at)
         ).all()
+        album_runs = session.exec(
+            select(AgentRun)
+            .where(AgentRun.agent_name == "album_orchestrator")
+            .order_by(AgentRun.created_at.desc())
+        ).all()
         out = []
-        for j in rows:
+        for j, seed_slot in resolve_track_rows(rows, album_runs, str(release_id)):
             out.append({
                 "id": str(j.id), "title": j.title, "status": j.status.value if hasattr(j.status, "value") else str(j.status),
-                "duration_ms": j.duration_ms, "seed": j.seed,
+                "duration_ms": j.duration_ms, "seed": j.seed, "seed_slot": seed_slot,
                 "artifacts": {"audio": j.audio_path, "midi": j.midi_path,
                               "musicxml": j.musicxml_path, "stems": j.stems_json,
                               "mastered": j.mastered_path},
@@ -1180,8 +1341,77 @@ def release_tracks(release_id: UUID):
             })
         done = sum(1 for r in out if r["status"] == "completed")
         return {"release_id": str(release_id), "title": release.title,
+                "status": release.status,
                 "tracks": out, "succeeded": done, "total": len(out),
-                "status": "completed" if done == len(out) and out else ("partial" if done else "pending")}
+                "rollup": "completed" if done == len(out) and out else ("partial" if done else "pending")}
+
+
+@app.post("/releases/{release_id}/tracks/{job_id}/retry")
+async def retry_release_track(release_id: UUID, job_id: UUID):
+    """Re-produce ONE failed album seed (its own run, own ledger row).
+
+    Refuses when the job isn't a recorded failed attempt (only failures are
+    retryable — completed slots are already the truth) or when another run is
+    live on the release. On success the album cursor's slot winner is
+    replaced, so the tracklist dedupes to the new job automatically."""
+    from app.agents.orchestrator.album import AlbumOrchestrator, retry_single_seed
+
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+
+        # Live-run guard first: any active orchestrator/retry on this release
+        # blocks new work regardless of what is being retried.
+        live = [
+            r for r in session.exec(
+                select(AgentRun).where(
+                    AgentRun.agent_name.in_(["album_orchestrator", "track_retry"]),
+                    AgentRun.status.in_(ACTIVE_RUN_STATUSES),
+                )
+            ).all()
+            if album_run_release_id(r) == str(release_id)
+        ]
+        if live:
+            raise HTTPException(status_code=409, detail={"error": {"code": "run_active",
+                "message": f"A run is {live[0].status} for this release — wait or cancel it first."}})
+
+        target: Optional[tuple] = None  # (album_run, seed_slot)
+        for r in session.exec(select(AgentRun).where(AgentRun.agent_name == "album_orchestrator")).all():
+            if album_run_release_id(r) != str(release_id):
+                continue
+            try:
+                st = json.loads(r.state_json or "{}")
+            except Exception:
+                continue
+            for slot, jids in (st.get("failed_jobs") or {}).items():
+                jid_list = jids if isinstance(jids, list) else [jids]
+                if str(job_id) in [str(x) for x in jid_list]:
+                    target = (r, int(slot))
+                    break
+            if target:
+                break
+        if target is None:
+            raise HTTPException(status_code=422, detail={"error": {"code": "not_retryable",
+                "message": "Only failed album track attempts can be retried."}})
+
+        parent = AgentRun(agent_name="track_retry", status="queued",
+                          profile_id=str(release.profile_id),
+                          input_json=json.dumps({
+                              "release_id": str(release_id),
+                              "job_id": str(job_id),
+                              "seed_slot": target[1],
+                              "album_run_id": str(target[0].id),
+                          }))
+        session.add(parent)
+        session.commit()
+        session.refresh(parent)
+
+    orchestrator = AlbumOrchestrator(run_registry, event_manager.publish)
+    spawn_background_task(retry_single_seed(
+        parent_run_id=parent.id, release_id=release_id,
+        engine=engine, orchestrator=orchestrator))
+    return {"run_id": str(parent.id), "status": "queued", "seed_slot": target[1]}
 
 
 @app.post("/releases/{release_id}/produce")
@@ -1203,8 +1433,23 @@ async def produce_release(release_id: UUID, payload: dict):
         release = session.get(Release, release_id)
         if not release:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        # Concurrency guard: one live orchestrator per release. Producing twice
+        # would double-spend and interleave two cursors on the same slots.
+        active = [
+            r for r in session.exec(
+                select(AgentRun).where(
+                    AgentRun.agent_name == "album_orchestrator",
+                    AgentRun.status.in_(ACTIVE_RUN_STATUSES),
+                )
+            ).all()
+            if album_run_release_id(r) == str(release_id)
+        ]
+        if active:
+            raise HTTPException(status_code=409, detail={"error": {"code": "run_active",
+                "message": f"An album run is already {active[0].status} for this release — resume or cancel it before producing again."}})
         parent = AgentRun(agent_name="album_orchestrator", status="queued",
                           input_json=json.dumps({"release_id": str(release_id), "autopilot": autopilot}),
+                          profile_id=str(release.profile_id),
                           budget_json=json.dumps({"caps": {"deadline_s": budget.deadline_s}}))
         session.add(parent)
         session.commit()
@@ -1247,12 +1492,15 @@ async def resume_agent_run(run_id: UUID, payload: dict = None):
 
 
 @app.get("/profiles/{profile_id}/releases")
-def list_releases(profile_id: UUID):
+def list_releases(profile_id: UUID, limit: int = 100, offset: int = 0):
     with Session(engine) as session:
+        base = select(Release).where(Release.profile_id == str(profile_id))
+        total = session.exec(select(func.count()).select_from(base.subquery())).one()
         releases = session.exec(
-            select(Release).where(Release.profile_id == str(profile_id)).order_by(Release.created_at.desc())
+            base.order_by(Release.created_at.desc())
+            .offset(max(0, offset)).limit(max(1, min(200, limit)))
         ).all()
-        return {"releases": releases}
+        return {"releases": releases, "total": int(total[0]) if isinstance(total, Sequence) else int(total)}
 
 
 @app.post("/tracks/{job_id}/midi")

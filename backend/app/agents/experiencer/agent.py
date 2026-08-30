@@ -60,6 +60,12 @@ class ExperiencerAgent:
         artist_block = ""
         if brief.artist_name or brief.artist_bio:
             artist_block = f"\nARTIST IDENTITY\n- Name: {brief.artist_name or '(unnamed)'}\n- Bio/lore: {brief.artist_bio or '(none provided)'}\n"
+        lore_block = ""
+        if ctx is not None and getattr(ctx, "artist_lore", None):
+            lore_block = (
+                "\nARTIST WORLD LORE (canonical history — stay consistent with it)\n"
+                f"{ctx.artist_lore}\n"
+            )
         tags_block = f"\nSTYLE HINTS (serve the moments; never let them flatten them): {brief.tags}\n" if brief.tags else ""
         direction_block = f"\nUSER STEERING (honor explicitly): {brief.extra_direction}\n" if brief.extra_direction else ""
 
@@ -67,7 +73,7 @@ class ExperiencerAgent:
             f"ALBUM BRIEF\n"
             f"- Title: {brief.album_title}\n"
             f"- Concept: {brief.album_concept}\n"
-            f"{artist_block}{tags_block}{direction_block}"
+            f"{artist_block}{lore_block}{tags_block}{direction_block}"
             f"- Target track count: {brief.track_target}\n\n"
             "Walk through this concept as a lived journey and return the JSON vision. "
             f"Produce exactly {brief.track_target} song_seeds placed along the emotional_arc."

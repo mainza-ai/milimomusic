@@ -3,6 +3,7 @@ import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Plus, Trash2, Music, Beaker, Rocket, Loader2, GraduationCap } from 'lucide-react';
 import { styleApi, type Style } from '../api';
+import { useModalA11y } from './ui/primitives';
 
 
 interface StyleManagerModalProps {
@@ -25,6 +26,8 @@ export const StyleManagerModal: React.FC<StyleManagerModalProps> = ({
     const [newStyleDesc, setNewStyleDesc] = useState('');
     const [isAdding, setIsAdding] = useState(false);
     const [error, setError] = useState<string | null>(null);
+    const panelRef = React.useRef<HTMLDivElement | null>(null);
+    useModalA11y(isOpen, onClose, panelRef);
 
     const officialStyles = styles.filter(s => s.type === 'official');
     const customStyles = styles.filter(s => s.type === 'custom' || s.type === 'trained');
@@ -112,6 +115,7 @@ export const StyleManagerModal: React.FC<StyleManagerModalProps> = ({
                                 initial={{ opacity: 0, scale: 0.95 }}
                                 animate={{ opacity: 1, scale: 1 }}
                                 exit={{ opacity: 0, scale: 0.95 }}
+                                ref={panelRef}
                                 className="bg-white/90 backdrop-blur-2xl rounded-xl border border-white/50 shadow-2xl w-full max-w-2xl overflow-hidden flex flex-col max-h-[80vh] glass-panel"
                             >
                                 {/* Header */}

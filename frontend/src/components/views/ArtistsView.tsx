@@ -13,6 +13,7 @@ import {
 } from '../../api';
 import { useValidatedForm } from '../../hooks/useValidatedForm';
 import { useAudioEngine } from '../../context/AudioEngineContext';
+import { Modal } from '../ui/primitives';
 
 const ROLES = ['world_builder', 'experiencer', 'songwriter', 'producer'];
 const ROLE_LABELS: Record<string, string> = {
@@ -510,29 +511,6 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
         }
     };
 
-    // ── Modal a11y (D2): focus trap + Escape for the create dialog ──────────
-    const createModalRef = useRef<HTMLDivElement | null>(null);
-    useEffect(() => {
-        if (!isCreateOpen) return;
-        const el = createModalRef.current;
-        if (!el) return;
-        const focusables = () => Array.from(
-            el.querySelectorAll<HTMLElement>('input, textarea, select, button, [href]'),
-        ).filter(f => !f.hasAttribute('disabled') && f.offsetParent !== null);
-        const handler = (e: KeyboardEvent) => {
-            if (e.key === 'Escape' && !createBusy) { setIsCreateOpen(false); return; }
-            if (e.key !== 'Tab') return;
-            const items = focusables();
-            if (items.length === 0) return;
-            const first = items[0];
-            const last = items[items.length - 1];
-            if (e.shiftKey && document.activeElement === first) { e.preventDefault(); last.focus(); }
-            else if (!e.shiftKey && document.activeElement === last) { e.preventDefault(); first.focus(); }
-        };
-        document.addEventListener('keydown', handler);
-        return () => document.removeEventListener('keydown', handler);
-    }, [isCreateOpen, createBusy]);
-
     // ── Experiencer run ────────────────────────────────────────────────────
     // Live stage text for experiencer runs via SSE run_progress events.
     // Filtered to THIS run's id — concurrent album/agent runs must not
@@ -845,13 +823,10 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                 )}
 
                 {/* Guided create stepper (A1): identity → bio → tags → cover */}
-                {isCreateOpen && (
-                    <div className="fixed inset-0 z-[110] bg-black/60 backdrop-blur-sm flex items-center justify-center p-4 animate-fade-in"
-                        role="dialog" aria-modal="true" aria-label="Create artist profile"
-                        onMouseDown={e => { if (e.target === e.currentTarget && !createBusy) setIsCreateOpen(false); }}>
-                        <div ref={createModalRef} className="w-full max-w-md rounded-3xl bg-white dark:bg-[#141620] border border-black/10 dark:border-white/10 shadow-apple-2xl p-6 space-y-4 animate-scale-up">
-                            <div className="flex items-center justify-between">
-                                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white">New Artist Profile</h3>
+                <Modal isOpen={isCreateOpen} onClose={() => { if (!createBusy) setIsCreateOpen(false); }}
+                    title="New Artist Profile" widthClass="max-w-md">
+                    <div className="p-6 space-y-4">
+                            <div className="flex items-center justify-end">
                                 <div className="flex items-center gap-1.5" aria-label={`Step ${createStep + 1} of 4`}>
                                     {[0, 1, 2, 3].map(i => (
                                         <span key={i} className={`w-1.5 h-1.5 rounded-full transition-colors ${i === createStep ? 'bg-teal-500 w-4' : i < createStep ? 'bg-teal-500/50' : 'bg-slate-300 dark:bg-slate-600'}`} />
@@ -985,9 +960,8 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                     </button>
                                 )}
                             </div>
-                        </div>
                     </div>
-                )}
+                </Modal>
             </div>
         );
     }

@@ -4,6 +4,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { X, Save, CheckCircle2, AlertCircle, RefreshCw, Key, Globe, Cpu } from 'lucide-react';
 import { type LLMConfig, api } from '../api';
 import { Combobox } from './ui/Combobox';
+import { useModalA11y } from './ui/primitives';
 
 interface LLMSettingsModalProps {
     isOpen: boolean;
@@ -24,6 +25,8 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
     const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
     const [availableModels, setAvailableModels] = useState<string[]>([]);
     const [isLoadingModels, setIsLoadingModels] = useState(false);
+    const panelRef = React.useRef<HTMLDivElement | null>(null);
+    useModalA11y(isOpen, onClose, panelRef);
 
     useEffect(() => {
         if (isOpen) {
@@ -162,6 +165,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                         initial={{ opacity: 0, scale: 0.95 }}
                         animate={{ opacity: 1, scale: 1 }}
                         exit={{ opacity: 0, scale: 0.95 }}
+                        ref={panelRef}
                         className="bg-white/95 dark:bg-[#141620]/95 rounded-3xl border border-black/[0.08] dark:border-white/10 shadow-apple-lg w-full max-w-4xl overflow-hidden flex flex-col max-h-[90vh] backdrop-blur-2xl"
                     >
                         {/* Header */}

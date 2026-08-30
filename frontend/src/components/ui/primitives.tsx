@@ -243,3 +243,53 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, widthClass
         document.body
     );
 };
+
+// ── useModalA11y ────────────────────────────────────────────────────────────
+// The a11y half of <Modal> as a hook, for modals whose shells are custom
+// (animations, max-height layouts, unusual widths): focus trap, Escape to
+// close, and focus restore on close. Adopt it — do not hand-roll another trap.
+export function useModalA11y(
+    isOpen: boolean,
+    onClose: () => void,
+    panelRef: React.RefObject<HTMLElement | null>,
+) {
+    const lastActiveRef = useRef<Element | null>(null);
+
+    useEffect(() => {
+        if (!isOpen) return;
+        lastActiveRef.current = document.activeElement;
+
+        const onKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape') {
+                e.stopPropagation();
+                onClose();
+                return;
+            }
+            if (e.key !== 'Tab' || !panelRef.current) return;
+            const focusables = Array.from(panelRef.current.querySelectorAll<HTMLElement>(FOCUSABLE))
+                .filter(el => !el.hasAttribute('disabled'));
+            if (focusables.length === 0) return;
+            const first = focusables[0];
+            const last = focusables[focusables.length - 1];
+            if (e.shiftKey && document.activeElement === first) {
+                e.preventDefault();
+                last.focus();
+            } else if (!e.shiftKey && document.activeElement === last) {
+                e.preventDefault();
+                first.focus();
+            }
+        };
+
+        document.addEventListener('keydown', onKeyDown, true);
+        requestAnimationFrame(() => {
+            const first = panelRef.current?.querySelector<HTMLElement>(FOCUSABLE);
+            first?.focus();
+        });
+        return () => {
+            document.removeEventListener('keydown', onKeyDown, true);
+            if (lastActiveRef.current instanceof HTMLElement) {
+                lastActiveRef.current.focus();
+            }
+        };
+    }, [isOpen, onClose, panelRef]);
+}

@@ -76,7 +76,7 @@ test.describe('Artist section', () => {
     await page.getByRole('button', { name: /create your first artist/i }).click();
 
     // Stepper: step 1 — identity; Next disabled until the name is valid
-    const dialog = page.getByRole('dialog', { name: /create artist profile/i });
+    const dialog = page.getByRole('dialog', { name: /new artist profile/i });
     await expect(dialog).toBeVisible();
     const next = dialog.getByRole('button', { name: 'Next' });
     await expect(next).toBeDisabled();
@@ -100,7 +100,7 @@ test.describe('Artist section', () => {
     await page.goto('/?view=artists');
     await page.getByRole('button', { name: /new artist/i }).click();
 
-    const dialog = page.getByRole('dialog', { name: /create artist profile/i });
+    const dialog = page.getByRole('dialog', { name: /new artist profile/i });
     await dialog.getByLabel(/artist name/i).fill('Nalo Rivers');
     await dialog.getByRole('button', { name: 'Next' }).click();
     await dialog.getByRole('button', { name: 'Next' }).click();

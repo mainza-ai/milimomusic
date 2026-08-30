@@ -1442,6 +1442,10 @@ def create_release(payload: ReleaseCreate):
         if not profile:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
         release = Release(profile_id=str(payload.profile_id), title=payload.title, description=payload.description)
+        # Persist the studio's vision so produce() reuses ITS seeds (track
+        # target honored) instead of re-imagining with the default count.
+        if payload.vision:
+            release.vision_json = json.dumps(payload.vision, default=str)
         session.add(release)
         session.commit()
         session.refresh(release)

@@ -634,8 +634,9 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                 profile_id: detail.profile.id,
                 title: vision.journey_title,
                 description: vision.concept_statement,
+                vision: vision as unknown as Record<string, unknown>,
             });
-            toast("Vision saved as a release.", "success");
+            toast('Vision saved as a release — producing it will use these exact seeds.', 'success');
             refreshDetail();
         } catch (e: any) {
             toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Could not save release'), 'error');

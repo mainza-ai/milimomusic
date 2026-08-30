@@ -2,7 +2,7 @@
 title: Milimo Music Wiki — Index
 type: index
 created: 2026-08-19
-updated: 2026-08-21
+updated: 2026-08-29
 ---
 
 # Milimo Music Wiki — Index
@@ -42,6 +42,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [AI Co-Writer](entities/ai-cowriter.md) — the multi-agent lyrics engine (Coordinator→Lyricist→StructureGuard).
 - [Producer Service](entities/producer-service.md) — LLM producer that enhances weak prompts + writes real lyrics; captions now come from the [Caption Rewriter](concepts/caption-rewriter.md).
 - [Training Studio](entities/training-studio.md) — fine-tune HeartMuLa on custom audio datasets (LoRA/full).
+- [Artist Crew Agents](entities/artist-crew-agents.md) — the four registered agents (Experiencer, World Builder, Stylist, Critic) and how they hook into the album pipeline.
 - [Repair Segment / Inpainting Service](entities/inpainting.md) — regenerate a time-range or glitch region.
 - [LLM Service & Providers](entities/llm-service.md) — OpenCode, OMLX, Ollama, OpenAI, Gemini, OpenRouter, DeepSeek, LM Studio.
 - [Backend & API](entities/backend-api.md) — FastAPI/SQLModel backend, Job/Project models, endpoints, SSE.
@@ -65,8 +66,9 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [AI Agent Foundation](concepts/agent-foundation.md) — LLM layer investigation + AgentRuntime proposal for multi-agent support.
 - [Artist Profiles & Album Agents](concepts/artist-profiles-vision.md) — the ultimate vision: per-project artist identities with assigned agent crews producing full albums.
 - [Album Orchestrator Plan](concepts/album-orchestrator-plan.md) — R1–R4 build plan: seed→song mapping, run lifecycle engine, gated album execution.
-- [Artist Production Gap Report](concepts/artist-production-gap-report.md) — evidence-based artist-domain audit (P0 integrity → P3 systemic) with phased production plan E–H.
-- [Artist Remaining Roadmap](concepts/artist-remaining-roadmap.md) — post-E–H plan: voice identity, World-Builder agent, indexed run lookups, playback/ordering/budget polish.
+- [Artist Production Gap Report](concepts/artist-production-gap-report.md) — evidence-based artist-domain audit; its E–H plan is fully shipped (status header inside).
+- [Artist Remaining Roadmap](concepts/artist-remaining-roadmap.md) — waves 1–3 shipped (voice identity, World-Builder, observability…); only LoRA links deferred.
+- [Artist Domain](concepts/artist-domain.md) — current state: data model, album pipeline with crew hooks, endpoints, frontend surface.
 
 ## Reports
 

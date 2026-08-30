@@ -1078,7 +1078,7 @@ export const profilesApi = {
         const res = await axios.put(`${API_BASE_URL}/profiles/${id}/assignments`, { assignments });
         return res.data.assignments;
     },
-    createRelease: async (body: { profile_id: string; title: string; description?: string; }): Promise<ReleaseT> => {
+    createRelease: async (body: { profile_id: string; title: string; description?: string; vision?: Record<string, unknown>; }): Promise<ReleaseT> => {
         const res = await axios.post(`${API_BASE_URL}/releases`, body);
         return res.data;
     },

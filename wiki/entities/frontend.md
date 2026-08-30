@@ -2,7 +2,7 @@
 title: Frontend
 type: entity
 created: 2026-08-19
-updated: 2026-08-21
+updated: 2026-08-29
 sources: [sources/readme.md, sources/v2-refactor-plan.md]
 tags: [frontend, react, vite, tailwind, ui, daw]
 aliases: [Web UI, Frontend app]
@@ -42,6 +42,13 @@ Suno-style **reference IA** plus a full web **DAW workspace**.
   stats, "Generate in this Project", "Add Existing Track", DAW open.
 - **MusicVideosView** — AI music-video studio (aesthetic presets, simulated storyboard,
   "WhisperX Aligned") — marked as "In Dev".
+- **ArtistsView** — the [artist domain](../concepts/artist-domain.md) front-end: guided
+  4-step create stepper, server-searched/paginated artist grid with stats, artist detail
+  (identity editor, singing-voice selector, world-lore editor + World-Builder generation,
+  crew management with model overrides, experiencer studio, releases with lifecycle chips +
+  art generation, tracklist with play/Studio/retry/reorder/review chips, run history with
+  aggregates), deep-links `?view=artists&id=`, run recovery on reload, honest toasts
+  throughout.
 - **ProfileView** — artist profile with badges (STUDIO MASTER, RVC/SVC, Note-Level
   Transcription), featured creations.
 

@@ -10,6 +10,14 @@ aliases: [artist profiles, album mode, creative flywheel]
 
 # Artist Profiles & Album Agents — The Ultimate Vision
 
+> [!NOTE] **Update (2026-08-29): most of this vision is now built.** Artist
+> profiles, agent crews (Experiencer/World-Builder/Stylist/Critic), lore canon,
+> voice identity, gated album production with resume/budget/retry, release
+> lifecycle and a full inspectable UI all ship — see the current state in
+> [Artist Domain](artist-domain.md) and the crew page
+> ([Artist Crew Agents](../entities/artist-crew-agents.md)). Still vision-only:
+> per-agent memory scoping, artist-file export, world_state tools.
+
 Owner-stated north star (2026-08-21): within a **Project**, the user creates
 **Artist Profiles** (unlimited). Each profile has **specific agents assigned**.
 The user then says *"create an entire album"* — and the assigned agents

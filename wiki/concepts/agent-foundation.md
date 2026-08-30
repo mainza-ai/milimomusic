@@ -19,6 +19,12 @@ aliases: [agent runtime, AgentRuntime, llm audit]
 > full suite green · live smoke verified failover (NVIDIA timeout → OMLX success).
 > Remaining below: streaming (G9), memory summarization beyond history window (G4),
 > world_state tools (G3), prompt registry formalization (G8).
+>
+> [!NOTE] **Update (2026-08-29): four agents live** — Experiencer, World Builder,
+> Stylist and Critic are registered ([Artist Crew Agents](../entities/artist-crew-agents.md));
+> ResiliencePolicy gained `chain_head` (per-artist crew overrides: assignment →
+> profile default → global) and RunContext gained `artist_lore` grounding.
+> See [Artist Domain](artist-domain.md).
 
 Investigation of the LLM configuration layer as the foundation for AI agents
 (songwriter, world builder, experiencer/critic…), feeding the larger vision in

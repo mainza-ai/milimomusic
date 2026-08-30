@@ -87,12 +87,12 @@ release status transitions, minimal progress UI.
 | R1 auth loop | DONE | axios interceptor · EventSource ?auth= · extraEventTypes |
 | R2a schema | DONE | Job.release_id/voice_profile_id fields + migration · bounded EventManager queues (512) · AgentRun orchestration cols (model+DB) · boot reconciliation |
 | R2b run lifecycle | DONE | RunRegistry cancels · /agents/runs/{id}/cancel+resume · BudgetState · strong-ref task spawning |
-| R2c frontend drawer | PARTIAL | ArtistsView subscribes run_progress (live stage text); full drawer pending |
-| R3 artist domain | PARTIAL | overrides verified live; role enum validation, Toasts, deep-links pending |
+| R2c frontend drawer | DONE | run banner w/ SSE+polling, review verdicts, retry/reorder/play in tracklist; run recovery on reload |
+| R3 artist domain | DONE | crew override chain live (assignment→profile→global); role enum, provider validation, toasts, deep-links, lore, voice identity — see [Artist Domain](artist-domain.md) |
 | R4 songwriter+album | **PROVEN E2E** | First complete agent-made track landed 2026-08-25: songwriter→generation(174s, hooked inference)→transcription→stems, release-linked, all artifacts. UI Produce button live. Remaining: autopilot full 5-seed album |
 | Lifecycle solidification | DONE | _abort_if_terminal ×3 pipeline checkpoints · provider orphan-audio discard · instance lock (PID lockfile) · shutdown reporting — see log 2026-08-25 |
 
-**Remaining:** full-album audio E2E on owner-run server · frontend Produce button + run drawer · R3 polish items · mlx_audio step-callback preemption (upstream).
+**Remaining:** full-album audio E2E on owner-run server (autopilot exists, gated+un-gated flows verified) · mlx_audio step-callback preemption (upstream). Everything else closed 2026-08-29 — see [Artist Domain](artist-domain.md).
 
 ## Related
 [Artist Profiles & Album Agents](artist-profiles-vision.md) · [Agent Foundation](agent-foundation.md)

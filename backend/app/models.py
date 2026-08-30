@@ -402,6 +402,7 @@ class ReleaseCreate(SQLModel):
     profile_id: str
     title: str
     description: str = ""
+    vision: Optional[dict] = None  # persist the ExperiencerVision the release was saved from (honors track_target on produce)
 
 
 class ReleaseUpdate(SQLModel):

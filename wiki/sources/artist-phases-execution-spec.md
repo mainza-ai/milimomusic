@@ -5,7 +5,9 @@ tags: [plan, artists, ui]
 created: 2026-08-26
 ---
 
-# Status: A-partial shipped (ce18b44, 519da6c) — remainder spec'd for mechanical execution
+# Status: SUPERSEDED (2026-08-29) — all A–D phases shipped and verified; see
+# [Artist Production Gap Report](../concepts/artist-production-gap-report.md) and
+# [Artist Remaining Roadmap](../concepts/artist-remaining-roadmap.md) for the live plans.
 
 ## Phase A rest
 A1 Guided create stepper: replace 3-input block (ArtistsView ~line 348) with 4-step

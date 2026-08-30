@@ -1,6 +1,6 @@
 import { toast } from '../../utils/toast';
 import { API_BASE_URL } from '../../api';
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import {
     Users, Plus, ArrowLeft, Trash2, Save, Loader2, Sparkles,
     Mic2, UserCog, Disc3, CheckCircle2, AlertTriangle, X, Copy, History
@@ -8,7 +8,7 @@ import {
 import {
     agentsApi, profilesApi, albumApi, coverApi, api, releaseApi, projectApi, styleApi, voiceApi,
     type ReleaseTracksT,
-    type AgentInfo, type ArtistProfileT, type ProfileStats, type AgentRunRow, type Project, type Style, type VoiceProfile,
+    type AgentInfo, type ArtistProfileT, type ProfileStats, type AgentRunRow, type Project, type Style, type VoiceProfile, type RunStats,
     type ProfileDetail, type ExperiencerVision, type AgentRunEnvelope
 } from '../../api';
 import { useValidatedForm } from '../../hooks/useValidatedForm';
@@ -165,19 +165,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     const expRunIdRef = useRef<string | null>(null);
 
     useEffect(() => {
-        (async () => {
-            setIsLoadingList(true);
-            try {
-                const data = await profilesApi.list({ withStats: true, limit: 200 });
-                setProfiles(data.profiles);
-                setStats(data.stats || {});
-            } catch (e: any) {
-                toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Could not load artists'), 'error');
-            } finally {
-                setIsLoadingList(false);
-            }
-            agentsApi.listAgents().then(setAgentsRegistry).catch(console.error);
-        })();
+        agentsApi.listAgents().then(setAgentsRegistry).catch(console.error);
     }, []);
 
     const openProfile = async (id: string) => {
@@ -192,7 +180,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
             setRunError('');
             albumRunIdRef.current = null;
             setAlbumRun(null);
-            // Run history (C5) + active-run recovery in one ledger fetch.
+            // Run history (C5) + aggregates (3D) + active-run recovery.
             agentsApi.listRuns(d.profile.id, 50).then(async ({ runs }) => {
                 setRunHistory(runs.slice(0, 10));
                 const active = envelope_active(runs);
@@ -210,6 +198,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                     message: 'Recovered an in-flight album run.',
                 });
             }).catch(console.error);
+            agentsApi.runStats(d.profile.id).then(setRunStats).catch(console.error);
         } finally {
             setIsDetailLoading(false);
         }
@@ -286,9 +275,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     const envelope_active = (runs: AgentRunRow[]) => runs.find(r => r.agent_name === 'album_orchestrator'
         && ['queued', 'running', 'awaiting_approval'].includes(r.status));
 
-    const refreshDetail = () => detail && openProfile(detail.profile.id);
-
-    const openCreateModal = () => {
+    const refreshDetail = () => detail && openProfile(detail.profile.id);    const openCreateModal = () => {
         setCreateStep(0);
         createForm.reset();
         setCreateProjectId('');
@@ -335,6 +322,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
             setCreateCoverPreview('');
             setCreateProjectId('');
             toast(`${p.name} created.`, 'success');
+            loadArtists({ page: 0, sortBy, q: debouncedSearch }); // new artist is newest — page 0
             openProfile(p.id);
         } catch (e: any) {
             toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Create failed'), 'error');
@@ -369,17 +357,43 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     const [search, setSearch] = useState('');
     const [sortBy, setSortBy] = useState<'activity' | 'name'>('activity');
     const [runHistory, setRunHistory] = useState<AgentRunRow[]>([]);
+    const [runStats, setRunStats] = useState<RunStats | null>(null);
+    // 3C: server-side search + pagination — the URL is the only truth for filtering
+    const PAGE_SIZE = 24;
+    const [page, setPage] = useState(0);
+    const [total, setTotal] = useState(0);
+    const [debouncedSearch, setDebouncedSearch] = useState('');
+    useEffect(() => {
+        const t = window.setTimeout(() => {
+            setDebouncedSearch(search);
+            setPage(0); // a new query restarts at the first page
+        }, 250);
+        return () => window.clearTimeout(t);
+    }, [search]);
 
-    const visibleProfiles = useMemo(() => {
-        const needle = search.toLowerCase();
-        const filtered = profiles.filter(p => (p.name + ' ' + p.tags + ' ' + p.bio).toLowerCase().includes(needle));
-        return [...filtered].sort((a, b) => {
-            if (sortBy === 'name') return a.name.localeCompare(b.name);
-            const la = stats[a.id]?.last_activity || a.updated_at || '';
-            const lb = stats[b.id]?.last_activity || b.updated_at || '';
-            return lb.localeCompare(la);
-        });
-    }, [profiles, search, sortBy, stats]);
+    const loadArtists = React.useCallback(async (opts: { page: number; sortBy: 'activity' | 'name'; q: string }) => {
+        setIsLoadingList(true);
+        try {
+            const data = await profilesApi.list({
+                withStats: true, limit: PAGE_SIZE, offset: opts.page * PAGE_SIZE,
+                q: opts.q || undefined,
+            });
+            setProfiles(data.profiles);
+            setStats(data.stats || {});
+            setTotal(data.total);
+            if (sortBy === 'name') data.profiles.sort((a, b) => a.name.localeCompare(b.name));
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Could not load artists'), 'error');
+        } finally {
+            setIsLoadingList(false);
+        }
+    }, [sortBy]);
+
+    useEffect(() => {
+        loadArtists({ page, sortBy, q: debouncedSearch });
+    }, [page, sortBy, debouncedSearch, loadArtists]);
+
+    const visibleProfiles = profiles; // server already filtered + paginated
 
     // ── Deep-link + URL truth (C6): the URL always reflects the open artist ──
     const syncArtistUrl = (profileId: string | null) => {
@@ -467,8 +481,9 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
         if (!window.confirm(`Delete artist "${detail.profile.name}"? Their crew is removed and album containers are deleted; finished tracks remain in Explore as standalone tracks.`)) return;
         try {
             await profilesApi.delete(detail.profile.id);
-            setProfiles(prev => prev.filter(p => p.id !== detail.profile.id));
             setDetail(null);
+            syncArtistUrl(null);
+            loadArtists({ page, sortBy, q: debouncedSearch }); // refetch current page
         } catch (e: any) {
             toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Delete failed'), 'error');
         }
@@ -750,6 +765,8 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                             </div>
                         ))}
                     </div>
+                ) : profiles.length === 0 && debouncedSearch ? (
+                    <p className="text-xs text-slate-500 italic py-8 text-center">No artists match “{debouncedSearch}”.</p>
                 ) : profiles.length === 0 ? (
                     <div className="py-20 text-center space-y-3">
                         <Users size={36} className="mx-auto text-slate-300 dark:text-slate-600" />
@@ -817,6 +834,19 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                         )}
                                     </button>
                                 ))}
+                            </div>
+                        )}
+                        {total > PAGE_SIZE && (
+                            <div className="flex items-center justify-between mt-4" aria-label="Artist pages">
+                                <span className="text-[10px] font-mono text-slate-400">
+                                    {page * PAGE_SIZE + 1}–{Math.min(total, (page + 1) * PAGE_SIZE)} of {total}
+                                </span>
+                                <div className="flex items-center gap-1.5">
+                                    <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
+                                        className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] disabled:opacity-40 transition-colors">Prev</button>
+                                    <button onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= total}
+                                        className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] disabled:opacity-40 transition-colors">Next</button>
+                                </div>
                             </div>
                         )}
                     </div>
@@ -1471,6 +1501,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                     {runHistory.length === 0 ? (
                         <p className="text-xs text-slate-500 italic py-2">No agent runs yet — visions and album production will appear here.</p>
                     ) : (
+                        <>
                         <div className="mt-3 space-y-1.5" role="list" aria-label="Agent run history">
                             {runHistory.map(r => (
                                 <div key={r.id} role="listitem" className="flex items-center justify-between gap-2 px-2.5 py-1.5 rounded-lg bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/5">
@@ -1489,6 +1520,24 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                 </div>
                             ))}
                         </div>
+                        {runStats && runStats.total > 0 && (
+                            <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[9px] font-mono text-slate-400" aria-label="Run aggregates">
+                                <span>{runStats.total} runs</span>
+                                {runStats.success_rate != null && (
+                                    <span>· {Math.round(runStats.success_rate * 100)}% success</span>
+                                )}
+                                {runStats.latency_ms.p50 != null && (
+                                    <span>· p50 {(runStats.latency_ms.p50 / 1000).toFixed(1)}s</span>
+                                )}
+                                {runStats.latency_ms.p95 != null && (
+                                    <span>· p95 {(runStats.latency_ms.p95 / 1000).toFixed(1)}s</span>
+                                )}
+                                {runStats.tokens_out > 0 && (
+                                    <span>· {runStats.tokens_out.toLocaleString()} out-tokens</span>
+                                )}
+                            </div>
+                        )}
+                        </>
                     )}
                 </details>
             </section>

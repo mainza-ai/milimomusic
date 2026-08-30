@@ -10,15 +10,11 @@ aliases: [remaining roadmap, artist next phases]
 
 # Artist Domain — Remaining Roadmap
 
-> [!NOTE] **Status: Waves 1+2 shipped (2026-08-29, commits `9a6af51`, `27cb5b3`).**
-> Done: C2 indexed run lookups, A3 lore→songwriter, A1 voice identity, A2 World-Builder
-> agent + lore generation, D1 workspace.spec fix, B1 playback, B2 track ordering,
-> B3 budget caps, B4 live release chips, A4 cover generation, C3 ledger retention.
-> **Remaining: Wave 3 / conditional only** — stylist+critic agents, shared Modal
-> primitive, pagination UI + server-side search, run observability, ops docs.
-> **A6 (LoRA checkpoint links) is DEFERRED by owner decision** — HeartMuLa is
-> legacy-only and not part of the current stack; revisit only if HeartMuLa
-> sampling returns.
+> [!NOTE] **Status: COMPLETE (2026-08-29).** Waves 1+2 (`9a6af51`, `27cb5b3`) and
+> Wave 3 (3A stylist+critic crew, 3B modal a11y adoption, 3C server search+pager,
+> 3D run observability, 3E ops docs) all shipped. **A6 LoRA links remain DEFERRED
+> by owner decision** (HeartMuLa legacy-only). The artist domain has no other
+> open items; future work belongs to the broader product roadmap.
 
 Everything still open after Phases E–H shipped (commits `80f6eda`, `c27420c`, `a9f0136`).
 Verified against code 2026-08-29. Ordered P1 → P3; each phase has an exit gate.

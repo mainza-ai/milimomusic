@@ -953,6 +953,58 @@ def list_agent_runs(profile_id: str = None, limit: int = 50, offset: int = 0):
         ], "total": int(total[0]) if isinstance(total, Sequence) else int(total)}
 
 
+@app.get("/agents/runs/stats")
+def agent_run_stats(profile_id: str = None, window_days: int = 0):
+    """Aggregates over the newest runs (same scope as the ledger list, capped
+    at 500). latency percentiles computed in Python — SQLite has no percentile."""
+    with Session(engine) as session:
+        q = select(AgentRun)
+        if profile_id:
+            q = q.where(AgentRun.profile_id == profile_id)
+        rows = session.exec(q.order_by(AgentRun.created_at.desc()).limit(500)).all()
+        if window_days and window_days > 0:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+
+            def _ts(r: AgentRun):
+                try:
+                    d = r.created_at if isinstance(r.created_at, datetime) else datetime.fromisoformat(str(r.created_at))
+                    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+                except (ValueError, TypeError):
+                    return None
+            rows = [r for r in rows if (_ts(r) is None or _ts(r) >= cutoff)]
+
+        def _pct(vals: List[int], p: float):
+            if not vals:
+                return None
+            s = sorted(vals)
+            return s[min(len(s) - 1, int(p * len(s)))]
+
+        statuses: Dict[str, int] = {}
+        for r in rows:
+            statuses[r.status] = statuses.get(r.status, 0) + 1
+        total = len(rows)
+        succeeded = statuses.get("succeeded", 0)
+        latencies = [int(r.latency_ms) for r in rows if r.latency_ms]
+        by_agent: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            a = by_agent.setdefault(r.agent_name, {"count": 0, "succeeded": 0, "failed": 0, "tokens_out": 0})
+            a["count"] += 1
+            if r.status == "succeeded":
+                a["succeeded"] += 1
+            if r.status == "failed":
+                a["failed"] += 1
+            a["tokens_out"] += r.tokens_out or 0
+        return {
+            "total": total,
+            "statuses": statuses,
+            "success_rate": round(succeeded / total, 3) if total else None,
+            "latency_ms": {"p50": _pct(latencies, 0.5), "p95": _pct(latencies, 0.95)},
+            "tokens_in": sum(r.tokens_in or 0 for r in rows),
+            "tokens_out": sum(r.tokens_out or 0 for r in rows),
+            "by_agent": by_agent,
+        }
+
+
 @app.get("/agents/runs/{run_id}")
 def get_agent_run(run_id: UUID):
     with Session(engine) as session:
@@ -1092,13 +1144,23 @@ def list_artist_profiles(
     with_stats: int = 0,
     limit: int = 100,
     offset: int = 0,
+    q: Optional[str] = None,
 ):
     """List artist profiles. `with_stats=1` adds per-profile crew/release counts
-    and last-activity (the artist grid renders them without N detail fetches)."""
+    and last-activity (the artist grid renders them without N detail fetches).
+    `q` is a server-side text filter (name/bio/tags, case-insensitive) so
+    search stays correct while paged."""
     with Session(engine) as session:
         stmt = select(ArtistProfile)
         if project_id:
             stmt = stmt.where(ArtistProfile.project_id == project_id)
+        if q and q.strip():
+            needle = f"%{q.strip().lower()}%"
+            stmt = stmt.where(or_(
+                func.lower(ArtistProfile.name).like(needle),
+                func.lower(ArtistProfile.bio).like(needle),
+                func.lower(ArtistProfile.tags).like(needle),
+            ))
         total = session.exec(select(func.count()).select_from(stmt.subquery())).one()
         profiles = session.exec(
             stmt.order_by(ArtistProfile.created_at.desc())

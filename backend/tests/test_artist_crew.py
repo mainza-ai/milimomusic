@@ -280,3 +280,36 @@ def test_tracklist_joins_critic_review(client, artist_fixture):
     row = next(t for t in data["tracks"] if t["id"] == job_id)
     assert row["review"]["verdict"] == "concern"
     assert row["review"]["notes"] == "second verse drifts"
+
+
+# ---------------------------------------------------------------- 3D: run observability
+
+def test_run_stats_aggregation(client, artist_fixture):
+    from datetime import datetime, timedelta, timezone as tz
+    from app.main import engine as app_engine
+
+    pid = artist_fixture["profile_id"]
+    old = datetime.now(tz.utc) - timedelta(days=5)
+    with Session(app_engine) as session:
+        session.add(AgentRun(agent_name="experiencer", status="succeeded", profile_id=pid,
+                             tokens_in=100, tokens_out=200, latency_ms=4000))
+        session.add(AgentRun(agent_name="experiencer", status="failed", profile_id=pid,
+                             tokens_in=50, tokens_out=0, latency_ms=12000))
+        session.add(AgentRun(agent_name="world_builder", status="succeeded", profile_id=pid,
+                             tokens_in=80, tokens_out=300, latency_ms=6000))
+        session.commit()
+
+    data = client.get(f"/agents/runs/stats?profile_id={pid}").json()
+    assert data["total"] == 3
+    assert data["statuses"]["succeeded"] == 2
+    assert data["statuses"]["failed"] == 1
+    assert data["success_rate"] == 0.667
+    assert data["latency_ms"]["p50"] == 6000
+    assert data["latency_ms"]["p95"] == 12000
+    assert data["tokens_out"] == 500
+    assert data["by_agent"]["experiencer"]["count"] == 2
+    assert data["by_agent"]["world_builder"]["tokens_out"] == 300
+
+    # window filter drops nothing here (all within 30d), but must not error
+    data_w = client.get(f"/agents/runs/stats?profile_id={pid}&window_days=1").json()
+    assert "total" in data_w

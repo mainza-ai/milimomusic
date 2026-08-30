@@ -971,6 +971,12 @@ export const agentsApi = {
         });
         return res.data;
     },
+    runStats: async (profileId?: string): Promise<RunStats> => {
+        const res = await axios.get(`${API_BASE_URL}/agents/runs/stats`, {
+            params: { ...(profileId ? { profile_id: profileId } : {}) },
+        });
+        return res.data;
+    },
 };
 
 export interface TrackReview { verdict: 'pass' | 'revise' | 'concern' | 'unavailable'; score?: number | null; notes?: string; contradictions?: string[]; }
@@ -997,6 +1003,16 @@ export interface AgentRunRow {
 
 export interface ProfileStats { crew_count: number; release_count: number; last_activity: string | null; }
 
+export interface RunStats {
+    total: number;
+    statuses: Record<string, number>;
+    success_rate: number | null;
+    latency_ms: { p50: number | null; p95: number | null };
+    tokens_in: number;
+    tokens_out: number;
+    by_agent: Record<string, { count: number; succeeded: number; failed: number; tokens_out: number }>;
+}
+
 export const albumApi = {
     produce: async (releaseId: string, autopilot: boolean, opts?: { budget?: { deadline_s?: number }; crew?: { stylist?: boolean; critic?: boolean } }): Promise<{ run_id: string; status: string; autopilot: boolean }> => {
         const res = await axios.post(`${API_BASE_URL}/releases/${releaseId}/produce`, {
@@ -1021,12 +1037,13 @@ export const albumApi = {
 };
 
 export const profilesApi = {
-    list: async (opts?: { projectId?: string; withStats?: boolean; limit?: number; offset?: number }): Promise<{ profiles: ArtistProfileT[]; total: number; stats?: Record<string, ProfileStats> }> => {
+    list: async (opts?: { projectId?: string; withStats?: boolean; limit?: number; offset?: number; q?: string }): Promise<{ profiles: ArtistProfileT[]; total: number; stats?: Record<string, ProfileStats> }> => {
         const params: Record<string, unknown> = {};
         if (opts?.projectId) params.project_id = opts.projectId;
         if (opts?.withStats) params.with_stats = 1;
         if (opts?.limit) params.limit = opts.limit;
         if (opts?.offset) params.offset = opts.offset;
+        if (opts?.q) params.q = opts.q;
         const res = await axios.get(`${API_BASE_URL}/profiles`, { params });
         return res.data;
     },

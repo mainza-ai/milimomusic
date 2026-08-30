@@ -976,3 +976,20 @@ artists list (client-side search breaks once paged). 3D run observability
 (stats endpoint + panel footer, p50/p95 in Python). 3E ops docs — instance lock
 already hard-fails multi-instance boots (MILIMO_ALLOW_MULTI_INSTANCE escape);
 document all MILIMO_* env vars + WAL backup guidance. Budget ≈6–7.5d.
+
+## [2026-08-29] create | Wave 3 shipped — artist domain roadmap complete
+3A stylist+critic crew: registered agents (tag curation pre-caption; pre-
+generation review pass/revise/concern), opt-in crew flags on produce
+(default off), bounded revision (exactly one round + one re-review),
+graceful degradation on crew LLM failure, verdicts persisted in the album
+cursor and joined onto tracklist rows, UI checkboxes + verdict chips.
+3B modal a11y: useModalA11y hook adopted by LLMSettings/Inpaint/Paths/
+StyleManager modals; ArtistsView create dialog fully on <Modal>. 3C
+server-side q search (name/bio/tags) + real pagination (24/page, N–M of T
+pager, debounced query, honest miss-vs-empty distinction). 3D run
+observability: /agents/runs/stats (status counts, success rate, p50/p95,
+tokens, per-agent) + run-history footer. 3E ops docs: README Operations
+section (instance lock, env reference, WAL backup guidance);
+artist-phases-execution-spec marked superseded. Verification: 167 backend
+tests, 9/9 playwright, tsc + build green. Commits: 06d6877 (3A),
+dc359f5 (3B), Wave-3-close commit.

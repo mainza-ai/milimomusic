@@ -36,7 +36,12 @@ async function mockApi(page: import('@playwright/test').Page) {
   await page.route(`${API}/styles`, r => r.fulfill({ json: { styles: [] } }));
   await page.route(`${API}/agents`, r => r.fulfill({ json: { agents: [] } }));
   await page.route(`${API}/agents/runs*`, r => r.fulfill({ json: { runs: [], total: 0 } }));
-  await page.route(`${API}/profiles?*`, r => r.fulfill({ json: { profiles: [profile], total: 1, stats: { p1: { crew_count: 2, release_count: 1, last_activity: now } } } }));
+  await page.route(`${API}/profiles?*`, r => {
+    const url = new URL(r.request().url());
+    const q = url.searchParams.get('q');
+    if (q) return r.fulfill({ json: { profiles: [], total: 0 } });
+    return r.fulfill({ json: { profiles: [profile], total: 1, stats: { p1: { crew_count: 2, release_count: 1, last_activity: now } } } });
+  });
   await page.route(`${API}/profiles`, r => r.fulfill({ json: { profiles: [profile], total: 1, stats: { p1: { crew_count: 2, release_count: 1, last_activity: now } } } }));
   await page.route(`${API}/profiles/p1`, r => r.fulfill({ json: profileDetail }));
   await page.route(`${API}/releases/r1/tracks`, r => r.fulfill({
@@ -152,7 +157,7 @@ test.describe('Artist section', () => {
     await expect(page.getByText(/artist identity image updated/i)).toBeVisible();
   });
 
-  test('list cards render stats and search filters client-side', async ({ page }) => {
+  test('list cards render stats and search queries the server', async ({ page }) => {
     await mockApi(page);
     await page.goto('/?view=artists');
     await expect(page.getByText('2 crew')).toBeVisible();

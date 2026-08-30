@@ -146,6 +146,33 @@ npm run dev
 
 ---
 
+## 🔧 Operations
+
+### Single-instance lock
+The backend refuses to boot when another live instance already holds the lock
+(GPU, SQLite WAL, and boot reconciliation must never be shared):
+
+- Stale locks (dead PID) are detected and reclaimed after a 30 s grace period.
+- Escape hatch for CI/sandboxes: `MILIMO_ALLOW_MULTI_INSTANCE=1` (you accept
+  GPU/DB contention — do not use in production).
+- Lock file location: `MILIMO_LOCK_FILE` (default `.milimo.lock`).
+
+### Environment reference
+| Variable | Default | Purpose |
+|---|---|---|
+| `MILIMO_AUTH_TOKEN` | unset (open localhost) | Optional bearer-token auth for the API |
+| `MILIMO_CORS_ORIGINS` | localhost allowlist | Explicit CORS origin list |
+| `MILIMO_AGENT_TIMEOUT` | `60` | Per-attempt ceiling (s) for agent LLM calls |
+| `MILIMO_RUN_RETENTION_DAYS` | `30` | Agent-ledger retention sweep at boot (`0` disables) |
+| `MILIMO_MAX_DURATION_S` | `240` | Hard cap on generated track duration (s) |
+| `MILIMO_LOCK_FILE` | `.milimo.lock` | Instance-lock file path |
+| `MILIMO_ALLOW_MULTI_INSTANCE` | unset | Set to `1` to bypass the boot lock |
+
+### Backing up the database
+SQLite runs in WAL mode. Never copy the `jobs.db`/`-wal`/`-shm` trio while the
+server is live — stop the server first, or take a consistent snapshot with:
+`sqlite3 jobs.db "VACUUM INTO 'backup.db';"`
+
 ## ⌨️ Pro Media Transport Hotkeys
 
 | Hotkey | Action |

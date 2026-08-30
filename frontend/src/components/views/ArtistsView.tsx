@@ -12,6 +12,7 @@ import {
     type ProfileDetail, type ExperiencerVision, type AgentRunEnvelope
 } from '../../api';
 import { useValidatedForm } from '../../hooks/useValidatedForm';
+import { useAudioEngine } from '../../context/AudioEngineContext';
 
 const ROLES = ['world_builder', 'experiencer', 'songwriter', 'producer'];
 const ROLE_LABELS: Record<string, string> = {
@@ -106,10 +107,13 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     const [albumRun, setAlbumRun] = useState<AlbumRunState | null>(null);
     const albumRunIdRef = useRef<string | null>(null);
     const [autopilot, setAutopilot] = useState(false);
+    // B3: wall-clock budget cap handed to the orchestrator (off = uncapped)
+    const [budgetMin, setBudgetMin] = useState<'off' | '15' | '30' | '60'>('off');
 
     const startAlbum = async (releaseId: string, title: string) => {
         try {
-            const res = await albumApi.produce(releaseId, autopilot);
+            const budget = budgetMin === 'off' ? undefined : { deadline_s: Number(budgetMin) * 60 };
+            const res = await albumApi.produce(releaseId, autopilot, budget);
             albumRunIdRef.current = res.run_id;
             setAlbumRun({ runId: res.run_id, releaseTitle: title, status: 'queued', progress: 0, message: 'Imagining the journey…' });
         } catch (e: any) {
@@ -204,6 +208,46 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
         }
     };
 
+    // A4: cover art generation from lore/tags — procedural covers endpoint.
+    const [coverGenBusy, setCoverGenBusy] = useState<'profile' | string | null>(null);
+    const generateCover = async (target: 'profile' | string) => {
+        if (!detail) return;
+        setCoverGenBusy(target);
+        try {
+            let prompt: string;
+            if (target === 'profile') {
+                let loreBits = '';
+                try {
+                    const lore = JSON.parse(detail.profile.lore_json || '{}');
+                    loreBits = [lore.era_setting, lore.appearance].filter(Boolean).join(', ');
+                } catch { /* raw/freeform lore — not usable as a structured prompt */ }
+                prompt = `High-end artistic album cover art for the artist '${detail.profile.name}'`
+                    + (loreBits ? `, ${loreBits}` : '')
+                    + (detail.profile.tags ? `, style: ${detail.profile.tags}` : '')
+                    + ', minimalist, cinematic lighting, modern abstract aesthetics, award-winning graphic design';
+            } else {
+                const rel = detail.releases.find(r => r.id === target);
+                prompt = `High-end artistic album cover art for the release '${rel?.title || 'Untitled'}', by ${detail.profile.name}`
+                    + (detail.profile.tags ? `, style: ${detail.profile.tags}` : '')
+                    + ', minimalist, cinematic lighting, modern abstract aesthetics, award-winning graphic design';
+            }
+            const { url } = await coverApi.generateCoverImage({ prompt });
+            if (target === 'profile') {
+                const updated = await profilesApi.setCover(detail.profile.id, url);
+                setDetail({ ...detail, profile: updated });
+                setProfiles(prev => prev.map(p => p.id === updated.id ? updated : p));
+            } else {
+                const updated = await releaseApi.update(target, { cover_image_path: url });
+                setDetail(d => d ? { ...d, releases: d.releases.map(r => r.id === target ? updated : r) } : d);
+            }
+            toast('Cover art generated.', 'success');
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Cover generation failed'), 'error');
+        } finally {
+            setCoverGenBusy(null);
+        }
+    };
+
     /** Hand the finished track to the main studio (full player + DAW view). */
     const openInStudio = (jobId: string) => {
         try {
@@ -213,6 +257,22 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
             window.history.pushState({ view: 'track-detail', trackId: jobId }, '', url.toString());
             window.dispatchEvent(new PopStateEvent('popstate'));
         } catch { /* deep-link best effort */ }
+    };
+
+    // B1: in-app playback — route the track through the global audio engine.
+    const { playTrack } = useAudioEngine();
+    const [playFetchingId, setPlayFetchingId] = useState<string | null>(null);
+    const playFromTracklist = async (jobId: string) => {
+        setPlayFetchingId(jobId);
+        try {
+            const job = await api.getJobStatus(jobId);
+            if (job.audio_path) await playTrack(job);
+            else toast('This track has no audio yet.', 'error');
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Playback failed'), 'error');
+        } finally {
+            setPlayFetchingId(null);
+        }
     };
 
     /** The album run a reload should reattach to, if any. */
@@ -283,6 +343,21 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
         setOpenTracks(rid); setTracks(null);
         try { setTracks(await profilesApi.getReleaseTracks(rid)); }
         catch (e: any) { toast(String(e?.response?.data?.detail?.error?.message || 'Failed to load tracks'), 'error'); }
+    };
+    // B2: curate the tracklist order (optimistic move, honest revert on failure)
+    const moveTrack = async (index: number, dir: -1 | 1) => {
+        if (!tracks || !openTracks) return;
+        const arr = [...tracks.tracks];
+        const j = index + dir;
+        if (j < 0 || j >= arr.length) return;
+        [arr[index], arr[j]] = [arr[j], arr[index]];
+        setTracks({ ...tracks, tracks: arr });
+        try {
+            await releaseApi.setTrackOrder(openTracks, arr.map(t => t.id));
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Reorder failed'), 'error');
+            try { setTracks(await profilesApi.getReleaseTracks(openTracks)); } catch { /* keep optimistic view */ }
+        }
     };
     const [search, setSearch] = useState('');
     const [sortBy, setSortBy] = useState<'activity' | 'name'>('activity');
@@ -495,6 +570,19 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
         }, 5000);
         return () => clearInterval(t);
     }, [albumActive, albumRun?.runId]);
+
+    // B4: while a run is live, keep release rows honest (planned → in_progress → completed)
+    useEffect(() => {
+        if (!albumActive || !detail) return;
+        const pid = detail.profile.id;
+        const t = setInterval(async () => {
+            try {
+                const data = await releaseApi.list(pid);
+                setDetail(d => d ? { ...d, releases: data.releases } : d);
+            } catch { /* transient poll error — next tick retries */ }
+        }, 8000);
+        return () => clearInterval(t);
+    }, [albumActive, detail?.profile.id]);
 
     const startRunTimer = () => {
         setElapsed(0);
@@ -938,6 +1026,11 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                         <input type="file" accept="image/*" className="hidden" disabled={coverBusy}
                             onChange={e => { const f = e.target.files?.[0]; if (f) uploadCover(f); }} />
                     </label>
+                    <button onClick={() => generateCover('profile')} disabled={coverGenBusy !== null}
+                        className="text-[10px] font-bold px-2 py-1.5 rounded-lg bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 hover:bg-fuchsia-500 hover:text-slate-950 disabled:opacity-50 transition-colors"
+                        title="Generate identity art from this artist's lore and tags">
+                        {coverGenBusy === 'profile' ? 'Imagining…' : 'Generate art'}
+                    </button>
                 </div>
                 <input value={identityForm.values.name} onChange={e => identityForm.setField('name', e.target.value)}
                     onBlur={() => identityForm.markTouched('name')}
@@ -1238,6 +1331,16 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                         className="accent-teal-500 w-3 h-3" aria-label="Autopilot mode" />
                     Autopilot — produce every track without approval pauses (burns budget faster on failure)
                 </label>
+                <label className="flex items-center gap-2 text-[10px] font-mono text-slate-500 dark:text-slate-400 select-none">
+                    Budget cap
+                    <select value={budgetMin} onChange={e => setBudgetMin(e.target.value as 'off' | '15' | '30' | '60')}
+                        className="apple-input !py-1 !px-2 text-[10px] font-mono w-auto" aria-label="Budget cap">
+                        <option value="off">off</option>
+                        <option value="15">15 min</option>
+                        <option value="30">30 min</option>
+                        <option value="60">60 min</option>
+                    </select>
+                </label>
                 {detail.releases.length === 0 ? (
                     <p className="text-xs text-slate-500 italic py-1">No releases yet.</p>
                 ) : detail.releases.map(r => (
@@ -1258,13 +1361,21 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                             </div>
                         ) : (
                             <>
-                                <div className="min-w-0">
-                                    <span className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">{r.title}</span>
-                                    {r.status !== 'planned' && (
-                                        <span className={`ml-2 text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full ${r.status === 'completed' ? 'bg-emerald-500/15 text-emerald-600' : 'bg-sky-500/15 text-sky-600 dark:text-sky-300'}`}>{r.status}</span>
+                                <div className="flex items-center gap-2 min-w-0">
+                                    {r.cover_image_path && (
+                                        <img src={`${API_BASE_URL}${r.cover_image_path}`} alt="" className="w-8 h-8 rounded-lg object-cover border border-black/10 dark:border-white/10" />
                                     )}
+                                    <div className="min-w-0">
+                                        <span className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">{r.title}</span>
+                                        {r.status !== 'planned' && (
+                                            <span className={`ml-2 text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full ${r.status === 'completed' ? 'bg-emerald-500/15 text-emerald-600' : 'bg-sky-500/15 text-sky-600 dark:text-sky-300'}`}>{r.status}</span>
+                                        )}
+                                    </div>
                                 </div>
                                 <div className="flex items-center gap-1.5 shrink-0">
+                                    <button onClick={() => generateCover(r.id)} disabled={coverGenBusy !== null}
+                                        className="text-[10px] font-bold px-2 py-1 rounded-lg bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 hover:bg-fuchsia-500 hover:text-slate-950 disabled:opacity-50 transition-colors"
+                                        title="Generate release artwork">{coverGenBusy === r.id ? 'Imagining…' : 'Art'}</button>
                                     <button onClick={() => { setEditReleaseId(r.id); setEditReleaseTitle(r.title); setEditReleaseDesc(r.description || ''); }}
                                         className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-500 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
                                         title="Rename release" aria-label={`Rename ${r.title}`}>Edit</button>
@@ -1295,7 +1406,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                         <span className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full ${tracks.rollup === 'completed' ? 'bg-emerald-500/15 text-emerald-600' : tracks.rollup === 'partial' ? 'bg-amber-500/15 text-amber-600' : 'bg-black/[0.04] dark:bg-white/5 text-slate-500'}`}>{tracks.rollup}</span>
                                     </div>
                                 </div>
-                                {tracks.tracks.map(tr => (
+                                {tracks.tracks.map((tr, idx) => (
                                     <div key={tr.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-white/60 dark:bg-white/[0.04] border border-black/[0.04] dark:border-white/5">
                                         <div className="min-w-0">
                                             <p className="text-[11px] font-bold text-slate-800 dark:text-slate-100 truncate">{tr.title || '(untitled)'}</p>
@@ -1304,6 +1415,16 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                             </p>
                                         </div>
                                         <div className="flex items-center gap-1 shrink-0">
+                                            {tracks.tracks.length > 1 && (
+                                                <span className="flex flex-col -space-y-1 mr-0.5">
+                                                    <button onClick={() => moveTrack(idx, -1)} disabled={idx === 0}
+                                                        className="text-slate-400 hover:text-teal-600 disabled:opacity-30 transition-colors"
+                                                        title="Move up" aria-label={`Move ${tr.title || 'track'} up`}>▴</button>
+                                                    <button onClick={() => moveTrack(idx, 1)} disabled={idx === tracks.tracks.length - 1}
+                                                        className="text-slate-400 hover:text-teal-600 disabled:opacity-30 transition-colors"
+                                                        title="Move down" aria-label={`Move ${tr.title || 'track'} down`}>▾</button>
+                                                </span>
+                                            )}
                                             {(['audio', 'midi', 'musicxml', 'stems', 'mastered'] as const).map(k =>
                                                 tr.artifacts?.[k] ? (
                                                     <a key={k} href={`${API_BASE_URL}${tr.artifacts[k]}`} target="_blank" rel="noreferrer"
@@ -1314,6 +1435,13 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                                 <button onClick={() => retryTrack(openTracks, tr.id, tr.title || 'Track')}
                                                     className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 hover:bg-amber-500 hover:text-slate-950 transition-colors"
                                                     title="Reproduce this track from its seed">Retry</button>
+                                            )}
+                                            {tr.status === 'completed' && (
+                                                <button onClick={() => playFromTracklist(tr.id)} disabled={playFetchingId === tr.id}
+                                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500 hover:text-slate-950 disabled:opacity-50 transition-colors"
+                                                    title="Play through the studio player">
+                                                    {playFetchingId === tr.id ? '…' : '▶ Play'}
+                                                </button>
                                             )}
                                             {tr.status === 'completed' && (
                                                 <button onClick={() => openInStudio(tr.id)}

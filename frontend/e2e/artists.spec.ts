@@ -41,8 +41,21 @@ async function mockApi(page: import('@playwright/test').Page) {
   await page.route(`${API}/profiles/p1`, r => r.fulfill({ json: profileDetail }));
   await page.route(`${API}/releases/r1/tracks`, r => r.fulfill({
     json: {
-      release_id: 'r1', title: 'First Light', status: 'planned', rollup: 'pending',
-      tracks: [], succeeded: 0, total: 0,
+      release_id: 'r1', title: 'First Light', status: 'in_progress', rollup: 'partial',
+      tracks: [
+        {
+          id: 'j1', title: 'Side A', status: 'completed', duration_ms: 120000,
+          seed: 42, seed_slot: 0,
+          artifacts: { audio: '/audio/j1.wav', midi: null, musicxml: null, stems: null, mastered: null },
+          used_real_inference: true, created_at: now,
+        },
+        {
+          id: 'j2', title: 'Side B', status: 'failed', duration_ms: 0,
+          seed: null, seed_slot: 1,
+          artifacts: { audio: null, midi: null, musicxml: null, stems: null, mastered: null },
+          used_real_inference: false, created_at: now,
+        },
+      ], succeeded: 1, total: 2,
     },
   }));
   await page.route(`${API}/upload/image`, r => r.fulfill({ json: { url: '/image/test-cover.png', filename: 'test-cover.png' } }));
@@ -100,6 +113,9 @@ test.describe('Artist section', () => {
 
   test('detail shows release rows with gated produce and autopilot off by default', async ({ page }) => {
     await mockApi(page);
+    await page.route(`${API}/jobs/j1`, r => r.fulfill({
+      json: { id: 'j1', audio_path: '/audio/j1.wav', title: 'Side A', status: 'completed' },
+    }));
     await page.goto('/?view=artists&id=p1');
 
     // Deep-link landed on the artist
@@ -110,6 +126,17 @@ test.describe('Artist section', () => {
     const autopilot = page.getByLabel(/autopilot mode/i);
     await expect(autopilot).toBeVisible();
     await expect(autopilot).not.toBeChecked();
+    // Budget cap selector ships with the produce controls
+    await expect(page.getByLabel(/budget cap/i)).toBeVisible();
+
+    // Tracklist: completed row offers playback + studio handoff, failed row offers retry
+    await page.getByRole('button', { name: 'Tracks', exact: true }).first().click();
+    await expect(page.getByRole('button', { name: '▶ Play' })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Studio', exact: true })).toBeVisible();
+    await expect(page.getByRole('button', { name: 'Retry', exact: true })).toBeVisible();
+    // Reorder controls
+    await expect(page.getByRole('button', { name: /move side a up/i })).toBeDisabled();
+    await expect(page.getByRole('button', { name: /move side a down/i })).toBeEnabled();
   });
 
   test('cover upload flows through upload → setCover and renders', async ({ page }) => {

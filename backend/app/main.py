@@ -15,7 +15,7 @@ import time
 import shutil
 import threading
 import uuid
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 
 logging.basicConfig(
@@ -205,6 +205,19 @@ def create_db_and_tables():
         ))
         session.exec(text("CREATE INDEX IF NOT EXISTS ix_agentrun_release_id ON agentrun (release_id)"))
 
+        # Automatic Migration for release table (curation columns)
+        existing_rel_cols = {row[1] for row in session.exec(text("PRAGMA table_info(release);")).all()}
+        release_columns = {
+            "track_order_json": "TEXT DEFAULT '[]'",
+            "cover_image_path": "VARCHAR",
+        }
+        for col, col_type in release_columns.items():
+            if col not in existing_rel_cols:
+                try:
+                    session.exec(text(f"ALTER TABLE release ADD COLUMN {col} {col_type};"))
+                except Exception as e:
+                    print(f"Migration notice for release.{col}: {e}")
+
         # Automatic Migration for artistprofile table (identity columns)
         existing_prof_cols = {row[1] for row in session.exec(text("PRAGMA table_info(artistprofile);")).all()}
         profile_columns = {
@@ -268,6 +281,14 @@ async def lifespan(app: FastAPI):
     create_db_and_tables()
     reconcile_orphan_jobs()
     reconcile_orphan_agent_runs()
+    try:
+        _retention_days = int(os.environ.get("MILIMO_RUN_RETENTION_DAYS", "30"))
+    except ValueError:
+        _retention_days = 30
+    if _retention_days > 0:
+        pruned = prune_agent_runs(_retention_days)
+        if pruned:
+            logger.info(f"Ledger retention: pruned {pruned} run(s) older than {_retention_days}d.")
     await music_service.initialize()
     yield
     run_registry.shutdown_all()
@@ -1437,6 +1458,50 @@ def delete_release(release_id: UUID):
         return {"status": "deleted", "id": str(release_id), "jobs_detached": detached}
 
 
+def prune_agent_runs(max_age_days: int) -> int:
+    """Ledger retention (C3): drop old leaf run rows so agent_runs cannot grow
+    unbounded. Album cursors (album_orchestrator/track_retry) are NEVER pruned —
+    the tracklist dedupe and resume paths depend on them. Created_at values mix
+    naive/aware storage, so age is judged after parsing (honest over clever)."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+    with Session(engine) as session:
+        rows = session.exec(
+            select(AgentRun).where(
+                AgentRun.status.not_in(ACTIVE_RUN_STATUSES),
+                AgentRun.agent_name.not_in(["album_orchestrator", "track_retry"]),
+            )
+        ).all()
+        doomed = []
+        for r in rows:
+            try:
+                created = r.created_at if isinstance(r.created_at, datetime) else datetime.fromisoformat(str(r.created_at))
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                if created < cutoff:
+                    doomed.append(r)
+            except (ValueError, TypeError):
+                continue  # unparseable timestamp → keep (never silently lose history)
+        for r in doomed:
+            session.delete(r)
+        session.commit()
+        return len(doomed)
+
+
+@app.delete("/agents/runs")
+def prune_agent_runs_endpoint(older_than_days: Optional[int] = None):
+    """Manual ledger prune. Defaults to MILIMO_RUN_RETENTION_DAYS (30)."""
+    days = older_than_days
+    if days is None:
+        try:
+            days = int(os.environ.get("MILIMO_RUN_RETENTION_DAYS", "30"))
+        except ValueError:
+            days = 30
+    if days <= 0:
+        raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "older_than_days must be a positive integer."}})
+    deleted = prune_agent_runs(days)
+    return {"status": "pruned", "older_than_days": days, "deleted": deleted}
+
+
 @app.get("/releases/{release_id}/tracks")
 def release_tracks(release_id: UUID):
     """Tracklist with artifact inventory — the artist section's view of its music.
@@ -1469,10 +1534,48 @@ def release_tracks(release_id: UUID):
                 "created_at": str(j.created_at),
             })
         done = sum(1 for r in out if r["status"] == "completed")
+        # B2: explicit curation order wins; unordered tracks keep cursor/natural
+        # order after the positioned ones (stable sort).
+        try:
+            order = json.loads(release.track_order_json or "[]")
+        except Exception:
+            order = []
+        if isinstance(order, list) and order:
+            pos = {str(x): i for i, x in enumerate(order)}
+            out.sort(key=lambda r: pos.get(r["id"], len(order)))
         return {"release_id": str(release_id), "title": release.title,
                 "status": release.status,
                 "tracks": out, "succeeded": done, "total": len(out),
                 "rollup": "completed" if done == len(out) and out else ("partial" if done else "pending")}
+
+
+@app.patch("/releases/{release_id}/track-order")
+def set_release_track_order(release_id: UUID, payload: dict):
+    """Curate the tracklist order. `job_ids` may be a subset — ordered jobs are
+    positioned first, remaining tracks keep their natural order after them."""
+    ids_raw = (payload or {}).get("job_ids")
+    if not isinstance(ids_raw, list):
+        raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "job_ids must be an array of track ids."}})
+    seen: set = set()
+    ids = []
+    for x in ids_raw:
+        s = str(x)
+        if s not in seen:
+            seen.add(s)
+            ids.append(s)
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        valid = {str(r) for r in session.exec(select(Job.id).where(Job.release_id == str(release_id))).all()}
+        unknown = [i for i in ids if i not in valid]
+        if unknown:
+            raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": f"Unknown track ids for this release: {unknown[:3]}"}})
+        release.track_order_json = json.dumps(ids)
+        release.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(release)
+        session.commit()
+        return {"status": "ok", "track_order": ids}
 
 
 @app.post("/releases/{release_id}/tracks/{job_id}/retry")

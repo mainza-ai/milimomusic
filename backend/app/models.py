@@ -320,6 +320,8 @@ class Release(SQLModel, table=True):
     description: str = ""
     status: str = "planned"               # planned | in_progress | completed
     vision_json: str = "{}"               # ExperiencerVision / orchestrator artifacts
+    track_order_json: str = "[]"          # B2: explicit cur order — array of Job ids
+    cover_image_path: Optional[str] = None  # A4: release artwork
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -408,3 +410,4 @@ class ReleaseUpdate(SQLModel):
     title: Optional[str] = None
     description: Optional[str] = None
     status: Optional[str] = None
+    cover_image_path: Optional[str] = None

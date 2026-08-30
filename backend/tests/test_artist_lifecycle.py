@@ -563,3 +563,72 @@ def test_world_builder_schema_rejects_empty_name():
     import pydantic
     with pytest.raises(pydantic.ValidationError):
         WorldBuilderBrief(artist_name="")
+
+
+# ---------------------------------------------------------------- B2: track ordering
+
+def test_track_order_round_trip_and_validation(client, artist_fixture):
+    from app.models import Release as _Release
+    rid = artist_fixture["release_id"]
+    from app.main import engine as app_engine
+    with Session(app_engine) as session:
+        j1 = Job(title="o1", prompt="p", lyrics="l", release_id=rid, status=JobStatus.COMPLETED)
+        j2 = Job(title="o2", prompt="p", lyrics="l", release_id=rid, status=JobStatus.COMPLETED)
+        session.add(j1); session.add(j2); session.commit(); session.refresh(j1); session.refresh(j2)
+        ids = [str(j2.id), str(j1.id)]
+
+    # unknown id → 422
+    out = client.patch(f"/releases/{rid}/track-order", json={"job_ids": [str(uuid.uuid4())]})
+    assert out.status_code == 422
+
+    out = client.patch(f"/releases/{rid}/track-order", json={"job_ids": ids})
+    assert out.status_code == 200
+
+    data = client.get(f"/releases/{rid}/tracks").json()
+    assert [t["id"] for t in data["tracks"]] == ids
+
+    with Session(app_engine) as session:
+        for j in session.exec(select(Job).where(Job.release_id == rid)).all():
+            session.delete(j)
+        session.commit()
+
+
+def test_track_order_requires_array(client, artist_fixture):
+    rid = artist_fixture["release_id"]
+    out = client.patch(f"/releases/{rid}/track-order", json={"job_ids": "nope"})
+    assert out.status_code == 422
+
+
+# ---------------------------------------------------------------- C3: ledger retention
+
+def test_prune_agent_runs_spares_cursors_and_active():
+    from datetime import datetime, timedelta, timezone as tz
+    from app.main import prune_agent_runs, engine as app_engine
+
+    old = datetime.now(tz.utc) - timedelta(days=90)
+    with Session(app_engine) as session:
+        old_leaf = AgentRun(agent_name="experiencer", status="succeeded", created_at=old)
+        old_album = AgentRun(agent_name="album_orchestrator", status="failed",
+                             created_at=old, input_json=json.dumps({"release_id": "keep-cursor"}))
+        fresh = AgentRun(agent_name="experiencer", status="succeeded")
+        active = AgentRun(agent_name="experiencer", status="running", created_at=old)
+        for r in (old_leaf, old_album, fresh, active):
+            session.add(r)
+        session.commit()
+        session.refresh(old_leaf); session.refresh(old_album); session.refresh(fresh); session.refresh(active)
+        kept_ids = {str(fresh.id), str(active.id), str(old_album.id)}
+
+    deleted = prune_agent_runs(30)
+    assert deleted >= 1
+
+    with Session(app_engine) as session:
+        assert session.get(AgentRun, old_leaf.id) is None          # pruned
+        assert session.get(AgentRun, old_album.id) is not None     # cursor: never pruned
+        assert session.get(AgentRun, fresh.id) is not None         # fresh: kept
+        assert session.get(AgentRun, active.id) is not None        # active: kept
+        # cleanup
+        for rid in (old_album.id, fresh.id, active.id):
+            r = session.get(AgentRun, rid)
+            if r:
+                session.delete(r)
+        session.commit()

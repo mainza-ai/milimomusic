@@ -912,6 +912,8 @@ export interface ReleaseT {
     description: string;
     status: string;
     vision_json: string;
+    track_order_json: string;
+    cover_image_path: string | null;
     created_at: string;
 }
 
@@ -995,8 +997,8 @@ export interface AgentRunRow {
 export interface ProfileStats { crew_count: number; release_count: number; last_activity: string | null; }
 
 export const albumApi = {
-    produce: async (releaseId: string, autopilot: boolean): Promise<{ run_id: string; status: string; autopilot: boolean }> => {
-        const res = await axios.post(`${API_BASE_URL}/releases/${releaseId}/produce`, { autopilot });
+    produce: async (releaseId: string, autopilot: boolean, budget?: { deadline_s?: number }): Promise<{ run_id: string; status: string; autopilot: boolean }> => {
+        const res = await axios.post(`${API_BASE_URL}/releases/${releaseId}/produce`, { autopilot, ...(budget ? { budget } : {}) });
         return res.data;
     },
     resume: async (runId: string, autopilot = false): Promise<{ run_id: string; status: string }> => {
@@ -1061,7 +1063,11 @@ export const profilesApi = {
 };
 
 export const releaseApi = {
-    update: async (id: string, body: { title?: string; description?: string; status?: string }): Promise<ReleaseT> => {
+    list: async (profileId: string, limit = 100): Promise<{ releases: ReleaseT[]; total: number }> => {
+        const res = await axios.get(`${API_BASE_URL}/profiles/${profileId}/releases`, { params: { limit } });
+        return res.data;
+    },
+    update: async (id: string, body: { title?: string; description?: string; status?: string; cover_image_path?: string }): Promise<ReleaseT> => {
         const res = await axios.patch(`${API_BASE_URL}/releases/${id}`, body);
         return res.data;
     },
@@ -1069,7 +1075,10 @@ export const releaseApi = {
         const res = await axios.delete(`${API_BASE_URL}/releases/${id}`);
         return res.data;
     },
-    retryTrack: async (releaseId: string, jobId: string): Promise<{ run_id: string; status: string; seed_slot: number }> => {
+    setTrackOrder: async (releaseId: string, jobIds: string[]): Promise<{ status: string; track_order: string[] }> => {
+        const res = await axios.patch(`${API_BASE_URL}/releases/${releaseId}/track-order`, { job_ids: jobIds });
+        return res.data;
+    },    retryTrack: async (releaseId: string, jobId: string): Promise<{ run_id: string; status: string; seed_slot: number }> => {
         const res = await axios.post(`${API_BASE_URL}/releases/${releaseId}/tracks/${jobId}/retry`);
         return res.data;
     },

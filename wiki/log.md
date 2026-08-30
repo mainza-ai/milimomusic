@@ -938,3 +938,21 @@ workspace.spec selector fix. P2: global-player playback, release track ordering,
 budget caps UI, per-release live chips, cover generation for profile+release,
 ledger retention. P3: stylist/critic agents, LoRA checkpoint links, Modal
 primitive, pagination UI, run observability. Sequenced into 3 waves with gates.
+
+## [2026-08-29] create | Artist Roadmap Waves 1+2 shipped
+Wave 1 (9a6af51): C2 indexed AgentRun.release_id + backfill (all guards are
+indexed queries now), A3 lore→songwriter steering, A1 artist voice identity
+(profile.voice_profile_id → bridge → GenerationRequest; pipeline degrades
+gracefully; 'Singing voice' selector), A2 World-Builder agent (registry +
+POST /profiles/{id}/lore/generate persisting lore_json; 'Generate with
+World-Builder' UI), D1 workspace.spec selectors fixed (9/9 e2e green).
+Wave 2 (this commit): B1 tracklist playback through the global audio engine,
+B2 release track ordering (track_order_json + PATCH + up/down controls,
+optimistic with revert), B3 budget caps selector feeding produce deadline_s,
+B4 live release-status polling while a run is active, A4 cover art generation
+for profile identity + releases (procedural covers endpoint, lore-prompted),
+C3 ledger retention (MILIMO_RUN_RETENTION_DAYS default 30d sweep + DELETE
+/agents/runs endpoint; album cursors never pruned). Remaining P3 items
+(stylist/critic agents, LoRA links, Modal primitive, pagination UI,
+observability) stay conditional in artist-remaining-roadmap.md.
+Verification: 160 backend tests, 9/9 playwright, tsc + build green.

@@ -868,3 +868,8 @@ quantization eval via MILIMO_MINIMAX_SNAPSHOT.
 - **Playwright Browser E2E**: Configured `frontend/playwright.config.ts` and `frontend/e2e/workspace.spec.ts` with test scripts covering Landing hero, Composer, LLM settings masking, and DAW navigation.
 - **Test Suite Green**: 114/114 backend tests passing, frontend TypeScript compilation & build 100% clean.
 
+
+## [2026-08-26] create | Artist Section full audit + production plan
+User could not run artist section. Wiring verified correct; 3 causes: silent
+catches, sync blocking runs, stale bundle. Full gap list + 4-phase plan logged;
+no implementation without approval (approval given same day).

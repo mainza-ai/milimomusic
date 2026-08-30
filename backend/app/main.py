@@ -1116,6 +1116,33 @@ def create_release(payload: ReleaseCreate):
         return release
 
 
+@app.get("/releases/{release_id}/tracks")
+def release_tracks(release_id: UUID):
+    """Tracklist with artifact inventory — the artist section's view of its music."""
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        rows = session.exec(
+            select(Job).where(Job.release_id == str(release_id)).order_by(Job.created_at)
+        ).all()
+        out = []
+        for j in rows:
+            out.append({
+                "id": str(j.id), "title": j.title, "status": j.status.value if hasattr(j.status, "value") else str(j.status),
+                "duration_ms": j.duration_ms, "seed": j.seed,
+                "artifacts": {"audio": j.audio_path, "midi": j.midi_path,
+                              "musicxml": j.musicxml_path, "stems": j.stems_json,
+                              "mastered": j.mastered_path},
+                "used_real_inference": not bool(j.used_fallback_synth),
+                "created_at": str(j.created_at),
+            })
+        done = sum(1 for r in out if r["status"] == "completed")
+        return {"release_id": str(release_id), "title": release.title,
+                "tracks": out, "succeeded": done, "total": len(out),
+                "status": "completed" if done == len(out) and out else ("partial" if done else "pending")}
+
+
 @app.post("/releases/{release_id}/produce")
 async def produce_release(release_id: UUID, payload: dict):
     """Album Orchestrator: vision → per-seed songwriter+generation children.

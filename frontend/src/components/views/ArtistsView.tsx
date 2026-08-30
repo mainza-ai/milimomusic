@@ -63,12 +63,12 @@ export const ArtistsView: React.FC = () => {
     const approveNextTrack = async () => {
         if (!albumRun || albumRun.runId === '-') return;
         setAlbumRun(r => r ? { ...r, status: 'running', message: 'Approved — producing next track…' } : r);
-        await albumApi.resume(albumRun.runId).catch(() => null);
+        await albumApi.resume(albumRun.runId).catch((e) => { toast(String(e?.response?.data?.detail?.error?.message || e?.message || "Request failed"), "error"); return null; });
     };
 
     const cancelAlbum = async () => {
         if (!albumRun || albumRun.runId === '-') return;
-        await albumApi.cancelRun(albumRun.runId).catch(() => null);
+        await albumApi.cancelRun(albumRun.runId).catch((e) => { toast(String(e?.response?.data?.detail?.error?.message || e?.message || "Request failed"), "error"); return null; });
         setAlbumRun(r => r ? { ...r, status: 'cancelling', message: 'Cancelling…' } : r);
     };
 
@@ -217,7 +217,7 @@ export const ArtistsView: React.FC = () => {
     useEffect(() => {
         if (!albumActive || !albumRun || albumRun.runId === '-') return;
         const t = setInterval(async () => {
-            const row = await albumApi.getRun(albumRun.runId).catch(() => null);
+            const row = await albumApi.getRun(albumRun.runId).catch((e) => { toast(String(e?.response?.data?.detail?.error?.message || e?.message || "Request failed"), "error"); return null; });
             if (row) setAlbumRun(prev => prev ? ({ ...prev, status: row.status, progress: row.progress ?? prev.progress }) : prev);
         }, 5000);
         return () => clearInterval(t);
@@ -606,13 +606,13 @@ export const ArtistsView: React.FC = () => {
                         placeholder="New release title…" className="apple-input text-xs flex-1"
                         onKeyDown={async e => {
                             if (e.key === 'Enter' && newReleaseTitle.trim()) {
-                                const r = await profilesApi.createRelease({ profile_id: detail.profile.id, title: newReleaseTitle.trim() }).catch(() => null);
+                                const r = await profilesApi.createRelease({ profile_id: detail.profile.id, title: newReleaseTitle.trim() }).catch((e) => { toast(String(e?.response?.data?.detail?.error?.message || e?.message || "Request failed"), "error"); return null; });
                                 if (r) { setDetail(d => d ? ({ ...d, releases: [r, ...d.releases] }) : d); setNewReleaseTitle(''); }
                             }
                         }} />
                     {newReleaseTitle.trim() && (
                         <button onClick={async () => {
-                            const r = await profilesApi.createRelease({ profile_id: detail.profile.id, title: newReleaseTitle.trim() }).catch(() => null);
+                            const r = await profilesApi.createRelease({ profile_id: detail.profile.id, title: newReleaseTitle.trim() }).catch((e) => { toast(String(e?.response?.data?.detail?.error?.message || e?.message || "Request failed"), "error"); return null; });
                             if (r) { setDetail(d => d ? ({ ...d, releases: [r, ...d.releases] }) : d); setNewReleaseTitle(''); }
                         }} className="p-2 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 transition-colors" aria-label="Create release"><Plus size={13} /></button>
                     )}

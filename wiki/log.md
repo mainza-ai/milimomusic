@@ -878,3 +878,8 @@ no implementation without approval (approval given same day).
 PATCH /profiles/{id}/cover + ArtistsView identity-image upload/display (detail
 header, busy states, honest toasts) · create-form validation live. Remaining A:
 guided create stepper, list thumbnails. Servers rebuilt.
+
+## [2026-08-26] create | Artist C1+C4 shipped
+Tracklist UI (expand per release: status rollup, per-track artifact chips audio/
+midi/xml/stems/mastered, real-inference badge, status dots) · crew role enum
+enforced server-side (422 + allowed list). 114 tests, build green, servers live.

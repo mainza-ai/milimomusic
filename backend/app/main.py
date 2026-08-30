@@ -1086,6 +1086,10 @@ def delete_artist_profile(profile_id: UUID):
 
 @app.put("/profiles/{profile_id}/assignments")
 def set_artist_assignments(profile_id: UUID, payload: AgentAssignmentSet):
+    ALLOWED_ROLES = {"experiencer", "songwriter", "producer", "stylist", "critic"}
+    for a in (payload.assignments if hasattr(payload, "assignments") else []):
+        if getattr(a, "role", "") not in ALLOWED_ROLES:
+            raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": f"Unknown crew role '{a.role}'. Allowed: {sorted(ALLOWED_ROLES)}"}})
     """Replace the artist's entire crew atomically (no drift, no partial state)."""
     with Session(engine) as session:
         profile = session.get(ArtistProfile, profile_id)

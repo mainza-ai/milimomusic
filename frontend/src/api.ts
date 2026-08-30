@@ -964,6 +964,12 @@ export const agentsApi = {
     },
 };
 
+export interface ReleaseTrackT {
+    id: string; title: string | null; status: string; duration_ms: number;
+    seed: number | null; artifacts: Record<string, string | null>;
+    used_real_inference: boolean; created_at: string;
+}
+export interface ReleaseTracksT { release_id: string; title: string; tracks: ReleaseTrackT[]; succeeded: number; total: number; status: string; }
 export interface AgentRunRow {
     id: string;
     agent_name: string;
@@ -1011,6 +1017,10 @@ export const profilesApi = {
     },
     delete: async (id: string): Promise<void> => {
         await axios.delete(`${API_BASE_URL}/profiles/${id}`);
+    },
+    getReleaseTracks: async (releaseId: string): Promise<ReleaseTracksT> => {
+        const res = await axios.get(`${API_BASE_URL}/releases/${releaseId}/tracks`);
+        return res.data;
     },
     setCover: async (id: string, coverImagePath: string): Promise<ArtistProfileT> => {
         const res = await axios.patch(`${API_BASE_URL}/profiles/${id}/cover`, { cover_image_path: coverImagePath });

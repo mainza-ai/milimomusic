@@ -7,6 +7,7 @@ import {
 } from 'lucide-react';
 import {
     agentsApi, profilesApi, albumApi, coverApi, api,
+    type ReleaseTracksT,
     type AgentInfo, type ArtistProfileT,
     type ProfileDetail, type ExperiencerVision, type AgentRunEnvelope
 } from '../../api';
@@ -133,6 +134,14 @@ export const ArtistsView: React.FC = () => {
         }
     };
 
+    const [openTracks, setOpenTracks] = useState<string | null>(null);
+    const [tracks, setTracks] = useState<ReleaseTracksT | null>(null);
+    const toggleTracks = async (rid: string) => {
+        if (openTracks === rid) { setOpenTracks(null); setTracks(null); return; }
+        setOpenTracks(rid); setTracks(null);
+        try { setTracks(await profilesApi.getReleaseTracks(rid)); }
+        catch (e: any) { toast(String(e?.response?.data?.detail?.error?.message || 'Failed to load tracks'), 'error'); }
+    };
     const [coverBusy, setCoverBusy] = useState(false);
     const uploadCover = async (file: File) => {
         if (!detail) return;
@@ -657,12 +666,44 @@ export const ArtistsView: React.FC = () => {
                         <span className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">{r.title}</span>
                         <div className="flex items-center gap-1.5 shrink-0">
                             <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/5 text-slate-500">{r.status}</span>
+                            <button onClick={() => toggleTracks(r.id)} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] dark:hover:bg-white/10 transition-colors">{openTracks === r.id ? 'Hide tracks' : 'Tracks'}</button>
                             <button onClick={() => startAlbum(r.id, r.title)} disabled={albumActive}
                                 className="text-[10px] font-bold px-2 py-1 rounded-lg bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 hover:bg-fuchsia-500 hover:text-slate-950 transition-colors disabled:opacity-40"
                                 title="Produce this album (gated: pauses after each track)">Produce</button>
                         </div>
                     </div>
                 ))}
+                {openTracks && (
+                    <div className="mt-2 p-3 rounded-xl border border-black/[0.06] dark:border-white/[0.08] bg-black/[0.02] dark:bg-white/[0.03] space-y-2">
+                        {!tracks ? (
+                            <p className="text-[10px] text-slate-400 font-mono">Loading tracks…</p>
+                        ) : (
+                            <>
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[11px] font-bold text-slate-700 dark:text-slate-200">{tracks.title} · {tracks.succeeded}/{tracks.total} complete</span>
+                                    <span className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full ${tracks.status === 'completed' ? 'bg-emerald-500/15 text-emerald-600' : tracks.status === 'partial' ? 'bg-amber-500/15 text-amber-600' : 'bg-black/[0.04] dark:bg-white/5 text-slate-500'}`}>{tracks.status}</span>
+                                </div>
+                                {tracks.tracks.map(tr => (
+                                    <div key={tr.id} className="flex items-center justify-between gap-2 p-2 rounded-lg bg-white/60 dark:bg-white/[0.04] border border-black/[0.04] dark:border-white/5">
+                                        <div className="min-w-0">
+                                            <p className="text-[11px] font-bold text-slate-800 dark:text-slate-100 truncate">{tr.title || '(untitled)'}</p>
+                                            <p className="text-[9px] text-slate-500 font-mono">{Math.round(tr.duration_ms / 1000)}s · seed {tr.seed ?? '—'} · {tr.used_real_inference ? 'real inference' : 'fallback'}</p>
+                                        </div>
+                                        <div className="flex items-center gap-1 shrink-0">
+                                            {(['audio', 'midi', 'musicxml', 'stems', 'mastered'] as const).map(k =>
+                                                tr.artifacts?.[k] ? (
+                                                    <a key={k} href={`${API_BASE_URL}${tr.artifacts[k]}`} target="_blank" rel="noreferrer"
+                                                        className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 transition-colors">{k.slice(0, 4)}</a>
+                                                ) : null
+                                            )}
+                                            <span className={`w-1.5 h-1.5 rounded-full ${tr.status === 'completed' ? 'bg-emerald-500' : tr.status === 'failed' ? 'bg-red-500' : 'bg-amber-400'}`} title={tr.status} />
+                                        </div>
+                                    </div>
+                                ))}
+                            </>
+                        )}
+                    </div>
+                )}
             </section>
         </div>
     );

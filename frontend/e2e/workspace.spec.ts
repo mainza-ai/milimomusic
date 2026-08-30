@@ -8,8 +8,8 @@ test.describe('Milimo Music Web DAW & Studio', () => {
     const tagline = page.getByText(/Give the silence something worth remembering/i);
     await expect(tagline).toBeVisible();
 
-    // Check Composer elements
-    const composerHeading = page.getByText(/Prompt \/ Lyrics/i).first();
+    // Check Composer elements (current composer heading)
+    const composerHeading = page.getByText('Compose', { exact: true }).first();
     await expect(composerHeading).toBeVisible();
   });
 
@@ -25,11 +25,12 @@ test.describe('Milimo Music Web DAW & Studio', () => {
   test('LLM Settings Modal opens and displays masked credentials', async ({ page }) => {
     await page.goto('/');
 
-    // Open settings if button exists
-    const settingsButton = page.locator('button[title*="Settings"], button:has-text("Settings"), button[aria-label*="Settings"]').first();
-    if (await settingsButton.isVisible()) {
+    // The LLM settings entry lives in the rail footer's engine-health block and
+    // only renders when a backend is reachable; skip silently when offline (CI).
+    const settingsButton = page.locator('button[title="LLM Settings"]');
+    if (await settingsButton.isVisible({ timeout: 2000 }).catch(() => false)) {
       await settingsButton.click();
-      const modal = page.getByText(/LLM Engine Settings|Model Provider/i).first();
+      const modal = page.getByText(/LLM Engine & Co-Writer Settings/i).first();
       await expect(modal).toBeVisible();
     }
   });

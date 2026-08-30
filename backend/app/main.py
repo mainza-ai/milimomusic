@@ -101,7 +101,6 @@ from sqlalchemy import event, func
 
 from app.release_state import (
     ACTIVE_RUN_STATUSES,
-    album_run_release_id,
     resolve_track_rows,
     transition_release,
 )
@@ -189,6 +188,7 @@ def create_db_and_tables():
             "state_json": "TEXT DEFAULT '{}'",
             "progress": "INTEGER DEFAULT 0",
             "budget_json": "TEXT DEFAULT '{}'",
+            "release_id": "VARCHAR",
         }
         for col, col_type in run_columns.items():
             if col not in existing_run_cols:
@@ -196,6 +196,29 @@ def create_db_and_tables():
                     session.exec(text(f"ALTER TABLE agentrun ADD COLUMN {col} {col_type};"))
                 except Exception as e:
                     print(f"Migration notice for agentrun.{col}: {e}")
+
+        # Backfill: legacy album/retry runs carried release_id only inside
+        # input_json. Promote it to the indexed column, then index it.
+        session.exec(text(
+            "UPDATE agentrun SET release_id = json_extract(input_json, '$.release_id') "
+            "WHERE release_id IS NULL AND json_extract(input_json, '$.release_id') IS NOT NULL"
+        ))
+        session.exec(text("CREATE INDEX IF NOT EXISTS ix_agentrun_release_id ON agentrun (release_id)"))
+
+        # Automatic Migration for artistprofile table (identity columns)
+        existing_prof_cols = {row[1] for row in session.exec(text("PRAGMA table_info(artistprofile);")).all()}
+        profile_columns = {
+            "lore_json": "TEXT DEFAULT '{}'",
+            "default_provider": "VARCHAR",
+            "default_model": "VARCHAR",
+            "voice_profile_id": "VARCHAR",
+        }
+        for col, col_type in profile_columns.items():
+            if col not in existing_prof_cols:
+                try:
+                    session.exec(text(f"ALTER TABLE artistprofile ADD COLUMN {col} {col_type};"))
+                except Exception as e:
+                    print(f"Migration notice for artistprofile.{col}: {e}")
 
         session.commit()
 
@@ -1138,6 +1161,82 @@ def get_artist_profile(profile_id: UUID):
         return {"profile": profile, "assignments": assignments, "releases": releases}
 
 
+@app.post("/profiles/{profile_id}/lore/generate")
+async def generate_profile_lore(profile_id: UUID):
+    """World-Builder run: imagine/refresh the artist's canonical lore document.
+
+    Grounded on the profile's name/bio/tags and any existing lore (regeneration
+    extends rather than contradicts). Persists to lore_json on success and
+    writes a full ledger row; crew model overrides apply like any other
+    profile-scoped agent run."""
+    entry = get_agent("world_builder")
+    with Session(engine) as session:
+        profile = session.get(ArtistProfile, profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
+        brief = entry.input_schema.model_validate({
+            "artist_name": profile.name,
+            "artist_bio": profile.bio or "",
+            "tags": profile.tags or "",
+        })
+        chain_head, existing_lore = resolve_artist_grounding(session, str(profile_id), "world_builder")
+
+    ctx = RunContext(
+        agent_name="world_builder",
+        artist_profile_id=str(profile_id),
+        artist_lore=existing_lore or None,
+    )
+    with Session(engine) as session:
+        run_row = AgentRun(
+            agent_name="world_builder", status="running",
+            profile_id=str(profile_id),
+            input_json=brief.model_dump_json(),
+        )
+        session.add(run_row)
+        session.commit()
+        session.refresh(run_row)
+        run_id = str(run_row.id)
+
+    ctx.run_id = run_id
+    started = time.monotonic()
+    try:
+        result = await entry.agent.run(brief, ctx, ResiliencePolicy(chain_head=chain_head))
+    except Exception as exc:
+        exc_response = _agent_error_response(exc)
+        err_detail = getattr(exc_response, "detail", {})
+        err_meta = err_detail.get("error", {}) if isinstance(err_detail, dict) else {}
+        with Session(engine) as session:
+            row = session.get(AgentRun, UUID(run_id))
+            row.status = "failed"
+            row.error_type = err_meta.get("code", "internal_error")
+            row.error_message = str(exc)[:2000]
+            row.attempts_json = json.dumps(err_meta.get("attempts", []), default=str)
+            row.finished_at = datetime.now(timezone.utc)
+            session.add(row)
+            session.commit()
+        raise exc_response
+
+    output = result.output.model_dump(mode="json")
+    with Session(engine) as session:
+        row = session.get(AgentRun, UUID(run_id))
+        row.status = "succeeded"
+        row.output_json = json.dumps({"output": output}, default=str)
+        row.tokens_in = getattr(result, "tokens_in", 0)
+        row.tokens_out = getattr(result, "tokens_out", 0)
+        row.latency_ms = getattr(result, "latency_ms", int((time.monotonic() - started) * 1000))
+        row.attempts_json = json.dumps([a.to_dict() for a in getattr(result, "attempts", [])], default=str)
+        row.finished_at = datetime.now(timezone.utc)
+        session.add(row)
+        # Persist canon onto the artist.
+        profile = session.get(ArtistProfile, profile_id)
+        profile.lore_json = json.dumps(output, default=str)
+        profile.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+    return {"run": run_id, "lore": output, "profile": profile}
+
+
 @app.patch("/profiles/{profile_id}")
 def update_artist_profile(profile_id: UUID, payload: ArtistProfileUpdate):
     with Session(engine) as session:
@@ -1173,16 +1272,21 @@ def delete_artist_profile(profile_id: UUID):
             select(Release).where(Release.profile_id == str(profile.id))
         ).all()
         release_ids = {str(r.id) for r in releases}
-        # Block deletion while a run is live on this profile or its releases.
-        for run in session.exec(
-            select(AgentRun).where(AgentRun.status.in_(ACTIVE_RUN_STATUSES))
-        ).all():
-            on_profile = str(run.profile_id or "") == str(profile_id)
-            on_release = album_run_release_id(run) in release_ids
-            if on_profile or on_release:
-                raise HTTPException(status_code=409, detail={
-                    "error": {"code": "active_run",
-                              "message": f"An agent run is {run.status} for this artist — cancel it before deleting."}})
+        # Block deletion while a run is live on this profile or one of its
+        # releases (indexed: profile_id / release_id columns; in_([]) is safe).
+        blocking = session.exec(
+            select(AgentRun).where(
+                AgentRun.status.in_(ACTIVE_RUN_STATUSES),
+                or_(
+                    AgentRun.profile_id == str(profile_id),
+                    AgentRun.release_id.in_(list(release_ids)),
+                ),
+            )
+        ).all()
+        if blocking:
+            raise HTTPException(status_code=409, detail={
+                "error": {"code": "active_run",
+                          "message": f"An agent run is {blocking[0].status} for this artist — cancel it before deleting."}})
         detached = 0
         for a in session.exec(
             select(AgentAssignment).where(AgentAssignment.profile_id == str(profile.id))
@@ -1268,13 +1372,14 @@ def get_release(release_id: UUID):
         if not release:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
         track_total = len(session.exec(select(Job.id).where(Job.release_id == str(release_id))).all())
-        active = any(
-            album_run_release_id(r) == str(release_id)
-            for r in session.exec(
-                select(AgentRun).where(AgentRun.agent_name == "album_orchestrator", AgentRun.status.in_(ACTIVE_RUN_STATUSES))
-            ).all()
-        )
-        return {"release": release, "track_total": track_total, "active_run": active}
+        active = session.exec(
+            select(AgentRun.id).where(
+                AgentRun.agent_name == "album_orchestrator",
+                AgentRun.status.in_(ACTIVE_RUN_STATUSES),
+                AgentRun.release_id == str(release_id),
+            )
+        ).first()
+        return {"release": release, "track_total": track_total, "active_run": active is not None}
 
 
 @app.patch("/releases/{release_id}")
@@ -1312,12 +1417,13 @@ def delete_release(release_id: UUID):
         release = session.get(Release, release_id)
         if not release:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
-        active = [
-            r for r in session.exec(
-                select(AgentRun).where(AgentRun.agent_name == "album_orchestrator", AgentRun.status.in_(ACTIVE_RUN_STATUSES))
-            ).all()
-            if album_run_release_id(r) == str(release_id)
-        ]
+        active = session.exec(
+            select(AgentRun).where(
+                AgentRun.agent_name == "album_orchestrator",
+                AgentRun.status.in_(ACTIVE_RUN_STATUSES),
+                AgentRun.release_id == str(release_id),
+            )
+        ).all()
         if active:
             raise HTTPException(status_code=409, detail={"error": {"code": "run_active",
                 "message": f"An album run is {active[0].status} for this release — cancel it before deleting."}})
@@ -1348,7 +1454,7 @@ def release_tracks(release_id: UUID):
         ).all()
         album_runs = session.exec(
             select(AgentRun)
-            .where(AgentRun.agent_name == "album_orchestrator")
+            .where(AgentRun.agent_name == "album_orchestrator", AgentRun.release_id == str(release_id))
             .order_by(AgentRun.created_at.desc())
         ).all()
         out = []
@@ -1386,23 +1492,24 @@ async def retry_release_track(release_id: UUID, job_id: UUID):
 
         # Live-run guard first: any active orchestrator/retry on this release
         # blocks new work regardless of what is being retried.
-        live = [
-            r for r in session.exec(
-                select(AgentRun).where(
-                    AgentRun.agent_name.in_(["album_orchestrator", "track_retry"]),
-                    AgentRun.status.in_(ACTIVE_RUN_STATUSES),
-                )
-            ).all()
-            if album_run_release_id(r) == str(release_id)
-        ]
+        live = session.exec(
+            select(AgentRun).where(
+                AgentRun.agent_name.in_(["album_orchestrator", "track_retry"]),
+                AgentRun.status.in_(ACTIVE_RUN_STATUSES),
+                AgentRun.release_id == str(release_id),
+            )
+        ).all()
         if live:
             raise HTTPException(status_code=409, detail={"error": {"code": "run_active",
                 "message": f"A run is {live[0].status} for this release — wait or cancel it first."}})
 
         target: Optional[tuple] = None  # (album_run, seed_slot)
-        for r in session.exec(select(AgentRun).where(AgentRun.agent_name == "album_orchestrator")).all():
-            if album_run_release_id(r) != str(release_id):
-                continue
+        for r in session.exec(
+            select(AgentRun).where(
+                AgentRun.agent_name == "album_orchestrator",
+                AgentRun.release_id == str(release_id),
+            )
+        ).all():
             try:
                 st = json.loads(r.state_json or "{}")
             except Exception:
@@ -1420,6 +1527,7 @@ async def retry_release_track(release_id: UUID, job_id: UUID):
 
         parent = AgentRun(agent_name="track_retry", status="queued",
                           profile_id=str(release.profile_id),
+                          release_id=str(release_id),
                           input_json=json.dumps({
                               "release_id": str(release_id),
                               "job_id": str(job_id),
@@ -1458,21 +1566,20 @@ async def produce_release(release_id: UUID, payload: dict):
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
         # Concurrency guard: one live orchestrator per release. Producing twice
         # would double-spend and interleave two cursors on the same slots.
-        active = [
-            r for r in session.exec(
-                select(AgentRun).where(
-                    AgentRun.agent_name == "album_orchestrator",
-                    AgentRun.status.in_(ACTIVE_RUN_STATUSES),
-                )
-            ).all()
-            if album_run_release_id(r) == str(release_id)
-        ]
+        active = session.exec(
+            select(AgentRun).where(
+                AgentRun.agent_name == "album_orchestrator",
+                AgentRun.status.in_(ACTIVE_RUN_STATUSES),
+                AgentRun.release_id == str(release_id),
+            )
+        ).all()
         if active:
             raise HTTPException(status_code=409, detail={"error": {"code": "run_active",
                 "message": f"An album run is already {active[0].status} for this release — resume or cancel it before producing again."}})
         parent = AgentRun(agent_name="album_orchestrator", status="queued",
                           input_json=json.dumps({"release_id": str(release_id), "autopilot": autopilot}),
                           profile_id=str(release.profile_id),
+                          release_id=str(release_id),
                           budget_json=json.dumps({"caps": {"deadline_s": budget.deadline_s}}))
         session.add(parent)
         session.commit()

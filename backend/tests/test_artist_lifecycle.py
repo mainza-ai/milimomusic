@@ -252,9 +252,11 @@ def test_patch_profile_lore_round_trip(client, artist_fixture):
 
 def test_delete_release_detaches_jobs_and_blocks_on_active_run(client, artist_fixture):
     rid = artist_fixture["release_id"]
+    track_title = f"Detach {uuid.uuid4().hex[:6]}"
     with Session(app_engine) as session:
-        session.add(Job(title="t", prompt="p", lyrics="l", release_id=rid, status=JobStatus.COMPLETED))
+        session.add(Job(title=track_title, prompt="p", lyrics="l", release_id=rid, status=JobStatus.COMPLETED))
         session.add(AgentRun(agent_name="album_orchestrator", status="running",
+                             release_id=rid,
                              input_json=json.dumps({"release_id": rid})))
         session.commit()
 
@@ -271,7 +273,7 @@ def test_delete_release_detaches_jobs_and_blocks_on_active_run(client, artist_fi
     assert out.status_code == 200
     assert out.json()["jobs_detached"] == 1
     with Session(app_engine) as session:
-        job = session.exec(select(Job).where(Job.title == "t")).first()
+        job = session.exec(select(Job).where(Job.title == track_title)).first()
         assert job is not None  # detached, not deleted
         assert job.release_id is None
         session.delete(job)
@@ -366,6 +368,7 @@ def test_retry_endpoint_rejects_when_run_active(client, artist_fixture):
     rid = artist_fixture["release_id"]
     with Session(app_engine) as session:
         session.add(AgentRun(agent_name="album_orchestrator", status="running",
+                             release_id=rid,
                              input_json=json.dumps({"release_id": rid})))
         session.commit()
     out = client.post(f"/releases/{rid}/tracks/{uuid.uuid4()}/retry")
@@ -392,6 +395,7 @@ async def test_retry_success_promotes_cursor_winner():
         }))
         session.add(release); session.commit(); session.refresh(release)
         album_run = AgentRun(agent_name="album_orchestrator", status="failed",
+                             release_id=str(release.id),
                              input_json=json.dumps({"release_id": str(release.id)}),
                              state_json=json.dumps({
                                  "completed_seeds": [],
@@ -401,6 +405,7 @@ async def test_retry_success_promotes_cursor_winner():
         session.add(album_run); session.commit(); session.refresh(album_run)
         retry_run = AgentRun(agent_name="track_retry", status="queued",
                              profile_id=str(profile.id),
+                             release_id=str(release.id),
                              input_json=json.dumps({
                                  "release_id": str(release.id),
                                  "job_id": "old-failed-job",
@@ -451,10 +456,12 @@ async def test_retry_failure_pins_new_failed_job():
         }))
         session.add(release); session.commit(); session.refresh(release)
         album_run = AgentRun(agent_name="album_orchestrator", status="failed",
+                             release_id=str(release.id),
                              input_json=json.dumps({"release_id": str(release.id)}),
                              state_json=json.dumps({"failed_jobs": {"0": ["old-job"]}}))
         session.add(album_run); session.commit(); session.refresh(album_run)
         retry_run = AgentRun(agent_name="track_retry", status="queued",
+                             release_id=str(release.id),
                              input_json=json.dumps({
                                  "release_id": str(release.id),
                                  "job_id": "old-job",
@@ -476,3 +483,83 @@ async def test_retry_failure_pins_new_failed_job():
         album = session.get(AgentRun, album_run_id)
         state = json.loads(album.state_json)
         assert state["failed_jobs"]["0"] == ["old-job", "second-failed-job"]
+
+
+# ---------------------------------------------------------------- lore -> songwriter (A3)
+
+def test_songwriter_prompt_includes_album_context_lore():
+    from app.agents.songwriter.agent import SONGWRITER_AGENT
+    from app.agents.runtime.context import RunContext
+
+    seed = {"working_title": "S1", "mood": "m", "story_seed": "s", "energy": 0.5}
+    ctx_with = {"album_title": "T", "album_concept": "C", "artist_name": "A",
+                "artist_lore": '{"origin": "copperbelt"}'}
+    msgs = SONGWRITER_AGENT.build_messages(seed, ctx_with, RunContext(agent_name="songwriter"))
+    assert any("ARTIST WORLD LORE" in m["content"] for m in msgs)
+
+    ctx_without = {"album_title": "T", "album_concept": "C", "artist_name": "A"}
+    msgs_without = SONGWRITER_AGENT.build_messages(seed, ctx_without, RunContext(agent_name="songwriter"))
+    assert not any("ARTIST WORLD LORE" in m["content"] for m in msgs_without)
+
+
+# ---------------------------------------------------------------- world-builder (A2)
+
+def test_lore_generate_route_persists_canon(client, artist_fixture, monkeypatch):
+    from app.agents.world_builder.agent import WORLD_BUILDER_AGENT
+    from app.agents.world_builder.schemas import WorldLore
+
+    pid = artist_fixture["profile_id"]
+
+    lore = WorldLore(
+        origin_story="Raised on the copperbelt, shaped by mine-town radio.",
+        era_setting="1970s Zambia",
+        appearance="Wide-brim hat, worn acoustic guitar, dust-colored coat.",
+        musical_dna=["fingerpicked guitar", "warm baritone", "railway rhythms"],
+        influences=["Zamrock", "1970s highlife"],
+        lore_facts=["Never performed outside Zambia before 1975."],
+        avoid_contradictions=["Do not describe the artist as city-bred."],
+        signature="Songs are places you can return to.",
+    )
+
+    class _Outcome:
+        attempts = []
+
+    class _Result:
+        output = lore
+        outcome = _Outcome()
+        attempts = []
+        tokens_in = 10
+        tokens_out = 20
+        latency_ms = 5
+
+    async def _fake_run(brief, ctx, policy=None):
+        # Grounding: existing lore should be in the prompt context
+        assert brief.artist_name
+        return _Result()
+
+    monkeypatch.setattr(WORLD_BUILDER_AGENT, "run", _fake_run)
+
+    resp = client.post(f"/profiles/{pid}/lore/generate")
+    assert resp.status_code == 200
+    body = resp.json()
+    assert body["lore"]["era_setting"] == "1970s Zambia"
+
+    detail = client.get(f"/profiles/{pid}").json()
+    assert "copperbelt" in detail["profile"]["lore_json"]
+
+    # ledger row exists and succeeded
+    runs = client.get(f"/agents/runs?profile_id={pid}").json()["runs"]
+    assert any(r["agent_name"] == "world_builder" and r["status"] == "succeeded" for r in runs)
+
+
+def test_world_builder_registered_and_listed():
+    from app.agents.registry import AGENTS, list_agents
+    assert "world_builder" in AGENTS
+    assert any(a["name"] == "world_builder" for a in list_agents())
+
+
+def test_world_builder_schema_rejects_empty_name():
+    from app.agents.world_builder.schemas import WorldBuilderBrief
+    import pydantic
+    with pytest.raises(pydantic.ValidationError):
+        WorldBuilderBrief(artist_name="")

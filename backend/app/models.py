@@ -293,6 +293,7 @@ class ArtistProfile(SQLModel, table=True):
     cover_image_path: Optional[str] = None
     default_provider: Optional[str] = None   # optional per-artist LLM override
     default_model: Optional[str] = None
+    voice_profile_id: Optional[str] = None   # linked singing voice (voice_service profile) — A1
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
@@ -345,6 +346,7 @@ class AgentRun(SQLModel, table=True):
     session_id: Optional[str] = Field(default=None, index=True)
     project_id: Optional[str] = Field(default=None, index=True)
     profile_id: Optional[str] = Field(default=None, index=True)
+    release_id: Optional[str] = Field(default=None, index=True)  # album/retry runs (was only in input_json — see C2 backfill)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     finished_at: Optional[datetime] = None
 
@@ -357,6 +359,7 @@ class ArtistProfileCreate(SQLModel):
     cover_image_path: Optional[str] = None
     default_provider: Optional[str] = None
     default_model: Optional[str] = None
+    voice_profile_id: Optional[str] = None
 
 
 class ArtistProfileUpdate(SQLModel):
@@ -367,6 +370,7 @@ class ArtistProfileUpdate(SQLModel):
     lore_json: Optional[str] = None   # structured world/identity document (World Builder domain)
     default_provider: Optional[str] = None
     default_model: Optional[str] = None
+    voice_profile_id: Optional[str] = None
 
 
 class AgentAssignmentCreate(SQLModel):

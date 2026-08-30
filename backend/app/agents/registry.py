@@ -12,6 +12,8 @@ from pydantic import BaseModel
 
 from app.agents.experiencer.agent import EXPERIENCER_AGENT
 from app.agents.experiencer.schemas import AlbumBrief
+from app.agents.world_builder.agent import WORLD_BUILDER_AGENT
+from app.agents.world_builder.schemas import WorldBuilderBrief
 
 
 @dataclass
@@ -26,6 +28,11 @@ AGENTS: Dict[str, AgentEntry] = {
         agent=EXPERIENCER_AGENT,
         input_schema=AlbumBrief,
         description=EXPERIENCER_AGENT.description,
+    ),
+    WORLD_BUILDER_AGENT.name: AgentEntry(
+        agent=WORLD_BUILDER_AGENT,
+        input_schema=WorldBuilderBrief,
+        description=WORLD_BUILDER_AGENT.description,
     ),
 }
 

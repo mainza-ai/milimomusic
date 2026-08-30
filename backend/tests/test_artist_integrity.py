@@ -147,7 +147,8 @@ async def test_orchestrator_writes_slot_cursor_and_release_status(test_db):
     orchestrator = AlbumOrchestrator(registry, publish)
 
     with Session(test_db) as session:
-        profile = ArtistProfile(name="Cursor Artist", bio="b")
+        profile = ArtistProfile(name="Cursor Artist", bio="b", voice_profile_id="voice-abc")
+        session.add(profile)
         session.add(profile)
         session.commit()
         session.refresh(profile)
@@ -185,6 +186,8 @@ async def test_orchestrator_writes_slot_cursor_and_release_status(test_db):
             parent_run_id=run_id, release_id=release_id,
             autopilot=True, engine=test_db,
         )
+        # A1: artist voice identity flows into every track's generation request
+        assert mock_create.call_args.kwargs["voice_profile_id"] == "voice-abc"
 
     with Session(test_db) as session:
         run = session.get(AgentRun, run_id)
@@ -325,6 +328,7 @@ def test_produce_guard_returns_409_on_active_run(client, artist_fixture):
     with Session(app_engine) as session:
         session.add(AgentRun(
             agent_name="album_orchestrator", status="running",
+            release_id=rid,
             input_json=json.dumps({"release_id": rid}),
         ))
         session.commit()
@@ -342,6 +346,7 @@ def test_delete_profile_blocks_on_active_run(client, artist_fixture):
     with Session(app_engine) as session:
         session.add(AgentRun(
             agent_name="album_orchestrator", status="awaiting_approval",
+            release_id=rid,
             input_json=json.dumps({"release_id": rid}),
         ))
         session.commit()
@@ -358,9 +363,10 @@ def test_delete_profile_cascades_and_detaches_jobs(client, artist_fixture):
 
     rid = artist_fixture["release_id"]
     pid = artist_fixture["profile_id"]
+    track_title = f"Detached Track {uuid.uuid4().hex[:6]}"
     with Session(app_engine) as session:
         session.add(Job(
-            title="Detached Track", prompt="p", lyrics="l", release_id=rid,
+            title=track_title, prompt="p", lyrics="l", release_id=rid,
             artist_profile_id=pid, status=JobStatus.COMPLETED,
         ))
         session.add(AgentAssignment(profile_id=pid, role="producer", agent_name="songwriter"))
@@ -375,7 +381,7 @@ def test_delete_profile_cascades_and_detaches_jobs(client, artist_fixture):
     with Session(app_engine) as session:
         assert session.get(Release, uuid.UUID(rid)) is None
         assert session.get(ArtistProfile, uuid.UUID(pid)) is None
-        jobs = session.exec(select(Job).where(Job.title == "Detached Track")).all()
+        jobs = session.exec(select(Job).where(Job.title == track_title)).all()
         assert len(jobs) == 1
         assert jobs[0].release_id is None
         assert jobs[0].artist_profile_id is None

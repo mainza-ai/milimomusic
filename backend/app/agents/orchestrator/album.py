@@ -18,11 +18,11 @@ from sqlmodel import Session
 from app.agents.orchestrator import AlbumRunHandle, BudgetState, RunRegistry
 from app.agents.orchestrator.bridge import create_track_from_seed
 from app.agents.runtime.context import RunContext
-from app.agents.runtime.overrides import resolve_chain_head
+from app.agents.runtime.overrides import load_artist_lore, resolve_chain_head
 from app.agents.runtime.policy import ResiliencePolicy
 from app.core.llm_contracts import AllProvidersFailedError
 from app.experiencer_bridge import run_experiencer_for_release
-from app.models import AgentRun, Release
+from app.models import AgentRun, ArtistProfile, Release
 from app.release_state import transition_release
 
 logger = logging.getLogger("milimo.agents.album")
@@ -138,6 +138,7 @@ class AlbumOrchestrator:
                     "album_title": vision_payload.get("journey_title") or release.title,
                     "album_concept": vision_payload.get("concept_statement", ""),
                     "artist_name": getattr(release, "artist_name", "") or "",
+                    "artist_lore": load_artist_lore(session, str(getattr(release, "profile_id", "") or "") or None),
                 }
                 total = len(seeds)
                 handle.total_steps = total
@@ -146,6 +147,11 @@ class AlbumOrchestrator:
 
                 policy = ResiliencePolicy(
                     chain_head=resolve_chain_head(session, str(getattr(release, "profile_id", "") or "") or None, "songwriter"))
+                # A1: artist voice identity — resolved once per album, applied to
+                # every track. Missing/deleted profiles degrade gracefully in the
+                # pipeline (vocal stem passes through unchanged).
+                artist_profile = session.get(ArtistProfile, uuidlib.UUID(str(release.profile_id))) if getattr(release, "profile_id", None) else None
+                artist_voice = getattr(artist_profile, "voice_profile_id", None) or None
                 current_slot: Optional[int] = None  # slot being attempted (failure capture)
 
                 for idx, seed in enumerate(seeds):
@@ -188,6 +194,7 @@ class AlbumOrchestrator:
                         release_id=str(release.id),
                         project_id=str(getattr(release, "project_id", None) or "") or None,
                         provider_name="minimax_music3",
+                        voice_profile_id=artist_voice,
                         ctx=ctx, policy=policy,
                         engine=eng,
                         progress_cb=lambda phase, msg, i=idx, t=total: self._emit(
@@ -351,6 +358,8 @@ async def retry_single_seed(
         orchestrator.registry.register(handle.run_id)
         policy = ResiliencePolicy(
             chain_head=resolve_chain_head(session, str(getattr(release, "profile_id", "") or "") or None, "songwriter"))
+        retry_profile = session.get(ArtistProfile, uuidlib.UUID(str(release.profile_id))) if getattr(release, "profile_id", None) else None
+        retry_voice = getattr(retry_profile, "voice_profile_id", None) or None
         try:
             ctx = RunContext(
                 agent_name="songwriter", run_id=str(parent_run_id),
@@ -361,6 +370,7 @@ async def retry_single_seed(
                 "album_title": vision.get("journey_title") or release.title,
                 "album_concept": vision.get("concept_statement", ""),
                 "artist_name": getattr(release, "artist_name", "") or "",
+                "artist_lore": load_artist_lore(session, str(getattr(release, "profile_id", "") or "") or None),
             }
             emit(handle.run_id, {"step": 1, "total_steps": 1, "phase": "track", "progress": 5,
                                   "message": f"Reproducing '{seeds[seed_slot].get('working_title', 'track')}…"})
@@ -371,6 +381,7 @@ async def retry_single_seed(
                 release_id=str(release.id),
                 project_id=str(getattr(release, "project_id", None) or "") or None,
                 provider_name="minimax_music3",
+                voice_profile_id=retry_voice,
                 ctx=ctx, policy=policy, engine=eng,
                 progress_cb=lambda phase, msg: emit(
                     handle.run_id,

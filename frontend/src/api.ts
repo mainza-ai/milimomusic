@@ -890,6 +890,7 @@ export interface ArtistProfileT {
     cover_image_path: string | null;
     default_provider: string | null;
     default_model: string | null;
+    voice_profile_id: string | null;
     created_at: string;
     updated_at: string;
 }
@@ -1030,8 +1031,12 @@ export const profilesApi = {
         const res = await axios.get(`${API_BASE_URL}/profiles/${id}`);
         return res.data;
     },
-    update: async (id: string, body: Partial<Pick<ArtistProfileT, 'name' | 'bio' | 'tags' | 'lore_json'>>): Promise<ArtistProfileT> => {
+    update: async (id: string, body: Partial<Pick<ArtistProfileT, 'name' | 'bio' | 'tags' | 'lore_json' | 'voice_profile_id'>>): Promise<ArtistProfileT> => {
         const res = await axios.patch(`${API_BASE_URL}/profiles/${id}`, body);
+        return res.data;
+    },
+    generateLore: async (id: string): Promise<{ run: string; lore: Record<string, unknown>; profile: ArtistProfileT }> => {
+        const res = await axios.post(`${API_BASE_URL}/profiles/${id}/lore/generate`);
         return res.data;
     },
     delete: async (id: string): Promise<void> => {

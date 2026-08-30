@@ -29,12 +29,19 @@ class SongwriterAgent:
     ) -> List[dict]:
         placement = seed.get("placement_hint", "mid-album")
         duration_s = seed.get("target_duration_s") or 180
+        lore_block = ""
+        if album_context.get("artist_lore"):
+            lore_block = (
+                "\nARTIST WORLD LORE (canonical history — stay consistent with it)\n"
+                f"{album_context['artist_lore']}\n"
+            )
         user = (
             f"ALBUM CONTEXT\n"
             f"- Album: {album_context.get('album_title', '(untitled)')}\n"
             f"- Concept: {album_context.get('album_concept', '')}\n"
-            f"- Artist: {album_context.get('artist_name', '(unnamed}')}\n"
-            f"- Arc position: {placement}\n\n"
+            f"- Artist: {album_context.get('artist_name', '(unnamed)')}\n"
+            f"- Arc position: {placement}\n"
+            f"{lore_block}\n"
             f"THE SEED (write THIS song)\n"
             f"- Working title: {seed.get('working_title', '')}\n"
             f"- Mood: {seed.get('mood', '')}\n"

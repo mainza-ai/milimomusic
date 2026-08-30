@@ -6,9 +6,9 @@ import {
     Mic2, UserCog, Disc3, CheckCircle2, AlertTriangle, X, Copy, History
 } from 'lucide-react';
 import {
-    agentsApi, profilesApi, albumApi, coverApi, api, releaseApi, projectApi, styleApi,
+    agentsApi, profilesApi, albumApi, coverApi, api, releaseApi, projectApi, styleApi, voiceApi,
     type ReleaseTracksT,
-    type AgentInfo, type ArtistProfileT, type ProfileStats, type AgentRunRow, type Project, type Style,
+    type AgentInfo, type ArtistProfileT, type ProfileStats, type AgentRunRow, type Project, type Style, type VoiceProfile,
     type ProfileDetail, type ExperiencerVision, type AgentRunEnvelope
 } from '../../api';
 import { useValidatedForm } from '../../hooks/useValidatedForm';
@@ -66,6 +66,24 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     });
     const [saveState, setSaveState] = useState<'idle' | 'saving' | 'saved' | 'error'>('idle');
     const [saveError, setSaveError] = useState('');
+    // A1: artist voice identity — singing voice applied to every album track
+    const [voiceProfiles, setVoiceProfiles] = useState<VoiceProfile[]>([]);
+    const [voiceSaving, setVoiceSaving] = useState(false);
+
+    const handleChangeVoice = async (voiceId: string) => {
+        if (!detail) return;
+        setVoiceSaving(true);
+        try {
+            const updated = await profilesApi.update(detail.profile.id, { voice_profile_id: voiceId || null });
+            setDetail({ ...detail, profile: updated });
+            setProfiles(prev => prev.map(p => p.id === updated.id ? updated : p));
+            toast(voiceId ? 'Singing voice linked — future album tracks will use it.' : 'Voice unlinked — future tracks use the provider default.', 'success');
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Voice update failed'), 'error');
+        } finally {
+            setVoiceSaving(false);
+        }
+    };
 
     // crew add row
     const [crewRole, setCrewRole] = useState('experiencer');
@@ -292,6 +310,9 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     };
 
     const prevDeepLinkRef = useRef<string | null | undefined>(undefined);
+    useEffect(() => {
+        voiceApi.listProfiles().then(setVoiceProfiles).catch(console.error);
+    }, []);
     useEffect(() => {
         const prev = prevDeepLinkRef.current;
         prevDeepLinkRef.current = initialProfileId ?? null;
@@ -537,15 +558,20 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     // World lore edit state (F10)
     const [editLore, setEditLore] = useState('');
     const [loreSaving, setLoreSaving] = useState(false);
+    const [loreGenerating, setLoreGenerating] = useState(false);
+    const loreBaselineRef = useRef('');
     useEffect(() => {
         if (detail) {
+            let next = '';
             try {
                 const raw = detail.profile.lore_json || '{}';
                 const parsed = JSON.parse(raw);
-                setEditLore(parsed && typeof parsed === 'object' ? JSON.stringify(parsed, null, 2) : String(raw));
+                next = parsed && typeof parsed === 'object' ? JSON.stringify(parsed, null, 2) : String(raw);
             } catch {
-                setEditLore(String(detail.profile.lore_json || ''));
+                next = String(detail.profile.lore_json || '');
             }
+            setEditLore(next);
+            loreBaselineRef.current = next;
         }
     }, [detail?.profile.id, detail?.profile.lore_json]);
 
@@ -555,11 +581,30 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
         try {
             const updated = await profilesApi.update(detail.profile.id, { lore_json: editLore });
             setDetail({ ...detail, profile: updated });
+            loreBaselineRef.current = editLore;
             toast('World lore saved — the crew will ground on it.', 'success');
         } catch (e: any) {
             toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Lore save failed'), 'error');
         } finally {
             setLoreSaving(false);
+        }
+    };
+
+    const handleGenerateLore = async () => {
+        if (!detail) return;
+        if (editLore !== loreBaselineRef.current && !window.confirm('Regenerating will replace the lore — including your unsaved edits. Continue?')) return;
+        setLoreGenerating(true);
+        try {
+            const res = await profilesApi.generateLore(detail.profile.id);
+            const pretty = JSON.stringify(res.lore, null, 2);
+            setEditLore(pretty);
+            loreBaselineRef.current = pretty;
+            setDetail(d => d ? { ...d, profile: res.profile } : d);
+            toast('World lore generated — review and save it.', 'success');
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Lore generation failed'), 'error');
+        } finally {
+            setLoreGenerating(false);
         }
     };
 
@@ -917,6 +962,23 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                 {saveState === 'error' && saveError && (
                     <p className="text-[11px] font-mono text-rose-600 dark:text-rose-400" role="alert">{saveError}</p>
                 )}
+                {/* A1: Singing voice — applied to every album track this artist produces */}
+                <label className="block">
+                    <span className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-1">Singing voice (album tracks)</span>
+                    <select
+                        value={detail.profile.voice_profile_id || ''}
+                        onChange={e => handleChangeVoice(e.target.value)}
+                        disabled={voiceSaving}
+                        className="apple-input text-xs" aria-label="Singing voice">
+                        <option value="">Provider default (no custom voice)</option>
+                        {voiceProfiles.filter(v => v.status === 'ready').map(v => (
+                            <option key={v.id} value={v.id}>{v.name}</option>
+                        ))}
+                    </select>
+                    {voiceProfiles.filter(v => v.status === 'ready').length === 0 && (
+                        <span className="text-[9px] font-mono text-slate-400 mt-1 block">No voice profiles yet — create one in the Voice Lab.</span>
+                    )}
+                </label>
                 {/* World Lore (F10): canonical artist document — read/edit, feeds agent grounding */}
                 <details className="rounded-xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/5 px-3 py-2">
                     <summary className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 cursor-pointer select-none">
@@ -928,8 +990,12 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                         rows={5}
                         placeholder={'Structured lore as JSON or freeform text — the crew reads this as canonical history.\ne.g. {"hometown": "Lusaka", "era": "1970s"}'}
                         className="apple-input !bg-transparent text-[11px] font-mono mt-2 w-full" aria-label="World lore" />
-                    <div className="flex justify-end mt-1">
-                        <button onClick={handleSaveLore} disabled={loreSaving}
+                    <div className="flex justify-end gap-1.5 mt-1">
+                        <button onClick={handleGenerateLore} disabled={loreGenerating || loreSaving}
+                            className="text-[10px] font-bold px-2 py-1 rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 disabled:opacity-50 transition-colors">
+                            {loreGenerating ? 'Imagining…' : 'Generate with World-Builder'}
+                        </button>
+                        <button onClick={handleSaveLore} disabled={loreSaving || loreGenerating}
                             className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] dark:hover:bg-white/10 disabled:opacity-50 transition-colors">
                             {loreSaving ? 'Saving…' : 'Save Lore'}
                         </button>

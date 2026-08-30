@@ -88,6 +88,7 @@ async def create_track_from_seed(
     release_id,
     project_id: Optional[str],
     provider_name: str = "minimax_music3",
+    voice_profile_id: Optional[str] = None,
     ctx: Optional[RunContext] = None,
     policy: Optional[ResiliencePolicy] = None,
     engine=None,
@@ -148,6 +149,7 @@ async def create_track_from_seed(
         model_provider=provider_name,
         structured_caption=structured_caption or None,
         project_id=project_id,
+        voice_profile_id=voice_profile_id,  # artist voice identity (A1): None → provider default
     )
 
     job = Job(

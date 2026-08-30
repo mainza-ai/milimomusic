@@ -961,3 +961,18 @@ Verification: 160 backend tests, 9/9 playwright, tsc + build green.
 artist-remaining-roadmap.md marked: Waves 1+2 shipped; only Wave 3 /
 conditional items remain (stylist+critic agents, LoRA links, Modal
 primitive, pagination UI, observability, multi-worker ops note).
+
+## [2026-08-29] create | Wave 3 implementation plan (investigated)
+A6 LoRA links DEFERRED by owner decision (HeartMuLa legacy-only). Remaining items
+investigated against code and planned in artist-remaining-roadmap.md:
+3A stylist+critic agents — insertion points verified in create_track_from_seed
+(songwriter→sanitize→caption→generation), opt-in per produce run via crew flags
+(default off, cost control), bounded revise path (max 1 revision), graceful
+degradation on LLM failure, critic verdicts persisted in the album cursor and
+joined onto tracklist rows. 3B shared Modal primitive — all four existing modals
+share unguarded overlays; trap/Escape/focus-restore primitive in
+ui/primitives.tsx. 3C server-side search (q param) + real pagination for the
+artists list (client-side search breaks once paged). 3D run observability
+(stats endpoint + panel footer, p50/p95 in Python). 3E ops docs — instance lock
+already hard-fails multi-instance boots (MILIMO_ALLOW_MULTI_INSTANCE escape);
+document all MILIMO_* env vars + WAL backup guidance. Budget ≈6–7.5d.

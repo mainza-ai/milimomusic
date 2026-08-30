@@ -14,8 +14,11 @@ aliases: [remaining roadmap, artist next phases]
 > Done: C2 indexed run lookups, A3 lore→songwriter, A1 voice identity, A2 World-Builder
 > agent + lore generation, D1 workspace.spec fix, B1 playback, B2 track ordering,
 > B3 budget caps, B4 live release chips, A4 cover generation, C3 ledger retention.
-> **Remaining: Wave 3 / conditional only** — stylist+critic agents, LoRA checkpoint
-> links, shared Modal primitive, pagination UI, run observability, multi-worker ops note.
+> **Remaining: Wave 3 / conditional only** — stylist+critic agents, shared Modal
+> primitive, pagination UI + server-side search, run observability, ops docs.
+> **A6 (LoRA checkpoint links) is DEFERRED by owner decision** — HeartMuLa is
+> legacy-only and not part of the current stack; revisit only if HeartMuLa
+> sampling returns.
 
 Everything still open after Phases E–H shipped (commits `80f6eda`, `c27420c`, `a9f0136`).
 Verified against code 2026-08-29. Ordered P1 → P3; each phase has an exit gate.
@@ -97,24 +100,94 @@ rows (poll while any release is active) instead of showing state only inside the
 (default 30d) swept at startup + `DELETE /agents/runs?older_than=`; never prune rows
 referenced by an active run's cursor.
 
-## P3 — Later / conditional
+## Wave 3 — implementation plan (investigated 2026-08-29)
 
-- **A5. Stylist + critic agents (2–3d)** — crew roles exist but only experiencer/songwriter
-  compute. Stylist: tag refinement per seed pre-generation (bridged after songwriter).
-  Critic: post-generation review persisted on the run ledger, surfaced in tracklist.
-  Build only when there's a real quality signal to act on.
-- **A6. LoRA checkpoint link (1d)** — fine-tuning checkpoints (`adapter_model.safetensors`)
-  linkable to a profile (`checkpoint_id` column + picker). Metadata + HeartMuLa-legacy
-  sampling only; MiniMax Music 3 takes no adapters — keep honest in UI copy.
-- **D2. Shared Modal primitive (0.5d)** — extract the focus trap + Escape + overlay pattern
-  from ArtistsView into `ui/primitives.tsx`; adopt InpaintModal/StyleManagerModal/LLMSettingsModal.
-- **D3. Artists-list pagination UI (0.5d, conditional)** — backend supports offset/total;
-  add controls only if a deployment approaches the 200-row fetch cap.
-- **C4. Run observability (1d, optional)** — small aggregation endpoint (success rate,
-  latency p50/p95, tokens by agent) for the run-history panel footer.
-- **C1. Multi-worker note (docs only)** — the produce/retry guards are single-process.
-  Document "run one backend worker" in ops; revisit with a real lock only if multi-worker
-  deployment becomes real.
+### 3A. Stylist + Critic agents (2.5–3d) — the crew's last two real jobs
+
+**Insertion points (verified):** `create_track_from_seed` runs songwriter → sanitize →
+caption → generation. The Stylist slots between sanitize and caption (refines the draft's
+tags *before* the rich prompt bakes them in); the Critic reviews the draft *before*
+generation — an honest text-level review (lyrics vs seed story + lore consistency).
+Audio review would require audio analysis and is out of scope.
+
+**Design:**
+- `app/agents/stylist/`: persona + schemas (`StylistBrief{seed, draft, artist_name, artist_lore?}`
+  → `StylingChoice{style_tags: List[str] 2–6, rationale}`). Registered like the World-Builder.
+  `order_tags_genre_first` still runs AFTER the stylist as the deterministic guard.
+- `app/agents/critic/`: persona + schemas (`CriticBrief{seed, draft}` →
+  `Critique{verdict: 'pass'|'revise'|'concern', score: float 0–1, notes, contradictions}`).
+- **Revise path (bounded):** verdict `revise` → ONE songwriter revision round fed by the
+  critic's notes → ONE re-review; final verdict recorded either way (never a loop).
+- **Graceful degradation (non-negotiable):** stylist/critic LLM failures must never kill the
+  track — catch, record in the ledger attempts, proceed with the unrefined draft (same
+  pattern as the caption step).
+- **Cost control:** opt-in per run — `POST /releases/{id}/produce` gains
+  `{"crew": {"stylist": true, "critic": true}}`, default OFF (+1–2 LLM calls per track).
+  Retry runs inherit the flags via their input_json. Two checkboxes beside autopilot.
+- **Persistence/surface:** critic output lands in the album run cursor
+  (`state.reviews[slot]`); `release_tracks` joins it by slot → each tracklist row can show
+  a verdict chip + notes on demand. Stylist tags need no extra persistence — they're baked
+  into the Job's rich prompt.
+- **Exit gate:** seeded album run with crew on → stylist tags land in the Job prompt,
+  critic verdict shows on the tracklist row, `revise` path produces exactly one revision,
+  forced-LLM-failure runs still complete.
+
+### 3B. Shared Modal primitive (1d)
+
+**Investigation:** all four modals (InpaintModal, LLMSettingsModal, StyleManagerModal,
+PathsSettingsModal) repeat `fixed inset-0 … backdrop-blur` overlays + X button with no
+focus trap (InpaintModal has Escape only); ArtistsView's create modal has the only full
+trap — inline. No portal needed (fixed positioning suffices).
+
+**Design:** `<Modal open onClose title? widthClass? children>` in `ui/primitives.tsx`:
+Tab trap + Escape + overlay click, initial focus to first focusable, restore focus to the
+opener on close, body scroll lock. Migrate ArtistsView first (delete its inline trap),
+then the four modals one commit each.
+
+**Exit gate:** no modal overlay outside `primitives.tsx`; keyboard pass — Tab cycles, Esc
+closes, focus returns to opener; all e2e still green.
+
+### 3C. Artists-list pagination + server-side search (1d)
+
+**Gap:** search is client-side over the loaded page — with paging, page-2 artists are
+invisible to search. Backend list already has limit/offset/total but no text filter.
+
+**Design:** add `q` to `GET /profiles` (case-insensitive LIKE across name/bio/tags);
+frontend search becomes a debounced (250 ms) server query; pager = Prev/Next +
+"N–M of T" footer (limit 24); skeletons and empty/miss states already exist; keep
+`with_stats=1` on every page. Tests: q matches name/bio/tag, misses return empty;
+pagination totals; e2e with mocked API (search + pager navigation).
+
+**Exit gate:** search spans ALL profiles while paged; zero client-side filtering remains.
+
+### 3D. Run observability (1d)
+
+**Design:** `GET /agents/runs/stats?profile_id=&window=` aggregating the same bounded
+query as the ledger list — counts by status, success rate, tokens in/out sums, latency
+p50/p95 (computed in Python over parsed values; SQLite has no percentile), per-agent
+breakdown. UI: a footer line inside the run-history panel ("142 runs · 91% success ·
+p50 4.1s · p95 38s · 1.2M out-tokens") via `agentsApi.runStats(profileId)`.
+
+**Exit gate:** seeded profile renders real aggregates; endpoint shape tested.
+
+### 3E. Ops documentation (0.5d, docs only)
+
+**Investigation:** multi-instance is already *prevented*, not just discouraged —
+`acquire_instance_lock` hard-fails a second boot (stale-lock grace 30 s) with
+`MILIMO_ALLOW_MULTI_INSTANCE=1` as the explicit escape hatch. C1 is therefore docs.
+
+**Design:** README "Operations" section documenting: the instance lock + escape hatch +
+`MILIMO_LOCK_FILE`; `MILIMO_RUN_RETENTION_DAYS` (ledger retention, 30d default, 0=off);
+`MILIMO_AGENT_TIMEOUT`; `MILIMO_AUTH_TOKEN` / `MILIMO_CORS_ORIGINS`; `MILIMO_MAX_DURATION_S`;
+SQLite WAL backup guidance (use `VACUUM INTO` or stop the server — don't copy a live WAL
+trio). Also mark `artist-phases-execution-spec.md` as superseded (pending micro-fix).
+
+**Exit gate:** every `MILIMO_*` env var documented; roadmap page closes C1.
+
+### Suggested order & budget
+3A (2.5–3d) → 3B (1d) → 3C (1d) → 3D (1d) → 3E (0.5d) ≈ **6–7.5d**. 3B/3C/3D are
+independent and can interleave; 3A stands alone. Gates per item: backend suite (160+),
+tsc/build, artist e2e extended, CI green.
 
 ## Micro-fixes (fold into the next touching commit)
 - `songwriter/agent.py:36` — `'(unnamed}'` → `'(unnamed)'` (typo in fallback text).

@@ -142,6 +142,7 @@ export const ArtistsView: React.FC = () => {
         try { setTracks(await profilesApi.getReleaseTracks(rid)); }
         catch (e: any) { toast(String(e?.response?.data?.detail?.error?.message || 'Failed to load tracks'), 'error'); }
     };
+    const [search, setSearch] = useState('');
     const [coverBusy, setCoverBusy] = useState(false);
     const uploadCover = async (file: File) => {
         if (!detail) return;
@@ -357,13 +358,31 @@ export const ArtistsView: React.FC = () => {
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
-                        {profiles.map(p => (
+                        <div className="flex items-center gap-2 mb-2">
+                            <input value={search} onChange={e => setSearch(e.target.value)} placeholder="Search artists, styles…" className="apple-input text-xs flex-1" aria-label="Search artists" />
+                            {search && <button onClick={() => setSearch('')} className="text-[10px] font-bold text-slate-400 hover:text-slate-600" aria-label="Clear search">Clear</button>}
+                        </div>
+                        {profiles.filter(p => (p.name + ' ' + p.tags + ' ' + p.bio).toLowerCase().includes(search.toLowerCase())).map(p => (
                             <button
                                 key={p.id}
                                 onClick={() => openProfile(p.id)}
                                 className="text-left p-5 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm hover:shadow-apple-md backdrop-blur-xl transition-all hover:-translate-y-0.5"
                             >
-                                <h3 className="text-sm font-extrabold text-slate-900 dark:text-white truncate">{p.name}</h3>
+                                <div className="flex items-center gap-3">
+                                    {p.cover_image_path ? (
+                                        <img src={`${API_BASE_URL}${p.cover_image_path}`} alt="" className="w-10 h-10 rounded-xl object-cover border border-black/10 dark:border-white/10" />
+                                    ) : (
+                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-400/40 to-fuchsia-500/40 flex items-center justify-center"><UserCog size={16} className="text-slate-500" /></div>
+                                    )}
+                                    <div className="flex items-center gap-3">
+                                    {p.cover_image_path ? (
+                                        <img src={`${API_BASE_URL}${p.cover_image_path}`} alt="" className="w-10 h-10 rounded-xl object-cover border border-black/10 dark:border-white/10" />
+                                    ) : (
+                                        <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-400/40 to-fuchsia-500/40 flex items-center justify-center"><UserCog size={16} className="text-slate-500" /></div>
+                                    )}
+                                    <h3 className="text-sm font-extrabold text-slate-900 dark:text-white truncate">{p.name}</h3>
+                                </div>
+                                </div>
                                 <p className="text-[11px] text-slate-500 dark:text-slate-400 mt-1 line-clamp-2 min-h-[2em]">
                                     {p.bio || 'No bio yet.'}
                                 </p>

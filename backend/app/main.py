@@ -46,7 +46,7 @@ from app.transcription.muscriptor_provider import muscriptor_provider
 from app.transcription.real_separator import separate_sources
 from app.transcription.instrument_stems import render_instrument_parts
 from app.transcription.mastering import master_track
-from app.transcription.karaoke import lyric_sync_engine
+from app.transcription.karaoke import lyric_sync_engine, _resolve_audio_file
 from app.providers.registry import provider_registry
 from app.models import (
     Job,
@@ -1923,7 +1923,19 @@ def get_track_lrc(job_id: str):
                 timed_lines = []
 
         if not timed_lines and job.lyrics:
-            timed_lines = lyric_sync_engine.align_lyrics(job.lyrics, duration_sec=180.0)
+            dur = 180.0
+            resolved = _resolve_audio_file(job.audio_path)
+            if resolved:
+                try:
+                    import soundfile as sf
+                    dur = float(sf.info(resolved).duration)
+                except Exception:
+                    pass
+            elif getattr(job, "duration_ms", None):
+                dur = float(job.duration_ms) / 1000.0
+            stems_dict = json.loads(job.stems_json) if job.stems_json else {}
+            vocal_stem = stems_dict.get("vocals") or stems_dict.get("part_vocals") or job.audio_path
+            timed_lines = lyric_sync_engine.align_lyrics(job.lyrics, duration_sec=dur, vocal_stem_path=vocal_stem)
 
         title = job.title or job.prompt or "Milimo Track"
         lrc_text = lyric_sync_engine.generate_lrc(timed_lines, title=title)
@@ -1947,17 +1959,18 @@ def realign_track_lyrics(job_id: str, lyrics: Optional[str] = Body(None, embed=T
 
         eff_lyrics = job.lyrics or job.prompt or ""
         stems_dict = json.loads(job.stems_json) if job.stems_json else {}
-        vocal_path = stems_dict.get("vocals") or job.audio_path
+        vocal_path = stems_dict.get("vocals") or stems_dict.get("part_vocals") or job.audio_path
 
         duration_sec = 180.0
-        local_audio = (job.audio_path or "").replace("/audio/", "generated_audio/", 1)
-        if local_audio and os.path.exists(local_audio):
+        resolved_audio = _resolve_audio_file(job.audio_path)
+        if resolved_audio:
             try:
                 import soundfile as sf
-                info = sf.info(local_audio)
-                duration_sec = float(info.duration)
+                duration_sec = float(sf.info(resolved_audio).duration)
             except Exception:
                 pass
+        elif getattr(job, "duration_ms", None):
+            duration_sec = float(job.duration_ms) / 1000.0
 
         timed = lyric_sync_engine.align_lyrics(
             lyrics=eff_lyrics,

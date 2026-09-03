@@ -70,8 +70,54 @@ def test_lrc_and_srt_generation():
     assert "2\n00:00:06,500 --> 00:00:09,000\nHello world" in srt
 
 
+def test_neural_forced_alignment_on_real_vocal_stem():
+    vocal_stem = "backend/generated_audio/stems/53e4c875-484d-4e6d-9db2-10cc40e6bb30_vocals.wav"
+    if not os.path.exists(vocal_stem):
+        return  # Skip if stem file is not present in environment
+
+    lyrics = """[Verse 1]
+Black basalt, frozen breath —
+solar wind threads the twilight.
+Green sparks awake the sky.
+
+[Outro]
+Awakening."""
+
+    results = lyric_sync_engine.align_lyrics(lyrics, duration_sec=14.5, vocal_stem_path=vocal_stem)
+    assert len(results) > 0
+
+    # Ensure sections and lines are present
+    sections = [r for r in results if r.get('is_section')]
+    sung = [r for r in results if not r.get('is_section')]
+    assert len(sections) == 2
+    assert len(sung) == 4
+
+    # Ensure words are acoustically aligned with non-zero spans
+    for s in sung:
+        assert len(s['words']) > 0
+        for w in s['words']:
+            assert w['end'] > w['start']
+
+    # Section header deconfliction: section headers must end before or at sung line start
+    for i, r in enumerate(results):
+        if r.get('is_section') and i + 1 < len(results) and not results[i+1].get('is_section'):
+            assert r['end'] <= results[i+1]['start'] + 0.05
+
+
+def test_audio_path_resolver():
+    from app.transcription.karaoke import _resolve_audio_file
+    vocal_stem = "backend/generated_audio/stems/53e4c875-484d-4e6d-9db2-10cc40e6bb30_vocals.wav"
+    if os.path.exists(vocal_stem):
+        # Test virtual audio prefix resolution
+        resolved = _resolve_audio_file("/audio/stems/53e4c875-484d-4e6d-9db2-10cc40e6bb30_vocals.wav")
+        assert resolved is not None
+        assert os.path.exists(resolved)
+
+
 if __name__ == '__main__':
     test_section_tag_detection()
     test_acoustic_alignment_timing_monotonicity()
     test_lrc_and_srt_generation()
+    test_neural_forced_alignment_on_real_vocal_stem()
+    test_audio_path_resolver()
     print('All LyricSyncEngine unit tests passed successfully!')

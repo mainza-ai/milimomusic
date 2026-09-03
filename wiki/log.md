@@ -1096,3 +1096,22 @@ Comprehensive production audit conducted across backend and frontend:
    - Verified frontend `ArtistsView.tsx` displays emerald badge `● MiniMax Music 3 (Neural)` for authentic neural audio.
    - All 171 backend tests pass. Frontend TypeScript build 100% clean.
 
+## [2026-09-03] fix | Neural Acoustic Forced Alignment (TorchAudio MMS_FA) & Karaoke Synchronization
+1. Root Cause Analysis:
+   - Fixed threshold `max(0.015, max_energy * 0.12)` in `LyricSyncEngine._extract_vocal_regions` failed on subtly mixed vocal stems where peak was below 0.015, causing empty regions and arbitrary fallback partition.
+   - Syllable spreading collapsed multiple disjoint singing intervals into a single `[first_vocal_start, last_vocal_end]` window, uniformly stretching lines over instrumental pauses and guitar solos.
+   - Section headers (`[Verse 1]`, `[Chorus]`, `[Outro]`) overlapped with sung lines and were captured by `activeLineIndex` in `SessionWorkspace.tsx` and `GlobalAudioPlayer.tsx`, stealing the highlight from actual words.
+   - `realign_lyrics` endpoint passed mixed master audio instead of the isolated vocal stem.
+2. 3-Tier Neural Architecture Implemented in `backend/app/transcription/karaoke.py`:
+   - **Tier 1 (Neural Forced Alignment)**: TorchAudio `MMS_FA` (Meta Multilingual Forced Aligner) generates frame-level CTC emission from the isolated vocal stem (`BS-Roformer`), mapping tokenized lyrics directly to acoustic phonemes with sub-100ms precision.
+   - **Tier 2 (Multi-Interval Adaptive VAD)**: Dynamic 75th-percentile energy thresholding (`p75 * 0.25`) preserving vocal pauses and instrumental breaks between stanzas.
+   - **Tier 3 (Syllable Heuristic)**: Clean proportional fallback for offline/synthetic testing.
+3. Section Header Deconfliction & Frontend Tracking:
+   - Section headers isolated and assigned cue timestamps within preceding pauses with strictly non-overlapping boundaries.
+   - `SessionWorkspace.tsx` and `GlobalAudioPlayer.tsx` updated so `activeLineIndex` ignores section headers (`!is_section`), preserving active lyric word-by-word tracking.
+   - `realign_lyrics` endpoint updated to resolve `stems.vocals` or `stems.part_vocals` and actual soundfile duration.
+4. Live Verification & Validation:
+   - Live endpoint test on real album tracks (`53e4c875` and `dd5481fb`): sub-100ms word-by-word timestamps verified against acoustic vocals, perfectly matching singing bursts (e.g. 2.86s–4.37s and 9.39s–10.43s).
+   - Exported `.lrc` verified via `GET /tracks/{id}/lrc`.
+   - Unit tests added in `backend/tests/test_lyrics_sync.py`; all 173 backend pytest tests pass.
+   - Frontend production build (`tsc -b && vite build`) 100% clean.

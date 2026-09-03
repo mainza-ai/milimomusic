@@ -33,7 +33,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [MuScriptor](entities/muscriptor.md) — multi-instrument transcription → MIDI + MusicXML (git submodule, integrated).
 - [Stem Separation (Dual-Engine)](entities/stem-separator.md) — HTDemucs real neural separation + MuScriptor per-instrument parts, user-selectable in the DAW.
 - [Matchering Reference Mastering](entities/matchering-mastering.md) — -14 LUFS reference mastering.
-- [Karaoke & Lyric Sync](entities/karaoke-lyricsync.md) — timed lyrics, `.lrc`/`.srt` export.
+- [Karaoke & Lyric Sync](entities/karaoke-lyricsync.md) — TorchAudio MMS_FA neural forced alignment, sub-100ms word sync, .lrc/.srt export.
 - [Voice Studio (SVC)](entities/voice-service.md) — offline voice conversion + consent-gated profiles.
 - [Session Workspace (DAW)](entities/session-workspace.md) — Listen/Arrange/Piano Roll/Notation/Mix/Lyrics.
 

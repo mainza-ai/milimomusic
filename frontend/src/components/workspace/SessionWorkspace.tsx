@@ -339,19 +339,34 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         setStemDurations(nextDurations);
     };
 
+    const isSectionLine = (l?: TimedLine) => {
+        if (!l) return false;
+        return Boolean(l.is_section || (l.text.startsWith('[') && l.text.endsWith(']')));
+    };
+
     const activeLineIndex = (() => {
         if (timedLyrics.length === 0) return -1;
+        let lastSungIdx = -1;
         for (let i = 0; i < timedLyrics.length; i++) {
             const line = timedLyrics[i];
-            const nextLine = timedLyrics[i + 1];
-            const lineStart = line.start;
-            const lineEnd = nextLine ? nextLine.start : (line.end || line.start + 6);
-            if (currentTime >= lineStart && currentTime < lineEnd) {
+            if (isSectionLine(line)) continue;
+            lastSungIdx = i;
+
+            // Find next non-section line to define upper time boundary
+            let nextSungStart = line.end || (line.start + 5.0);
+            for (let j = i + 1; j < timedLyrics.length; j++) {
+                if (!isSectionLine(timedLyrics[j])) {
+                    nextSungStart = timedLyrics[j].start;
+                    break;
+                }
+            }
+
+            if (currentTime >= line.start && currentTime < nextSungStart) {
                 return i;
             }
         }
-        if (currentTime >= timedLyrics[timedLyrics.length - 1].start) {
-            return timedLyrics.length - 1;
+        if (lastSungIdx !== -1 && currentTime >= (timedLyrics[lastSungIdx]?.start ?? 0)) {
+            return lastSungIdx;
         }
         return -1;
     })();

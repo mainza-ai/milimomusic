@@ -97,6 +97,7 @@ export interface TimedLine {
     start: number;
     end: number;
     words: TimedWord[];
+    is_section?: boolean;
 }
 
 export interface Job {

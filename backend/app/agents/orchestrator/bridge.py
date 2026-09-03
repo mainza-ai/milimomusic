@@ -16,6 +16,7 @@ from sqlmodel import Session
 
 from app.agents.runtime.context import RunContext
 from app.agents.runtime.policy import ResiliencePolicy
+from app.agents.runtime.overrides import resolve_chain_head
 from app.agents.songwriter.agent import SONGWRITER_AGENT
 from app.agents.songwriter.schemas import SongDraft
 from app.agents.stylist.agent import STYLIST_AGENT
@@ -140,6 +141,19 @@ async def create_track_from_seed(
     # 2.5) Crew (optional, per-run flags). Everything here degrades gracefully:
     # a crew agent failing must NEVER kill the track — record and proceed.
     flags = crew_flags or {}
+    stylist_policy = policy
+    critic_policy = policy
+    if eng is not None and artist_profile_id:
+        try:
+            with Session(eng) as s:
+                st_head = resolve_chain_head(s, str(artist_profile_id), "stylist")
+                if st_head:
+                    stylist_policy = ResiliencePolicy(chain_head=st_head)
+                cr_head = resolve_chain_head(s, str(artist_profile_id), "critic")
+                if cr_head:
+                    critic_policy = ResiliencePolicy(chain_head=cr_head)
+        except Exception as _e:
+            logger.debug(f"[bridge] role policy resolution skipped: {_e}")
 
     if flags.get("stylist"):
         step("stylist", "Refining style tags…")
@@ -151,7 +165,7 @@ async def create_track_from_seed(
                     album_title=str(album_context.get("album_title") or ""),
                     artist_lore=str(album_context.get("artist_lore") or ""),
                 ),
-                ctx, policy,
+                ctx, stylist_policy,
             )
             refined = order_tags_genre_first(styling.output.style_tags)
             if refined:
@@ -165,7 +179,7 @@ async def create_track_from_seed(
         review: Dict[str, Any]
         try:
             critic_result = await CRITIC_AGENT.run(
-                CriticBrief(seed=seed, draft=draft.model_dump()), ctx, policy,
+                CriticBrief(seed=seed, draft=draft.model_dump()), ctx, critic_policy,
             )
             critique: Critique = critic_result.output
             review = {
@@ -196,7 +210,7 @@ async def create_track_from_seed(
                                         album_title=str(album_context.get("album_title") or ""),
                                         artist_lore=str(album_context.get("artist_lore") or ""),
                                     ),
-                                    ctx, policy,
+                                    ctx, stylist_policy,
                                 )
                                 tags_list = order_tags_genre_first(styling2.output.style_tags) or tags_list
                             except Exception as exc:  # noqa: BLE001
@@ -213,7 +227,7 @@ async def create_track_from_seed(
                             seed=seed, draft=draft.model_dump(),
                             revision_context="Second review after one revision round.",
                         ),
-                        ctx, policy,
+                        ctx, critic_policy,
                     )
                     critique = re_review.output
                     review = {
@@ -250,7 +264,12 @@ async def create_track_from_seed(
     # 4) Explicit duration + seed (defaults are traps: 30s / randomized).
     import os as _os
     _cap_s = int(_os.environ.get("MILIMO_MAX_DURATION_S", "240"))
-    duration_ms = min(energy_to_duration_s(float(seed.get("energy", 0.5))), _cap_s) * 1000
+    seed_s = seed.get("target_duration_s")
+    if seed_s is not None and int(seed_s) > 0:
+        duration_s = min(int(seed_s), _cap_s)
+    else:
+        duration_s = min(energy_to_duration_s(float(seed.get("energy", 0.5))), _cap_s)
+    duration_ms = duration_s * 1000
     seed_val = random.randint(0, 2**32 - 1)
 
     # Rich prompt prevents producer-enhancement from rewriting the
@@ -287,7 +306,7 @@ async def create_track_from_seed(
         topk=req.topk,
         artist_profile_id=str(artist_profile_id),
         release_id=str(release_id),
-        voice_profile_id=None,
+        voice_profile_id=str(voice_profile_id) if voice_profile_id else None,
     )
 
     from app.services.music_service import music_service

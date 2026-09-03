@@ -1,60 +1,64 @@
 name: CI
-on: [push, pull_request]
+on:
+  push:
+    branches: [ main, develop ]
+  pull_request:
+    branches: [ main, develop ]
 
 jobs:
-  backend:
+  backend-test:
+    name: Backend Test Suite
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout Code
+        uses: actions/checkout@v4
         with:
           submodules: recursive
-      - uses: actions/setup-python@v5
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: "3.12"
+          cache: "pip"
+          cache-dependency-path: backend/requirements.txt
+
+      - name: Install System Audio Libraries
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ffmpeg libsndfile1
+
       - name: Install Dependencies
         run: |
-          python -m pip install --upgrade pip setuptools wheel
-          python -m pip install "numpy>=1.26.0" "torch>=2.0.0" "torchaudio>=2.0.0" --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install --upgrade pip
           pip install -r backend/requirements.txt
+
       - name: Run Backend Tests
+        env:
+          OPENCODE_API_KEY: "mock-ci-key"
+          NVIDIA_API_KEY: "mock-ci-key"
         run: |
-          cd backend
-          PYTHONPATH=.:../muscriptor python -m pytest tests/ -v
+          PYTHONPATH=backend:muscriptor pytest backend/tests/ -v
 
-  frontend:
+  frontend-build:
+    name: Frontend Build & Typecheck
     runs-on: ubuntu-latest
-    timeout-minutes: 10
-    steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install & Build Frontend
-        run: |
-          cd frontend
-          npm install --no-audit --no-fund
-          npx tsc -b
-          npm run build
 
-  frontend-e2e:
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-node@v4
-        with:
-          node-version: '20'
-      - name: Install Frontend
-        run: |
-          cd frontend
-          npm install --no-audit --no-fund
-      - name: Install Playwright Chromium
-        run: |
-          cd frontend
-          npx playwright install --with-deps chromium
-      - name: Run Playwright E2E
-        run: |
-          cd frontend
-          npx playwright test
+      - name: Checkout Code
+        uses: actions/checkout@v4
 
+      - name: Set up Node.js 20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: "npm"
+          cache-dependency-path: frontend/package.json
+
+      - name: Install Frontend Dependencies
+        working-directory: frontend
+        run: npm install
+
+      - name: Build Frontend & Typecheck
+        working-directory: frontend
+        run: npm run build

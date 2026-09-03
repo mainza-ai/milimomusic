@@ -1104,4 +1104,12 @@ export const releaseApi = {
         const res = await axios.post(`${API_BASE_URL}/releases/${releaseId}/tracks/${jobId}/retry`);
         return res.data;
     },
+    detachTrack: async (releaseId: string, jobId: string): Promise<{ status: string; message: string }> => {
+        const res = await axios.delete(`${API_BASE_URL}/releases/${releaseId}/tracks/${jobId}`);
+        return res.data;
+    },
+    attachTrack: async (releaseId: string, jobId: string): Promise<{ status: string; message: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/releases/${releaseId}/tracks`, { job_id: jobId });
+        return res.data;
+    },
 };

@@ -62,7 +62,7 @@ class PolicyOutcome:
 
 # Stable candidate order after the active provider. Cloud first (key-gated),
 # local engines as the universal safety net.
-_CLOUD_ORDER = ["nvidia", "deepseek", "openai", "gemini", "openrouter", "opencode"]
+_CLOUD_ORDER = ["opencode", "nvidia", "deepseek", "openai", "gemini", "openrouter"]
 _LOCAL_ORDER = ["omlx", "ollama", "lmstudio"]
 
 
@@ -208,13 +208,16 @@ class ResiliencePolicy:
                 try:
                     # OFF the event loop (gap G2): sync SDK call in a worker
                     # thread; kwargs pass straight through to generate_chat.
-                    result: LLMResult = await asyncio.to_thread(
-                        provider.generate_chat,
-                        call_messages,
-                        model,
-                        options={"temperature": temperature or profile.temperature},
-                        timeout=timeout,
-                        force_json=True,  # constrained decoding at the provider
+                    result: LLMResult = await asyncio.wait_for(
+                        asyncio.to_thread(
+                            provider.generate_chat,
+                            call_messages,
+                            model,
+                            options={"temperature": temperature or profile.temperature},
+                            timeout=timeout,
+                            force_json=True,  # constrained decoding at the provider
+                        ),
+                        timeout=timeout + 5.0,
                     )
                     latency_ms = int((asyncio.get_event_loop().time() - started) * 1000)
 

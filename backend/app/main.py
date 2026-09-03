@@ -515,7 +515,7 @@ async def transcribe_uploaded_audio(file: UploadFile = File(...)):
         id=UUID(job_id),
         title=f"Imported: {file.filename}",
         prompt="User imported audio",
-        audio_path=f"/audio/{filename}",
+        audio_path=f"/audio/{safe_name}",
         status=JobStatus.COMPLETED,
         midi_path=transcription.midi_path,
         musicxml_path=transcription.musicxml_path,
@@ -1653,6 +1653,65 @@ def set_release_track_order(release_id: UUID, payload: dict):
         session.add(release)
         session.commit()
         return {"status": "ok", "track_order": ids}
+
+
+@app.delete("/releases/{release_id}/tracks/{job_id}")
+def detach_release_track(release_id: UUID, job_id: UUID):
+    """Detach a single track from a release without deleting the job or project."""
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        job = session.get(Job, job_id)
+        if not job or str(job.release_id) != str(release_id):
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Track not found in this release."}})
+
+        job.release_id = None
+        session.add(job)
+
+        try:
+            order = json.loads(release.track_order_json or "[]")
+            if isinstance(order, list) and str(job_id) in order:
+                order = [x for x in order if x != str(job_id)]
+                release.track_order_json = json.dumps(order)
+                session.add(release)
+        except Exception:
+            pass
+
+        session.commit()
+        return {"status": "ok", "message": "Track detached from release."}
+
+
+@app.post("/releases/{release_id}/tracks")
+def attach_release_track(release_id: UUID, payload: dict):
+    """Attach an existing job/track to a release."""
+    target_job_id = (payload or {}).get("job_id")
+    if not target_job_id:
+        raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "job_id is required."}})
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        job = session.get(Job, UUID(str(target_job_id)))
+        if not job:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Job not found."}})
+
+        job.release_id = str(release_id)
+        if release.profile_id:
+            job.artist_profile_id = str(release.profile_id)
+        session.add(job)
+
+        try:
+            order = json.loads(release.track_order_json or "[]")
+            if isinstance(order, list) and str(target_job_id) not in order:
+                order.append(str(target_job_id))
+                release.track_order_json = json.dumps(order)
+                session.add(release)
+        except Exception:
+            pass
+
+        session.commit()
+        return {"status": "ok", "message": "Track attached to release."}
 
 
 @app.post("/releases/{release_id}/tracks/{job_id}/retry")
@@ -2967,6 +3026,16 @@ def _delete_job_artifacts(job_id_str: str, audio_public_path: Optional[str] = No
                     removed += 1
             except OSError as e:
                 logger.warning(f"Cascade delete skipped {path}: {e}")
+
+    for form in id_forms:
+        sheet_dir = os.path.join("generated_audio", "sheets", form)
+        if os.path.isdir(sheet_dir):
+            try:
+                shutil.rmtree(sheet_dir, ignore_errors=True)
+                removed += 1
+            except Exception as e:
+                logger.warning(f"Cascade delete skipped sheet dir {sheet_dir}: {e}")
+
     return removed
 
 

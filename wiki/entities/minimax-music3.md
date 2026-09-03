@@ -2,8 +2,8 @@
 title: MiniMax Music 3
 type: entity
 created: 2026-08-19
-updated: 2026-08-20
-sources: [sources/v2-refactor-plan.md, sources/v2-refactor-plan.md]
+updated: 2026-09-03
+sources: [sources/v2-refactor-plan.md]
 tags: [minimax, music3, model, generation, provider]
 aliases: [MiniMax-Music3, Music 3]
 ---
@@ -20,7 +20,7 @@ From `MiniMaxMusic3Provider.get_capabilities()`:
 - **provider_id**: `minimax_music3` — version `Music-3-bf16`.
 - **max_duration_sec**: 300 (5 min).
 - **supports_structured_caption**: yes; **supports_section_tags**: yes; **supports_lora**: yes.
-- **recommended_hardware**: `mid_single_gpu` (Apple Silicon MPS / 16GB+).
+- **recommended_hardware**: `mid_single_gpu` (Apple Silicon MPS / unified memory 32GB+).
 - **license_class**: `MiniMax Open Weights`; default sample rate **44.1kHz**.
 
 ## Structured Captions & section tags
@@ -36,35 +36,37 @@ From `MiniMaxMusic3Provider.get_capabilities()`:
   (MiniMax drops lyric text sharing a line with a leading tag).
 
 ## Model snapshot / loading
-- Default snapshot: `~/.cache/huggingface/hub/models--mlx-community--MiniMax-Music3-bf16/snapshots/…`
+- Default snapshot: auto-discovered via `_find_default_snapshot()` in `minimax_provider.py`,
+  searching `~/.cache/huggingface/hub/models--mlx-community--MiniMax-Music3-bf16/snapshots/*`
   (overridable via `MINIMAX_MODEL_PATH`). `is_ready()` returns true if the snapshot dir exists.
+- Dedicated runtime: launched via `scripts/start-backend.sh` which executes under the
+  dedicated environment `/opt/miniconda3/envs/milimomusic/bin/python` containing `mlx`,
+  `mlx_audio`, `torch`, `audio_separator`, and `soundfile`.
 - See [Model Manager](model-manager.md) for the adapter/quantization **model tree**
   (BF16 28.5 GB default, INT8 14.2 GB quantized variant).
 
-> [!NOTE] **Real inference — implemented.** `MiniMaxMusic3Provider.generate()` now runs
-> **genuine MiniMax Music 3 weight inference** on Apple Silicon via `mlx_audio.music.generate`
-> (`mlx-community/MiniMax-Music3-bf16`), conditioned on the prompt / structured caption /
-> lyrics / section tags, writing `/audio/<job>.wav`. Requires `mlx` + `mlx-audio` (optional,
-> Apple-only). Inference `steps` are clamped to the model's allowed 1–30 range (an earlier
-> clamp of 32 made every song ≥62s fail real inference and silently fall back to the synth).
+> [!NOTE] **Real inference — fully verified in production (2026-09-03).**
+> `MiniMaxMusic3Provider.generate()` runs **genuine MiniMax Music 3 weight inference**
+> on Apple Silicon via `mlx_audio.music.generate` (`mlx-community/MiniMax-Music3-bf16`),
+> conditioned on the prompt / structured caption / lyrics / section tags, writing `/audio/<job>.wav`.
 >
-> **Fallback is never silent.** When the MLX runtime is missing, the snapshot is absent, or
-> inference throws, `generate()` returns `used_fallback_synth=True` + `fallback_reason`, the
-> [orchestration pipeline](../concepts/generation-pipeline.md) persists them on the `Job`,
-> and the UI shows a visible "Fallback synthesis" badge (hero + AI Provenance tab). The
-> procedural synth exists only so the app runs on every platform — users can always tell
-> when a track was not actually produced by MiniMax Music 3.
+> **Strict production inference (`MILIMO_STRICT_INFERENCE=1`):**
+> To prevent silent degradation or accidental fallback to procedural oscillator synthesis,
+> the backend enforces strict inference. If the MLX model or snapshot cannot load,
+> `MiniMaxMusic3Provider` raises a clean `RuntimeError` rather than generating placeholder audio.
+>
+> **Real-time hooked cancellation:**
+> Long MLX autoregressive generation loops check `cancel_event` every 25 frames (1 second of audio).
+> Preemption occurs within 1 second of a cancellation request without stranding GPU memory.
 >
 > **Self-healing producer:** if the user hands over a bare prompt (e.g. "A smash hit pop song")
 > and/or no lyrics, the [producer service](producer-service.md) invokes the real LLM producer to
 > enhance the concept and write genuine structured lyrics, so real inference is always
-> well-conditioned and never fails (`Lyrics are required`) or falls back to the synthetic
-> placeholder (see [Producer Service](producer-service.md)).
+> well-conditioned and never fails (`Lyrics are required`).
 >
-> **Memory:** the MLX model is loaded **thread-safely** (a `threading.Lock` prevents two racing
-> threads from loading two full ~28–40 GB copies), and can be released with
-> `unload_minimax_model()`. HTDemucs is unloaded after separation, so both heavy models aren't
-> resident between generations.
+> **Memory management:** the MLX model is loaded thread-safely with `_minimax_model_lock`
+> and occupies ~28–31 GB unified memory during execution. Separation models (BS-Roformer/HTDemucs)
+> and MuScriptor run sequentially on MPS to preserve memory headroom.
 
 ## In the pipeline
 Resolved by the [generation-provider](generation-provider.md) registry and driven through the

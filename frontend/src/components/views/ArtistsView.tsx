@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import {
     agentsApi, profilesApi, albumApi, coverApi, api, releaseApi, projectApi, styleApi, voiceApi,
-    type ReleaseTracksT,
+    type ReleaseTracksT, type ReleaseTrackT, type Job,
     type AgentInfo, type ArtistProfileT, type ProfileStats, type AgentRunRow, type Project, type Style, type VoiceProfile, type RunStats,
     type ProfileDetail, type ExperiencerVision, type AgentRunEnvelope
 } from '../../api';
@@ -20,7 +20,7 @@ const ROLE_LABELS: Record<string, string> = {
     world_builder: 'World Builder', experiencer: 'Experiencer',
     songwriter: 'Songwriter', producer: 'Producer', stylist: 'Stylist', critic: 'Critic',
 };
-const LLM_PROVIDERS = ['nvidia', 'deepseek', 'openai', 'gemini', 'openrouter', 'opencode', 'omlx', 'ollama', 'lmstudio'];
+const LLM_PROVIDERS = ['opencode', 'nvidia', 'deepseek', 'openai', 'gemini', 'openrouter', 'omlx', 'ollama', 'lmstudio'];
 
 type RunPhase = 'idle' | 'running' | 'done' | 'error';
 
@@ -136,6 +136,19 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
             setAlbumRun({ runId: res.run_id, releaseTitle: title || 'Track', status: 'queued', progress: 0, message: 'Reproducing failed track…' });
         } catch (e: any) {
             toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Retry failed'), 'error');
+        }
+    };
+
+    const detachTrack = async (releaseId: string, jobId: string, title: string) => {
+        if (!confirm(`Detach "${title}" from this release? The audio file will remain in your project.`)) return;
+        try {
+            await releaseApi.detachTrack(releaseId, jobId);
+            toast(`Detached "${title}"`, 'success');
+            if (openTracks === releaseId) {
+                try { setTracks(await profilesApi.getReleaseTracks(releaseId)); } catch { /* optimistic */ }
+            }
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Detach failed'), 'error');
         }
     };
 
@@ -258,12 +271,28 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     // B1: in-app playback — route the track through the global audio engine.
     const { playTrack } = useAudioEngine();
     const [playFetchingId, setPlayFetchingId] = useState<string | null>(null);
-    const playFromTracklist = async (jobId: string) => {
+    const playFromTracklist = async (jobId: string, albumTracks?: ReleaseTrackT[]) => {
         setPlayFetchingId(jobId);
         try {
             const job = await api.getJobStatus(jobId);
-            if (job.audio_path) await playTrack(job);
-            else toast('This track has no audio yet.', 'error');
+            if (job.audio_path) {
+                let playlistQueue: Job[] = [job];
+                if (albumTracks && albumTracks.length > 1) {
+                    try {
+                        const targetIdx = albumTracks.findIndex(t => t.id === jobId);
+                        const ordered = targetIdx >= 0 ? [...albumTracks.slice(targetIdx), ...albumTracks.slice(0, targetIdx)] : albumTracks;
+                        const otherTracks = ordered.filter(t => t.id !== jobId && t.status === 'completed');
+                        const fetched = await Promise.all(otherTracks.map(t => api.getJobStatus(t.id).catch(() => null)));
+                        const valid = fetched.filter((j): j is Job => j !== null && !!j.audio_path);
+                        playlistQueue = [job, ...valid];
+                    } catch {
+                        playlistQueue = [job];
+                    }
+                }
+                await playTrack(job, playlistQueue);
+            } else {
+                toast('This track has no audio yet.', 'error');
+            }
         } catch (e: any) {
             toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Playback failed'), 'error');
         } finally {
@@ -1445,9 +1474,20 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                                     </span>
                                                 )}
                                             </p>
-                                            <p className="text-[9px] text-slate-500 font-mono">
-                                                {Math.round(tr.duration_ms / 1000)}s · {tr.seed_slot != null ? `slot ${tr.seed_slot + 1}` : `seed ${tr.seed ?? '—'}`} · {tr.used_real_inference ? 'real inference' : 'fallback'}
-                                            </p>
+                                            <div className="flex items-center gap-2 mt-0.5">
+                                                <span className="text-[9px] text-slate-500 font-mono">
+                                                    {Math.round(tr.duration_ms / 1000)}s · {tr.seed_slot != null ? `slot ${tr.seed_slot + 1}` : `seed ${tr.seed ?? '—'}`}
+                                                </span>
+                                                {tr.used_real_inference ? (
+                                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[8px] font-bold uppercase tracking-wider bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 border border-emerald-500/20">
+                                                        ● MiniMax Music 3 (Neural)
+                                                    </span>
+                                                ) : (
+                                                    <span className="inline-flex items-center gap-0.5 px-1.5 py-0.2 rounded text-[8px] font-bold uppercase tracking-wider bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20" title="Procedural waveform generator used">
+                                                        ▲ Fallback Synth
+                                                    </span>
+                                                )}
+                                            </div>
                                         </div>
                                         <div className="flex items-center gap-1 shrink-0">
                                             {tracks.tracks.length > 1 && (
@@ -1460,19 +1500,39 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                                         title="Move down" aria-label={`Move ${tr.title || 'track'} down`}>▾</button>
                                                 </span>
                                             )}
-                                            {(['audio', 'midi', 'musicxml', 'stems', 'mastered'] as const).map(k =>
+                                            {(['audio', 'midi', 'musicxml', 'mastered'] as const).map(k =>
                                                 tr.artifacts?.[k] ? (
                                                     <a key={k} href={`${API_BASE_URL}${tr.artifacts[k]}`} target="_blank" rel="noreferrer"
                                                         className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 transition-colors">{k.slice(0, 4)}</a>
                                                 ) : null
                                             )}
+                                            {(() => {
+                                                if (!tr.artifacts?.stems) return null;
+                                                try {
+                                                    const parsed = typeof tr.artifacts.stems === 'string' ? JSON.parse(tr.artifacts.stems) : tr.artifacts.stems;
+                                                    if (parsed && typeof parsed === 'object') {
+                                                        return Object.entries(parsed).map(([stemName, stemPath]) => (
+                                                            typeof stemPath === 'string' && stemPath ? (
+                                                                <a key={stemName} href={`${API_BASE_URL}${stemPath}`} target="_blank" rel="noreferrer"
+                                                                    title={`Download ${stemName} stem`}
+                                                                    className="text-[9px] font-mono font-bold px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 hover:bg-cyan-500 hover:text-slate-950 transition-colors">
+                                                                    {stemName.slice(0, 3)}
+                                                                </a>
+                                                            ) : null
+                                                        ));
+                                                    }
+                                                } catch {
+                                                    return null;
+                                                }
+                                                return null;
+                                            })()}
                                             {tr.status === 'failed' && openTracks && (
                                                 <button onClick={() => retryTrack(openTracks, tr.id, tr.title || 'Track')}
                                                     className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 hover:bg-amber-500 hover:text-slate-950 transition-colors"
                                                     title="Reproduce this track from its seed">Retry</button>
                                             )}
                                             {tr.status === 'completed' && (
-                                                <button onClick={() => playFromTracklist(tr.id)} disabled={playFetchingId === tr.id}
+                                                <button onClick={() => playFromTracklist(tr.id, tracks.tracks)} disabled={playFetchingId === tr.id}
                                                     className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500 hover:text-slate-950 disabled:opacity-50 transition-colors"
                                                     title="Play through the studio player">
                                                     {playFetchingId === tr.id ? '…' : '▶ Play'}
@@ -1484,6 +1544,13 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                                     title="Open this track in the studio (full playback, DAW, transcription)">Studio</button>
                                             )}
                                             <span className={`w-1.5 h-1.5 rounded-full ${tr.status === 'completed' ? 'bg-emerald-500' : tr.status === 'failed' ? 'bg-red-500' : 'bg-amber-400'}`} title={tr.status} />
+                                            {openTracks && (
+                                                <button onClick={() => detachTrack(openTracks, tr.id, tr.title || 'Track')}
+                                                    className="text-slate-400 hover:text-red-500 transition-colors p-0.5 ml-0.5"
+                                                    title="Detach track from this release">
+                                                    <X size={11} />
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 ))}

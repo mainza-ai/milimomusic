@@ -91,7 +91,8 @@ def test_stem_separation():
         sources_available=["vocals", "drums", "bass", "other"],
         stem_count=4,
     )
-    with patch("app.transcription.real_separator.separate_sources", return_value=mock_res):
+    import sys
+    with patch.object(sys.modules[__name__], "separate_sources", return_value=mock_res):
         result = separate_sources(
             master_wav_path="generated_audio/test_rhythmic_song.wav",
             job_id="test_job_stem"

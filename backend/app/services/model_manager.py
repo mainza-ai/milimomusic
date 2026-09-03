@@ -76,14 +76,29 @@ class ModelManager:
                 has_mps = True
 
         tier = HardwareTier.MID_SINGLE_GPU
-        desc = "Apple Silicon GPU (Metal/MPS) detected. Optimal for MiniMax Music 3 & HeartMuLa."
+        desc = "Apple Silicon GPU (Metal/MPS) detected. Optimal for MiniMax Music 3."
+        can_minimax = True
 
         if has_cuda:
-            tier = HardwareTier.HIGH_DUAL_GPU
-            desc = "NVIDIA CUDA GPU detected. Full multi-GPU & batch acceleration enabled."
+            try:
+                import torch
+                count = torch.cuda.device_count()
+                vram_gb = torch.cuda.get_device_properties(0).total_memory / (1024**3)
+                dev_name = torch.cuda.get_device_name(0)
+                if count > 1:
+                    tier = HardwareTier.HIGH_DUAL_GPU
+                    desc = f"Multi-GPU NVIDIA CUDA detected ({count}x {dev_name}, {vram_gb:.1f}GB VRAM). Full acceleration enabled."
+                else:
+                    tier = HardwareTier.MID_SINGLE_GPU
+                    desc = f"NVIDIA CUDA GPU detected: {dev_name} ({vram_gb:.1f}GB VRAM)."
+                can_minimax = vram_gb >= 12.0
+            except Exception:
+                tier = HardwareTier.MID_SINGLE_GPU
+                desc = "NVIDIA CUDA GPU detected. Acceleration enabled."
         elif not has_mps:
             tier = HardwareTier.ENTRY_CPU
             desc = "CPU-only execution detected. Generation will run slower."
+            can_minimax = False
 
         return HardwareProfile(
             os_name=platform.system(),
@@ -93,7 +108,7 @@ class ModelManager:
             has_mps=has_mps,
             hardware_tier=tier.value,
             tier_description=desc,
-            can_run_minimax_full=True,
+            can_run_minimax_full=can_minimax,
             can_run_heartmula=True
         )
 

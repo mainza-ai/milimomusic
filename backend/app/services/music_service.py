@@ -75,31 +75,23 @@ class MusicService:
         return cls._instance
 
     async def initialize(self, model_path: str = None, version: str = "3B"):
-        """Initialize provider registry with MiniMax Music 3 and HeartMuLa."""
+        """Initialize provider registry with MiniMax Music 3."""
         from app.providers.registry import provider_registry
         # Initialize default provider (MiniMax Music 3)
         minimax = provider_registry.get_provider("minimax_music3")
         await minimax.initialize()
 
-        # Also initialize HeartMuLa if weights exist
-        try:
-            heartmula = provider_registry.get_provider("heartmula")
-            await heartmula.initialize(model_path)
-            self.pipeline = getattr(heartmula, "pipeline", None)
-        except Exception as e:
-            logger.warning(f"HeartMuLa optional init deferred: {e}")
-
     def load_lora_checkpoint(self, checkpoint_path: str) -> bool:
         """Forward LoRA loading to active provider if supported."""
         from app.providers.registry import provider_registry
-        provider = provider_registry.get_provider("heartmula")
+        provider = provider_registry.get_provider()
         if hasattr(provider, "load_lora_checkpoint"):
             return provider.load_lora_checkpoint(checkpoint_path)
         return False
 
     def unload_lora(self) -> bool:
         from app.providers.registry import provider_registry
-        provider = provider_registry.get_provider("heartmula")
+        provider = provider_registry.get_provider()
         if hasattr(provider, "unload_lora"):
             return provider.unload_lora()
         return True

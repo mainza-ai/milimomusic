@@ -18,9 +18,9 @@ def _load_dotenv_once():
     _ENV_LOADED = True
     # Search root .env and backend/.env
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-    load_dotenv(os.path.join(repo_root, ".env"))
-    load_dotenv(os.path.join(repo_root, "backend", ".env"))
-    load_dotenv(".env")
+    load_dotenv(os.path.join(repo_root, ".env"), override=True)
+    load_dotenv(os.path.join(repo_root, "backend", ".env"), override=True)
+    load_dotenv(".env", override=True)
 
 
 logger = logging.getLogger(__name__)
@@ -28,7 +28,7 @@ logger = logging.getLogger(__name__)
 CONFIG_FILE = "llm_config.json"
 
 DEFAULT_CONFIG = {
-    "provider": "nvidia",
+    "provider": "opencode",
     "ollama": {
         "base_url": "http://localhost:11434",
         "model": "llama3.2:3b-instruct-fp16"
@@ -61,7 +61,7 @@ DEFAULT_CONFIG = {
     "opencode": {
         "api_key": "",
         "base_url": "https://opencode.ai/zen/go/v1",
-        "model": "minimax-m3"
+        "model": "deepseek-v4-flash"
     },
     "omlx": {
         "base_url": "http://localhost:8787/v1",
@@ -78,7 +78,7 @@ DEFAULT_CONFIG = {
 # map: config_key -> (env_var, default)
 _ENV_MAP = {
     "nvidia": {"api_key": ("NVIDIA_API_KEY", ""), "base_url": ("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"), "model": ("NVIDIA_MODEL", "deepseek-ai/deepseek-v4-flash-0731")},
-    "opencode": {"api_key": ("OPENCODE_API_KEY", ""), "base_url": ("OPENCODE_BASE_URL", "https://opencode.ai/zen/go/v1"), "model": ("OPENCODE_MODEL", "minimax-m3")},
+    "opencode": {"api_key": ("OPENCODE_API_KEY", ""), "base_url": ("OPENCODE_BASE_URL", "https://opencode.ai/zen/go/v1"), "model": ("OPENCODE_MODEL", "deepseek-v4-flash")},
     "deepseek": {"api_key": ("DEEPSEEK_API_KEY", ""), "base_url": ("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), "model": ("DEEPSEEK_MODEL", "deepseek-chat")},
     "openrouter": {"api_key": ("OPENROUTER_API_KEY", ""), "base_url": ("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"), "model": ("OPENROUTER_MODEL", "openai/gpt-3.5-turbo")},
     "openai": {"api_key": ("OPENAI_API_KEY", ""), "model": ("OPENAI_MODEL", "gpt-4o")},

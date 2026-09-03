@@ -180,25 +180,11 @@ def separate_sources(
             stem_count=len(stems_dict)
         )
     except Exception as exc:
-        logger.warning(f"Native neural separation encountered error: {exc}. Providing clean audio fallback stems.")
-        
-        # Fallback: copy master to vocals and instrumental stems so the pipeline degrades gracefully
-        fallback_stems = {
-            "vocals": f"/audio/stems/{job_id}_vocals.wav",
-            "drums": f"/audio/stems/{job_id}_drums.wav",
-            "bass": f"/audio/stems/{job_id}_bass.wav",
-            "other": f"/audio/stems/{job_id}_other.wav"
-        }
-        for s_name in ("vocals", "drums", "bass", "other"):
-            dest = f"{out_dir}/{job_id}_{s_name}.wav"
-            if not os.path.exists(dest) and os.path.exists(master_wav_path):
-                import shutil
-                shutil.copyfile(master_wav_path, dest)
-
+        logger.warning(f"Native neural separation encountered error: {exc}. Returning empty stem set.")
         return SeparationResult(
-            stems=fallback_stems,
-            source_id="neural_fallback",
-            sources_available=list(fallback_stems.keys()),
-            stem_count=len(fallback_stems)
+            stems={},
+            source_id="separation_failed",
+            sources_available=[],
+            stem_count=0
         )
 

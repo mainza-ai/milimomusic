@@ -599,6 +599,51 @@ def test_track_order_requires_array(client, artist_fixture):
     assert out.status_code == 422
 
 
+def test_detach_and_attach_release_track(client, artist_fixture):
+    rid = artist_fixture["release_id"]
+    pid = artist_fixture["profile_id"]
+    with Session(app_engine) as session:
+        j = Job(
+            title="Track To Detach", prompt="test",
+            status=JobStatus.COMPLETED, release_id=rid,
+            artist_profile_id=pid,
+        )
+        session.add(j)
+        session.commit()
+        session.refresh(j)
+        jid = str(j.id)
+
+    # Verify track is returned in release
+    tracks_res = client.get(f"/releases/{rid}/tracks")
+    assert any(t["id"] == jid for t in tracks_res.json()["tracks"])
+
+    # Detach track
+    detach_res = client.delete(f"/releases/{rid}/tracks/{jid}")
+    assert detach_res.status_code == 200
+    assert detach_res.json()["status"] == "ok"
+
+    # Verify track is no longer in release
+    tracks_res2 = client.get(f"/releases/{rid}/tracks")
+    assert not any(t["id"] == jid for t in tracks_res2.json()["tracks"])
+
+    # Re-attach track
+    attach_res = client.post(f"/releases/{rid}/tracks", json={"job_id": jid})
+    assert attach_res.status_code == 200
+    assert attach_res.json()["status"] == "ok"
+
+    # Verify track is back
+    tracks_res3 = client.get(f"/releases/{rid}/tracks")
+    assert any(t["id"] == jid for t in tracks_res3.json()["tracks"])
+
+    # Cleanup
+    from uuid import UUID
+    with Session(app_engine) as session:
+        row = session.get(Job, UUID(jid))
+        if row:
+            session.delete(row)
+        session.commit()
+
+
 # ---------------------------------------------------------------- C3: ledger retention
 
 def test_prune_agent_runs_spares_cursors_and_active():

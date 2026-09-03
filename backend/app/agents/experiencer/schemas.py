@@ -41,7 +41,7 @@ class AlbumBrief(BaseModel):
 class EmotionalBeat(BaseModel):
     """One phase of the imagined life journey across the album's running order."""
 
-    position: int = Field(..., ge=1, description="1-based ordering along the arc.")
+    position: int = Field(..., ge=0, description="1-based or 0-based ordering along the arc.")
     label: str = Field(..., description="Short name for this emotional phase, e.g. 'Departure'.")
     intensity: float = Field(..., ge=0.0, le=1.0, description="Emotional intensity 0..1.")
     description: str = Field(default="", description="One or two sentences on what is felt here.")
@@ -85,7 +85,7 @@ class ExperiencerVision(BaseModel):
         description="Multi-paragraph narrative imagining the experiences behind the album — scenes, places, turning points.",
     )
     emotional_arc: List[EmotionalBeat] = Field(
-        ..., min_length=3, description="Ordered phases of the journey.",
+        ..., min_length=1, description="Ordered phases of the journey.",
     )
     song_seeds: List[SongSeed] = Field(
         ..., min_length=1, description="One seed per intended track (aim for track_target).",

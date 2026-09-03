@@ -19,22 +19,37 @@ import time
 from pathlib import Path
 from typing import Callable, Optional
 
-import mlx.core as mx
+try:
+    import mlx.core as mx
 
-from mlx_audio.music.models.minimax_music3.ar import (
-    ar_one_frame,
-    qwen3_hidden,
-)
-from mlx_audio.music.models.minimax_music3.minimax_music3 import (
-    CHUNK_FRAMES,
-    CHUNK_HOP,
-    DIT_CFG_SCALE,
-    OVERLAP_LATENT_LENGTH,
-    _chunk_starts,
-    _crop_waveform,
-    denoise_chunk,
-)
-from mlx_audio.audio_io import write as audio_write
+    from mlx_audio.music.models.minimax_music3.ar import (
+        ar_one_frame,
+        qwen3_hidden,
+    )
+    from mlx_audio.music.models.minimax_music3.minimax_music3 import (
+        CHUNK_FRAMES,
+        CHUNK_HOP,
+        DIT_CFG_SCALE,
+        OVERLAP_LATENT_LENGTH,
+        _chunk_starts,
+        _crop_waveform,
+        denoise_chunk,
+    )
+    from mlx_audio.audio_io import write as audio_write
+    HAS_MLX_AUDIO = True
+except ImportError:
+    mx = None
+    ar_one_frame = None
+    qwen3_hidden = None
+    CHUNK_FRAMES = 0
+    CHUNK_HOP = 0
+    DIT_CFG_SCALE = 0.0
+    OVERLAP_LATENT_LENGTH = 0
+    _chunk_starts = None
+    _crop_waveform = None
+    denoise_chunk = None
+    audio_write = None
+    HAS_MLX_AUDIO = False
 
 logger = logging.getLogger("milimo.minimax_local")
 
@@ -71,6 +86,8 @@ def generate_frame_hiddens_hooked(
     progress_cb: Optional[ProgressCB] = None,
 ):
     """Mirror of library ar.generate_frame_hiddens with hooks injected."""
+    if not HAS_MLX_AUDIO:
+        raise RuntimeError("mlx_audio is not available on this platform.")
     mx.random.seed(seed)
     key = mx.random.key(seed)
     embeddings = language_model.model.embed_tokens(text_ids)

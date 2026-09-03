@@ -84,11 +84,11 @@ def resolve_track_rows(
             state = json.loads(getattr(run, "state_json", None) or "{}") or {}
         except Exception:
             state = {}
-        # Legacy positional mapping (job_ids appended in seed order).
-        for pos, jid in enumerate(state.get("job_ids") or []):
-            slot_winner.setdefault(int(pos), str(jid))
         for slot, jid in (state.get("slot_jobs") or {}).items():
             slot_winner.setdefault(int(slot), str(jid))
+        # Legacy positional mapping (fallback only when slot_jobs is absent):
+        for pos, jid in enumerate(state.get("job_ids") or []):
+            slot_winner.setdefault(int(pos), str(jid))
         for slot, jids in (state.get("failed_jobs") or {}).items():
             bucket = slot_failed.setdefault(int(slot), [])
             for jid in jids if isinstance(jids, list) else [jids]:

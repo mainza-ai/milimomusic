@@ -51,6 +51,12 @@ backend/jobs.db
 backend/db.sqlite3
 backend/jobs.db*
 backend/database.db
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+models/
+backend/models/
 backend/llm_config.json
 backend/llm_config.backup.json
 llm_config.json

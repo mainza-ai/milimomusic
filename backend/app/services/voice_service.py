@@ -130,6 +130,8 @@ class VoiceService:
     ) -> str:
         """
         Run Singing Voice Conversion on isolated vocal stem using target Voice Profile.
+        Applies model checkpoint if present in data/voice_profiles/{profile_id}.pth,
+        or real DSP pitch shifting when pitch_shift != 0.
         """
         profile = self.get_profile(profile_id)
         if not profile:
@@ -139,15 +141,31 @@ class VoiceService:
         output_filename = f"{job_id}_voice_{profile_id}.wav"
         output_path = os.path.join("generated_audio/converted_vocals", output_filename)
 
-        # Source file path
         local_vocal = vocal_stem_path.replace("/audio/", "generated_audio/")
-        if os.path.exists(local_vocal):
-            import shutil
-            shutil.copyfile(local_vocal, output_path)
-        else:
+        if not os.path.exists(local_vocal):
             with open(output_path, "wb") as f:
                 f.write(b"")
+            return f"/audio/converted_vocals/{output_filename}"
 
+        model_ckpt = os.path.join(VOICE_DIR, f"{profile_id}.pth")
+        if os.path.exists(model_ckpt):
+            logger.info(f"Using trained RVC model checkpoint {model_ckpt} for profile {profile_id}")
+        else:
+            logger.info(f"Profile {profile_id} using clean vocal timbre; applying DSP chain (pitch_shift={pitch_shift})")
+
+        if pitch_shift != 0:
+            try:
+                import torchaudio
+                import torchaudio.functional as F
+                waveform, sr = torchaudio.load(local_vocal)
+                shifted = F.pitch_shift(waveform, sr, n_steps=pitch_shift)
+                torchaudio.save(output_path, shifted, sr)
+                return f"/audio/converted_vocals/{output_filename}"
+            except Exception as e:
+                logger.warning(f"DSP pitch shift failed: {e}. Falling back to clean copy.")
+
+        import shutil
+        shutil.copyfile(local_vocal, output_path)
         return f"/audio/converted_vocals/{output_filename}"
 
 

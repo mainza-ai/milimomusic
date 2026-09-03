@@ -3,15 +3,16 @@ title: Artist Domain — Current State
 type: concept
 tags: [artists, crew, albums, releases, voice, production, reference]
 created: 2026-08-29
-updated: 2026-08-30
+updated: 2026-09-03
 sources: [artist-phases-execution-spec.md, artist-section-audit.md]
 aliases: [artist domain, artists current state]
 ---
 
 # Artist Domain — Current State
 
-What the artist section **does** as of 2026-08-29 (Phases E–H + roadmap Waves 1–3
-shipped). For history and reasoning see the [gap report](artist-production-gap-report.md)
+What the artist section **does** as of 2026-09-03 (Phases E–H + roadmap Waves 1–3
+shipped, OpenCode DeepSeek v4 Flash baseline active, and genuine MiniMax Music 3
+neural generation verified end-to-end). For history and reasoning see the [gap report](artist-production-gap-report.md)
 and [roadmap](artist-remaining-roadmap.md); for the original dream, the
 [vision page](artist-profiles-vision.md).
 
@@ -50,15 +51,20 @@ The [Album Orchestrator](album-orchestrator-plan.md) wraps this: gated produce
 `state_json` (`slot_jobs` + `completed_seeds` + `failed_jobs` + `reviews`), WAL
 crash recovery, 409 guards against concurrent runs, single-seed retry.
 
-> [!NOTE] **Real-LLM verification (2026-08-30).** Albums were produced end-to-end
-> on this stack with real agents (NVIDIA Nemotron 120B) and **real MiniMax Music 3
-> inference** (29.5GB bf16 resident; short tracks via `MILIMO_MAX_DURATION_S=10`
-> because full-length runs are ~130× RTF ≈ hours). Crew tags applied and Critic
-> verdicts (`pass 0.88`) recorded and joined to tracklist rows. Two real-model
-> schema bugs were found and fixed live: `Critique.score` is now optional and
-> `StylingChoice` accepts the natural key `tags` (via `AliasChoices`) — real
-> models omit numeric fields and rename keys, so crew schemas must tolerate
-> honest output. Crew failure warnings carry per-provider attempt details.
+> [!NOTE] **Production verification & OpenCode DeepSeek v4 Flash baseline (2026-09-03).**
+> - **OpenCode baseline:** OpenCode Zen (`deepseek-v4-flash`) is the default baseline
+>   across backend and frontend. Experiencer, World-Builder, Songwriter, Stylist, and
+>   Critic agents all execute against `deepseek-v4-flash` via Cloudflare-protected endpoints.
+> - **Database decoupling:** SQLite/SQLAlchemy sessions in `AlbumOrchestrator.execute` and
+>   `retry_single_seed` are decoupled into short atomic transactions, committing and closing
+>   before long async LLM and GPU generation awaits.
+> - **Live 2-track album production:** Album "Aurora Borealis" for artist "Nova Eclipse"
+>   produced 2 tracks with authentic MiniMax Music 3 neural inference (`used_real_inference: true`),
+>   BS-Roformer 4-stem separation on Apple Silicon MPS, and MuScriptor transcription to
+>   note-level MIDI and MusicXML.
+> - **Critic verdicts:** Joined by slot to tracklist rows (`pass 0.80`, `pass 0.85`).
+> - **UI provenance badge:** Displays emerald `● MiniMax Music 3 (Neural)` badge for
+>   verified neural inference tracks.
 
 **Vision handoff:** the Experiencer Studio's "Save as Release" persists the full
 vision onto the release, so `produce` uses its exact seeds and track count —

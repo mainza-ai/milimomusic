@@ -519,10 +519,22 @@ class CoordinatorNode(BaseNode[SongState, GraphDeps, LyricsResponse]):
 # Graph Definition
 # ============================================================================
 
-lyrics_graph = Graph(
-    nodes=[CoordinatorNode, LyricistNode, StructureGuardNode],
-    state_type=SongState,
-)
+try:
+    lyrics_graph = Graph(
+        nodes=[CoordinatorNode, LyricistNode, StructureGuardNode],
+        state_type=SongState,
+    )
+except TypeError:
+    try:
+        from pydantic_graph import GraphBuilder
+        _builder = GraphBuilder(state_type=SongState, deps_type=GraphDeps, output_type=LyricsResponse)
+        _builder.add(_builder.node(CoordinatorNode))
+        _builder.add(_builder.node(LyricistNode))
+        _builder.add(_builder.node(StructureGuardNode))
+        lyrics_graph = _builder.build(validate_graph_structure=False)
+    except Exception as _e:
+        logger.warning(f"Could not initialize pydantic Graph: {_e}")
+        lyrics_graph = None
 
 
 # ============================================================================

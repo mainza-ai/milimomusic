@@ -121,7 +121,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
         try {
             const cfg = await api.getLLMConfig();
             setLlmConfig(cfg);
-            const activeProvider = cfg.provider || 'nvidia';
+            const activeProvider = cfg.provider || 'opencode';
             const activeModel = (cfg as any)[activeProvider]?.model;
             if (activeModel) {
                 setLyricsModel(activeModel);
@@ -154,11 +154,11 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
         localStorage.setItem(key, String(value));
     };
 
-    const [lyricsModel, setLyricsModel] = useState(() => localStorage.getItem('milimo_lyrics_model') || (lyricsModels[0] || 'deepseek-ai/deepseek-v4-flash-0731'));
+    const [lyricsModel, setLyricsModel] = useState(() => localStorage.getItem('milimo_lyrics_model') || (lyricsModels[0] || 'deepseek-v4-flash'));
 
     useEffect(() => {
         if (lyricsModels.length > 0) {
-            const activeProvider = llmConfig.provider || 'nvidia';
+            const activeProvider = llmConfig.provider || 'opencode';
             const configuredModel = (llmConfig as any)[activeProvider]?.model;
             if (configuredModel && lyricsModels.includes(configuredModel)) {
                 setLyricsModel(configuredModel);
@@ -387,7 +387,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                                     const newModel = e.target.value;
                                                     setLyricsModel(newModel); 
                                                     localStorage.setItem('milimo_lyrics_model', newModel);
-                                                    const activeProvider = llmConfig.provider || 'nvidia';
+                                                    const activeProvider = llmConfig.provider || 'opencode';
                                                     try {
                                                         await api.updateLLMConfig({
                                                             [activeProvider]: { model: newModel }

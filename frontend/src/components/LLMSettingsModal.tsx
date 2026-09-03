@@ -19,7 +19,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
     currentConfig,
     onConfigUpdate
 }) => {
-    const [activeTab, setActiveTab] = useState<string>('nvidia');
+    const [activeTab, setActiveTab] = useState<string>('opencode');
     const [config, setConfig] = useState<LLMConfig>(currentConfig);
     const [isSaving, setIsSaving] = useState(false);
     const [saveStatus, setSaveStatus] = useState<'idle' | 'success' | 'error'>('idle');
@@ -146,8 +146,8 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
     };
 
     const providers = [
+        { id: 'opencode', name: 'OpenCode Zen', icon: '🚀', desc: 'DeepSeek v4 Flash (Default)' },
         { id: 'nvidia', name: 'NVIDIA NIM', icon: '🟢', desc: 'Hosted Llama 3.1/3.3 & Nemotron' },
-        { id: 'opencode', name: 'OpenCode Go', icon: '🚀', desc: 'Remote Cloud Engine' },
         { id: 'omlx', name: 'OMLX Local (Port 8787)', icon: '⚡', desc: 'Apple Silicon MLX Server' },
         { id: 'ollama', name: 'Ollama (Local)', icon: '🦙', desc: 'Local Ollama Instance' },
         { id: 'deepseek', name: 'DeepSeek', icon: '🐳', desc: 'DeepSeek Official API' },
@@ -349,7 +349,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                                 </button>
                                             </div>
                                             <Combobox
-                                                value={config.opencode?.model || 'minimax-m3'}
+                                                value={config.opencode?.model || 'deepseek-v4-flash'}
                                                 onChange={(val) => handleChange('opencode', 'model', val)}
                                                 options={availableModels}
                                                 onRefresh={handleFetchModels}

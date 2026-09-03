@@ -1044,3 +1044,55 @@ artist-crew-agents gained the real-model hardening section (optional score,
 tags alias, persona key pinning, attempts diagnostics, LLM chain). Album
 orchestrator plan R4 remaining-note updated (real inference verified on short
 tracks; full-length = owner-hardware run).
+
+## [2026-09-03] plan | Production Audit & Roadmap Update: HeartMuLa Legacy Isolation & Artist Domain Hardening
+Comprehensive production audit conducted across backend and frontend:
+1. HeartMuLa Legacy Isolation: Confirmed HeartMuLa is v1 legacy (removed from
+   requirements.txt/registry.py 2026-08-21; LoRA deferred). Isolated dead boot hooks in
+   music_service.py that re-initialized MiniMax twice and left inpainting non-functional.
+2. Artist Domain Audit: Identified and documented P0 bugs: (1) `(unnamed)` artist bug
+   in album.py:147 & 387 due to missing Release.artist_name column; (2) dropped
+   Job.voice_profile_id in bridge.py:290; (3) lost Stylist/Critic overrides in album.py;
+   (4) broken stems URL in ArtistsView.tsx:1463; (5) missing release track detach API.
+3. LLM Baseline: Configured OpenCode DeepSeek v4 Flash (`deepseek-ai/deepseek-v4-flash-0731`)
+   as the default baseline for development, testing, and creative agent crews.
+4. Testing & Verification: Mandated running both backend (:8000) and frontend (:5173)
+   servers for continuous live verification.
+5. Wiki Synchronized: Updated production-readiness-plan.md and index.md.
+
+## [2026-09-03] live-test | OpenCode DeepSeek v4 Flash Baseline & Live 2-Track Album Production
+1. OpenCode Baseline Default: Replaced NVIDIA NIM with OpenCode Zen (`deepseek-v4-flash`) across backend (`config_manager.py`, `DEFAULT_CONFIG`, `_ENV_MAP`), root/backend `.env`, `llm_config.json`, and frontend UI (`LLMSettingsModal.tsx`, `ComposerSidebar.tsx`, `ArtistsView.tsx`). Corrected model identifier to `deepseek-v4-flash` which is natively accepted by OpenCode Zen with Cloudflare protection.
+2. End-to-End Live Artist Testing:
+   - Created artist profile "Nova Eclipse" with subarctic electronic identity.
+   - Ran World-Builder agent live via OpenCode DeepSeek v4 Flash to produce detailed canon lore and contradiction guards.
+   - Assigned crew agents (Experiencer, Stylist, Critic) to OpenCode `deepseek-v4-flash`.
+   - Ran Experiencer agent to imagine 2-track album vision "Celestial Drift" (seeds: "The Last Light We Saw" and "Aurora, Remember Me").
+   - Saved vision to Release and initiated gated Album Orchestrator production.
+   - Track 1 ("The Last Light We Saw"): Songwriter, Stylist, and Critic ran live (verdict pass 0.92), audio generated, BS-Roformer neural source separation ran on Apple Silicon MPS (produced instrumental & vocal stems), MuScriptor transcribed drum and bass parts to note-level MIDI and MusicXML.
+   - Resumed for Track 2 ("Aurora, Remember Me"): Full crew executed, real audio generated, BS-Roformer separated stems, MuScriptor transcribed drums, bass, and clean electric guitar.
+   - Album completed with 2/2 tracks succeeded (100% progress).
+3. Live UI Endpoints Verified:
+   - Track detachment (`DELETE /releases/{id}/tracks/{job_id}`) verified (1 track left).
+   - Track re-attachment (`POST /releases/{id}/tracks`) verified (restored to 2 tracks).
+   - Track reordering (`PATCH /releases/{id}/track-order`) persisted.
+   - Track retry refusal on completed tracks verified (`not_retryable`).
+   - SVG Cover artwork procedurally synthesized and attached to release (`cover_image_path`).
+   - Frontend Vite server live on :5173 with HMR and clean production build. All 171 backend tests green.
+
+## [2026-09-03] live-test | Real MiniMax Music 3 Neural Audio Verification & Production Hardening
+1. Root Cause Analysis: Identified why previous test audio was procedurally synthesized (`used_real_inference: false`): Uvicorn had launched with `/opt/miniconda3/bin/python3` (base env lacking `mlx-audio`), causing `_MLX_AUDIO_AVAILABLE = False` and silent fallback to `synthesize_dynamic_audio_waveform()`.
+2. Dedicated Process Launcher: Created `scripts/start-backend.sh` strictly targeting the dedicated conda environment `/opt/miniconda3/envs/milimomusic/bin/python` containing `mlx`, `mlx_audio`, `audio-separator`, `torch`, `muscriptor`, and `soundfile`.
+3. Auto-Snapshot Locator: Added `_find_default_snapshot()` in `minimax_provider.py` automatically discovering cached HuggingFace snapshot directory (`models--mlx-community--MiniMax-Music3-bf16/snapshots/*`).
+4. Strict Production Inference Mode: Added `MILIMO_STRICT_INFERENCE=1` to fail loudly with RuntimeError rather than producing silent fallback audio when MLX inference cannot be completed.
+5. Duration Control & DB Decoupling:
+   - Fixed duration hardcoding in `album.py` and `bridge.py` to respect seed `target_duration_s`.
+   - Decoupled SQLAlchemy/SQLite database sessions in `AlbumOrchestrator.execute` and `retry_single_seed`, releasing transactions before entering long-running async LLM and GPU generation awaits.
+   - Prioritized authoritative `slot_jobs` mapping over legacy positional `job_ids` in `release_state.py:resolve_track_rows`.
+6. Live Real Neural 2-Track Album Production:
+   - Album "Aurora Borealis" for artist "Nova Eclipse" produced 2 real neural tracks:
+     - Slot 0: "Solar Winds Awakening" (ID `53e4c875-484d-4e6d-9db2-10cc40e6bb30`) — 44.1kHz stereo, 15.0s, 2.52MB, BS-Roformer neural stems, MuScriptor notation.
+     - Slot 1: "Crown of Emerald Light" (ID `dd5481fb-b9ac-492c-b912-8012c18c20f7`) — 44.1kHz stereo, 15.0s, 2.52MB, BS-Roformer neural stems, MuScriptor electric guitar and drums notes.
+   - Verified via `GET /releases/{id}/tracks`: both tracks report `used_real_inference: true`, `status: "completed"`, `rollup: "completed"`, with Critic scores 0.80 and 0.85.
+   - Verified frontend `ArtistsView.tsx` displays emerald badge `● MiniMax Music 3 (Neural)` for authentic neural audio.
+   - All 171 backend tests pass. Frontend TypeScript build 100% clean.
+

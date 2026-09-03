@@ -33,7 +33,18 @@ try:
 except Exception:
     pass
 
-DEFAULT_MINIMAX_SNAPSHOT = os.environ.get("MINIMAX_MODEL_PATH", "")
+def _find_default_snapshot() -> str:
+    env_path = os.environ.get("MINIMAX_MODEL_PATH") or os.environ.get("MILIMO_MINIMAX_SNAPSHOT")
+    if env_path and os.path.isdir(env_path):
+        return env_path
+    hf_hub = Path.home() / ".cache" / "huggingface" / "hub" / "models--mlx-community--MiniMax-Music3-bf16" / "snapshots"
+    if hf_hub.exists():
+        snapshots = sorted([s for s in hf_hub.iterdir() if s.is_dir()])
+        if snapshots:
+            return str(snapshots[-1])
+    return env_path or ""
+
+DEFAULT_MINIMAX_SNAPSHOT = _find_default_snapshot()
 
 # ---------------------------------------------------------------------------
 # Real MiniMax Music 3 inference via mlx-audio (native Apple Silicon MLX).
@@ -539,6 +550,14 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     fallback_reason = f"MiniMax Music 3 model snapshot not found at {self.snapshot_path}"
                 else:
                     fallback_reason = "real inference path was not attempted (unknown)"
+
+            # Production Strict Mode: if MILIMO_STRICT_INFERENCE is set, NEVER silently fake audio
+            strict_mode = os.environ.get("MILIMO_STRICT_INFERENCE", "0") in ("1", "true", "True") or kwargs.get("strict_inference", False)
+            if strict_mode:
+                err_msg = f"Strict Inference Error: Real MiniMax Music 3 inference required, but failed: {fallback_reason}"
+                logger.error(err_msg)
+                raise RuntimeError(err_msg)
+
             # Heavy CPU synthesis offloaded to a worker thread so the event loop is not blocked.
             await loop.run_in_executor(None, synthesize_dynamic_audio_waveform, duration_sec, seed, output_path, prompt, lyrics, tags)
             wav_path = output_path.replace(".mp3", ".wav")

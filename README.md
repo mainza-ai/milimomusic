@@ -17,6 +17,7 @@ Created by **[Mainza Kangombe](https://www.linkedin.com/in/mainza-kangombe-62142
 
 <p align="center">
   <a href="#-overview">Overview</a> •
+  <a href="#-video-explainer--studio-walkthrough">Video Explainer</a> •
   <a href="#-studio-tour--workspace-modes">Studio Tour</a> •
   <a href="#%EF%B8%8F-studio-workflow--signal-architecture">Workflow</a> •
   <a href="#-key-features">Key Features</a> •
@@ -45,6 +46,20 @@ graph LR
     F --> G["🎤 Neural Acoustic Lyric Sync<br/>(TorchAudio MMS_FA • LRC/SRT)"]
     G --> H["💻 6-Mode Web Audio DAW<br/>(Listen • Arrange • Piano Roll • Notation • Mix • Lyrics)"]
 ```
+
+---
+
+## 🎬 Video Explainer & Studio Walkthrough
+
+Watch the video breakdown and live workstation walkthrough of **Milimo Music v2** showcasing full prompt-to-production multitrack workflows:
+
+<p align="center">
+  <a href="https://youtu.be/Nsun12RGHi4" target="_blank">
+    <img src="https://i.ytimg.com/vi/Nsun12RGHi4/maxresdefault.jpg" alt="Milimo Music v2 - Major Update Video Explainer" width="85%" />
+  </a>
+  <br />
+  <em>▶️ <b><a href="https://youtu.be/Nsun12RGHi4" target="_blank">Watch: Milimo Music v2 — Major Update Walkthrough on YouTube</a></b></em>
+</p>
 
 ---
 
@@ -262,6 +277,7 @@ sqlite3 milimo.db "VACUUM INTO 'backup.db';"
 
 ## 📚 Documentation & Resources
 
+- [🎬 **Milimo Music v2 Video Explainer & Walkthrough (YouTube)**](https://youtu.be/Nsun12RGHi4)
 - [📄 **Milimo Neural DAW Architecture Specification (PDF)**](assets/misc/Milimo_Neural_DAW.pdf)
 - [📊 **Presentation Slides Deck (PPTX)**](assets/misc/Milimo_Neural_DAW.pptx)
 - [🗺️ **Studio Production Workflow Infographic**](assets/misc/AI_Music_Production_Studio_Workflow.png)

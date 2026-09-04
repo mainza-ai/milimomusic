@@ -13,11 +13,11 @@ class LyricsParser:
         if not lyrics_text:
             return []
 
-        # Strategy: Split by lines, look for [Header] patterns.
-        # Everything until the next header is content.
+        from .lyrics_graph import sanitize_lyrics
+        cleaned_text = sanitize_lyrics(lyrics_text)
         
         sections: List[FormattedLyricsSection] = []
-        lines = lyrics_text.split('\n')
+        lines = cleaned_text.split('\n')
         
         current_header_type = "Verse" # Default if no header starts
         current_header_index = 1

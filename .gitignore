@@ -41,6 +41,8 @@ heartlib/assets/*.wav
 backend/generated_audio/
 backend/generated_tokens/
 backend/data/
+generated_audio/
+data/
 dataset_samples/
 
 # Temporary/Debug
@@ -48,6 +50,27 @@ debug_instrumental.py
 backend/jobs.db
 backend/db.sqlite3
 backend/jobs.db*
+backend/database.db
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+models/
+backend/models/
 backend/llm_config.json
 backend/llm_config.backup.json
+llm_config.json
 *.log
+
+# Secrets / environment — never commit real keys
+.env
+.env.local
+backend/.env
+frontend/.env.local
+
+# Internal Developer Docs
+devs/
+devs/**
+
+# runtime artifacts
+backend/.milimo.lock

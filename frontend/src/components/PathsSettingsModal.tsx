@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { useModalA11y } from './ui/primitives';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Save, FolderOpen, CheckCircle2, AlertCircle, Loader2 } from 'lucide-react';
@@ -19,6 +20,8 @@ export const PathsSettingsModal: React.FC<PathsSettingsModalProps> = ({ isOpen, 
     const [isSaving, setIsSaving] = useState(false);
     const [validation, setValidation] = useState<Record<string, { valid: boolean; path: string }>>({});
     const [message, setMessage] = useState<{ type: 'success' | 'error'; text: string } | null>(null);
+    const panelRef = React.useRef<HTMLDivElement | null>(null);
+    useModalA11y(isOpen, onClose, panelRef);
 
     useEffect(() => {
         if (isOpen) {
@@ -92,7 +95,7 @@ export const PathsSettingsModal: React.FC<PathsSettingsModalProps> = ({ isOpen, 
     return createPortal(
         <AnimatePresence>
             {isOpen && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" ref={panelRef}>
                     <motion.div
                         initial={{ opacity: 0, scale: 0.95, y: 20 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}

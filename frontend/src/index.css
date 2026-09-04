@@ -1,48 +1,54 @@
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap');
-@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&display=swap');
 
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  /* "Sterile Void" Palette - Clinical Alien Theme (Refined) */
-  --bg-void: #020617;
-  /* Slate 950 - Deep Void */
-  --bg-lab: #f1f5f9;
-  /* Slate 100 - Clinical White */
+  /* Apple HIG Light Palette */
+  --bg-primary: #f5f5f7;
+  --bg-secondary: #ffffff;
+  --text-primary: #1d1d1f;
+  --text-secondary: #86868b;
+  --border-subtle: rgba(0, 0, 0, 0.08);
+  --glass-bg: rgba(255, 255, 255, 0.75);
+  --glass-border: rgba(0, 0, 0, 0.06);
 
-  --glass-surface: rgba(255, 255, 255, 0.7);
-  --glass-border: rgba(255, 255, 255, 0.5);
-  --glass-blur: 24px;
+  --accent-cyan: #0077ed;
+  --accent-teal: #00c7be;
+  --accent-amber: #ff9500;
+}
 
-  --accent-plasma: #06b6d4;
-  /* Cyan 500 - Electric Plasma */
-  --accent-bio: #14b8a6;
-  /* Teal 500 - Biological Specimen */
-  --accent-alert: #f43f5e;
-  /* Rose 500 - Critical Failure */
-  --accent-chrome: #64748b;
-  /* Slate 500 - Industrial Chrome */
+.dark {
+  /* Apple HIG Dark Palette */
+  --bg-primary: #000000;
+  --bg-secondary: #12141c;
+  --text-primary: #f5f5f7;
+  --text-secondary: #a1a1a6;
+  --border-subtle: rgba(255, 255, 255, 0.08);
+  --glass-bg: rgba(18, 20, 28, 0.82);
+  --glass-border: rgba(255, 255, 255, 0.1);
 
-  --font-display: 'Inter', sans-serif;
-  --font-mono: 'JetBrains Mono', monospace;
+  --accent-cyan: #00d2ff;
+  --accent-teal: #64d2ff;
+  --accent-amber: #ff9f0a;
 }
 
 body {
   margin: 0;
-  font-family: var(--font-display);
-  background-color: var(--bg-lab);
-  background-image:
-    radial-gradient(at 0% 0%, rgba(14, 165, 233, 0.05) 0px, transparent 50%),
-    radial-gradient(at 100% 100%, rgba(45, 212, 191, 0.05) 0px, transparent 50%);
-  color: #0f172a;
+  font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Inter", system-ui, sans-serif;
+  background-color: var(--bg-primary);
+  color: var(--text-primary);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  transition: background-color 0.25s ease, color 0.25s ease;
 }
 
-/* Custom Scrollbar */
+/* Apple Smooth Scrollbar */
 ::-webkit-scrollbar {
-  width: 6px;
+  width: 7px;
+  height: 7px;
 }
 
 ::-webkit-scrollbar-track {
@@ -50,16 +56,39 @@ body {
 }
 
 ::-webkit-scrollbar-thumb {
-  background: rgba(148, 163, 184, 0.3);
-  border-radius: 10px;
+  background: rgba(134, 134, 139, 0.25);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.2);
+  border-radius: 9999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
 }
 
 ::-webkit-scrollbar-thumb:hover {
-  background: var(--accent-plasma);
+  background: rgba(134, 134, 139, 0.45);
 }
 
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: rgba(255, 255, 255, 0.35);
+}
+
+/* Glassmorphism Surface Helpers */
 @layer utilities {
-  .glass-panel {
-    @apply bg-white/60 backdrop-blur-xl border border-white/50 shadow-lg shadow-indigo-500/5;
+  .apple-glass {
+    @apply bg-white/70 dark:bg-[#141620]/80 backdrop-blur-2xl border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm dark:shadow-2xl;
+  }
+  
+  .apple-card {
+    @apply bg-white dark:bg-[#161824] border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm transition-all duration-200;
+  }
+  
+  .apple-input {
+    @apply bg-black/[0.03] dark:bg-white/[0.05] border border-black/[0.08] dark:border-white/[0.1] rounded-xl px-3.5 py-2.5 text-xs text-slate-800 dark:text-slate-100 placeholder:text-slate-400 dark:placeholder:text-slate-500 focus:outline-none focus:ring-2 focus:ring-teal-500/40 focus:border-teal-500 transition-all;
   }
 }
+@keyframes milimo-toast-in{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}

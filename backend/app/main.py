@@ -1,118 +1,2022 @@
 import asyncio
 import os
-# Enable MPS Fallback for operations not supported on MPS (e.g. large channel conv1d)
-# Must be set before torch is imported!
 os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 
+# Anchor the working directory to the backend root so all relative artifact paths
+# (generated_audio/, data/, llm_config.json, database.db) resolve consistently and the
+# /audio static mount + exports work regardless of where uvicorn was launched from.
+os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
 import logging
+logger = logging.getLogger("milimo.main")
+import json
+import re
+import time
+import shutil
+import threading
+import uuid
+from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 
-# Configure logging to suppress verbose debug output from dependencies
-# optimization: Configure BEFORE imports to catch everything
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - [%(levelname)s] %(name)s: %(message)s',
     datefmt='%H:%M:%S'
 )
 
-# Silence specific noisy loggers
 logging.getLogger("multipart").setLevel(logging.WARNING)
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING) # Reduce access log spam if needed, or keep INFO
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
 logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Body
+from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from sqlmodel import SQLModel, Session, create_engine, select, or_, text
-from typing import List, Optional
+from typing import List, Optional, Dict, Any, Sequence
 from uuid import UUID
 
-from app.services.music_service import music_service
+from app.services.music_service import music_service, event_manager
 from app.services.llm_service import LLMService
-from app.models import Job, JobStatus, GenerationRequest, LyricsRequest, LyricsChatRequest, EnhancePromptRequest, InspirationRequest, LLMConfigUpdate, ProviderConfig
+from app.services.model_manager import model_manager
+from app.services.voice_service import voice_service
+from app.transcription.muscriptor_provider import muscriptor_provider
+from app.transcription.real_separator import separate_sources
+from app.transcription.instrument_stems import render_instrument_parts
+from app.transcription.mastering import master_track
+from app.transcription.karaoke import lyric_sync_engine, _resolve_audio_file
+from app.providers.registry import provider_registry
+from app.models import (
+    Job,
+    JobStatus,
+    GenerationRequest,
+    LyricsRequest,
+    LyricsChatRequest,
+    EnhancePromptRequest,
+    RewriteCaptionRequest,
+    InspirationRequest,
+    LLMConfigUpdate,
+    ProviderConfig,
+    VoiceProfileCreate,
+    MasteringRequest,
+    Project,
+    ProjectCreate,
+    ProjectUpdate,
+    Session as StudioSession,
+    SessionCreate,
+    SessionUpdate,
+    SessionMessage,
+    SessionMessageCreate,
+    CoverPromptRequest,
+    CoverImageRequest,
+    ArtistProfile,
+    ArtistProfileCreate,
+    ArtistProfileUpdate,
+    AgentAssignment,
+    AgentAssignmentSet,
+    AgentAssignmentCreate,
+    Release,
+    ReleaseCreate,
+    ReleaseUpdate,
+    AgentRun,
+    AgentRunRequest
+)
+from app.agents.registry import AGENTS, get_agent, list_agents
+from app.agents.runtime.context import RunContext
+from app.agents.runtime.overrides import resolve_artist_grounding
+from app.agents.runtime.policy import ResiliencePolicy
+from app.core.llm_contracts import (
+    AllProvidersFailedError,
+    LLMAuthError,
+    LLMBadModelError,
+    LLMParseError,
+    LLMQuotaError,
+    LLMTimeoutError,
+    LLMUpstreamError,
+)
+
+from sqlalchemy import event, func
+
+from app.release_state import (
+    ACTIVE_RUN_STATUSES,
+    resolve_track_rows,
+    transition_release,
+)
 
 # Database
 sqlite_file_name = "jobs.db"
 sqlite_url = f"sqlite:///{sqlite_file_name}"
-engine = create_engine(sqlite_url)
+engine = create_engine(
+    sqlite_url,
+    connect_args={"check_same_thread": False, "timeout": 15},
+)
+
+
+@event.listens_for(engine, "connect")
+def set_sqlite_pragma(dbapi_connection, connection_record):
+    cursor = dbapi_connection.cursor()
+    cursor.execute("PRAGMA journal_mode=WAL")
+    cursor.execute("PRAGMA synchronous=NORMAL")
+    cursor.execute("PRAGMA busy_timeout=10000")
+    cursor.close()
+
 
 def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
-    # Enable WAL mode for better concurrency (Readers don't block Writers)
-    # This prevents "database is locked" errors when deleting tracks while generating.
     with Session(engine) as session:
         session.exec(text("PRAGMA journal_mode=WAL;"))
+        
+        # Automatic Migration: check and add missing columns to job table
+        existing_cols = {row[1] for row in session.exec(text("PRAGMA table_info(job);")).all()}
+        # Index backfill: fresh DBs get these via SQLModel index=True, but
+        # pre-existing tables only ever received the COLUMNS — queries filtering
+        # release_id/artist_profile_id would table-scan forever.
+        for index_stmt in (
+            "CREATE INDEX IF NOT EXISTS ix_job_release_id ON job (release_id)",
+            "CREATE INDEX IF NOT EXISTS ix_job_artist_profile_id ON job (artist_profile_id)",
+        ):
+            session.exec(text(index_stmt))
+        new_columns = {
+            "model_provider": "VARCHAR",
+            "llm_model": "VARCHAR",
+            "parent_job_id": "VARCHAR",
+            "temperature": "FLOAT",
+            "cfg_scale": "FLOAT",
+            "topk": "INTEGER",
+            "cover_image_path": "VARCHAR",
+            "image_prompt": "VARCHAR",
+            "midi_path": "VARCHAR",
+            "musicxml_path": "VARCHAR",
+            "notes_json": "TEXT",
+            "stems_json": "TEXT",
+            "beat_grid_json": "TEXT",
+            "timed_lyrics_json": "TEXT",
+            "structured_caption_json": "TEXT",
+            "voice_profile_id": "VARCHAR",
+            "project_id": "VARCHAR",
+            "session_id": "VARCHAR",
+            "artist_profile_id": "VARCHAR",
+            "release_id": "VARCHAR",
+            "mastered_path": "TEXT"
+        }
+        for col, col_type in new_columns.items():
+            if col not in existing_cols:
+                try:
+                    session.exec(text(f"ALTER TABLE job ADD COLUMN {col} {col_type};"))
+                except Exception as e:
+                    print(f"Migration notice for job.{col}: {e}")
+                    
+        # Automatic Migration for project table
+        existing_proj_cols = {row[1] for row in session.exec(text("PRAGMA table_info(project);")).all()}
+        proj_columns = {
+            "cover_image_path": "VARCHAR",
+            "image_prompt": "VARCHAR"
+        }
+        for col, col_type in proj_columns.items():
+            if col not in existing_proj_cols:
+                try:
+                    session.exec(text(f"ALTER TABLE project ADD COLUMN {col} {col_type};"))
+                except Exception as e:
+                    print(f"Migration notice for project.{col}: {e}")
+
+        # Automatic Migration for agentrun table (orchestration columns)
+        existing_run_cols = {row[1] for row in session.exec(text("PRAGMA table_info(agentrun);")).all()}
+        run_columns = {
+            "parent_run_id": "VARCHAR",
+            "state_json": "TEXT DEFAULT '{}'",
+            "progress": "INTEGER DEFAULT 0",
+            "budget_json": "TEXT DEFAULT '{}'",
+            "release_id": "VARCHAR",
+        }
+        for col, col_type in run_columns.items():
+            if col not in existing_run_cols:
+                try:
+                    session.exec(text(f"ALTER TABLE agentrun ADD COLUMN {col} {col_type};"))
+                except Exception as e:
+                    print(f"Migration notice for agentrun.{col}: {e}")
+
+        # Backfill: legacy album/retry runs carried release_id only inside
+        # input_json. Promote it to the indexed column, then index it.
+        session.exec(text(
+            "UPDATE agentrun SET release_id = json_extract(input_json, '$.release_id') "
+            "WHERE release_id IS NULL AND json_extract(input_json, '$.release_id') IS NOT NULL"
+        ))
+        session.exec(text("CREATE INDEX IF NOT EXISTS ix_agentrun_release_id ON agentrun (release_id)"))
+
+        # Automatic Migration for release table (curation columns)
+        existing_rel_cols = {row[1] for row in session.exec(text("PRAGMA table_info(release);")).all()}
+        release_columns = {
+            "track_order_json": "TEXT DEFAULT '[]'",
+            "cover_image_path": "VARCHAR",
+        }
+        for col, col_type in release_columns.items():
+            if col not in existing_rel_cols:
+                try:
+                    session.exec(text(f"ALTER TABLE release ADD COLUMN {col} {col_type};"))
+                except Exception as e:
+                    print(f"Migration notice for release.{col}: {e}")
+
+        # Automatic Migration for artistprofile table (identity columns)
+        existing_prof_cols = {row[1] for row in session.exec(text("PRAGMA table_info(artistprofile);")).all()}
+        profile_columns = {
+            "lore_json": "TEXT DEFAULT '{}'",
+            "default_provider": "VARCHAR",
+            "default_model": "VARCHAR",
+            "voice_profile_id": "VARCHAR",
+        }
+        for col, col_type in profile_columns.items():
+            if col not in existing_prof_cols:
+                try:
+                    session.exec(text(f"ALTER TABLE artistprofile ADD COLUMN {col} {col_type};"))
+                except Exception as e:
+                    print(f"Migration notice for artistprofile.{col}: {e}")
+
         session.commit()
 
-# Lifespan
+
+def reconcile_orphan_agent_runs() -> int:
+    with Session(engine) as session:
+        orphans = session.exec(
+            select(AgentRun).where(AgentRun.status == "running")
+        ).all()
+        for run in orphans:
+            run.status = "interrupted"
+            run.error_type = "interrupted"
+            run.error_message = "Interrupted by server restart."
+            run.finished_at = datetime.now(timezone.utc)
+            session.add(run)
+        session.commit()
+        if orphans:
+            logger.warning(f"Reconciled {len(orphans)} orphaned agent run(s).")
+        return len(orphans)
+
+
+def reconcile_orphan_jobs() -> int:
+    """Boot-time crash recovery: jobs left queued/processing by a previous
+    process can never finish — mark them failed with an honest reason."""
+    with Session(engine) as session:
+        orphans = session.exec(
+            select(Job).where(Job.status.in_([JobStatus.QUEUED, JobStatus.PROCESSING]))
+        ).all()
+        for job in orphans:
+            job.status = JobStatus.FAILED
+            job.error_msg = "Interrupted by server restart."
+            session.add(job)
+        session.commit()
+        if orphans:
+            logger.warning(f"Reconciled {len(orphans)} orphaned job(s) after restart.")
+        return len(orphans)
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    if not acquire_instance_lock():
+        # Another live backend owns the GPU/DB. Hard-fail the boot.
+        import sys as _sys
+        _sys.stderr.write("REFUSING TO START: another instance holds the lock.\n")
+        os._exit(3)
+
     create_db_and_tables()
-    # Initialize Heartlib (Non-blocking usually, but loading big models might take a sec)
-    # We trigger it but don't await strictly if we want faster startup, 
-    # but for safety we await to ensure model is ready before traffic.
-    await music_service.initialize() 
+    reconcile_orphan_jobs()
+    reconcile_orphan_agent_runs()
+    try:
+        _retention_days = int(os.environ.get("MILIMO_RUN_RETENTION_DAYS", "30"))
+    except ValueError:
+        _retention_days = 30
+    if _retention_days > 0:
+        pruned = prune_agent_runs(_retention_days)
+        if pruned:
+            logger.info(f"Ledger retention: pruned {pruned} run(s) older than {_retention_days}d.")
+    await music_service.initialize()
     yield
-    # Shutdown Event Manager (Closes SSE connections)
+    run_registry.shutdown_all()
+    active = music_service.shutdown_all()
+    if active:
+        logger.warning(f"{active} generation(s) were still active at shutdown; "
+                       "their threads cannot be preempted mid-inference — outputs "
+                       "will be discarded by terminal-state guards.")
     event_manager.shutdown()
-    music_service.shutdown_all()
+    release_instance_lock()
 
-app = FastAPI(lifespan=lifespan, title="Milimo Music API")
 
-# CORS
+from app.core.security import require_auth
+from app.core.instance_lock import acquire_instance_lock, release_instance_lock
+from app.agents.orchestrator import RunRegistry
+from app.core.ratelimit import enforce_rate_limit
+run_registry = RunRegistry()
+
+# Strong references to fire-and-forget tasks. Python GC can collect an
+# unreferenced task MID-FLIGHT — album runs would vanish nondeterministically.
+_background_tasks: set = set()
+
+
+def spawn_background_task(coro) -> asyncio.Task:
+    task = asyncio.get_running_loop().create_task(coro)
+    _background_tasks.add(task)
+    task.add_done_callback(_background_tasks.discard)
+    return task
+app = FastAPI(lifespan=lifespan, title="Milimo Music v2 API — AI Music Production DAW",
+              dependencies=[Depends(require_auth)])
+
+# ── Security posture (Phase 1) ──────────────────────────────────────────────
+# Auth: optional bearer token via MILIMO_AUTH_TOKEN. Unset = open localhost dev.
+# CORS: explicit allowlist from MILIMO_CORS_ORIGINS; sane localhost default
+# WITHOUT credentials (the wildcard+credentials combo was spec-invalid).
+_cors_env = (os.environ.get("MILIMO_CORS_ORIGINS") or "").strip()
+if _cors_env:
+    _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
+    _cors_credentials = True
+else:
+    _cors_origins = ["http://localhost:5173", "http://localhost:4173"]
+    _cors_credentials = False
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
+    allow_origins=_cors_origins,
+    allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# Every route requires the bearer token when MILIMO_AUTH_TOKEN is set;
+# exemptions (/health, docs, static media) live inside the dependency itself.
+from fastapi import Depends  # noqa: E402  (kept beside usage for clarity)
+from starlette.requests import Request  # noqa: E402
+from starlette.responses import JSONResponse  # noqa: E402
+
+# Rate limiting on expensive routes (agents/generation/uploads/mastering).
+@app.middleware("http")
+async def rate_limit_middleware(request: Request, call_next):
+    return await enforce_rate_limit(request, call_next)
+
+
+# Global exception handler: uniform envelope, no internal leakage (G-class fix).
+
+@app.exception_handler(Exception)
+async def unhandled_exception_handler(request: Request, exc: Exception):
+    logger.exception(f"Unhandled error on {request.method} {request.url.path}: {exc}")
+    return JSONResponse(
+        status_code=500,
+        content={"error": {"code": "internal_error", "message": "Unexpected server error."}},
+    )
+
 
 from fastapi.exceptions import RequestValidationError
 from fastapi.exception_handlers import request_validation_exception_handler
 from starlette.requests import Request
 
+
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    print(f"Validation error: {exc.errors()}")
-    # For debugging, also print the raw body if accessible
-    try:
-        body = await request.json()
-        print(f"Validation Body: {body}")
-    except:
-        pass
+    logger.warning(f"Validation error on {request.method} {request.url.path}: {exc.errors()}")
     return await request_validation_exception_handler(request, exc)
 
-# Static Files (Audio Serving)
-import os
-os.makedirs("generated_audio", exist_ok=True)
-app.mount("/audio", StaticFiles(directory="generated_audio"), name="audio")
 
-# --- Routes ---
+# Static Files (Audio & Covers Serving)
+os.makedirs("generated_audio", exist_ok=True)
+os.makedirs("generated_audio/stems", exist_ok=True)
+os.makedirs("generated_audio/mastered", exist_ok=True)
+os.makedirs("generated_audio/converted_vocals", exist_ok=True)
+os.makedirs("data/covers", exist_ok=True)
+
+app.mount("/audio", StaticFiles(directory="generated_audio"), name="audio")
+app.mount("/covers", StaticFiles(directory="data/covers"), name="covers")
+
+
+# --- Core & Health ---
 
 @app.get("/health")
 def health_check():
-    return {"status": "ok", "model_loaded": music_service.pipeline is not None}
+    active_caps = provider_registry.get_active_capabilities()
+    return {
+        "status": "ok",
+        "generation": music_service.active_status(),
+        "active_provider": active_caps.provider_id,
+        "display_name": active_caps.display_name,
+        "version": active_caps.version
+    }
+
+
+# --- Model Management & Tree Endpoints ---
+
+@app.get("/models/tree")
+def get_model_tree():
+    """Return model tree with MiniMax Music 3, HeartMuLa, adapters, sizes and install states."""
+    return {"models": model_manager.get_model_tree()}
+
+
+@app.get("/models/capabilities")
+def get_model_capabilities():
+    """Return capability manifests for all registered generation providers."""
+    return {"capabilities": [c.model_dump() for c in provider_registry.list_capabilities()]}
+
+
+@app.get("/models/hardware")
+def get_hardware_profile():
+    """Detect hardware configuration and capability recommendations."""
+    return {"hardware": model_manager.detect_hardware()}
+
+
+@app.get("/models/check/{model_id}")
+def check_model_dependencies(model_id: str):
+    """Check if a selected model variant is downloaded or missing."""
+    return model_manager.check_missing_dependencies(model_id)
+
+
+@app.post("/models/active/{provider_id}")
+def set_active_generation_provider(provider_id: str):
+    """Switch active default generation model."""
+    success = provider_registry.set_active_provider(provider_id)
+    if not success:
+        raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_id}")
+    return {"active_provider": provider_id, "capabilities": provider_registry.get_active_capabilities().model_dump()}
+
+
+# --- Voice Training Studio & Profiles API ---
+
+@app.get("/voice/profiles")
+def list_voice_profiles():
+    """List all custom and pre-trained vocal identities."""
+    return {"profiles": voice_service.list_profiles()}
+
+
+@app.post("/voice/profiles")
+def create_voice_profile(req: VoiceProfileCreate):
+    """Create a new Voice Identity profile with mandatory consent confirmation."""
+    try:
+        profile = voice_service.create_profile(
+            name=req.name,
+            description=req.description,
+            consent_confirmed=req.consent_confirmed,
+            f0_method=req.f0_method
+        )
+        return {"profile": profile}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail={"error": {"code": "invalid_request", "message": str(e)}})
+
+
+@app.delete("/voice/profiles/{profile_id}")
+def delete_voice_profile(profile_id: str):
+    """Delete a voice profile."""
+    if voice_service.delete_profile(profile_id):
+        return {"success": True, "profile_id": profile_id}
+    raise HTTPException(status_code=404, detail="Profile not found")
+
+
+# --- Production DAW Workspace & Export Routes ---
+
+@app.post("/transcribe/upload")
+async def transcribe_uploaded_audio(file: UploadFile = File(...)):
+    """
+    Import user audio file into the DAW, separating stems and generating MIDI/MusicXML.
+    Uploads are hardened: extension whitelist, size cap, magic-byte sniff,
+    randomized containment-safe filename (audit A4 fix).
+    """
+    import uuid
+    job_id = str(uuid.uuid4())
+    from app.core.uploads import save_upload
+    upload_path, safe_name = await save_upload(file, "generated_audio", kind="audio")
+
+    # 1. Real neural source separation (BS-Roformer) on the uploaded audio
+    loop = asyncio.get_running_loop()
+    separation_res = await loop.run_in_executor(
+        None, separate_sources, upload_path, "generated_audio/stems", job_id, 1
+    )
+    real_stems = dict(separation_res.stems) if hasattr(separation_res, "stems") else dict(separation_res)
+    stems_source_id = getattr(separation_res, "source_id", "bs_roformer_6stem")
+
+    # 2. MuScriptor transcription
+    transcription = await muscriptor_provider.transcribe(upload_path, job_id)
+
+    # 2b. MuScriptor-derived per-instrument stems (dynamic instrument parts + GM programs)
+    instrument_parts: dict[str, str] = {}
+    instrument_programs: dict[str, int] = {}
+    try:
+        instrument_parts, instrument_programs = render_instrument_parts(
+            transcription.notes, job_id, duration_sec=None
+        )
+    except Exception as e:
+        logger.warning(f"Per-instrument stem rendering skipped for import {job_id}: {e}")
+
+    dynamic_stems_payload = {
+        "stems_source": stems_source_id,
+        "instrumental_parts": instrument_parts,
+        "instrument_programs": instrument_programs,
+        "sources_available": [stems_source_id, "muscriptor"],
+        "default_source": "muscriptor",
+    }
+    for stem_k, stem_v in real_stems.items():
+        dynamic_stems_payload[stem_k] = stem_v
+
+    # 3. Create Job session in DB
+    job = Job(
+        id=UUID(job_id),
+        title=f"Imported: {file.filename}",
+        prompt="User imported audio",
+        audio_path=f"/audio/{safe_name}",
+        status=JobStatus.COMPLETED,
+        midi_path=transcription.midi_path,
+        musicxml_path=transcription.musicxml_path,
+        notes_json=json.dumps(transcription.notes),
+        beat_grid_json=json.dumps(transcription.beat_grid),
+        stems_json=json.dumps(dynamic_stems_payload)
+    )
+
+    with Session(engine) as session:
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+    return {"job_id": job.id, "job": job}
+
+
+def job_audio_public(job: Job) -> str:
+    """Public (/audio/...) URL of a job's master — the canonical stored form."""
+    return job.audio_path or ""
+
+
+def get_job_by_id(session: Session, job_id_input: Any) -> Optional[Job]:
+    """Universal robust job lookup handling UUID objects, hyphenated strings, and raw 32-hex strings."""
+    if not job_id_input:
+        return None
+    
+    clean_str = str(job_id_input).strip()
+    hex_str = clean_str.replace("-", "")
+
+    # 1. Try UUID object
+    try:
+        u = UUID(hex_str)
+        job = session.get(Job, u)
+        if job:
+            return job
+    except Exception:
+        pass
+
+    # 2. Try session.get with string forms
+    job = session.get(Job, hex_str)
+    if job:
+        return job
+    job = session.get(Job, clean_str)
+    if job:
+        return job
+
+    # 3. Try select with hex_str and clean_str
+    try:
+        job = session.exec(select(Job).where(Job.id == hex_str)).one_or_none()
+        if job:
+            return job
+    except Exception:
+        pass
+
+    try:
+        job = session.exec(select(Job).where(Job.id == clean_str)).one_or_none()
+        if job:
+            return job
+    except Exception:
+        pass
+
+    return None
+
+
+@app.get("/transcribe/export/{job_id}/{export_format}")
+def export_track_asset(job_id: str, export_format: str):
+    """
+    Export DAW assets: midi, musicxml, ableton, lrc, srt, stems.
+    """
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        job_id_str = str(job.id)
+
+        if export_format == "midi":
+            if not job.midi_path:
+                raise HTTPException(status_code=404, detail="MIDI not available for this track")
+            file_path = job.midi_path.replace("/audio/", "generated_audio/")
+            return FileResponse(file_path, media_type="audio/midi", filename=f"{job.title or 'milimo_track'}.mid")
+
+        elif export_format == "musicxml":
+            if not job.musicxml_path:
+                raise HTTPException(status_code=404, detail="MusicXML not available")
+            file_path = job.musicxml_path.replace("/audio/", "generated_audio/")
+            return FileResponse(file_path, media_type="application/vnd.recordare.musicxml+xml", filename=f"{job.title or 'milimo_track'}.musicxml")
+
+        elif export_format == "lrc":
+            timed_lines = json.loads(job.timed_lyrics_json) if job.timed_lyrics_json else []
+            lrc_content = lyric_sync_engine.generate_lrc(timed_lines)
+            return Response(content=lrc_content, media_type="text/plain", headers={
+                "Content-Disposition": f"attachment; filename={job.title or 'milimo_lyrics'}.lrc"
+            })
+
+        elif export_format == "srt":
+            timed_lines = json.loads(job.timed_lyrics_json) if job.timed_lyrics_json else []
+            srt_content = lyric_sync_engine.generate_srt(timed_lines)
+            return Response(content=srt_content, media_type="text/plain", headers={
+                "Content-Disposition": f"attachment; filename={job.title or 'milimo_lyrics'}.srt"
+            })
+
+        elif export_format == "ableton":
+            # Export DAW Ableton session descriptor
+            notes = json.loads(job.notes_json) if job.notes_json else []
+            beat_grid = json.loads(job.beat_grid_json) if job.beat_grid_json else {}
+            stems = json.loads(job.stems_json) if job.stems_json else {}
+            parts = stems.get("instrumental_parts", {})
+            stems_src = stems.get("stems_source", "bs_roformer_6stem")
+
+            instrument_tracks = [
+                {"name": inst, "audio": url, "source": "muscriptor",
+                 "program": stems.get("instrument_programs", {}).get(inst, 0)}
+                for inst, url in parts.items()
+            ]
+
+            # Dynamically build neural stem tracks for all available stems (vocals, drums, bass, guitar, piano, other)
+            reserved_keys = {"stems_source", "instrumental_parts", "instrument_programs", "sources_available", "default_source"}
+            neural_tracks = []
+            for stem_key, stem_url in stems.items():
+                if stem_key not in reserved_keys and stem_url and isinstance(stem_url, str):
+                    neural_tracks.append({
+                        "name": stem_key.capitalize(),
+                        "audio": stem_url,
+                        "source": stems_src
+                    })
+
+            ableton_desc = {
+                "format": "ableton-midi-multitrack",
+                "bpm": beat_grid.get("bpm", 120.0),
+                "source": stems_src,
+                "tracks": neural_tracks,
+                "instrumental_parts": instrument_tracks,
+                "note_events": notes
+            }
+            return Response(content=json.dumps(ableton_desc, indent=2), media_type="application/json", headers={
+                "Content-Disposition": f"attachment; filename={job.title or 'milimo_ableton'}.json"
+            })
+
+        else:
+            raise HTTPException(status_code=400, detail=f"Unsupported format: {export_format}")
+
+
+@app.post("/mastering/match/{job_id}")
+async def apply_reference_mastering(job_id: UUID, req: MasteringRequest = MasteringRequest()):
+    """Real mastering: Matchering against a reference track, or honest -14 LUFS
+    normalization when no reference is given. Never overwrites the original
+    master — results land in `mastered_path` (B8 fix)."""
+    audio_public = ""
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        if not job or not job.audio_path:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Track not found"}})
+
+        audio_public = job.audio_path  # plain str — safe beyond this block
+        reference_public = None
+        if req.reference_job_id:
+            ref_job = get_job_by_id(session, str(req.reference_job_id))
+            if not ref_job or not ref_job.audio_path:
+                raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Reference track not found"}})
+            reference_public = ref_job.audio_path
+
+    try:
+        result = await master_track(
+            job_id=str(job_id),
+            target_audio_path_public=audio_public,
+            reference_audio_path_public=reference_public,
+            target_lufs=req.target_lufs,
+        )
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail={"error": {"code": "file_missing", "message": str(e)}})
+    except RuntimeError as e:
+        logger.error(f"Mastering unavailable for {job_id}: {e}")
+        raise HTTPException(status_code=503, detail={"error": {"code": "mastering_unavailable", "message": str(e)}})
+    except Exception as e:
+        logger.error(f"Mastering failed for {job_id}: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": "mastering_failed", "message": "Mastering DSP failed — the original track is untouched."}})
+
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Track deleted during mastering."}})
+        job.mastered_path = result.mastered_audio_path
+        session.add(job)
+        session.commit()
+
+    resp = {
+        "status": "mastered",
+        "method": result.method,
+        "audio_path": result.mastered_audio_path,
+        "original_audio_path": audio_public,
+        "lufs": result.measured_lufs,
+        "target_lufs": result.target_lufs,
+        "peak_limited": getattr(result, "peak_limited", False),
+    }
+    if getattr(result, "peak_limited", False):
+        resp["note"] = ("Target LUFS not fully reached: peak headroom exhausted. "
+                        "Apply a limiter/compressor stage (or lower the target) to close the gap.")
+    return resp
+
+
+@app.get("/tracks/{job_id}/sheets")
+def get_track_sheets(job_id: str):
+    """List available engraved sheet music scores and PDFs for a track."""
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+        clean_id = str(job.id).replace("-", "")
+        sheets = muscriptor_provider.get_available_sheets(clean_id)
+        return {"job_id": str(job.id), "sheets": sheets}
+
+
+@app.get("/tracks/{job_id}/peaks")
+def get_track_peaks(job_id: str, buckets: int = 240):
+    """Normalized waveform peaks for lightweight library waveforms.
+
+    Library rows must never download multi-MB masters just to draw a waveform.
+    This computes an amplitude envelope from the master ONCE, caches it to disk
+    beside the media, and serves a few-KB JSON payload instead.
+
+    Sync handler on purpose: FastAPI runs it in the threadpool, keeping the
+    event loop free while soundfile reads blocks from disk.
+    """
+    import numpy as np
+    import soundfile as sf
+
+    buckets = max(32, min(720, buckets))
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job or not job.audio_path:
+            raise HTTPException(status_code=404, detail="Track not found")
+        audio_name = os.path.basename(job.audio_path)
+
+    media_dir = os.path.abspath("generated_audio")
+    audio_path = os.path.abspath(os.path.join(media_dir, audio_name))
+    # Containment: never compute/serve anything outside the media directory.
+    if not audio_path.startswith(media_dir + os.sep):
+        raise HTTPException(status_code=400, detail="Invalid audio path")
+    if not os.path.exists(audio_path):
+        raise HTTPException(status_code=404, detail="Audio file missing")
+
+    cache_dir = os.path.join(media_dir, ".peaks")
+    os.makedirs(cache_dir, exist_ok=True)
+    stem = os.path.splitext(audio_name)[0]
+    cache_path = os.path.join(cache_dir, f"{stem}.{buckets}.json")
+
+    if os.path.exists(cache_path):
+        try:
+            with open(cache_path, "r") as f:
+                return json.load(f)
+        except Exception:
+            pass  # corrupted cache → fall through and recompute
+
+    try:
+        with sf.SoundFile(audio_path) as f:
+            total = len(f)
+            if total == 0:
+                raise HTTPException(status_code=409, detail="Empty audio file")
+            duration = round(total / f.samplerate, 3)
+            edges = np.linspace(0, total, buckets + 1, dtype=int)
+            peaks: List[float] = []
+            for i in range(buckets):
+                n = int(edges[i + 1] - edges[i])
+                if n <= 0:
+                    peaks.append(0.0)
+                    continue
+                f.seek(int(edges[i]))
+                seg = f.read(n, dtype="float32", always_2d=True)
+                mono = seg.mean(axis=1)
+                peaks.append(float(np.abs(mono).max()) if len(mono) else 0.0)
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Peaks computation failed for {audio_name}: {e}")
+        raise HTTPException(status_code=500, detail="Peaks computation failed")
+
+    max_p = max(peaks) or 1.0
+    if max_p > 0:
+        peaks = [round(p / max_p, 3) for p in peaks]
+    payload = {"job_id": str(job_id), "buckets": buckets, "duration": duration, "peaks": peaks}
+    try:
+        with open(cache_path, "w") as f:
+            json.dump(payload, f)
+    except Exception:
+        pass  # cache write is best-effort; recompute next time
+    return payload
+
+
+# ---------------------------------------------------------------------------
+# AI Agent Foundation — surface layer
+# (wiki/concepts/agent-foundation.md §runtime · artist-profiles-vision.md)
+# ---------------------------------------------------------------------------
+
+_AGENT_ERROR_MAP = {
+    LLMAuthError: (502, "upstream_auth"),
+    LLMQuotaError: (429, "upstream_quota"),
+    LLMTimeoutError: (504, "upstream_timeout"),
+    LLMBadModelError: (400, "bad_model"),
+    LLMParseError: (502, "upstream_parse"),
+    AllProvidersFailedError: (502, "all_providers_failed"),
+    LLMUpstreamError: (502, "upstream_error"),
+}
+
+
+def _agent_error_response(exc: Exception) -> HTTPException:
+    """Uniform error envelope for the agent surface: {error:{code,message}}."""
+    for etype, (status, code) in _AGENT_ERROR_MAP.items():
+        if isinstance(exc, etype):
+            detail = {"error": {"code": code, "message": str(exc)}}
+            if hasattr(exc, "attempts"):
+                detail["error"]["attempts"] = exc.attempts
+            return HTTPException(status_code=status, detail=detail)
+    logger.error(f"Unhandled agent error: {exc}", exc_info=True)
+    return HTTPException(status_code=500, detail={
+        "error": {"code": "internal_error", "message": "Agent run failed unexpectedly."}
+    })
+
+
+@app.get("/agents")
+def list_available_agents():
+    """Registry listing with input schemas — self-describing agent surface."""
+    return {"agents": list_agents()}
+
+
+@app.post("/agents/{agent_name}/run")
+async def run_agent(agent_name: str, payload: AgentRunRequest):
+    """Execute a registered agent once, persisting a full AgentRun ledger row.
+
+    The experiencer is single-step (seconds), so it runs to completion in-request;
+    multi-step orchestrations (album runs) will return run_id immediately and
+    stream progress over /events keyed by run_id.
+    """
+    try:
+        entry = get_agent(agent_name)
+    except KeyError:
+        raise HTTPException(status_code=404, detail={
+            "error": {"code": "unknown_agent", "message": f"No agent registered as '{agent_name}'."}
+        })
+
+    try:
+        validated_input = entry.input_schema.model_validate(payload.input or {})
+    except Exception as e:
+        raise HTTPException(status_code=422, detail={
+            "error": {"code": "invalid_input", "message": str(e)}
+        })
+
+    ctx = RunContext(
+        agent_name=agent_name,
+        session_id=payload.session_id,
+        project_id=payload.project_id,
+        artist_profile_id=payload.profile_id,
+    )
+
+    # Crew overrides + artist grounding: one DB round-trip before execution.
+    chain_head, artist_lore = None, ""
+    if payload.profile_id:
+        with Session(engine) as session:
+            chain_head, artist_lore = resolve_artist_grounding(session, payload.profile_id, agent_name)
+    if artist_lore:
+        ctx.artist_lore = artist_lore
+
+    with Session(engine) as session:
+        run_row = AgentRun(
+            agent_name=agent_name,
+            status="running",
+            input_json=json.dumps(payload.input or {}, default=str),
+            session_id=payload.session_id,
+            project_id=payload.project_id,
+            profile_id=payload.profile_id,
+        )
+        session.add(run_row)
+        session.commit()
+        session.refresh(run_row)
+        run_id = str(run_row.id)
+
+    started = time.monotonic()
+    try:
+        result = await entry.agent.run(validated_input, ctx, ResiliencePolicy(chain_head=chain_head))
+    except Exception as exc:
+        exc_response = _agent_error_response(exc)
+        err_detail = getattr(exc_response, "detail", {})
+        err_meta = err_detail.get("error", {}) if isinstance(err_detail, dict) else {}
+        attempts_json = json.dumps(err_meta.get("attempts", []), default=str)
+        with Session(engine) as session:
+            row = session.get(AgentRun, UUID(run_id))
+            row.status = "failed"
+            row.error_type = err_meta.get("code", "internal_error")
+            row.error_message = str(exc)[:2000]
+            row.attempts_json = attempts_json
+            row.finished_at = datetime.now(timezone.utc)
+            session.add(row)
+            session.commit()
+        raise exc_response
+
+    latency_ms = int((time.monotonic() - started) * 1000)
+    output = result.output.model_dump(mode="json") if hasattr(result.output, "model_dump") else str(result.output)
+    with Session(engine) as session:
+        row = session.get(AgentRun, UUID(run_id))
+        row.status = "succeeded"
+        row.output_json = json.dumps({
+            "output": output,
+            "shortfall_notes": getattr(result, "shortfall_notes", ""),
+        }, default=str)
+        row.tokens_in = getattr(result, "tokens_in", 0)
+        row.tokens_out = getattr(result, "tokens_out", 0)
+        row.latency_ms = getattr(result, "latency_ms", latency_ms)
+        row.attempts_json = json.dumps([a.to_dict() for a in getattr(result, "attempts", [])], default=str)
+        row.finished_at = datetime.now(timezone.utc)
+        session.add(row)
+        session.commit()
+        session.refresh(row)
+
+    return {"run": row, "result": output}
+
+
+@app.get("/agents/runs")
+def list_agent_runs(profile_id: str = None, limit: int = 50, offset: int = 0):
+    """Run history ledger — newest first, optionally scoped to an artist."""
+    q = select(AgentRun)
+    if profile_id:
+        q = q.where(AgentRun.profile_id == profile_id)
+    with Session(engine) as session:
+        total = session.exec(select(func.count()).select_from(q.subquery())).one()
+        q = (q.order_by(AgentRun.created_at.desc())
+             .offset(max(0, offset)).limit(max(1, min(200, limit))))
+        rows = session.exec(q).all()
+        return {"runs": [
+            {"id": str(r.id), "agent_name": r.agent_name, "status": r.status,
+             "progress": r.progress, "error_message": r.error_message,
+             "latency_ms": r.latency_ms, "tokens_in": r.tokens_in,
+             "tokens_out": r.tokens_out, "created_at": str(r.created_at),
+             "parent_run_id": r.parent_run_id}
+            for r in rows
+        ], "total": int(total[0]) if isinstance(total, Sequence) else int(total)}
+
+
+@app.get("/agents/runs/stats")
+def agent_run_stats(profile_id: str = None, window_days: int = 0):
+    """Aggregates over the newest runs (same scope as the ledger list, capped
+    at 500). latency percentiles computed in Python — SQLite has no percentile."""
+    with Session(engine) as session:
+        q = select(AgentRun)
+        if profile_id:
+            q = q.where(AgentRun.profile_id == profile_id)
+        rows = session.exec(q.order_by(AgentRun.created_at.desc()).limit(500)).all()
+        if window_days and window_days > 0:
+            cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
+
+            def _ts(r: AgentRun):
+                try:
+                    d = r.created_at if isinstance(r.created_at, datetime) else datetime.fromisoformat(str(r.created_at))
+                    return d if d.tzinfo else d.replace(tzinfo=timezone.utc)
+                except (ValueError, TypeError):
+                    return None
+            rows = [r for r in rows if (_ts(r) is None or _ts(r) >= cutoff)]
+
+        def _pct(vals: List[int], p: float):
+            if not vals:
+                return None
+            s = sorted(vals)
+            return s[min(len(s) - 1, int(p * len(s)))]
+
+        statuses: Dict[str, int] = {}
+        for r in rows:
+            statuses[r.status] = statuses.get(r.status, 0) + 1
+        total = len(rows)
+        succeeded = statuses.get("succeeded", 0)
+        latencies = [int(r.latency_ms) for r in rows if r.latency_ms]
+        by_agent: Dict[str, Dict[str, Any]] = {}
+        for r in rows:
+            a = by_agent.setdefault(r.agent_name, {"count": 0, "succeeded": 0, "failed": 0, "tokens_out": 0})
+            a["count"] += 1
+            if r.status == "succeeded":
+                a["succeeded"] += 1
+            if r.status == "failed":
+                a["failed"] += 1
+            a["tokens_out"] += r.tokens_out or 0
+        return {
+            "total": total,
+            "statuses": statuses,
+            "success_rate": round(succeeded / total, 3) if total else None,
+            "latency_ms": {"p50": _pct(latencies, 0.5), "p95": _pct(latencies, 0.95)},
+            "tokens_in": sum(r.tokens_in or 0 for r in rows),
+            "tokens_out": sum(r.tokens_out or 0 for r in rows),
+            "by_agent": by_agent,
+        }
+
+
+@app.get("/agents/runs/{run_id}")
+def get_agent_run(run_id: UUID):
+    with Session(engine) as session:
+        row = session.get(AgentRun, run_id)
+        if not row:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Run not found."}})
+        return {"run": row}
+
+
+@app.post("/agents/runs/{run_id}/cancel")
+def cancel_agent_run(run_id: UUID):
+    """Cancel a running agent/album run. Falls back to marking the DB row
+    cancelled when no live task exists (mirrors /jobs/{id}/cancel)."""
+    live_cancelled = run_registry.cancel(str(run_id))
+    with Session(engine) as session:
+        row = session.get(AgentRun, run_id)
+        if not row:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Run not found."}})
+        if row.status == "running":
+            row.status = "cancelled"
+            row.finished_at = datetime.now(timezone.utc)
+            session.add(row)
+            session.commit()
+    return {"id": str(run_id), "status": "cancelling" if live_cancelled else "cancelled", "live": live_cancelled}
+
+
+# ---------------------------------------------------------------------------
+# Model download manager — REAL streamed HF downloads (B2), no fake spinners.
+# Per-file progress via hf_hub_download loop; resumable by construction
+# (hf cache resumes partial files); cancel honored between files.
+# ---------------------------------------------------------------------------
+_model_downloads: Dict[str, Dict[str, Any]] = {}
+_download_cancels: Dict[str, threading.Event] = {}
+_REPO_ID_RE = re.compile(r"^[\w.-]+/[\w.\-]+$")
+
+
+def _models_root() -> str:
+    root = os.environ.get("MODEL_DIRECTORY", os.path.join("data", "models"))
+    os.makedirs(root, exist_ok=True)
+    return root
+
+
+class ModelDownloadRequest(SQLModel):
+    repo_id: str
+
+
+@app.post("/models/download")
+async def start_model_download(payload: ModelDownloadRequest, background_tasks: BackgroundTasks):
+    from huggingface_hub import HfApi
+
+    if not _REPO_ID_RE.match(payload.repo_id or ""):
+        raise HTTPException(status_code=400, detail={"error": {"code": "bad_repo_id", "message": "repo_id must look like 'org/model'."}})
+
+    try:
+        info = await asyncio.to_thread(
+            lambda: HfApi().model_info(repo_id=payload.repo_id, files_metadata=True)
+        )
+    except Exception as e:
+        logger.warning(f"Model metadata fetch failed for {payload.repo_id}: {e}")
+        raise HTTPException(status_code=400, detail={"error": {"code": "repo_not_found", "message": f"Could not resolve '{payload.repo_id}' on Hugging Face: {e}"}})
+
+    files = [(s.rfilename, int(s.size or 0)) for s in (info.siblings or []) if s.size]
+    total_bytes = sum(sz for _, sz in files)
+    local_dir = os.path.join(_models_root(), payload.repo_id.replace("/", "__"))
+
+    disk = shutil.disk_usage(_models_root())
+    if total_bytes and disk.free < int(total_bytes * 1.1) + 512 * 1024 * 1024:
+        raise HTTPException(status_code=507, detail={
+            "error": {"code": "insufficient_disk",
+                      "message": f"Download needs ~{total_bytes / 1e9:.1f} GB; only {disk.free / 1e9:.1f} GB free."}})
+
+    download_id = str(uuid.uuid4())
+    _model_downloads[download_id] = {
+        "id": download_id, "repo_id": payload.repo_id, "status": "queued",
+        "total_files": len(files), "files_done": 0, "current_file": "",
+        "received_bytes": 0, "total_bytes": total_bytes,
+        "local_dir": os.path.abspath(local_dir), "error": "",
+    }
+    cancel_event = threading.Event()
+    _download_cancels[download_id] = cancel_event
+    background_tasks.add_task(_model_download_worker, download_id, payload.repo_id, local_dir, files, cancel_event)
+    return _snapshot_download(download_id)
+
+
+@app.get("/models/downloads/{download_id}")
+def get_model_download(download_id: str):
+    snap = _snapshot_download(download_id)
+    if not snap:
+        raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Download not found."}})
+    return snap
+
+
+@app.post("/models/downloads/{download_id}/cancel")
+def cancel_model_download(download_id: str):
+    ev = _download_cancels.get(download_id)
+    rec = _model_downloads.get(download_id)
+    if not rec:
+        raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Download not found."}})
+    if ev is not None:
+        ev.set()
+    return {"id": download_id, "status": rec["status"], "cancel_requested": True}
+
+
+def _snapshot_download(download_id: str) -> Optional[Dict[str, Any]]:
+    rec = _model_downloads.get(download_id)
+    if not rec:
+        return None
+    pct = round(100 * rec["received_bytes"] / rec["total_bytes"]) if rec["total_bytes"] else None
+    return {**rec, "progress_percent": pct}
+
+
+def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files: List[Any], cancel_event: threading.Event):
+    from huggingface_hub import hf_hub_download
+
+    rec = _model_downloads[download_id]
+    rec["status"] = "downloading"
+    try:
+        for fname, size in files:
+            if cancel_event.is_set():
+                rec["status"] = "cancelled"
+                return
+            rec["current_file"] = fname
+            hf_hub_download(repo_id=repo_id, filename=fname, local_dir=local_dir)
+            rec["files_done"] += 1
+            rec["received_bytes"] += size
+        rec["status"] = "completed"
+        rec["current_file"] = ""
+    except Exception as e:
+        rec["status"] = "error"
+        rec["error"] = str(e)[:500]
+        logger.error(f"Model download {download_id} failed: {e}")
+
+
+@app.get("/profiles")
+def list_artist_profiles(
+    project_id: Optional[str] = None,
+    with_stats: int = 0,
+    limit: int = 100,
+    offset: int = 0,
+    q: Optional[str] = None,
+):
+    """List artist profiles. `with_stats=1` adds per-profile crew/release counts
+    and last-activity (the artist grid renders them without N detail fetches).
+    `q` is a server-side text filter (name/bio/tags, case-insensitive) so
+    search stays correct while paged."""
+    with Session(engine) as session:
+        stmt = select(ArtistProfile)
+        if project_id:
+            stmt = stmt.where(ArtistProfile.project_id == project_id)
+        if q and q.strip():
+            needle = f"%{q.strip().lower()}%"
+            stmt = stmt.where(or_(
+                func.lower(ArtistProfile.name).like(needle),
+                func.lower(ArtistProfile.bio).like(needle),
+                func.lower(ArtistProfile.tags).like(needle),
+            ))
+        total = session.exec(select(func.count()).select_from(stmt.subquery())).one()
+        profiles = session.exec(
+            stmt.order_by(ArtistProfile.created_at.desc())
+            .offset(max(0, offset)).limit(max(1, min(200, limit)))
+        ).all()
+        out: Dict[str, Any] = {"profiles": profiles, "total": int(total[0]) if isinstance(total, Sequence) else int(total)}
+        if with_stats and profiles:
+            ids = [str(p.id) for p in profiles]
+            stats = {pid: {"crew_count": 0, "release_count": 0, "last_activity": None} for pid in ids}
+            for pid, cnt in session.exec(
+                select(AgentAssignment.profile_id, func.count())
+                .where(AgentAssignment.profile_id.in_(ids))
+                .group_by(AgentAssignment.profile_id)
+            ).all():
+                if pid in stats:
+                    stats[pid]["crew_count"] = int(cnt)
+            for pid, cnt, latest in session.exec(
+                select(Release.profile_id, func.count(), func.max(Release.created_at))
+                .where(Release.profile_id.in_(ids))
+                .group_by(Release.profile_id)
+            ).all():
+                if pid in stats:
+                    stats[pid]["release_count"] = int(cnt)
+                    stats[pid]["last_activity"] = str(latest) if latest else None
+            for p in profiles:
+                prof_ts = str(p.updated_at) if p.updated_at else None
+                cur = stats[str(p.id)]["last_activity"]
+                stats[str(p.id)]["last_activity"] = max(prof_ts, cur) if (prof_ts and cur) else (prof_ts or cur)
+            out["stats"] = stats
+        return out
+
+
+@app.patch("/profiles/{profile_id}/cover")
+async def set_profile_cover(profile_id: UUID, payload: dict):
+    """Attach an uploaded image (via /upload/image) as the artist's visual identity."""
+    path = (payload or {}).get("cover_image_path", "").strip()
+    if not path or not path.startswith("/"):
+        raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "cover_image_path must be a public /image path from /upload/image."}})
+    with Session(engine) as session:
+        profile = session.get(ArtistProfile, profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
+        profile.cover_image_path = path
+        profile.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+        return profile
+
+
+@app.post("/profiles")
+def create_artist_profile(payload: ArtistProfileCreate):
+    with Session(engine) as session:
+        # Project scoping enforcement: a profile may only point at a real project.
+        if payload.project_id:
+            try:
+                pid = UUID(payload.project_id)
+            except (ValueError, AttributeError):
+                raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "project_id must be a valid UUID."}})
+            if not session.get(Project, pid):
+                raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Project not found for this profile."}})
+        profile = ArtistProfile(**payload.model_dump())
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+        return profile
+
+
+@app.get("/profiles/{profile_id}")
+def get_artist_profile(profile_id: UUID):
+    with Session(engine) as session:
+        profile = session.get(ArtistProfile, profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
+        assignments = session.exec(
+            select(AgentAssignment).where(AgentAssignment.profile_id == str(profile.id))
+        ).all()
+        releases = session.exec(
+            select(Release).where(Release.profile_id == str(profile.id)).order_by(Release.created_at.desc())
+        ).all()
+        return {"profile": profile, "assignments": assignments, "releases": releases}
+
+
+@app.post("/profiles/{profile_id}/lore/generate")
+async def generate_profile_lore(profile_id: UUID):
+    """World-Builder run: imagine/refresh the artist's canonical lore document.
+
+    Grounded on the profile's name/bio/tags and any existing lore (regeneration
+    extends rather than contradicts). Persists to lore_json on success and
+    writes a full ledger row; crew model overrides apply like any other
+    profile-scoped agent run."""
+    entry = get_agent("world_builder")
+    with Session(engine) as session:
+        profile = session.get(ArtistProfile, profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
+        brief = entry.input_schema.model_validate({
+            "artist_name": profile.name,
+            "artist_bio": profile.bio or "",
+            "tags": profile.tags or "",
+        })
+        chain_head, existing_lore = resolve_artist_grounding(session, str(profile_id), "world_builder")
+
+    ctx = RunContext(
+        agent_name="world_builder",
+        artist_profile_id=str(profile_id),
+        artist_lore=existing_lore or None,
+    )
+    with Session(engine) as session:
+        run_row = AgentRun(
+            agent_name="world_builder", status="running",
+            profile_id=str(profile_id),
+            input_json=brief.model_dump_json(),
+        )
+        session.add(run_row)
+        session.commit()
+        session.refresh(run_row)
+        run_id = str(run_row.id)
+
+    ctx.run_id = run_id
+    started = time.monotonic()
+    try:
+        result = await entry.agent.run(brief, ctx, ResiliencePolicy(chain_head=chain_head))
+    except Exception as exc:
+        exc_response = _agent_error_response(exc)
+        err_detail = getattr(exc_response, "detail", {})
+        err_meta = err_detail.get("error", {}) if isinstance(err_detail, dict) else {}
+        with Session(engine) as session:
+            row = session.get(AgentRun, UUID(run_id))
+            row.status = "failed"
+            row.error_type = err_meta.get("code", "internal_error")
+            row.error_message = str(exc)[:2000]
+            row.attempts_json = json.dumps(err_meta.get("attempts", []), default=str)
+            row.finished_at = datetime.now(timezone.utc)
+            session.add(row)
+            session.commit()
+        raise exc_response
+
+    output = result.output.model_dump(mode="json")
+    with Session(engine) as session:
+        row = session.get(AgentRun, UUID(run_id))
+        row.status = "succeeded"
+        row.output_json = json.dumps({"output": output}, default=str)
+        row.tokens_in = getattr(result, "tokens_in", 0)
+        row.tokens_out = getattr(result, "tokens_out", 0)
+        row.latency_ms = getattr(result, "latency_ms", int((time.monotonic() - started) * 1000))
+        row.attempts_json = json.dumps([a.to_dict() for a in getattr(result, "attempts", [])], default=str)
+        row.finished_at = datetime.now(timezone.utc)
+        session.add(row)
+        # Persist canon onto the artist.
+        profile = session.get(ArtistProfile, profile_id)
+        profile.lore_json = json.dumps(output, default=str)
+        profile.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+    return {"run": run_id, "lore": output, "profile": profile}
+
+
+@app.patch("/profiles/{profile_id}")
+def update_artist_profile(profile_id: UUID, payload: ArtistProfileUpdate):
+    with Session(engine) as session:
+        profile = session.get(ArtistProfile, profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
+        updates = payload.model_dump(exclude_unset=True)
+        for k, v in updates.items():
+            setattr(profile, k, v)
+        profile.updated_at = datetime.now(timezone.utc)
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+        return profile
+
+
+@app.delete("/profiles/{profile_id}")
+def delete_artist_profile(profile_id: UUID):
+    """Delete an artist identity with an explicit, tested cascade policy:
+
+    - Refuse (409) while any active run references the profile or one of its
+      releases — cancel the run first.
+    - Crew assignments die with the profile.
+    - Release containers are deleted; their Jobs are DETACHED (release_id and
+      artist_profile_id cleared) so finished tracks survive in Explore as
+      standalone history instead of dangling or disappearing.
+    """
+    with Session(engine) as session:
+        profile = session.get(ArtistProfile, profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
+        releases = session.exec(
+            select(Release).where(Release.profile_id == str(profile.id))
+        ).all()
+        release_ids = {str(r.id) for r in releases}
+        # Block deletion while a run is live on this profile or one of its
+        # releases (indexed: profile_id / release_id columns; in_([]) is safe).
+        blocking = session.exec(
+            select(AgentRun).where(
+                AgentRun.status.in_(ACTIVE_RUN_STATUSES),
+                or_(
+                    AgentRun.profile_id == str(profile_id),
+                    AgentRun.release_id.in_(list(release_ids)),
+                ),
+            )
+        ).all()
+        if blocking:
+            raise HTTPException(status_code=409, detail={
+                "error": {"code": "active_run",
+                          "message": f"An agent run is {blocking[0].status} for this artist — cancel it before deleting."}})
+        detached = 0
+        for a in session.exec(
+            select(AgentAssignment).where(AgentAssignment.profile_id == str(profile.id))
+        ).all():
+            session.delete(a)
+        for rel in releases:
+            for job in session.exec(select(Job).where(Job.release_id == str(rel.id))).all():
+                job.release_id = None
+                job.artist_profile_id = None
+                session.add(job)
+                detached += 1
+            session.delete(rel)
+        session.delete(profile)
+        session.commit()
+        return {"status": "deleted", "id": str(profile_id), "releases_deleted": len(releases), "jobs_detached": detached}
+
+
+@app.put("/profiles/{profile_id}/assignments")
+def set_artist_assignments(profile_id: UUID, payload: AgentAssignmentSet):
+    ALLOWED_ROLES = {"experiencer", "songwriter", "producer", "stylist", "critic"}
+    # Providers an override may pin to — mirrors LLMService._get_provider's
+    # dispatch table. Unknown names would waste a failover attempt per run.
+    ALLOWED_PROVIDERS = {"nvidia", "deepseek", "openai", "gemini", "openrouter",
+                         "opencode", "omlx", "ollama", "lmstudio"}
+    for a in (payload.assignments if hasattr(payload, "assignments") else []):
+        if getattr(a, "role", "") not in ALLOWED_ROLES:
+            raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": f"Unknown crew role '{a.role}'. Allowed: {sorted(ALLOWED_ROLES)}"}})
+        provider = getattr(a, "model_provider", None)
+        if provider and provider not in ALLOWED_PROVIDERS:
+            raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": f"Unknown provider '{provider}'. Allowed: {sorted(ALLOWED_PROVIDERS)}"}})
+    """Replace the artist's entire crew atomically (no drift, no partial state)."""
+    with Session(engine) as session:
+        profile = session.get(ArtistProfile, profile_id)
+        if not profile:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
+        for name in {a.agent_name for a in payload.assignments}:
+            if name not in AGENTS:
+                raise HTTPException(status_code=400, detail={
+                    "error": {"code": "unknown_agent", "message": f"No agent registered as '{name}'."}
+                })
+        existing = session.exec(
+            select(AgentAssignment).where(AgentAssignment.profile_id == str(profile.id))
+        ).all()
+        for a in existing:
+            session.delete(a)
+        created = []
+        for spec in payload.assignments:
+            row = AgentAssignment(
+                profile_id=str(profile_id),
+                role=spec.role,
+                agent_name=spec.agent_name,
+                model_provider=spec.model_provider,
+                model=spec.model,
+                config_json=spec.config_json,
+            )
+            session.add(row)
+            created.append(row)
+        profile.updated_at = datetime.now(timezone.utc)
+        session.add(profile)
+        session.commit()
+        for r in created:
+            session.refresh(r)
+        return {"assignments": created}
+
+
+@app.post("/releases")
+def create_release(payload: ReleaseCreate):
+    with Session(engine) as session:
+        profile = session.get(ArtistProfile, UUID(payload.profile_id))
+        if not profile:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
+        release = Release(profile_id=str(payload.profile_id), title=payload.title, description=payload.description)
+        # Persist the studio's vision so produce() reuses ITS seeds (track
+        # target honored) instead of re-imagining with the default count.
+        if payload.vision:
+            release.vision_json = json.dumps(payload.vision, default=str)
+        session.add(release)
+        session.commit()
+        session.refresh(release)
+        return release
+
+
+@app.get("/releases/{release_id}")
+def get_release(release_id: UUID):
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        track_total = len(session.exec(select(Job.id).where(Job.release_id == str(release_id))).all())
+        active = session.exec(
+            select(AgentRun.id).where(
+                AgentRun.agent_name == "album_orchestrator",
+                AgentRun.status.in_(ACTIVE_RUN_STATUSES),
+                AgentRun.release_id == str(release_id),
+            )
+        ).first()
+        return {"release": release, "track_total": track_total, "active_run": active is not None}
+
+
+@app.patch("/releases/{release_id}")
+def update_release(release_id: UUID, payload: ReleaseUpdate):
+    """Rename / re-describe a release or move it through the status lifecycle."""
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        updates = payload.model_dump(exclude_unset=True)
+        new_status = updates.pop("status", None)
+        if new_status is not None:
+            try:
+                transition_release(release, str(new_status))
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail={"error": {"code": "invalid_transition", "message": str(e)}})
+        title = updates.get("title")
+        if title is not None and not str(title).strip():
+            raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "Release title cannot be empty."}})
+        for k, v in updates.items():
+            setattr(release, k, v)
+        release.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(release)
+        session.commit()
+        session.refresh(release)
+        return release
+
+
+@app.delete("/releases/{release_id}")
+def delete_release(release_id: UUID):
+    """Delete a release container. Its Jobs are DETACHED (release_id cleared,
+    artist provenance kept) so finished tracks survive in Explore. Refuses
+    while an album run is live on this release."""
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        active = session.exec(
+            select(AgentRun).where(
+                AgentRun.agent_name == "album_orchestrator",
+                AgentRun.status.in_(ACTIVE_RUN_STATUSES),
+                AgentRun.release_id == str(release_id),
+            )
+        ).all()
+        if active:
+            raise HTTPException(status_code=409, detail={"error": {"code": "run_active",
+                "message": f"An album run is {active[0].status} for this release — cancel it before deleting."}})
+        detached = 0
+        for job in session.exec(select(Job).where(Job.release_id == str(release_id))).all():
+            job.release_id = None
+            session.add(job)
+            detached += 1
+        session.delete(release)
+        session.commit()
+        return {"status": "deleted", "id": str(release_id), "jobs_detached": detached}
+
+
+def prune_agent_runs(max_age_days: int) -> int:
+    """Ledger retention (C3): drop old leaf run rows so agent_runs cannot grow
+    unbounded. Album cursors (album_orchestrator/track_retry) are NEVER pruned —
+    the tracklist dedupe and resume paths depend on them. Created_at values mix
+    naive/aware storage, so age is judged after parsing (honest over clever)."""
+    cutoff = datetime.now(timezone.utc) - timedelta(days=max_age_days)
+    with Session(engine) as session:
+        rows = session.exec(
+            select(AgentRun).where(
+                AgentRun.status.not_in(ACTIVE_RUN_STATUSES),
+                AgentRun.agent_name.not_in(["album_orchestrator", "track_retry"]),
+            )
+        ).all()
+        doomed = []
+        for r in rows:
+            try:
+                created = r.created_at if isinstance(r.created_at, datetime) else datetime.fromisoformat(str(r.created_at))
+                if created.tzinfo is None:
+                    created = created.replace(tzinfo=timezone.utc)
+                if created < cutoff:
+                    doomed.append(r)
+            except (ValueError, TypeError):
+                continue  # unparseable timestamp → keep (never silently lose history)
+        for r in doomed:
+            session.delete(r)
+        session.commit()
+        return len(doomed)
+
+
+@app.delete("/agents/runs")
+def prune_agent_runs_endpoint(older_than_days: Optional[int] = None):
+    """Manual ledger prune. Defaults to MILIMO_RUN_RETENTION_DAYS (30)."""
+    days = older_than_days
+    if days is None:
+        try:
+            days = int(os.environ.get("MILIMO_RUN_RETENTION_DAYS", "30"))
+        except ValueError:
+            days = 30
+    if days <= 0:
+        raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "older_than_days must be a positive integer."}})
+    deleted = prune_agent_runs(days)
+    return {"status": "pruned", "older_than_days": days, "deleted": deleted}
+
+
+@app.get("/releases/{release_id}/tracks")
+def release_tracks(release_id: UUID):
+    """Tracklist with artifact inventory — the artist section's view of its music.
+
+    Retry deduplication: when an album orchestrator cursor exists for this
+    release, it decides which Job won each seed slot; superseded retry rows
+    are hidden while failed attempts without a winning replacement stay
+    visible. Non-orchestrated releases list every Job chronologically."""
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        rows = session.exec(
+            select(Job).where(Job.release_id == str(release_id)).order_by(Job.created_at)
+        ).all()
+        album_runs = session.exec(
+            select(AgentRun)
+            .where(AgentRun.agent_name == "album_orchestrator", AgentRun.release_id == str(release_id))
+            .order_by(AgentRun.created_at.desc())
+        ).all()
+        out = []
+        # 3A: critic verdicts (if the album run collected any) join by slot.
+        reviews: Dict[str, Any] = {}
+        if album_runs:
+            try:
+                _rv = json.loads(album_runs[0].state_json or "{}").get("reviews")
+                if isinstance(_rv, dict):
+                    reviews = _rv
+            except Exception:
+                reviews = {}
+        for j, seed_slot in resolve_track_rows(rows, album_runs, str(release_id)):
+            review = reviews.get(str(seed_slot)) if seed_slot is not None else None
+            out.append({
+                "id": str(j.id), "title": j.title, "status": j.status.value if hasattr(j.status, "value") else str(j.status),
+                "duration_ms": j.duration_ms, "seed": j.seed, "seed_slot": seed_slot,
+                "artifacts": {"audio": j.audio_path, "midi": j.midi_path,
+                              "musicxml": j.musicxml_path, "stems": j.stems_json,
+                              "mastered": j.mastered_path},
+                "used_real_inference": not bool(j.used_fallback_synth),
+                "review": review,
+                "created_at": str(j.created_at),
+            })
+        done = sum(1 for r in out if r["status"] == "completed")
+        # B2: explicit curation order wins; unordered tracks keep cursor/natural
+        # order after the positioned ones (stable sort).
+        try:
+            order = json.loads(release.track_order_json or "[]")
+        except Exception:
+            order = []
+        if isinstance(order, list) and order:
+            pos = {str(x): i for i, x in enumerate(order)}
+            out.sort(key=lambda r: pos.get(r["id"], len(order)))
+        return {"release_id": str(release_id), "title": release.title,
+                "status": release.status,
+                "tracks": out, "succeeded": done, "total": len(out),
+                "rollup": "completed" if done == len(out) and out else ("partial" if done else "pending")}
+
+
+@app.patch("/releases/{release_id}/track-order")
+def set_release_track_order(release_id: UUID, payload: dict):
+    """Curate the tracklist order. `job_ids` may be a subset — ordered jobs are
+    positioned first, remaining tracks keep their natural order after them."""
+    ids_raw = (payload or {}).get("job_ids")
+    if not isinstance(ids_raw, list):
+        raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "job_ids must be an array of track ids."}})
+    seen: set = set()
+    ids = []
+    for x in ids_raw:
+        s = str(x)
+        if s not in seen:
+            seen.add(s)
+            ids.append(s)
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        valid = {str(r) for r in session.exec(select(Job.id).where(Job.release_id == str(release_id))).all()}
+        unknown = [i for i in ids if i not in valid]
+        if unknown:
+            raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": f"Unknown track ids for this release: {unknown[:3]}"}})
+        release.track_order_json = json.dumps(ids)
+        release.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        session.add(release)
+        session.commit()
+        return {"status": "ok", "track_order": ids}
+
+
+@app.delete("/releases/{release_id}/tracks/{job_id}")
+def detach_release_track(release_id: UUID, job_id: UUID):
+    """Detach a single track from a release without deleting the job or project."""
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        job = session.get(Job, job_id)
+        if not job or str(job.release_id) != str(release_id):
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Track not found in this release."}})
+
+        job.release_id = None
+        session.add(job)
+
+        try:
+            order = json.loads(release.track_order_json or "[]")
+            if isinstance(order, list) and str(job_id) in order:
+                order = [x for x in order if x != str(job_id)]
+                release.track_order_json = json.dumps(order)
+                session.add(release)
+        except Exception:
+            pass
+
+        session.commit()
+        return {"status": "ok", "message": "Track detached from release."}
+
+
+@app.post("/releases/{release_id}/tracks")
+def attach_release_track(release_id: UUID, payload: dict):
+    """Attach an existing job/track to a release."""
+    target_job_id = (payload or {}).get("job_id")
+    if not target_job_id:
+        raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "job_id is required."}})
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        job = session.get(Job, UUID(str(target_job_id)))
+        if not job:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Job not found."}})
+
+        job.release_id = str(release_id)
+        if release.profile_id:
+            job.artist_profile_id = str(release.profile_id)
+        session.add(job)
+
+        try:
+            order = json.loads(release.track_order_json or "[]")
+            if isinstance(order, list) and str(target_job_id) not in order:
+                order.append(str(target_job_id))
+                release.track_order_json = json.dumps(order)
+                session.add(release)
+        except Exception:
+            pass
+
+        session.commit()
+        return {"status": "ok", "message": "Track attached to release."}
+
+
+@app.post("/releases/{release_id}/tracks/{job_id}/retry")
+async def retry_release_track(release_id: UUID, job_id: UUID):
+    """Re-produce ONE failed album seed (its own run, own ledger row).
+
+    Refuses when the job isn't a recorded failed attempt (only failures are
+    retryable — completed slots are already the truth) or when another run is
+    live on the release. On success the album cursor's slot winner is
+    replaced, so the tracklist dedupes to the new job automatically."""
+    from app.agents.orchestrator.album import AlbumOrchestrator, retry_single_seed
+
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+
+        # Live-run guard first: any active orchestrator/retry on this release
+        # blocks new work regardless of what is being retried.
+        live = session.exec(
+            select(AgentRun).where(
+                AgentRun.agent_name.in_(["album_orchestrator", "track_retry"]),
+                AgentRun.status.in_(ACTIVE_RUN_STATUSES),
+                AgentRun.release_id == str(release_id),
+            )
+        ).all()
+        if live:
+            raise HTTPException(status_code=409, detail={"error": {"code": "run_active",
+                "message": f"A run is {live[0].status} for this release — wait or cancel it first."}})
+
+        target: Optional[tuple] = None  # (album_run, seed_slot)
+        for r in session.exec(
+            select(AgentRun).where(
+                AgentRun.agent_name == "album_orchestrator",
+                AgentRun.release_id == str(release_id),
+            )
+        ).all():
+            try:
+                st = json.loads(r.state_json or "{}")
+            except Exception:
+                continue
+            for slot, jids in (st.get("failed_jobs") or {}).items():
+                jid_list = jids if isinstance(jids, list) else [jids]
+                if str(job_id) in [str(x) for x in jid_list]:
+                    target = (r, int(slot))
+                    break
+            if target:
+                break
+        if target is None:
+            raise HTTPException(status_code=422, detail={"error": {"code": "not_retryable",
+                "message": "Only failed album track attempts can be retried."}})
+        # Retry inherits the album run's crew flags.
+        try:
+            album_cfg = json.loads(target[0].input_json or "{}")
+        except Exception:
+            album_cfg = {}
+        crew = album_cfg.get("crew") if isinstance(album_cfg.get("crew"), dict) else {}
+
+        parent = AgentRun(agent_name="track_retry", status="queued",
+                          profile_id=str(release.profile_id),
+                          release_id=str(release_id),
+                          input_json=json.dumps({
+                              "release_id": str(release_id),
+                              "job_id": str(job_id),
+                              "seed_slot": target[1],
+                              "album_run_id": str(target[0].id),
+                              "crew": crew,
+                          }))
+        session.add(parent)
+        session.commit()
+        session.refresh(parent)
+
+    orchestrator = AlbumOrchestrator(run_registry, event_manager.publish)
+    spawn_background_task(retry_single_seed(
+        parent_run_id=parent.id, release_id=release_id,
+        engine=engine, orchestrator=orchestrator))
+    return {"run_id": str(parent.id), "status": "queued", "seed_slot": target[1]}
+
+
+@app.post("/releases/{release_id}/produce")
+async def produce_release(release_id: UUID, payload: dict):
+    """Album Orchestrator: vision → per-seed songwriter+generation children.
+
+    Gated-by-default (pauses after each track; approve via /agents/runs/{id}/resume).
+    body: {"autopilot": bool, "budget": {"deadline_s"?: float}}"""
+    from app.agents.orchestrator import BudgetState
+    from app.agents.orchestrator.album import AlbumOrchestrator
+
+    autopilot = bool((payload or {}).get("autopilot", False))
+    caps = (payload or {}).get("budget") or {}
+    budget = BudgetState(
+        deadline_s=float(caps["deadline_s"]) if caps.get("deadline_s") else None,
+    )
+
+    with Session(engine) as session:
+        release = session.get(Release, release_id)
+        if not release:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
+        # Concurrency guard: one live orchestrator per release. Producing twice
+        # would double-spend and interleave two cursors on the same slots.
+        active = session.exec(
+            select(AgentRun).where(
+                AgentRun.agent_name == "album_orchestrator",
+                AgentRun.status.in_(ACTIVE_RUN_STATUSES),
+                AgentRun.release_id == str(release_id),
+            )
+        ).all()
+        if active:
+            raise HTTPException(status_code=409, detail={"error": {"code": "run_active",
+                "message": f"An album run is already {active[0].status} for this release — resume or cancel it before producing again."}})
+        # Crew flags (opt-in): stylist refines tags pre-generation; critic gates
+        # the draft with one bounded revision. Default OFF — cost control.
+        crew_in = (payload or {}).get("crew") if isinstance((payload or {}).get("crew"), dict) else {}
+        crew = {"stylist": bool(crew_in.get("stylist")), "critic": bool(crew_in.get("critic"))}
+        parent = AgentRun(agent_name="album_orchestrator", status="queued",
+                          input_json=json.dumps({"release_id": str(release_id), "autopilot": autopilot, "crew": crew}),
+                          profile_id=str(release.profile_id),
+                          release_id=str(release_id),
+                          budget_json=json.dumps({"caps": {"deadline_s": budget.deadline_s}}))
+        session.add(parent)
+        session.commit()
+        session.refresh(parent)
+
+    orchestrator = AlbumOrchestrator(run_registry, event_manager.publish)
+    spawn_background_task(orchestrator.execute(
+        parent_run_id=parent.id, release_id=release_id,
+        autopilot=autopilot, engine=engine, budget=budget))
+    return {"run_id": str(parent.id), "status": "queued", "autopilot": autopilot}
+
+
+@app.post("/agents/runs/{run_id}/resume")
+async def resume_agent_run(run_id: UUID, payload: dict = None):
+    """Approve + continue a gated album run (or re-kick an interrupted one).
+    Cursor state_json decides what still needs doing."""
+    from app.agents.orchestrator.album import AlbumOrchestrator
+
+    with Session(engine) as session:
+        run = session.get(AgentRun, run_id)
+        if not run:
+            raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Run not found."}})
+        if run.status not in ("awaiting_approval", "interrupted"):
+            raise HTTPException(status_code=409, detail={"error": {"code": "invalid_state",
+                "message": f"Run is '{run.status}'; only awaiting_approval/interrupted runs can resume."}})
+        try:
+            cfg = json.loads(run.input_json or "{}")
+        except Exception:
+            cfg = {}
+        release_id = UUID(cfg["release_id"])
+        run.status = "running"
+        session.add(run); session.commit()
+
+    orchestrator = AlbumOrchestrator(run_registry, event_manager.publish)
+    spawn_background_task(orchestrator.execute(
+        parent_run_id=run_id, release_id=release_id,
+        autopilot=bool((payload or {}).get("autopilot", False)),
+        engine=engine))
+    return {"run_id": str(run_id), "status": "resumed"}
+
+
+@app.get("/profiles/{profile_id}/releases")
+def list_releases(profile_id: UUID, limit: int = 100, offset: int = 0):
+    with Session(engine) as session:
+        base = select(Release).where(Release.profile_id == str(profile_id))
+        total = session.exec(select(func.count()).select_from(base.subquery())).one()
+        releases = session.exec(
+            base.order_by(Release.created_at.desc())
+            .offset(max(0, offset)).limit(max(1, min(200, limit)))
+        ).all()
+        return {"releases": releases, "total": int(total[0]) if isinstance(total, Sequence) else int(total)}
+
+
+@app.post("/tracks/{job_id}/midi")
+async def update_track_midi(job_id: str, notes: List[Dict[str, Any]] = Body(...)):
+    """Save edited note events from the DAW Piano Roll and re-generate MIDI and MusicXML."""
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+
+        clean_id = str(job.id).replace("-", "")
+        bg = json.loads(job.beat_grid_json) if job.beat_grid_json else {}
+        bpm = float(bg.get("bpm", 120.0))
+
+        result = await muscriptor_provider.update_midi_notes(clean_id, notes, bpm=bpm)
+        job.notes_json = result.notes_json
+        job.midi_path = result.midi_path
+        job.musicxml_path = result.musicxml_path
+
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+        return {"status": "saved", "job": job}
+
+
+@app.get("/tracks/{job_id}/lrc")
+def get_track_lrc(job_id: str):
+    """Generate and download standard .lrc synchronized lyrics for a track."""
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+
+        timed_lines = []
+        if job.timed_lyrics_json:
+            try:
+                timed_lines = json.loads(job.timed_lyrics_json)
+            except Exception:
+                timed_lines = []
+
+        if not timed_lines and job.lyrics:
+            dur = 180.0
+            resolved = _resolve_audio_file(job.audio_path)
+            if resolved:
+                try:
+                    import soundfile as sf
+                    dur = float(sf.info(resolved).duration)
+                except Exception:
+                    pass
+            elif getattr(job, "duration_ms", None):
+                dur = float(job.duration_ms) / 1000.0
+            stems_dict = json.loads(job.stems_json) if job.stems_json else {}
+            vocal_stem = stems_dict.get("vocals") or stems_dict.get("part_vocals") or job.audio_path
+            timed_lines = lyric_sync_engine.align_lyrics(job.lyrics, duration_sec=dur, vocal_stem_path=vocal_stem)
+
+        title = job.title or job.prompt or "Milimo Track"
+        lrc_text = lyric_sync_engine.generate_lrc(timed_lines, title=title)
+        return Response(
+            content=lrc_text,
+            media_type="text/plain",
+            headers={"Content-Disposition": f'attachment; filename="{title}.lrc"'}
+        )
+
+
+@app.post("/tracks/{job_id}/realign_lyrics")
+def realign_track_lyrics(job_id: str, lyrics: Optional[str] = Body(None, embed=True)):
+    """Recompute neural acoustic lyric timestamps on-demand for a track."""
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+
+        if lyrics is not None:
+            job.lyrics = lyrics
+
+        eff_lyrics = job.lyrics or job.prompt or ""
+        stems_dict = json.loads(job.stems_json) if job.stems_json else {}
+        vocal_path = stems_dict.get("vocals") or stems_dict.get("part_vocals") or job.audio_path
+
+        duration_sec = 180.0
+        resolved_audio = _resolve_audio_file(job.audio_path)
+        if resolved_audio:
+            try:
+                import soundfile as sf
+                duration_sec = float(sf.info(resolved_audio).duration)
+            except Exception:
+                pass
+        elif getattr(job, "duration_ms", None):
+            duration_sec = float(job.duration_ms) / 1000.0
+
+        timed = lyric_sync_engine.align_lyrics(
+            lyrics=eff_lyrics,
+            duration_sec=duration_sec,
+            vocal_stem_path=vocal_path
+        )
+        job.timed_lyrics_json = json.dumps(timed)
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        return {"status": "realigned", "timed_lyrics": timed, "job": job}
+
+
+@app.post("/workspace/{job_id}/notes")
+def save_workspace_notes(job_id: UUID, notes: List[Dict[str, Any]] = Body(...)):
+    """Save edited note events from the Piano Roll editor."""
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        job.notes_json = json.dumps(notes)
+        session.add(job)
+        session.commit()
+        return {"status": "saved", "note_count": len(notes)}
+
+
+# --- LLM Config & Co-Writer Endpoints ---
 
 @app.get("/models/lyrics")
 def get_lyrics_models():
     return {"models": LLMService.get_models()}
 
+
 @app.get("/config/llm")
 def get_llm_config():
     return LLMService.get_config()
 
+
 @app.post("/config/llm")
-def  update_llm_config(config: LLMConfigUpdate):
+def update_llm_config(config: LLMConfigUpdate):
     try:
-        # Update provider if specified
         if config.provider:
             LLMService.set_active_provider(config.provider)
-        
-        # Update specific provider settings
+        if config.nvidia:
+            LLMService.update_config("nvidia", config.nvidia.model_dump(exclude_unset=True))
         if config.openai:
             LLMService.update_config("openai", config.openai.model_dump(exclude_unset=True))
         if config.gemini:
@@ -125,27 +2029,28 @@ def  update_llm_config(config: LLMConfigUpdate):
             LLMService.update_config("ollama", config.ollama.model_dump(exclude_unset=True))
         if config.deepseek:
             LLMService.update_config("deepseek", config.deepseek.model_dump(exclude_unset=True))
-            
+        if config.opencode:
+            LLMService.update_config("opencode", config.opencode.model_dump(exclude_unset=True))
+        if config.omlx:
+            LLMService.update_config("omlx", config.omlx.model_dump(exclude_unset=True))
         return LLMService.get_config()
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Route failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": "internal_error", "message": "Unexpected server error."}})
+
 
 @app.post("/config/fetch-models")
 def fetch_models(request: LLMConfigUpdate):
-    """
-    Fetch models for a specific provider using passed credentials/url.
-    Does NOT save the config.
-    """
     try:
         provider = request.provider
         if not provider:
             raise HTTPException(status_code=400, detail="Provider required")
-        
-        # Extract relevant credentials from the request body
         api_key = None
         base_url = None
-        
-        if provider == "openai" and request.openai:
+        if provider == "nvidia" and request.nvidia:
+            api_key = request.nvidia.api_key
+            base_url = request.nvidia.base_url
+        elif provider == "openai" and request.openai:
             api_key = request.openai.api_key
         elif provider == "deepseek" and request.deepseek:
             api_key = request.deepseek.api_key
@@ -157,6 +2062,12 @@ def fetch_models(request: LLMConfigUpdate):
             base_url = request.lmstudio.base_url
         elif provider == "ollama" and request.ollama:
             base_url = request.ollama.base_url
+        elif provider == "opencode" and request.opencode:
+            api_key = request.opencode.api_key
+            base_url = request.opencode.base_url
+        elif provider == "omlx" and request.omlx:
+            api_key = request.omlx.api_key
+            base_url = request.omlx.base_url
 
         models = LLMService.fetch_available_models(provider, api_key, base_url)
         return {"models": models}
@@ -169,140 +2080,368 @@ def enhance_prompt(req: EnhancePromptRequest):
     try:
         result = LLMService.enhance_prompt(req.concept, req.model_name)
         return result
-    except Exception as e:
-        # Fallback
-        return {"topic": req.concept, "tags": "Pop"}
+    except Exception:
+        return {"topic": req.concept, "tags": "Pop, Electronic, Modern DAW Master"}
+
+
+@app.post("/generate/rewrite_caption")
+async def rewrite_caption(req: RewriteCaptionRequest):
+    """Rewrite a brief into a professional three-heading MiniMax structured caption
+    (official music-caption-rewriter workflow). Never blocks generation: the service
+    falls back to a constructed caption and reports it honestly via 'rewritten'/
+    'fallback_reason' instead of raising."""
+    result = await LLMService.rewrite_caption(
+        concept=req.concept,
+        lyrics=req.lyrics,
+        tags=req.tags,
+        model=req.model_name,
+    )
+    caption = result.get("structured_caption", {})
+    return {
+        "global_metadata": caption.get("global_metadata", ""),
+        "vocal_details": caption.get("vocal_details", ""),
+        "arrangement": caption.get("arrangement", ""),
+        "rewritten": result.get("rewritten", False),
+        "fallback_reason": result.get("fallback_reason"),
+        "families": result.get("families", []),
+        "templates": result.get("templates", []),
+    }
+
 
 @app.post("/generate/evaluate_inspiration")
 def generate_inspiration(req: InspirationRequest):
     try:
         result = LLMService.generate_inspiration(req.model_name)
         return result
-    except Exception as e:
-        return {"topic": "A futuristic city in the clouds", "tags": "Electronic, ambient, sci-fi"}
+    except Exception:
+        return {"topic": "A cinematic journey through neon skies", "tags": "Synthwave, Electronic, 128 BPM, Punchy Drums"}
+
 
 @app.post("/generate/styles")
 def generate_styles(req: InspirationRequest):
-    # Reusing InspirationRequest since we just need the model_name
     try:
         styles = LLMService.generate_styles_list(req.model_name)
         return {"styles": styles}
     except Exception:
-        return {"styles": ["Pop", "Rock", "Jazz"]} # Fallback
+        return {"styles": ["Pop", "Rock", "Synthwave", "R&B", "Acoustic", "Cinematic"]}
 
-# --- Style Management API ---
+
+@app.post("/generate/cover-prompt")
+def generate_cover_prompt(req: CoverPromptRequest):
+    """Generate an evocative visual prompt for album artwork from song/project metadata."""
+    title = req.title or "Untitled Master"
+    desc = req.description or ""
+    genre = req.genre or req.tags or "Modern Music Production"
+    prompt = f"High-end artistic album cover art for '{title}', {genre}, {desc}, minimalist, cinematic lighting, 8k resolution, modern abstract aesthetics, award-winning graphic design"
+    return {"prompt": prompt}
+
+
+@app.post("/upload/image")
+async def upload_cover_image(file: UploadFile = File(...)):
+    """Upload custom cover art (PNG/JPG/WEBP). SVG excluded (stored-XSS, audit A7);
+    content sniffed against magic bytes; size capped; name randomized."""
+    from app.core.uploads import save_upload
+    dest_path, filename = await save_upload(
+        file, os.path.join("data", "covers"), kind="image"
+    )
+
+    return {
+        "url": f"/covers/{filename}",
+        "filename": filename,
+        "content_type": file.content_type
+    }
+
+
+@app.post("/generate/cover-image")
+def generate_cover_image(req: CoverImageRequest):
+    """Generate or synthesize visual artwork for project/song cover."""
+    import uuid
+    import hashlib
+    
+    filename = f"ai_cover_{uuid.uuid4().hex[:10]}.svg"
+    dest_path = os.path.join("data", "covers", filename)
+    
+    # Generate an elegant, procedurally generated ambient dark gradient art
+    h = int(hashlib.md5(req.prompt.encode()).hexdigest(), 16)
+    hue1 = (h % 360)
+    hue2 = ((h >> 4) % 360)
+    hue3 = ((h >> 8) % 360)
+    
+    svg_content = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="100%" height="100%">
+  <defs>
+    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:hsl({hue1}, 75%, 20%);stop-opacity:1" />
+      <stop offset="50%" style="stop-color:hsl({hue2}, 85%, 40%);stop-opacity:1" />
+      <stop offset="100%" style="stop-color:hsl({hue3}, 80%, 15%);stop-opacity:1" />
+    </linearGradient>
+    <filter id="blur">
+      <feGaussianBlur stdDeviation="70" />
+    </filter>
+  </defs>
+  <rect width="800" height="800" fill="#090b10" />
+  <circle cx="400" cy="400" r="320" fill="url(#grad)" filter="url(#blur)" opacity="0.85" />
+  <circle cx="{200 + (h % 400)}" cy="{200 + ((h >> 3) % 400)}" r="200" fill="hsl({hue2}, 90%, 55%)" filter="url(#blur)" opacity="0.65" />
+</svg>'''
+    with open(dest_path, "w") as f:
+        f.write(svg_content)
+        
+    return {
+        "url": f"/covers/{filename}",
+        "prompt": req.prompt,
+        "style": req.style
+    }
+
+
+# --- Studio Sessions & Multi-Turn Producer Endpoints ---
+
+@app.get("/sessions")
+def list_sessions():
+    with Session(engine) as session:
+        sessions = session.exec(select(StudioSession).order_by(StudioSession.updated_at.desc())).all()
+        result = []
+        for s in sessions:
+            s_id = s.id
+            messages = session.exec(select(SessionMessage).where(SessionMessage.session_id == s_id)).all()
+            jobs = session.exec(select(Job).where(Job.session_id == str(s_id))).all()
+            s_dict = s.model_dump()
+            s_dict["message_count"] = len(messages)
+            s_dict["job_count"] = len(jobs)
+            s_dict["jobs"] = [j.model_dump() for j in jobs]
+            result.append(s_dict)
+        return result
+
+
+@app.post("/sessions", response_model=StudioSession)
+def create_session(data: SessionCreate):
+    with Session(engine) as session:
+        new_session = StudioSession(
+            title=data.title or "New session",
+            project_id=data.project_id,
+            active_job_id=data.active_job_id
+        )
+        session.add(new_session)
+        session.commit()
+        session.refresh(new_session)
+        return new_session
+
+
+@app.get("/sessions/{session_id}")
+def get_session(session_id: UUID):
+    with Session(engine) as session:
+        studio_session = session.get(StudioSession, session_id)
+        if not studio_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+            
+        messages = session.exec(
+            select(SessionMessage)
+            .where(SessionMessage.session_id == session_id)
+            .order_by(SessionMessage.created_at.asc())
+        ).all()
+        
+        jobs = session.exec(
+            select(Job)
+            .where(Job.session_id == str(session_id))
+            .order_by(Job.created_at.desc())
+        ).all()
+        
+        s_dict = studio_session.model_dump()
+        s_dict["messages"] = [m.model_dump() for m in messages]
+        s_dict["jobs"] = [j.model_dump() for j in jobs]
+        return s_dict
+
+
+@app.patch("/sessions/{session_id}", response_model=StudioSession)
+def update_session(session_id: UUID, data: SessionUpdate):
+    with Session(engine) as session:
+        studio_session = session.get(StudioSession, session_id)
+        if not studio_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+            
+        if data.title is not None:
+            studio_session.title = data.title
+        if data.project_id is not None:
+            studio_session.project_id = data.project_id
+        if data.active_job_id is not None:
+            studio_session.active_job_id = data.active_job_id
+            
+        studio_session.updated_at = datetime.now(timezone.utc)
+        session.add(studio_session)
+        session.commit()
+        session.refresh(studio_session)
+        return studio_session
+
+
+@app.delete("/sessions/{session_id}")
+def delete_session(session_id: UUID):
+    with Session(engine) as session:
+        studio_session = session.get(StudioSession, session_id)
+        if not studio_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+            
+        # Delete session messages
+        messages = session.exec(select(SessionMessage).where(SessionMessage.session_id == session_id)).all()
+        for m in messages:
+            session.delete(m)
+            
+        # Dissociate jobs
+        jobs = session.exec(select(Job).where(Job.session_id == str(session_id))).all()
+        for j in jobs:
+            j.session_id = None
+            session.add(j)
+            
+        session.delete(studio_session)
+        session.commit()
+        return {"status": "deleted", "id": session_id}
+
+
+@app.post("/sessions/{session_id}/chat")
+async def session_chat(session_id: UUID, message_data: SessionMessageCreate):
+    with Session(engine) as db_session:
+        studio_session = db_session.get(StudioSession, session_id)
+        if not studio_session:
+            raise HTTPException(status_code=404, detail="Session not found")
+            
+        # 1. Save user message
+        user_msg = SessionMessage(
+            session_id=session_id,
+            role="user",
+            content=message_data.content,
+            audio_attachment_path=message_data.audio_attachment_path
+        )
+        db_session.add(user_msg)
+        
+        # 2. Query Producer LLM for full track composition (Title, Tags, Topic, Lyrics, Captions)
+        full_preset = await LLMService.produce_full_track(message_data.content)
+        
+        # Build rich producer message
+        title_val = full_preset.get("title", "Studio Master")
+        tags_val = full_preset.get("tags", "Pop, Electronic")
+        topic_val = full_preset.get("topic", message_data.content)
+        lyrics_val = full_preset.get("lyrics", "")
+        
+        if full_preset.get("is_instrumental"):
+            producer_reply = (
+                f"### 🎵 Proposed Track: **{title_val}**\n"
+                f"**Style & Instrumentation:** `{tags_val}`\n\n"
+                f"**Direction:** {topic_val}\n\n"
+                f"*(Instrumental Master arrangement ready in Composer)*"
+            )
+        else:
+            producer_reply = (
+                f"### 🎵 Proposed Track: **{title_val}**\n"
+                f"**Style:** `{tags_val}`\n\n"
+                f"#### **Lyrics:**\n"
+                f"{lyrics_val}"
+            )
+        
+        producer_msg = SessionMessage(
+            session_id=session_id,
+            role="producer",
+            content=producer_reply,
+            preset_data_json=json.dumps(full_preset)
+        )
+        db_session.add(producer_msg)
+        
+        # Update session title with song title or prompt
+        if studio_session.title == "New session" or len(studio_session.title) <= 3:
+            studio_session.title = title_val[:32]
+            
+        studio_session.updated_at = datetime.now(timezone.utc)
+        db_session.commit()
+        db_session.refresh(studio_session)
+        db_session.refresh(user_msg)
+        db_session.refresh(producer_msg)
+        
+        messages = db_session.exec(
+            select(SessionMessage)
+            .where(SessionMessage.session_id == session_id)
+            .order_by(SessionMessage.created_at.asc())
+        ).all()
+        
+        session_dict = studio_session.model_dump()
+        session_dict["messages"] = [m.model_dump() for m in messages]
+        
+        return {
+            "session": session_dict,
+            "user_message": user_msg.model_dump(),
+            "producer_message": producer_msg.model_dump(),
+            "preset": full_preset
+        }
+
+
+# --- Style Registry ---
 from app.services.style_registry import StyleRegistry, Style
 from pydantic import BaseModel
+
 
 class StyleCreate(BaseModel):
     name: str
     description: Optional[str] = None
 
+
 class PathsConfig(BaseModel):
-    model_config = {"protected_namespaces": ()}  # Allow model_ prefix
+    model_config = {"protected_namespaces": ()}
     model_directory: Optional[str] = None
     checkpoints_directory: Optional[str] = None
     datasets_directory: Optional[str] = None
 
+
 @app.get("/styles")
 def get_styles():
-    """Get all available styles (official + custom + trained)."""
     registry = StyleRegistry()
     styles = registry.get_all_styles()
     return {"styles": [s.to_dict() for s in styles]}
 
+
 @app.post("/styles/custom")
 def add_custom_style(style: StyleCreate):
-    """Add a new custom style."""
     try:
         registry = StyleRegistry()
         created = registry.add_custom_style(style.name, style.description)
         return {"style": created.to_dict()}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail={"error": {"code": "invalid_request", "message": str(e)}})
+
 
 @app.delete("/styles/custom/{name}")
 def remove_custom_style(name: str):
-    """Remove a custom style."""
     registry = StyleRegistry()
     if registry.remove_custom_style(name):
         return {"status": "deleted", "name": name}
     raise HTTPException(status_code=404, detail=f"Custom style '{name}' not found")
 
-# --- Path Configuration API ---
+
+# --- Paths Configuration ---
 from app.services.config_manager import ConfigManager
+
 
 @app.get("/config/paths")
 def get_paths_config():
-    """Get current path configuration."""
     config = ConfigManager().get_config()
     return config.get("paths", {})
 
+
 @app.post("/config/paths")
 def update_paths_config(paths: PathsConfig):
-    """Update path configuration."""
     updates = paths.model_dump(exclude_unset=True)
     if updates:
         ConfigManager().update_config({"paths": updates})
     return ConfigManager().get_config().get("paths", {})
 
-@app.post("/config/paths/validate")
-def validate_paths(paths: PathsConfig):
-    """Validate if paths contain valid model/checkpoint files."""
-    import os
-    results = {}
-    
-    if paths.model_directory:
-        model_dir = os.path.expanduser(paths.model_directory)
-        # Check for HeartMuLa model structure
-        heartmula_path = os.path.join(model_dir, "HeartMuLa-oss-3B")
-        heartcodec_path = os.path.join(model_dir, "HeartCodec-oss")
-        tokenizer_path = os.path.join(model_dir, "tokenizer.json")
-        
-        results["model_directory"] = {
-            "path": model_dir,
-            "exists": os.path.isdir(model_dir),
-            "has_heartmula": os.path.isdir(heartmula_path),
-            "has_heartcodec": os.path.isdir(heartcodec_path),
-            "has_tokenizer": os.path.isfile(tokenizer_path),
-            "valid": all([
-                os.path.isdir(model_dir),
-                os.path.isdir(heartmula_path),
-                os.path.isdir(heartcodec_path),
-                os.path.isfile(tokenizer_path)
-            ])
-        }
-    
-    if paths.checkpoints_directory:
-        ckpt_dir = os.path.expanduser(paths.checkpoints_directory)
-        results["checkpoints_directory"] = {
-            "path": ckpt_dir,
-            "exists": os.path.isdir(ckpt_dir) if os.path.exists(ckpt_dir) else False,
-            "valid": True  # Will be created if doesn't exist
-        }
-    
-    if paths.datasets_directory:
-        data_dir = os.path.expanduser(paths.datasets_directory)
-        results["datasets_directory"] = {
-            "path": data_dir,
-            "exists": os.path.isdir(data_dir) if os.path.exists(data_dir) else False,
-            "valid": True  # Will be created if doesn't exist
-        }
-    
-    return results
 
-# --- Fine-Tuning API ---
+# --- Fine-Tuning & Training Studio API ---
 from app.services.fine_tuning_service import (
     fine_tuning_service, 
     TrainingConfig, 
     Dataset as FTDataset,
     TrainingJob as FTJob
 )
-from fastapi import UploadFile, File, Form
+
 
 class DatasetCreate(BaseModel):
     name: str
     styles: List[str]
+
 
 class TrainingConfigRequest(BaseModel):
     model_config = {"protected_namespaces": ()}
@@ -313,44 +2452,56 @@ class TrainingConfigRequest(BaseModel):
     batch_size: int = 2
     lora_rank: int = 8
 
-# Dataset Endpoints
+
 @app.post("/training/datasets")
 def create_dataset(data: DatasetCreate):
-    """Create a new training dataset."""
     dataset = fine_tuning_service.create_dataset(data.name, data.styles)
     return {"dataset": dataset.to_dict()}
 
+
 @app.get("/training/datasets")
 def list_datasets():
-    """List all training datasets."""
     datasets = fine_tuning_service.list_datasets()
     return {"datasets": [d.to_dict() for d in datasets]}
 
+
 @app.get("/training/datasets/{dataset_id}")
 def get_dataset(dataset_id: str):
-    """Get a specific dataset."""
     dataset = fine_tuning_service.get_dataset(dataset_id)
     if not dataset:
         raise HTTPException(status_code=404, detail="Dataset not found")
     return {"dataset": dataset.to_dict()}
 
+
 @app.post("/training/datasets/{dataset_id}/audio")
 async def upload_audio(dataset_id: str, file: UploadFile = File(...), caption: str = Form(...)):
-    """Upload an audio file to a dataset."""
+    # dataset_id must be a UUID (audit A4: it was concatenated into write paths)
     try:
-        content = await file.read()
+        dataset_uuid = UUID(dataset_id)
+    except ValueError:
+        raise HTTPException(status_code=400, detail={"error": {"code": "bad_dataset_id", "message": "dataset_id must be a UUID."}})
+
+    from app.core.uploads import save_upload
+    saved_path, safe_name = await save_upload(file, os.path.join("data", "datasets", dataset_id, "tmp"), kind="audio")
+
+    try:
+        with open(saved_path, "rb") as f:
+            content = f.read()
         audio_file = fine_tuning_service.add_audio_file(
-            dataset_id, file.filename, caption, content
+            str(dataset_uuid), safe_name, caption, content
         )
         return {"audio_file": {"filename": audio_file.filename, "caption": audio_file.caption}}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail={"error": {"code": "invalid_dataset", "message": str(e)}})
+    finally:
+        try:
+            os.remove(saved_path)
+        except OSError:
+            pass
 
-from fastapi.responses import FileResponse
 
 @app.get("/training/datasets/{dataset_id}/audio/{filename}")
 def get_dataset_audio(dataset_id: str, filename: str):
-    """Serve an audio file from a dataset for preview."""
     audio_path = fine_tuning_service.datasets_dir / dataset_id / "audio" / filename
     if not audio_path.exists():
         raise HTTPException(status_code=404, detail="Audio file not found")
@@ -360,75 +2511,30 @@ def get_dataset_audio(dataset_id: str, filename: str):
         filename=filename
     )
 
+
 @app.delete("/training/datasets/{dataset_id}/audio/{filename}")
 def delete_audio(dataset_id: str, filename: str):
-    """Delete an audio file from a dataset."""
     success = fine_tuning_service.remove_audio_file(dataset_id, filename)
     if not success:
         raise HTTPException(status_code=404, detail="Audio file not found")
     return {"success": True}
 
-class CaptionUpdate(BaseModel):
-    caption: str
-
-@app.put("/training/datasets/{dataset_id}/audio/{filename}")
-def update_audio_caption(dataset_id: str, filename: str, data: CaptionUpdate):
-    """Update the caption/lyrics for an audio file."""
-    success = fine_tuning_service.update_audio_caption(dataset_id, filename, data.caption)
-    if not success:
-        raise HTTPException(status_code=404, detail="Audio file not found")
-    return {"success": True}
 
 @app.get("/training/datasets/{dataset_id}/validate")
 def validate_dataset(dataset_id: str):
-    """Check if dataset meets minimum requirements (10 files)."""
     return fine_tuning_service.validate_dataset(dataset_id)
 
-@app.put("/training/datasets/{dataset_id}")
-def update_dataset(dataset_id: str, data: DatasetCreate):
-    """Update a dataset's name or styles."""
-    dataset = fine_tuning_service.update_dataset(dataset_id, data.name, data.styles)
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    return {"dataset": dataset.to_dict()}
 
 @app.delete("/training/datasets/{dataset_id}")
 def delete_dataset(dataset_id: str):
-    """Delete a dataset and all its files."""
     success = fine_tuning_service.delete_dataset(dataset_id)
     if not success:
         raise HTTPException(status_code=404, detail="Dataset not found")
     return {"success": True}
 
-class PreprocessRequest(BaseModel):
-    force: bool = True
-
-@app.post("/training/datasets/{dataset_id}/preprocess")
-async def preprocess_dataset(dataset_id: str, request: PreprocessRequest = PreprocessRequest()):
-    """Preprocess a dataset (tokenize audio files with correct tag format)."""
-    import asyncio
-    loop = asyncio.get_event_loop()
-    # Run in executor since this is blocking
-    result = await loop.run_in_executor(
-        None, 
-        lambda: fine_tuning_service.preprocess_dataset(dataset_id, force=request.force)
-    )
-    if not result.get("success"):
-        raise HTTPException(status_code=400, detail=result.get("error", "Preprocessing failed"))
-    return result
-
-# Training Job Endpoints
-
-@app.post("/training/jobs/{job_id}/cancel")
-def cancel_training_job(job_id: str):
-    """Cancel a running training job."""
-    if fine_tuning_service.cancel_job(job_id):
-        return {"status": "cancelled", "job_id": job_id}
-    raise HTTPException(status_code=404, detail="Job not found or not running")
 
 @app.post("/training/jobs")
 def create_training_job(config: TrainingConfigRequest):
-    """Start a new training job."""
     try:
         training_config = TrainingConfig(
             dataset_id=config.dataset_id,
@@ -441,141 +2547,239 @@ def create_training_job(config: TrainingConfigRequest):
         job = fine_tuning_service.create_training_job(training_config)
         return {"job": job.to_dict()}
     except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
+        raise HTTPException(status_code=400, detail={"error": {"code": "invalid_request", "message": str(e)}})
+
 
 @app.get("/training/jobs")
 def list_training_jobs():
-    """List all training jobs."""
     jobs = fine_tuning_service.list_jobs()
     return {"jobs": [j.to_dict() for j in jobs]}
 
+
 @app.get("/training/jobs/{job_id}")
 def get_training_job(job_id: str):
-    """Get training job status."""
     job = fine_tuning_service.get_job(job_id)
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
     return {"job": job.to_dict()}
 
-@app.get("/training/jobs/{job_id}/logs")
-def get_training_logs(job_id: str, offset: int = 0):
-    """Get training logs."""
-    logs = fine_tuning_service.get_job_logs(job_id, offset)
-    return {"logs": logs, "offset": offset + len(logs)}
 
-@app.delete("/training/jobs/{job_id}")
-def delete_training_job(job_id: str):
-    """Delete a training job."""
-    if fine_tuning_service.delete_job(job_id):
-        return {"success": True, "job_id": job_id}
-    raise HTTPException(status_code=404, detail="Job not found")
+@app.post("/training/jobs/{job_id}/cancel")
+def cancel_training_job(job_id: str):
+    if fine_tuning_service.cancel_job(job_id):
+        return {"status": "cancelled", "job_id": job_id}
+    raise HTTPException(status_code=404, detail="Job not found or not running")
 
-# Checkpoint Endpoints
+
 @app.get("/training/checkpoints")
 def list_checkpoints():
-    """List all model checkpoints."""
     checkpoints = fine_tuning_service.list_checkpoints()
     return {"checkpoints": [c.to_dict() for c in checkpoints]}
 
+
 @app.post("/training/checkpoints/{checkpoint_id}/activate")
 async def activate_checkpoint(checkpoint_id: str):
-    """Set a checkpoint as active."""
     if fine_tuning_service.activate_checkpoint(checkpoint_id):
-        # 1. Unload current (Sets pipeline to None)
         music_service.unload_lora()
-        
-        # 2. Re-initialize (Loads base model + Active LoRA automatically)
         await music_service.initialize()
-        
-        # 3. Refresh style registry so new trained styles appear
-        from app.services.style_registry import StyleRegistry
-        StyleRegistry().refresh()
-        
-        return {"status": "activated", "checkpoint_id": checkpoint_id, "message": "Model reloaded with new weights"}
+        return {"status": "activated", "checkpoint_id": checkpoint_id}
     raise HTTPException(status_code=404, detail="Checkpoint not found")
+
 
 @app.post("/training/checkpoints/deactivate")
 async def deactivate_checkpoint():
-    """Deactivate any active checkpoint (revert to base model)."""
     fine_tuning_service.deactivate_all_checkpoints()
-    
-    # Reload model stack
     music_service.unload_lora()
     await music_service.initialize()
-    
-    # Refresh style registry
-    from app.services.style_registry import StyleRegistry
-    StyleRegistry().refresh()
-    
     return {"status": "deactivated", "message": "Reverted to base model"}
 
-@app.delete("/training/checkpoints/{checkpoint_id}")
-def delete_checkpoint(checkpoint_id: str):
-    """Delete a checkpoint."""
-    if fine_tuning_service.delete_checkpoint(checkpoint_id):
-        return {"status": "deleted", "checkpoint_id": checkpoint_id}
-    raise HTTPException(status_code=404, detail="Checkpoint not found")
+
+# --- Lyrics & Co-Writer Endpoints ---
 
 @app.post("/generate/lyrics")
 async def generate_lyrics(req: LyricsRequest):
     try:
+        from app.services.lyrics_graph import sanitize_lyrics
         lyrics = await LLMService.generate_lyrics_async(req.topic, req.model_name, req.seed_lyrics, req.tags)
-        return {"lyrics": lyrics}
+        return {"lyrics": sanitize_lyrics(lyrics)}
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Route failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": "internal_error", "message": "Unexpected server error."}})
+
 
 @app.post("/generate/lyrics-chat")
 async def chat_with_lyrics(req: LyricsChatRequest):
     try:
+        from app.services.lyrics_graph import sanitize_lyrics
         result = await LLMService.chat_with_lyrics_async(
             req.current_lyrics, 
             req.user_message, 
             req.model_name, 
             req.chat_history, 
             req.topic, 
-            req.get_tags_string()  # Normalize tags array to string
+            req.get_tags_string()
         )
+        if result and "lyrics" in result:
+            result["lyrics"] = sanitize_lyrics(result["lyrics"])
         return result
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"Route failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": "internal_error", "message": "Unexpected server error."}})
+
+
+class ProducerComposeRequest(BaseModel):
+    prompt: str
+    model_name: Optional[str] = None
+
+
+@app.post("/producer/compose")
+async def producer_compose(req: ProducerComposeRequest):
+    """The 'Ask Producer' flow.
+
+    Given a free-text prompt, the producer (LLM) actually writes the full lyrics,
+    derives section structure, a title, and style tags — and returns them so the
+    frontend can populate the composer panel and then generate the final track.
+    """
+    try:
+        prompt = (req.prompt or "").strip()
+        if not prompt:
+            raise HTTPException(status_code=400, detail="prompt is required")
+        # None lets LLMService use the active configured model; a real model string may be passed.
+        model_name = req.model_name
+
+        # 1) Write the actual lyrics through the AI Co-Writer (real lyrics + section tags).
+        try:
+            lyrics = await LLMService.generate_lyrics_async(prompt, model_name)
+        except Exception as e:
+            lyrics = f"[Verse 1]\n{prompt}\n[Chorus]\n{prompt}"
+            logger = logging.getLogger(__name__)
+            logger.warning(f"Producer lyric generation failed, using prompt fallback: {e}")
+
+        # 2) Ask the LLM to derive title + genre/style tags (JSON).
+        title = None
+        tags = None
+        structured_caption_text = None
+        try:
+            derived = LLMService.enhance_prompt(
+                prompt + "\n\nReturn ONLY a strict JSON object with keys: title, genre(s), mood(s), instruments.",
+                model_name
+            ) if hasattr(LLMService, "enhance_prompt") else None
+        except Exception:
+            derived = None
+
+        # Fallback derivation without depending on enhance_prompt's return shape.
+        try:
+            if derived and isinstance(derived, dict):
+                title = derived.get("title")
+                _genre = derived.get("genre") or derived.get("genres") or ""
+                _mood = derived.get("mood") or ""
+                _instruments = derived.get("instruments") or ""
+                tags = ", ".join(x for x in [_genre, _mood] if x)
+                structured_caption_text = _instruments
+        except Exception:
+            pass
+
+        if not title:
+            words = [w for w in re.sub(r"[^A-Za-z0-9 ]", " ", prompt).split() if len(w) > 3]
+            title = " ".join(words[:5])[:60] or "Untitled Session"
+        if not tags:
+            tags = "Pop, Electronic"
+        if not structured_caption_text:
+            structured_caption_text = "Drums, Bass, Synths, Vocals"
+
+        return {
+            "title": title,
+            "lyrics": lyrics,
+            "tags": tags,
+            "structured_caption": {
+                "global_metadata": f"Genre: {tags.split(',')[0].strip()}\nMood: Energetic & Upbeat",
+                "vocal_details": "Lead Vocals: Clear, Expressive, Dynamic",
+                "arrangement": f"Instrumentation: {structured_caption_text}\nProduction: Studio Master",
+            },
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Route failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail={"error": {"code": "internal_error", "message": "Unexpected server error."}})
+
+
+# --- Music Generation & Track Extensions ---
 
 @app.post("/generate/music")
 async def generate_music(req: GenerationRequest, background_tasks: BackgroundTasks):
-    # Create Job Record
-    seed_val = req.seed
-    if seed_val is None:
-         import random
-         seed_val = random.randint(0, 2**32 - 1)
-         
+    import random
+    seed_val = req.seed if req.seed is not None else random.randint(0, 2**32 - 1)
+
+    lyrics_content = None if req.is_instrumental else req.lyrics
+
     job = Job(
+        title=req.title,
         prompt=req.prompt, 
-        lyrics=req.lyrics, 
+        lyrics=lyrics_content, 
         duration_ms=req.duration_ms, 
         tags=req.tags, 
         seed=seed_val,
+        model_provider=req.model_provider or "minimax_music3",
         llm_model=req.llm_model,
         parent_job_id=req.parent_job_id,
+        project_id=req.project_id,
+        session_id=req.session_id,
+        cover_image_path=req.cover_image_path,
+        image_prompt=req.image_prompt,
         temperature=req.temperature,
         cfg_scale=req.cfg_scale,
-        topk=req.topk
+        topk=req.topk,
+        voice_profile_id=req.voice_profile_id
     )
+
     with Session(engine) as session:
         session.add(job)
         session.commit()
         session.refresh(job)
-    
-    # Enqueue Background Task
-    background_tasks.add_task(music_service.generate_task, job.id, req, engine)
-    
-    return {"job_id": job.id, "status": job.status}
+        
+        job_id_val = job.id
+        job_id_str = str(job.id)
+        job_status = job.status
+        job_prompt = job.prompt
+        job_provider = job.model_provider
+        job_title = job.title
+        job_cover = job.cover_image_path
 
-from fastapi import Body
+        # If linked to a session, update session active_job_id and timestamp
+        if req.session_id:
+            try:
+                studio_session = session.get(StudioSession, UUID(req.session_id))
+                if studio_session:
+                    studio_session.active_job_id = job_id_str
+                    studio_session.updated_at = datetime.now(timezone.utc)
+                    session.add(studio_session)
+                    session.commit()
+            except Exception as e:
+                print(f"Session link notice: {e}")
+
+    # Publish initial queued event to SSE subscribers
+    event_manager.publish("job_update", {
+        "job_id": job_id_str,
+        "status": "queued",
+        "prompt": job_prompt,
+        "model_provider": job_provider
+    })
+
+    # Enqueue pipeline in background
+    background_tasks.add_task(music_service.generate_task, job_id_val, req, engine)
+    
+    return {
+        "job_id": job_id_val,
+        "status": job_status,
+        "model_provider": job_provider,
+        "title": job_title,
+        "cover_image_path": job_cover
+    }
+
+
 @app.post("/jobs/{job_id}/inpaint")
 async def inpaint_track(job_id: UUID, request: dict = Body(...)):
-    """
-    Repair a segment of audio.
-    Body: { "start_time": 10.0, "end_time": 15.0 }
-    """
     start_time = request.get("start_time")
     end_time = request.get("end_time")
     
@@ -583,19 +2787,19 @@ async def inpaint_track(job_id: UUID, request: dict = Body(...)):
         raise HTTPException(status_code=400, detail="start_time and end_time required")
         
     from app.services.inpainting_service import inpainting_service
-    # Run in background
-    # Note: inpainting_service uses same DB engine reference
     asyncio.create_task(inpainting_service.regenerate_segment(str(job_id), float(start_time), float(end_time), engine))
     
     return {"status": "queued", "message": "In-painting started"}
 
+
 @app.get("/jobs/{job_id}", response_model=Job)
-def get_job_status(job_id: UUID):
+def get_job_status(job_id: str):
     with Session(engine) as session:
-        job = session.get(Job, job_id)
+        job = get_job_by_id(session, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         return job
+
 
 @app.get("/history", response_model=List[Job])
 def get_history(limit: int = 50, offset: int = 0, status: Optional[str] = None, search: Optional[str] = None):
@@ -609,7 +2813,6 @@ def get_history(limit: int = 50, offset: int = 0, status: Optional[str] = None, 
                 query = query.where(Job.status == status)
             
         if search:
-            # Case insensitive search usually requires ilike in Postgres, but SQLite uses LIKE which is case-insensitive by default for ASCII.
             query = query.where(or_(
                 Job.title.contains(search), 
                 Job.prompt.contains(search), 
@@ -619,101 +2822,263 @@ def get_history(limit: int = 50, offset: int = 0, status: Optional[str] = None, 
         jobs = session.exec(query.offset(offset).limit(limit)).all()
         return jobs
 
+
 @app.post("/jobs/{job_id}/favorite", response_model=Job)
-def toggle_favorite(job_id: UUID):
+def toggle_favorite(job_id: str):
     with Session(engine) as session:
-        job = session.get(Job, job_id)
+        job = get_job_by_id(session, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        
-        # Toggle
         job.is_favorite = not job.is_favorite
         session.add(job)
         session.commit()
         session.refresh(job)
         return job
 
+
 @app.patch("/jobs/{job_id}", response_model=Job)
-def rename_job(job_id: UUID, upgrade: dict):
-    # Minimal schema for update, expecting {"title": "new name"}
-    new_title = upgrade.get("title")
-    if not new_title:
-        raise HTTPException(status_code=400, detail="Title is required")
-        
+def update_job(job_id: str, updates: dict = Body(...)):
     with Session(engine) as session:
-        job = session.get(Job, job_id)
+        job = get_job_by_id(session, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        job.title = new_title
+        
+        allowed_fields = ["title", "tags", "prompt", "is_favorite", "project_id", "cover_image_path", "lyrics"]
+        for key in allowed_fields:
+            if key in updates:
+                setattr(job, key, updates[key])
+                
         session.add(job)
         session.commit()
         session.refresh(job)
         return job
 
-@app.get("/download_track/{job_id}")
-def download_track(job_id: UUID):
+
+@app.get("/jobs/{job_id}/studio-pack")
+def export_studio_pack(job_id: str):
+    import io, zipfile, json, os, re
     with Session(engine) as session:
-        job = session.get(Job, job_id)
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+            
+        zip_buffer = io.BytesIO()
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            # 1. Master Audio
+            if job.audio_path:
+                local_path = job.audio_path.lstrip("/")
+                possible_paths = [local_path, f"generated_audio/{os.path.basename(local_path)}", f"data/{local_path}"]
+                for p in possible_paths:
+                    if os.path.exists(p):
+                        zf.write(p, arcname="master_audio.wav")
+                        break
+            
+            # 2. Stems
+            if job.stems_json:
+                try:
+                    stems_data = json.loads(job.stems_json)
+                    for stem_name in ["vocals", "drums", "bass", "other"]:
+                        p = stems_data.get(stem_name)
+                        if p and os.path.exists(p.lstrip("/")):
+                            zf.write(p.lstrip("/"), arcname=f"stems/{stem_name}.wav")
+                    parts = stems_data.get("instrumental_parts", {})
+                    for part_name, part_path in parts.items():
+                        if part_path and os.path.exists(part_path.lstrip("/")):
+                            clean_part = re.sub(r'[^a-zA-Z0-9_-]', '_', part_name)
+                            zf.write(part_path.lstrip("/"), arcname=f"stems/instruments/{clean_part}.wav")
+                except Exception as e:
+                    print(f"Stem packing error: {e}")
+            
+            # 3. Transcription & Scores
+            if job.midi_path and os.path.exists(job.midi_path.lstrip("/")):
+                zf.write(job.midi_path.lstrip("/"), arcname="transcription/score.mid")
+            if job.musicxml_path and os.path.exists(job.musicxml_path.lstrip("/")):
+                zf.write(job.musicxml_path.lstrip("/"), arcname="transcription/score.musicxml")
+            if job.notes_json:
+                zf.writestr("transcription/notes.json", job.notes_json)
+                
+            # 4. Lyrics
+            if job.timed_lyrics_json:
+                try:
+                    timed_data = json.loads(job.timed_lyrics_json)
+                    lrc_lines = []
+                    for seg in timed_data:
+                        start_s = seg.get("start", 0.0)
+                        mins = int(start_s // 60)
+                        secs = start_s % 60
+                        lrc_lines.append(f"[{mins:02d}:{secs:05.2f}]{seg.get('text', '')}")
+                    zf.writestr("lyrics/timed_lyrics.lrc", "\n".join(lrc_lines))
+                except Exception:
+                    pass
+            if job.lyrics:
+                zf.writestr("lyrics/lyrics.txt", job.lyrics)
+                
+            # 5. Metadata Manifest
+            metadata = {
+                "id": str(job.id),
+                "title": job.title or "Untitled Studio Master",
+                "prompt": job.prompt,
+                "tags": job.tags,
+                "model_provider": job.model_provider,
+                "seed": job.seed,
+                "temperature": job.temperature,
+                "cfg_scale": job.cfg_scale,
+                "topk": job.topk,
+                "duration_ms": job.duration_ms,
+                "created_at": job.created_at.isoformat() if job.created_at else None,
+                "structured_caption": json.loads(job.structured_caption_json) if job.structured_caption_json else None,
+                "beat_grid": json.loads(job.beat_grid_json) if job.beat_grid_json else None
+            }
+            zf.writestr("metadata.json", json.dumps(metadata, indent=2))
+            
+        zip_buffer.seek(0)
+        safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', job.title or "milimo_track")
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{safe_title}_studio_pack.zip"'}
+        )
+
+
+@app.post("/jobs/{job_id}/voice-convert", response_model=Job)
+async def voice_convert_job(job_id: str, body: dict = Body(...)):
+    voice_profile_id = body.get("voice_profile_id")
+    if not voice_profile_id:
+        raise HTTPException(status_code=400, detail="voice_profile_id is required")
+        
+    from app.services.voice_service import voice_service
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if not job.audio_path:
+            raise HTTPException(status_code=400, detail="Job does not have completed audio")
+            
+        stems = json.loads(job.stems_json) if job.stems_json else {}
+        target_vocal = stems.get("vocals", job.audio_path).lstrip("/")
+        
+        out_vocal = f"generated_audio/{job.id}_svc_{voice_profile_id}.wav"
+        await voice_service.convert_vocals(target_vocal, voice_profile_id, out_vocal)
+        
+        new_job = Job(
+            prompt=f"Voice Converted ({voice_profile_id}): {job.prompt}",
+            lyrics=job.lyrics,
+            tags=job.tags,
+            title=f"{job.title or 'Track'} ({voice_profile_id})",
+            duration_ms=job.duration_ms,
+            audio_path=f"/{out_vocal}",
+            stems_json=job.stems_json,
+            midi_path=job.midi_path,
+            musicxml_path=job.musicxml_path,
+            notes_json=job.notes_json,
+            parent_job_id=str(job.id),
+            project_id=job.project_id,
+            session_id=job.session_id,
+            cover_image_path=job.cover_image_path,
+            status="completed",
+            model_provider=job.model_provider,
+            voice_profile_id=voice_profile_id
+        )
+        session.add(new_job)
+        session.commit()
+        session.refresh(new_job)
+        return new_job
+
+
+@app.get("/download_track/{job_id}")
+def download_track(job_id: str):
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
         if not job or not job.audio_path:
             raise HTTPException(status_code=404, detail="Track not found")
             
-        # audio_path is "/audio/filename.mp3" -> "backend/generated_audio/filename.mp3"
         filename = job.audio_path.replace("/audio/", "")
         file_path = f"generated_audio/{filename}"
         
-        # Sanitize Title for Filename
-        import re
-        safe_title = re.sub(r'[^a-zA-Z0-9_\- ]', '', job.title or "untitled")
-        safe_title = safe_title.strip().replace(" ", "_")
+        safe_title = re.sub(r'[^a-zA-Z0-9_\- ]', '', job.title or "untitled").strip().replace(" ", "_")
         download_name = f"{safe_title}.mp3"
         
         return FileResponse(file_path, media_type="audio/mpeg", filename=download_name)
 
+
+def _delete_job_artifacts(job_id_str: str, audio_public_path: Optional[str] = None) -> int:
+    """Remove EVERY artifact belonging to a job (Phase 3 cascade completion).
+
+    The old implementation removed only the master + 4 fixed stems, orphaning
+    instrument stems, mastered/, converted_vocals/, tokens, covers and peaks.
+    """
+    import glob
+
+    removed = 0
+    # Different pipeline stages persist under different id forms:
+    # masters/stems/instruments use str(uuid) (hyphenated); MuScriptor outputs
+    # (tokens/sheets/MIDI/XML) use clean 32-hex. Sweep BOTH.
+    id_forms = {job_id_str, job_id_str.replace("-", "")}
+    patterns: List[str] = []
+    for form in id_forms:
+        patterns += [
+            f"generated_audio/stems/{form}_*.wav",
+            f"generated_audio/mastered/{form}*",
+            f"generated_audio/converted_vocals/{form}_*.wav",
+            f"generated_tokens/{form}*",
+            f"generated_audio/{form}.mid",
+            f"generated_audio/{form}.musicxml",
+            f"data/covers/{form}*",
+        ]
+    if audio_public_path:
+        master_name = os.path.basename(audio_public_path)
+        patterns.append(f"generated_audio/{master_name}")
+        stem = os.path.splitext(master_name)[0]
+        patterns.append(os.path.join("generated_audio", ".peaks", f"{stem}.*.json"))
+
+    for pattern in patterns:
+        for path in glob.glob(pattern):
+            try:
+                if os.path.isfile(path):
+                    os.remove(path)
+                    removed += 1
+            except OSError as e:
+                logger.warning(f"Cascade delete skipped {path}: {e}")
+
+    for form in id_forms:
+        sheet_dir = os.path.join("generated_audio", "sheets", form)
+        if os.path.isdir(sheet_dir):
+            try:
+                shutil.rmtree(sheet_dir, ignore_errors=True)
+                removed += 1
+            except Exception as e:
+                logger.warning(f"Cascade delete skipped sheet dir {sheet_dir}: {e}")
+
+    return removed
+
+
 @app.delete("/jobs/{job_id}")
-def delete_job(job_id: UUID):
-    # 1. Cancel active task (Release GPU)
+def delete_job(job_id: str):
     music_service.cancel_job(str(job_id))
-    
-    file_path = None
-    
-    # 2. Read Phase (Short Lock)
+
     with Session(engine) as session:
-        job = session.exec(select(Job).where(Job.id == job_id)).one_or_none()
+        job = get_job_by_id(session, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        
-        # Prepare file path
-        if job.audio_path:
-            filename = job.audio_path.replace("/audio/", "")
-            file_path = f"generated_audio/{filename}"
 
-    # 3. I/O Phase (No Lock)
-    if file_path:
-        import os
-        if os.path.exists(file_path):
-            try:
-                os.remove(file_path)
-            except Exception as e:
-                print(f"Error deleting file {file_path}: {e}")
-                
-    # 4. Write Phase (Short Lock)
-    with Session(engine) as session:
-        job = session.exec(select(Job).where(Job.id == job_id)).one_or_none()
-        if job:
-            session.delete(job)
-            session.commit()
-            
-    return {"status": "deleted", "id": job_id}
+        job_id_str = str(job.id)
+        audio_public = job.audio_path
+
+        # Remove from database first (fast), then sweep artifacts.
+        session.delete(job)
+        session.commit()
+
+    _delete_job_artifacts(job_id_str, audio_public)
+    return {"status": "deleted", "id": job_id_str}
+
 
 @app.post("/jobs/{job_id}/cancel")
-def cancel_job(job_id: UUID):
-    # Try to cancel running task via service
+def cancel_job(job_id: str):
     if music_service.cancel_job(str(job_id)):
         return {"status": "cancelling", "id": job_id}
     
-    # If not running, maybe update status in DB directly?
     with Session(engine) as session:
-        job = session.get(Job, job_id)
+        job = get_job_by_id(session, job_id)
         if job and job.status in [JobStatus.QUEUED, JobStatus.PROCESSING]:
             job.status = JobStatus.FAILED
             job.error_msg = "Cancelled by user"
@@ -723,8 +3088,154 @@ def cancel_job(job_id: UUID):
             
     raise HTTPException(status_code=400, detail="Job not active or already completed")
 
-from fastapi.responses import StreamingResponse
-from app.services.music_service import event_manager
+
+# --- Projects System API ---
+
+@app.post("/projects", response_model=Project)
+def create_project(data: ProjectCreate):
+    with Session(engine) as session:
+        project = Project(
+            name=data.name,
+            description=data.description,
+            cover_image_path=data.cover_image_path,
+            image_prompt=data.image_prompt,
+            tags=data.tags,
+            bpm=data.bpm or 120,
+            key_signature=data.key_signature or "C Major",
+            color=data.color or "teal",
+            icon=data.icon or "folder"
+        )
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+        return project
+
+
+@app.get("/projects")
+def list_projects():
+    with Session(engine) as session:
+        projects = session.exec(select(Project).order_by(Project.updated_at.desc())).all()
+        result = []
+        for p in projects:
+            p_id_str = str(p.id)
+            # Count child sessions
+            jobs = session.exec(select(Job).where(Job.project_id == p_id_str)).all()
+            total_duration_s = sum((j.duration_ms or 0) / 1000 for j in jobs if j.status == JobStatus.COMPLETED)
+            stems_count = sum(1 for j in jobs if j.stems_json is not None)
+            midi_count = sum(1 for j in jobs if j.midi_path is not None)
+            
+            p_dict = p.model_dump()
+            p_dict["track_count"] = len(jobs)
+            p_dict["total_duration_s"] = total_duration_s
+            p_dict["stems_count"] = stems_count
+            p_dict["midi_count"] = midi_count
+            result.append(p_dict)
+        return result
+
+
+@app.get("/projects/{project_id}")
+def get_project(project_id: UUID):
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        p_id_str = str(project_id)
+        jobs = session.exec(select(Job).where(Job.project_id == p_id_str).order_by(Job.created_at.desc())).all()
+        
+        p_dict = project.model_dump()
+        p_dict["jobs"] = [j.model_dump() for j in jobs]
+        p_dict["track_count"] = len(jobs)
+        p_dict["total_duration_s"] = sum((j.duration_ms or 0) / 1000 for j in jobs if j.status == JobStatus.COMPLETED)
+        return p_dict
+
+
+@app.put("/projects/{project_id}", response_model=Project)
+def update_project(project_id: UUID, data: ProjectUpdate):
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        if data.name is not None:
+            project.name = data.name
+        if data.description is not None:
+            project.description = data.description
+        if data.cover_image_path is not None:
+            project.cover_image_path = data.cover_image_path
+        if data.image_prompt is not None:
+            project.image_prompt = data.image_prompt
+        if data.tags is not None:
+            project.tags = data.tags
+        if data.bpm is not None:
+            project.bpm = data.bpm
+        if data.key_signature is not None:
+            project.key_signature = data.key_signature
+        if data.color is not None:
+            project.color = data.color
+        if data.icon is not None:
+            project.icon = data.icon
+            
+        project.updated_at = datetime.now(timezone.utc)
+        session.add(project)
+        session.commit()
+        session.refresh(project)
+        return project
+
+
+@app.delete("/projects/{project_id}")
+def delete_project(project_id: UUID):
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+        
+        # Dissociate child jobs rather than deleting audio files
+        p_id_str = str(project_id)
+        jobs = session.exec(select(Job).where(Job.project_id == p_id_str)).all()
+        for j in jobs:
+            j.project_id = None
+            session.add(j)
+            
+        session.delete(project)
+        session.commit()
+        return {"status": "deleted", "id": project_id}
+
+
+@app.post("/projects/{project_id}/tracks")
+def add_track_to_project(project_id: UUID, body: dict = Body(...)):
+    job_id_str = body.get("job_id")
+    if not job_id_str:
+        raise HTTPException(status_code=400, detail="job_id is required")
+        
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+        job = session.get(Job, UUID(job_id_str))
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+            
+        job.project_id = str(project_id)
+        project.updated_at = datetime.now(timezone.utc)
+        session.add(job)
+        session.add(project)
+        session.commit()
+        return {"status": "added", "project_id": project_id, "job_id": job_id_str}
+
+
+@app.delete("/projects/{project_id}/tracks/{job_id}")
+def remove_track_from_project(project_id: UUID, job_id: UUID):
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        job.project_id = None
+        session.add(job)
+        session.commit()
+        return {"status": "removed", "job_id": job_id}
+
 
 @app.get("/events")
 async def events():
@@ -732,20 +3243,15 @@ async def events():
         q = event_manager.subscribe()
         try:
             while True:
-                # Wait for new event using asyncio.wait_for to allow checking client disconnected
-                # actually Queue.get is async so it yields control
                 try:
                     data = await asyncio.wait_for(q.get(), timeout=1.0)
                     if "event: shutdown" in data:
                         break
                     yield data
                 except asyncio.TimeoutError:
-                    # Wake up loop to check for cancellation or keep-alive
-                    # yield ": keep-alive\n\n" # Optional: send comment to keep client connection alive
                     continue
         except asyncio.CancelledError:
-             # Server shutting down
-             pass
+            pass
         except Exception:
             pass
         finally:
@@ -753,6 +3259,10 @@ async def events():
 
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
+
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8000, timeout_graceful_shutdown=1)
+    # Security default: bind loopback. LAN exposure = explicit opt-in via HOST env.
+    host = os.environ.get("HOST") or os.environ.get("MILIMO_HOST") or "127.0.0.1"
+    port = int(os.environ.get("PORT") or os.environ.get("MILIMO_PORT") or 8000)
+    uvicorn.run(app, host=host, port=port, timeout_graceful_shutdown=5)

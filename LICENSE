@@ -2,6 +2,42 @@
                            Version 2.0, January 2004
                         http://www.apache.org/licenses/
 
+Copyright 2026 Mainza Kangombe
+
+Licensed under the Apache License, Version 2.0 (the "License");
+you may not use this file except in compliance with the License.
+You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0
+
+Unless required by applicable law or agreed to in writing, software
+distributed under the License is distributed on an "AS IS" BASIS,
+WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+See the License for the specific language governing permissions and
+limitations under the License.
+
+========================================================================
+IMPORTANT NOTICE REGARDING UPSTREAM AI MODEL WEIGHTS & DEPENDENCIES:
+========================================================================
+
+The software source code of Milimo Music is licensed under the Apache License,
+Version 2.0. However, running the platform with certain third-party model
+weights and components involves separate upstream licenses:
+
+1. MuScriptor Neural Transcription Weights (Kyutai x Mirelo):
+   Licensed under Creative Commons Attribution-NonCommercial 4.0 International
+   (CC BY-NC 4.0). Using the pre-trained MuScriptor neural transcription weights
+   is restricted to non-commercial research, personal, and educational use.
+
+2. MiniMax Music 3 Model Weights:
+   Governed by the MiniMax Open Weights License Agreement.
+
+3. Matchering Mastering Engine:
+   Licensed under the GNU General Public License v3.0 (GPL-3.0).
+
+For full details on individual module and weight licenses, see LICENSES.md.
+========================================================================
+
    TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
 
    1. Definitions.

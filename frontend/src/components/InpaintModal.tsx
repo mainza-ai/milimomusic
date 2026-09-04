@@ -1,6 +1,7 @@
 
 import React, { useState } from 'react';
 import { GlassCard } from './ui/GlassCard';
+import { useModalA11y } from './ui/primitives';
 import { X, Wand2, Loader2 } from 'lucide-react';
 import { api } from '../api';
 import { Toast } from './ui/Toast';
@@ -24,6 +25,8 @@ export const InpaintModal: React.FC<InpaintModalProps> = ({
     const [endTime, setEndTime] = useState(Math.min(5, duration));
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [toast, setToast] = useState<{ msg: string, type: 'success' | 'error' } | null>(null);
+    const panelRef = React.useRef<HTMLDivElement | null>(null);
+    useModalA11y(isOpen, onClose, panelRef);
 
     if (!isOpen) return null;
 
@@ -55,7 +58,7 @@ export const InpaintModal: React.FC<InpaintModalProps> = ({
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
             {toast && <Toast message={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
 
-            <GlassCard className="w-full max-w-md p-6 bg-white/90">
+            <div ref={panelRef}><GlassCard className="w-full max-w-md p-6 bg-white/90">
                 <div className="flex items-center justify-between mb-6">
                     <h3 className="text-lg font-semibold flex items-center gap-2">
                         <Wand2 className="w-5 h-5 text-indigo-500" />
@@ -146,7 +149,7 @@ export const InpaintModal: React.FC<InpaintModalProps> = ({
                         </button>
                     </div>
                 </div>
-            </GlassCard>
+            </GlassCard></div>
         </div>
     );
 };

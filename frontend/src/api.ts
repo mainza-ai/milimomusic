@@ -1,6 +1,104 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://localhost:8000';
+// Phase-1 auth loop closure: attach optional bearer token to every request.
+axios.interceptors.request.use((config) => {
+    const token = localStorage.getItem('milimo_auth_token');
+    if (token) config.headers.Authorization = `Bearer ${token}`;
+    return config;
+});
+
+// API base is configurable via Vite env; defaults to local backend for development.
+const API_BASE_URL: string = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+
+export { API_BASE_URL };
+
+export interface NoteEvent {
+    pitch: number;
+    start_time: number;
+    duration?: number;
+    end_time?: number;
+    velocity: number;
+    instrument: string;
+    channel?: number;
+    note_name?: string;
+}
+
+export interface BeatGrid {
+    bpm: number;
+    beats_per_bar: number;
+    first_downbeat: number;
+    onset_delay: number;
+}
+
+export interface StemsMap {
+    [key: string]: any;
+    vocals?: string;
+    drums?: string;
+    bass?: string;
+    guitar?: string;
+    piano?: string;
+    other?: string;
+    instrumental?: string;
+    /** Dynamic per-instrument stems keyed by instrument name (from transcription). */
+    instrumental_parts?: Record<string, string>;
+    /** General MIDI program (instrument) number per instrument name. */
+    instrument_programs?: Record<string, number>;
+    stems_source?: string;
+    sources_available?: string[];
+    default_source?: string;
+}
+
+export interface StemMeta {
+    label: string;
+    icon: string;
+    color: string;
+    gradient: string;
+}
+
+export function getStemMeta(stemKey: string): StemMeta {
+    const k = stemKey.toLowerCase();
+    if (k.includes('vocal') || k === 'lead_vocals' || k === 'backing_vocals') {
+        return { label: 'Vocals', icon: '🎤', color: '#0d9488', gradient: 'from-teal-500 to-cyan-500' };
+    }
+    if (k.includes('drum') || k === 'percussion' || k.includes('beat')) {
+        return { label: 'Drums', icon: '🥁', color: '#ea580c', gradient: 'from-amber-500 to-orange-500' };
+    }
+    if (k.includes('bass') || k === 'synth_bass') {
+        return { label: 'Bass', icon: '🎸', color: '#0284c7', gradient: 'from-sky-500 to-blue-500' };
+    }
+    if (k.includes('guitar') || k === 'acoustic_guitar' || k === 'electric_guitar') {
+        return { label: 'Guitar', icon: '🎸', color: '#d97706', gradient: 'from-amber-600 to-yellow-500' };
+    }
+    if (k.includes('piano') || k === 'keys' || k === 'keyboard') {
+        return { label: 'Piano & Keys', icon: '🎹', color: '#6366f1', gradient: 'from-violet-500 to-purple-500' };
+    }
+    if (k.includes('wind') || k.includes('flute') || k.includes('sax') || k.includes('brass') || k.includes('horn')) {
+        return { label: 'Winds & Brass', icon: '🎷', color: '#10b981', gradient: 'from-emerald-500 to-teal-500' };
+    }
+    if (k.includes('string') || k.includes('violin') || k.includes('cello')) {
+        return { label: 'Strings', icon: '🎻', color: '#ec4899', gradient: 'from-rose-500 to-pink-500' };
+    }
+    return {
+        label: stemKey.charAt(0).toUpperCase() + stemKey.slice(1).replace(/_/g, ' '),
+        icon: '🎛️',
+        color: '#64748b',
+        gradient: 'from-teal-500 to-emerald-500'
+    };
+}
+
+export interface TimedWord {
+    word: string;
+    start: number;
+    end: number;
+}
+
+export interface TimedLine {
+    text: string;
+    start: number;
+    end: number;
+    words: TimedWord[];
+    is_section?: boolean;
+}
 
 export interface Job {
     id: string;
@@ -8,13 +106,196 @@ export interface Job {
     title?: string;
     prompt: string;
     lyrics?: string;
-    tags?: string; // Added field
+    tags?: string;
     audio_path?: string;
     error_msg?: string;
     created_at: string;
     duration_ms?: number;
-    seed?: number; // Added field
+    seed?: number;
     is_favorite?: boolean;
+
+    // Visual Artwork Assets
+    cover_image_path?: string;
+    image_prompt?: string;
+
+    // v2 Generation & Provider
+    model_provider?: string;
+    llm_model?: string;
+    parent_job_id?: string;
+    temperature?: number;
+    cfg_scale?: number;
+    topk?: number;
+
+    // v2 DAW Multitrack & MuScriptor Transcription Assets
+    midi_path?: string;
+    musicxml_path?: string;
+    notes_json?: string;
+    stems_json?: string;
+    beat_grid_json?: string;
+    timed_lyrics_json?: string;
+    structured_caption_json?: string;
+    used_fallback_synth?: boolean;
+    fallback_reason?: string | null;
+    voice_profile_id?: string;
+    project_id?: string;
+    session_id?: string;
+}
+
+export interface Project {
+    id: string;
+    name: string;
+    description?: string;
+    cover_image_path?: string;
+    image_prompt?: string;
+    tags?: string;
+    bpm?: number;
+    key_signature?: string;
+    color?: string; // 'teal' | 'cyan' | 'amber' | 'emerald' | 'sky'
+    icon?: string;
+    created_at: string;
+    updated_at: string;
+    track_count?: number;
+    total_duration_s?: number;
+    stems_count?: number;
+    midi_count?: number;
+    jobs?: Job[];
+}
+
+export interface ProjectCreate {
+    name: string;
+    description?: string;
+    cover_image_path?: string;
+    image_prompt?: string;
+    tags?: string;
+    bpm?: number;
+    key_signature?: string;
+    color?: string;
+    icon?: string;
+}
+
+export interface ProjectUpdate {
+    name?: string;
+    description?: string;
+    cover_image_path?: string;
+    image_prompt?: string;
+    tags?: string;
+    bpm?: number;
+    key_signature?: string;
+    color?: string;
+    icon?: string;
+}
+
+export interface StudioSession {
+    id: string;
+    title: string;
+    project_id?: string;
+    active_job_id?: string;
+    created_at: string;
+    updated_at: string;
+    message_count?: number;
+    job_count?: number;
+    jobs?: Job[];
+    messages?: SessionMessage[];
+}
+
+export interface SessionMessage {
+    id: string;
+    session_id: string;
+    role: 'user' | 'producer' | 'system';
+    content: string;
+    audio_attachment_path?: string;
+    generated_job_id?: string;
+    preset_data_json?: string;
+    created_at: string;
+}
+
+export interface SessionCreate {
+    title?: string;
+    project_id?: string;
+    active_job_id?: string;
+}
+
+export interface SessionUpdate {
+    title?: string;
+    project_id?: string;
+    active_job_id?: string;
+}
+
+export interface SessionMessageCreate {
+    content: string;
+    role?: 'user' | 'producer';
+    audio_attachment_path?: string;
+    generated_job_id?: string;
+    preset_data_json?: string;
+}
+
+export interface ModelDownloadStatus {
+    id: string;
+    repo_id: string;
+    status: 'queued' | 'downloading' | 'completed' | 'cancelled' | 'error';
+    total_files: number;
+    files_done: number;
+    current_file: string;
+    received_bytes: number;
+    total_bytes: number;
+    progress_percent: number | null;
+    local_dir: string;
+    error: string;
+}
+
+export interface ModelVariant {
+    id: string;
+    name: string;
+    architecture: string;
+    quantization: string;
+    size_gb: number;
+    is_installed: boolean;
+    local_path?: string;
+    license: string;
+    recommended_hardware: string;
+    is_default: boolean;
+}
+
+export interface HardwareProfile {
+    os_name: string;
+    architecture: string;
+    processor: string;
+    has_cuda: boolean;
+    has_mps: boolean;
+    hardware_tier: string;
+    tier_description: string;
+    can_run_minimax_full: boolean;
+    can_run_heartmula: boolean;
+}
+
+export interface GenerationCapabilities {
+    provider_id: string;
+    display_name: string;
+    description: string;
+    version: string;
+    max_duration_sec: number;
+    supports_structured_caption: boolean;
+    supports_section_tags: boolean;
+    supports_lora: boolean;
+    supports_voice_conversion: boolean;
+    supports_track_extension: boolean;
+    supports_segment_repair: boolean;
+    recommended_hardware: string;
+    license_class: string;
+    default_sample_rate: number;
+}
+
+export interface VoiceProfile {
+    id: string;
+    name: string;
+    description: string;
+    sample_audio_path?: string;
+    status: 'ready' | 'training' | 'failed';
+    created_at: string;
+    consent_confirmed: boolean;
+    f0_method: string;
+    sample_rate: number;
+    is_default?: boolean;
 }
 
 export const api = {
@@ -43,7 +324,16 @@ export const api = {
         topk: number = 50,
         llmModel?: string,
         parentJobId?: string,
-        seed?: number
+        seed?: number,
+        modelProvider: string = 'minimax_music3',
+        voiceProfileId?: string,
+        structuredCaption?: Record<string, string>,
+        projectId?: string,
+        title?: string,
+        isInstrumental?: boolean,
+        coverImagePath?: string,
+        imagePrompt?: string,
+        sessionId?: string
     ) => {
         const res = await axios.post(`${API_BASE_URL}/generate/music`, {
             prompt,
@@ -55,7 +345,16 @@ export const api = {
             topk,
             llm_model: llmModel,
             parent_job_id: parentJobId,
-            seed
+            seed,
+            model_provider: modelProvider,
+            voice_profile_id: voiceProfileId,
+            structured_caption: structuredCaption,
+            project_id: projectId,
+            title,
+            is_instrumental: isInstrumental,
+            cover_image_path: coverImagePath,
+            image_prompt: imagePrompt,
+            session_id: sessionId
         });
         return res.data;
     },
@@ -78,7 +377,7 @@ export const api = {
             topic: topic,
             tags: tags
         });
-        return res.data; // { message, lyrics }
+        return res.data;
     },
 
     enhancePrompt: async (concept: string, modelName: string) => {
@@ -86,44 +385,39 @@ export const api = {
             concept,
             model_name: modelName
         });
-        return res.data; // { topic, tags }
+        return res.data;
+    },
+
+    rewriteCaption: async (concept: string, lyrics: string | undefined, tags: string | undefined, modelName: string) => {
+        const res = await axios.post(`${API_BASE_URL}/generate/rewrite_caption`, {
+            concept,
+            lyrics: lyrics || null,
+            tags: tags || null,
+            model_name: modelName
+        });
+        return res.data;
+    },
+
+    producerCompose: async (prompt: string, modelName?: string, signal?: AbortSignal) => {
+        const res = await axios.post(`${API_BASE_URL}/producer/compose`, {
+            prompt,
+            model_name: modelName
+        }, { signal });
+        return res.data;
     },
 
     getInspiration: async (modelName: string) => {
         const res = await axios.post(`${API_BASE_URL}/generate/evaluate_inspiration`, {
             model_name: modelName
         });
-        return res.data; // { topic, tags }
+        return res.data;
     },
 
     getStylePresets: async (modelName: string) => {
         const res = await axios.post(`${API_BASE_URL}/generate/styles`, {
             model_name: modelName
         });
-        return res.data.styles; // string[]
-    },
-
-    generateMusic: async (
-        tags: string,
-        lyrics: string,
-        durationMs: number = 240000,
-        temperature: number = 1.0,
-        cfgScale: number = 1.5,
-        topk: number = 50,
-        prompt: string,
-        llmModel: string = "llama3.2:3b-instruct-fp16"
-    ) => {
-        const res = await axios.post(`${API_BASE_URL}/generate/music`, {
-            lyrics,
-            tags,
-            duration_ms: durationMs,
-            temperature,
-            cfg_scale: cfgScale,
-            topk,
-            prompt,
-            llm_model: llmModel
-        });
-        return res.data; // { job_id, status }
+        return res.data.styles;
     },
 
     renameJob: async (jobId: string, title: string) => {
@@ -162,6 +456,8 @@ export const api = {
     },
 
     getAudioUrl: (path: string) => {
+        if (!path) return '';
+        if (path.startsWith('http')) return path;
         return `${API_BASE_URL}${path}`;
     },
 
@@ -169,14 +465,13 @@ export const api = {
         return `${API_BASE_URL}/download_track/${jobId}`;
     },
 
-    connectToEvents: (onMessage: (event: MessageEvent) => void) => {
-        const eventSource = new EventSource(`${API_BASE_URL}/events`);
+    connectToEvents: (onMessage: (event: MessageEvent) => void, extraEventTypes: string[] = []) => {
+        const token = localStorage.getItem('milimo_auth_token') || '';
+        const url = token ? `${API_BASE_URL}/events?auth=${encodeURIComponent(token)}` : `${API_BASE_URL}/events`;
+        const eventSource = new EventSource(url);
         eventSource.onmessage = onMessage;
-
-        // Custom event listeners
-        eventSource.addEventListener("job_update", onMessage);
-        eventSource.addEventListener("job_progress", onMessage);
-
+        [...new Set(["job_update", "job_progress", ...extraEventTypes])]
+            .forEach(t => eventSource.addEventListener(t, onMessage));
         return eventSource;
     },
 
@@ -200,23 +495,100 @@ export const api = {
     }
 };
 
+export const modelsApi = {
+    getModelTree: async (): Promise<ModelVariant[]> => {
+        const res = await axios.get(`${API_BASE_URL}/models/tree`);
+        return res.data.models;
+    },
+    startModelDownload: async (repoId: string): Promise<ModelDownloadStatus> => {
+        const res = await axios.post(`${API_BASE_URL}/models/download`, { repo_id: repoId });
+        return res.data;
+    },
+    getModelDownload: async (downloadId: string): Promise<ModelDownloadStatus> => {
+        const res = await axios.get(`${API_BASE_URL}/models/downloads/${downloadId}`);
+        return res.data;
+    },
+    cancelModelDownload: async (downloadId: string): Promise<void> => {
+        await axios.post(`${API_BASE_URL}/models/downloads/${downloadId}/cancel`);
+    },
+    getCapabilities: async (): Promise<GenerationCapabilities[]> => {
+        const res = await axios.get(`${API_BASE_URL}/models/capabilities`);
+        return res.data.capabilities;
+    },
+    getHardwareProfile: async (): Promise<HardwareProfile> => {
+        const res = await axios.get(`${API_BASE_URL}/models/hardware`);
+        return res.data.hardware;
+    },
+    checkDependencies: async (modelId: string): Promise<{ missing: boolean; model_id: string; name: string; size_gb: number; message: string }> => {
+        const res = await axios.get(`${API_BASE_URL}/models/check/${encodeURIComponent(modelId)}`);
+        return res.data;
+    },
+    setActiveProvider: async (providerId: string) => {
+        const res = await axios.post(`${API_BASE_URL}/models/active/${encodeURIComponent(providerId)}`);
+        return res.data;
+    }
+};
+
+export const voiceApi = {
+    listProfiles: async (): Promise<VoiceProfile[]> => {
+        const res = await axios.get(`${API_BASE_URL}/voice/profiles`);
+        return res.data.profiles;
+    },
+    createProfile: async (data: { name: string; description: string; consent_confirmed: boolean; f0_method?: string; audio_file?: File | null }): Promise<VoiceProfile> => {
+        const formData = new FormData();
+        formData.append('name', data.name);
+        formData.append('description', data.description);
+        formData.append('consent_confirmed', String(data.consent_confirmed));
+        if (data.f0_method) formData.append('f0_method', data.f0_method);
+        if (data.audio_file) formData.append('audio_file', data.audio_file);
+        const res = await axios.post(`${API_BASE_URL}/voice/profiles`, formData);
+        return res.data.profile;
+    },
+    deleteProfile: async (profileId: string): Promise<void> => {
+        await axios.delete(`${API_BASE_URL}/voice/profiles/${encodeURIComponent(profileId)}`);
+    }
+};
+
+export const workspaceApi = {
+    uploadAndTranscribe: async (file: File): Promise<{ job_id: string; job: Job }> => {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await axios.post(`${API_BASE_URL}/transcribe/upload`, formData);
+        return res.data;
+    },
+    getExportUrl: (jobId: string, format: 'midi' | 'musicxml' | 'ableton' | 'lrc' | 'srt') => {
+        return `${API_BASE_URL}/transcribe/export/${jobId}/${format}`;
+    },
+    applyMastering: async (jobId: string, targetLufs: number = -14.0): Promise<{ status: string; audio_path: string; lufs: number }> => {
+        const res = await axios.post(`${API_BASE_URL}/mastering/match/${jobId}`, { target_lufs: targetLufs });
+        return res.data;
+    },
+    saveNotes: async (jobId: string, notes: NoteEvent[]): Promise<void> => {
+        await axios.post(`${API_BASE_URL}/workspace/${jobId}/notes`, notes);
+    }
+};
+
 export interface ProviderConfig {
     api_key?: string;
+    has_key?: boolean;
+    has_api_key?: boolean;
     base_url?: string;
     model?: string;
 }
 
 export interface LLMConfig {
     provider?: string;
+    nvidia?: ProviderConfig;
     openai?: ProviderConfig;
     gemini?: ProviderConfig;
     openrouter?: ProviderConfig;
     lmstudio?: ProviderConfig;
     ollama?: ProviderConfig;
     deepseek?: ProviderConfig;
+    opencode?: ProviderConfig;
+    omlx?: ProviderConfig;
 }
 
-// Style Management Types
 export interface Style {
     name: string;
     type: 'official' | 'custom' | 'trained';
@@ -242,7 +614,7 @@ export interface Dataset {
 export interface TrainingJob {
     id: string;
     dataset_id: string;
-    dataset_name?: string;  // Persists even if dataset is deleted
+    dataset_name?: string;
     config: {
         method: string;
         epochs: number;
@@ -253,15 +625,15 @@ export interface TrainingJob {
     progress: number;
     current_epoch: number;
     current_loss?: number;
-    initial_loss?: number;   // First loss value at start of training
-    final_loss?: number;     // Final loss when training completes
+    initial_loss?: number;
+    final_loss?: number;
     total_epochs: number;
     checkpoint_id?: string;
     error?: string;
     message?: string;
-    started_at?: string;     // ISO timestamp when training started
-    completed_at?: string;   // ISO timestamp when training finished
-    created_at?: string;     // ISO timestamp when job was created
+    started_at?: string;
+    completed_at?: string;
+    created_at?: string;
 }
 
 export interface Checkpoint {
@@ -274,7 +646,6 @@ export interface Checkpoint {
     is_active: boolean;
 }
 
-// Extended API
 export const styleApi = {
     getStyles: async (): Promise<Style[]> => {
         const res = await axios.get(`${API_BASE_URL}/styles`);
@@ -305,7 +676,6 @@ export const pathsApi = {
 };
 
 export const trainingApi = {
-    // Datasets
     createDataset: async (name: string, styles: string[]): Promise<Dataset> => {
         const res = await axios.post(`${API_BASE_URL}/training/datasets`, { name, styles });
         return res.data.dataset;
@@ -318,11 +688,12 @@ export const trainingApi = {
         const res = await axios.get(`${API_BASE_URL}/training/datasets/${id}`);
         return res.data.dataset;
     },
-    uploadAudio: async (datasetId: string, file: File, caption: string): Promise<void> => {
+    uploadAudio: async (datasetId: string, file: File, caption: string = ''): Promise<{ filename: string; caption: string }> => {
         const formData = new FormData();
         formData.append('file', file);
         formData.append('caption', caption);
-        await axios.post(`${API_BASE_URL}/training/datasets/${datasetId}/audio`, formData);
+        const res = await axios.post(`${API_BASE_URL}/training/datasets/${datasetId}/audio`, formData);
+        return res.data.audio_file;
     },
     deleteAudio: async (datasetId: string, filename: string): Promise<void> => {
         await axios.delete(`${API_BASE_URL}/training/datasets/${datasetId}/audio/${encodeURIComponent(filename)}`);
@@ -345,8 +716,6 @@ export const trainingApi = {
         const res = await axios.post(`${API_BASE_URL}/training/datasets/${datasetId}/preprocess`, { force });
         return res.data;
     },
-
-    // Jobs
     startJob: async (config: { dataset_id: string; method: string; epochs: number; learning_rate: number; lora_rank: number }): Promise<TrainingJob> => {
         const res = await axios.post(`${API_BASE_URL}/training/jobs`, config);
         return res.data.job;
@@ -369,8 +738,6 @@ export const trainingApi = {
     deleteJob: async (id: string): Promise<void> => {
         await axios.delete(`${API_BASE_URL}/training/jobs/${id}`);
     },
-
-    // Checkpoints
     listCheckpoints: async (): Promise<Checkpoint[]> => {
         const res = await axios.get(`${API_BASE_URL}/training/checkpoints`);
         return res.data.checkpoints;
@@ -384,4 +751,366 @@ export const trainingApi = {
     deleteCheckpoint: async (id: string): Promise<void> => {
         await axios.delete(`${API_BASE_URL}/training/checkpoints/${id}`);
     }
+};
+
+export const projectApi = {
+    listProjects: async (): Promise<Project[]> => {
+        const res = await axios.get(`${API_BASE_URL}/projects`);
+        return res.data;
+    },
+    getProject: async (id: string): Promise<Project> => {
+        const res = await axios.get(`${API_BASE_URL}/projects/${id}`);
+        return res.data;
+    },
+    createProject: async (data: ProjectCreate): Promise<Project> => {
+        const res = await axios.post(`${API_BASE_URL}/projects`, data);
+        return res.data;
+    },
+    updateProject: async (id: string, data: ProjectUpdate): Promise<Project> => {
+        const res = await axios.put(`${API_BASE_URL}/projects/${id}`, data);
+        return res.data;
+    },
+    deleteProject: async (id: string): Promise<void> => {
+        await axios.delete(`${API_BASE_URL}/projects/${id}`);
+    },
+    addTrackToProject: async (projectId: string, jobId: string): Promise<void> => {
+        await axios.post(`${API_BASE_URL}/projects/${projectId}/tracks`, { job_id: jobId });
+    },
+    removeTrackFromProject: async (projectId: string, jobId: string): Promise<void> => {
+        await axios.delete(`${API_BASE_URL}/projects/${projectId}/tracks/${jobId}`);
+    }
+};
+
+export const sessionApi = {
+    listSessions: async (): Promise<StudioSession[]> => {
+        const res = await axios.get(`${API_BASE_URL}/sessions`);
+        return res.data;
+    },
+    createSession: async (data: SessionCreate = {}): Promise<StudioSession> => {
+        const res = await axios.post(`${API_BASE_URL}/sessions`, data);
+        return res.data;
+    },
+    getSession: async (id: string): Promise<StudioSession> => {
+        const res = await axios.get(`${API_BASE_URL}/sessions/${id}`);
+        return res.data;
+    },
+    updateSession: async (id: string, data: SessionUpdate): Promise<StudioSession> => {
+        const res = await axios.patch(`${API_BASE_URL}/sessions/${id}`, data);
+        return res.data;
+    },
+    deleteSession: async (id: string): Promise<void> => {
+        await axios.delete(`${API_BASE_URL}/sessions/${id}`);
+    },
+    sendChatMessage: async (id: string, message: SessionMessageCreate, signal?: AbortSignal): Promise<{
+        session: StudioSession;
+        user_message: SessionMessage;
+        producer_message: SessionMessage;
+        preset: any;
+    }> => {
+        const res = await axios.post(`${API_BASE_URL}/sessions/${id}/chat`, message, { signal });
+        return res.data;
+    }
+};
+
+export const coverApi = {
+    uploadCoverImage: async (file: File): Promise<{ url: string; filename: string }> => {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await axios.post(`${API_BASE_URL}/upload/image`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        return res.data;
+    },
+    generateCoverPrompt: async (params: { title?: string; description?: string; tags?: string; genre?: string }): Promise<{ prompt: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/generate/cover-prompt`, params);
+        return res.data;
+    },
+    generateCoverImage: async (params: { prompt: string; style?: string }): Promise<{ url: string; prompt: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/generate/cover-image`, params);
+        return res.data;
+    }
+};
+
+export interface SheetScoreItem {
+    name: string;
+    filename: string;
+    type: 'musicxml' | 'pdf';
+    url: string;
+}
+
+export const trackApi = {
+    updateTrackMetadata: async (jobId: string, updates: Partial<Job>): Promise<Job> => {
+        const res = await axios.patch(`${API_BASE_URL}/jobs/${jobId}`, updates);
+        return res.data;
+    },
+    getStudioPackUrl: (jobId: string): string => {
+        return `${API_BASE_URL}/jobs/${jobId}/studio-pack`;
+    },
+    voiceConvertTrack: async (jobId: string, voiceProfileId: string): Promise<Job> => {
+        const res = await axios.post(`${API_BASE_URL}/jobs/${jobId}/voice-convert`, {
+            voice_profile_id: voiceProfileId
+        });
+        return res.data;
+    },
+    getSheets: async (jobId: string): Promise<{ job_id: string; sheets: SheetScoreItem[] }> => {
+        const res = await axios.get(`${API_BASE_URL}/tracks/${jobId}/sheets`);
+        return res.data;
+    },
+    getTrackPeaks: async (jobId: string, buckets: number = 240): Promise<{ job_id: string; buckets: number; duration: number; peaks: number[] }> => {
+        const res = await axios.get(`${API_BASE_URL}/tracks/${jobId}/peaks`, { params: { buckets } });
+        return res.data;
+    },
+    updateMidiNotes: async (jobId: string, notes: NoteEvent[]): Promise<{ status: string; job: Job }> => {
+        const res = await axios.post(`${API_BASE_URL}/tracks/${jobId}/midi`, notes);
+        return res.data;
+    },
+    getLrcUrl: (jobId: string): string => {
+        return `${API_BASE_URL}/tracks/${jobId}/lrc`;
+    },
+    realignLyrics: async (jobId: string, lyrics?: string): Promise<{ status: string; timed_lyrics: any[]; job: Job }> => {
+        const res = await axios.post(`${API_BASE_URL}/tracks/${jobId}/realign_lyrics`, { lyrics });
+        return res.data;
+    }
+};
+
+// ── AI Agents & Artist Profiles (agent foundation surface) ──────────────────
+export interface AgentInfo {
+    name: string;
+    display_name: string;
+    description: string;
+    input_schema: Record<string, unknown>;
+}
+
+export interface ArtistProfileT {
+    id: string;
+    project_id: string | null;
+    name: string;
+    bio: string;
+    lore_json: string;
+    tags: string;
+    cover_image_path: string | null;
+    default_provider: string | null;
+    default_model: string | null;
+    voice_profile_id: string | null;
+    created_at: string;
+    updated_at: string;
+}
+
+export interface AgentAssignmentT {
+    id: string;
+    profile_id: string;
+    role: string;
+    agent_name: string;
+    model_provider: string | null;
+    model: string | null;
+    config_json: string;
+}
+
+export interface ReleaseT {
+    id: string;
+    profile_id: string;
+    title: string;
+    description: string;
+    status: string;
+    vision_json: string;
+    track_order_json: string;
+    cover_image_path: string | null;
+    created_at: string;
+}
+
+export interface ProfileDetail {
+    profile: ArtistProfileT;
+    assignments: AgentAssignmentT[];
+    releases: ReleaseT[];
+}
+
+export interface ExperiencerSeed {
+    working_title: string;
+    mood: string;
+    story_seed: string;
+    suggested_style_tags: string[];
+    energy: number;
+    placement_hint: string;
+}
+
+export interface ExperiencerVision {
+    journey_title: string;
+    concept_statement: string;
+    life_journey_narrative: string;
+    emotional_arc: { position: number; label: string; intensity: number; description?: string }[];
+    song_seeds: ExperiencerSeed[];
+    recurring_motifs: string[];
+    listener_experience_notes: string;
+}
+
+export interface AgentRunEnvelope {
+    run: {
+        id: string;
+        agent_name: string;
+        status: string;
+        tokens_in: number;
+        tokens_out: number;
+        latency_ms: number;
+        attempts_json: string;
+        output_json: string;
+    };
+    result: unknown;
+}
+
+export const agentsApi = {
+    listAgents: async (): Promise<AgentInfo[]> => {
+        const res = await axios.get(`${API_BASE_URL}/agents`);
+        return res.data.agents;
+    },
+    runAgent: async (name: string, body: { input: Record<string, unknown>; session_id?: string; project_id?: string; profile_id?: string }): Promise<AgentRunEnvelope> => {
+        const res = await axios.post(`${API_BASE_URL}/agents/${name}/run`, body);
+        return res.data;
+    },
+    listRuns: async (profileId?: string, limit = 50): Promise<{ runs: AgentRunRow[]; total: number }> => {
+        const res = await axios.get(`${API_BASE_URL}/agents/runs`, {
+            params: { ...(profileId ? { profile_id: profileId } : {}), limit },
+        });
+        return res.data;
+    },
+    runStats: async (profileId?: string): Promise<RunStats> => {
+        const res = await axios.get(`${API_BASE_URL}/agents/runs/stats`, {
+            params: { ...(profileId ? { profile_id: profileId } : {}) },
+        });
+        return res.data;
+    },
+};
+
+export interface TrackReview { verdict: 'pass' | 'revise' | 'concern' | 'unavailable'; score?: number | null; notes?: string; contradictions?: string[]; }
+export interface ReleaseTrackT {
+    id: string; title: string | null; status: string; duration_ms: number;
+    seed: number | null; seed_slot?: number | null; artifacts: Record<string, string | null>;
+    used_real_inference: boolean; review?: TrackReview | null; created_at: string;
+}
+// `status` = release lifecycle (planned|in_progress|completed); `rollup` = track completion rollup (completed|partial|pending)
+export interface ReleaseTracksT { release_id: string; title: string; tracks: ReleaseTrackT[]; succeeded: number; total: number; status: string; rollup: string; }
+export interface AgentRunRow {
+    id: string;
+    agent_name: string;
+    status: string;
+    progress?: number;
+    error_message?: string;
+    state_json?: string;
+    input_json?: string;
+    created_at?: string;
+    latency_ms?: number;
+    tokens_in?: number;
+    tokens_out?: number;
+}
+
+export interface ProfileStats { crew_count: number; release_count: number; last_activity: string | null; }
+
+export interface RunStats {
+    total: number;
+    statuses: Record<string, number>;
+    success_rate: number | null;
+    latency_ms: { p50: number | null; p95: number | null };
+    tokens_in: number;
+    tokens_out: number;
+    by_agent: Record<string, { count: number; succeeded: number; failed: number; tokens_out: number }>;
+}
+
+export const albumApi = {
+    produce: async (releaseId: string, autopilot: boolean, opts?: { budget?: { deadline_s?: number }; crew?: { stylist?: boolean; critic?: boolean } }): Promise<{ run_id: string; status: string; autopilot: boolean }> => {
+        const res = await axios.post(`${API_BASE_URL}/releases/${releaseId}/produce`, {
+            autopilot,
+            ...(opts?.budget ? { budget: opts.budget } : {}),
+            ...(opts?.crew ? { crew: opts.crew } : {}),
+        });
+        return res.data;
+    },
+    resume: async (runId: string, autopilot = false): Promise<{ run_id: string; status: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/agents/runs/${runId}/resume`, { autopilot });
+        return res.data;
+    },
+    cancelRun: async (runId: string): Promise<{ id: string; status: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/agents/runs/${runId}/cancel`, {});
+        return res.data;
+    },
+    getRun: async (runId: string): Promise<AgentRunRow> => {
+        const res = await axios.get(`${API_BASE_URL}/agents/runs/${runId}`);
+        return res.data.run;
+    },
+};
+
+export const profilesApi = {
+    list: async (opts?: { projectId?: string; withStats?: boolean; limit?: number; offset?: number; q?: string }): Promise<{ profiles: ArtistProfileT[]; total: number; stats?: Record<string, ProfileStats> }> => {
+        const params: Record<string, unknown> = {};
+        if (opts?.projectId) params.project_id = opts.projectId;
+        if (opts?.withStats) params.with_stats = 1;
+        if (opts?.limit) params.limit = opts.limit;
+        if (opts?.offset) params.offset = opts.offset;
+        if (opts?.q) params.q = opts.q;
+        const res = await axios.get(`${API_BASE_URL}/profiles`, { params });
+        return res.data;
+    },
+    create: async (body: { name: string; bio?: string; tags?: string; project_id?: string }): Promise<ArtistProfileT> => {
+        const res = await axios.post(`${API_BASE_URL}/profiles`, body);
+        return res.data;
+    },
+    get: async (id: string): Promise<ProfileDetail> => {
+        const res = await axios.get(`${API_BASE_URL}/profiles/${id}`);
+        return res.data;
+    },
+    update: async (id: string, body: Partial<Pick<ArtistProfileT, 'name' | 'bio' | 'tags' | 'lore_json' | 'voice_profile_id'>>): Promise<ArtistProfileT> => {
+        const res = await axios.patch(`${API_BASE_URL}/profiles/${id}`, body);
+        return res.data;
+    },
+    generateLore: async (id: string): Promise<{ run: string; lore: Record<string, unknown>; profile: ArtistProfileT }> => {
+        const res = await axios.post(`${API_BASE_URL}/profiles/${id}/lore/generate`);
+        return res.data;
+    },
+    delete: async (id: string): Promise<void> => {
+        await axios.delete(`${API_BASE_URL}/profiles/${id}`);
+    },
+    getReleaseTracks: async (releaseId: string): Promise<ReleaseTracksT> => {
+        const res = await axios.get(`${API_BASE_URL}/releases/${releaseId}/tracks`);
+        return res.data;
+    },
+    setCover: async (id: string, coverImagePath: string): Promise<ArtistProfileT> => {
+        const res = await axios.patch(`${API_BASE_URL}/profiles/${id}/cover`, { cover_image_path: coverImagePath });
+        return res.data;
+    },
+    setAssignments: async (id: string, assignments: { role: string; agent_name: string; model_provider?: string; model?: string }[]): Promise<AgentAssignmentT[]> => {
+        const res = await axios.put(`${API_BASE_URL}/profiles/${id}/assignments`, { assignments });
+        return res.data.assignments;
+    },
+    createRelease: async (body: { profile_id: string; title: string; description?: string; vision?: Record<string, unknown>; }): Promise<ReleaseT> => {
+        const res = await axios.post(`${API_BASE_URL}/releases`, body);
+        return res.data;
+    },
+};
+
+export const releaseApi = {
+    list: async (profileId: string, limit = 100): Promise<{ releases: ReleaseT[]; total: number }> => {
+        const res = await axios.get(`${API_BASE_URL}/profiles/${profileId}/releases`, { params: { limit } });
+        return res.data;
+    },
+    update: async (id: string, body: { title?: string; description?: string; status?: string; cover_image_path?: string }): Promise<ReleaseT> => {
+        const res = await axios.patch(`${API_BASE_URL}/releases/${id}`, body);
+        return res.data;
+    },
+    delete: async (id: string): Promise<{ status: string; jobs_detached: number }> => {
+        const res = await axios.delete(`${API_BASE_URL}/releases/${id}`);
+        return res.data;
+    },
+    setTrackOrder: async (releaseId: string, jobIds: string[]): Promise<{ status: string; track_order: string[] }> => {
+        const res = await axios.patch(`${API_BASE_URL}/releases/${releaseId}/track-order`, { job_ids: jobIds });
+        return res.data;
+    },    retryTrack: async (releaseId: string, jobId: string): Promise<{ run_id: string; status: string; seed_slot: number }> => {
+        const res = await axios.post(`${API_BASE_URL}/releases/${releaseId}/tracks/${jobId}/retry`);
+        return res.data;
+    },
+    detachTrack: async (releaseId: string, jobId: string): Promise<{ status: string; message: string }> => {
+        const res = await axios.delete(`${API_BASE_URL}/releases/${releaseId}/tracks/${jobId}`);
+        return res.data;
+    },
+    attachTrack: async (releaseId: string, jobId: string): Promise<{ status: string; message: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/releases/${releaseId}/tracks`, { job_id: jobId });
+        return res.data;
+    },
 };

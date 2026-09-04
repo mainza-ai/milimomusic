@@ -37,14 +37,88 @@ def debug_log(message: str, data: Any = None):
 
 def sanitize_lyrics(raw_lyrics: str) -> str:
     """
-    Post-process lyrics to ensure they comply with the expected format.
-    
+    Post-process lyrics to ensure clean, structured song lyrics without
+    reasoning tokens, scratchpad outlines, bullet lists, or conversational filler.
+
     Fixes:
-    1. Convert "Intro:" or "Verse 1:" to "[Intro]" or "[Verse 1]"
-    2. Remove instrumental directions like "(Soft piano melody)"
-    3. Remove stage directions like "(repeat chorus)"
+    1. Strip all model thinking/reasoning tags (<think>...</think>, orphaned </think>, etc.)
+    2. Strip markdown code fences (```markdown, ```lyrics, ```)
+    3. Drop all scratchpad brainstorms/bullet points prior to the first song section ([Intro], [Verse], etc.)
+    4. Convert "Intro:" or "Verse 1:" to "[Intro]" or "[Verse 1]"
+    5. Remove instrumental directions like "(Soft piano melody)" or "(guitar solo)"
+    6. Strip conversational postambles ("Hope you enjoy!", "Final output ready.")
     """
-    lines = raw_lyrics.split('\n')
+    if not raw_lyrics:
+        return ""
+
+    text = raw_lyrics
+
+    # --- 1. Strip all reasoning / thinking envelopes & scratchpads ---
+    tag_names = r"think|thinking|reasoning|analysis|thought|reflection|deliberation|scratchpad|internal_thought"
+    
+    # Matched tags
+    text = re.sub(
+        rf"<(?:\s*{tag_names})[^>]*>.*?</(?:\s*{tag_names})>",
+        "",
+        text,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+    # Orphaned closing tag (drop everything up to </think>)
+    text = re.sub(
+        rf"^.*?</(?:\s*{tag_names})>\s*",
+        "",
+        text,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+    # Unclosed opening tag
+    text = re.sub(
+        rf"<\s*(?:{tag_names})[^>]*>.*?(?=\n\s*\[|\Z)",
+        "",
+        text,
+        flags=re.DOTALL | re.IGNORECASE
+    )
+    # Markdown reasoning blocks
+    text = re.sub(r"#####\s*reasoning\s*#####.*?(?=\n|$)", "", text, flags=re.DOTALL | re.IGNORECASE)
+    text = re.sub(r"(?i)###\s*(?:thinking|thought|scratchpad|reasoning|analysis).*?(?=\n\s*\[|\Z)", "", text, flags=re.DOTALL)
+    text = re.sub(r"(?i)\*\*(?:thinking|thought process|analysis|reasoning):\*\*.*?(?=\n\s*\[|\Z)", "", text, flags=re.DOTALL)
+    text = re.sub(r"^\s*::.*?(\n|$)", "", text, flags=re.MULTILINE)
+    text = re.sub(rf"</(?:\s*{tag_names})>", "", text, flags=re.IGNORECASE)
+
+    # --- 2. Remove markdown code fences ---
+    text = re.sub(r"^```[a-zA-Z0-9_-]*\s*$", "", text, flags=re.MULTILINE)
+    text = re.sub(r"^```\s*$", "", text, flags=re.MULTILINE)
+
+    # --- 3. Anchor to first section header and drop pre-section thoughts ---
+    lines = text.split('\n')
+    section_pattern = re.compile(
+        r'^\s*(\[[^\]]+\]|(Intro|Verse|Chorus|Bridge|Outro|Pre-Chorus|Hook|Drop|Build|Refrain)(\s*\d*):?)\s*$',
+        re.IGNORECASE
+    )
+    
+    section_idx = None
+    for i, ln in enumerate(lines):
+        clean_ln = ln.strip()
+        if clean_ln.startswith('[') and clean_ln.endswith(']'):
+            section_idx = i
+            break
+        if section_pattern.match(clean_ln):
+            section_idx = i
+            break
+
+    if section_idx is not None and section_idx > 0:
+        # We found an official song section header ([Intro], [Verse 1], etc.)
+        # Check if the preamble contains scratchpad bullets, thoughts, or chat
+        preamble = lines[:section_idx]
+        has_scratchpad_or_bullets = any(
+            re.match(r'^\s*[-*•\d.]+\s+', pl) or 
+            re.match(r'^(here (are|is)|sure|okay|certainly|let me|i\'ll|final output|yes,|notes?:)', pl.strip(), re.IGNORECASE) or
+            'brief' in pl.lower() or 'rhyme' in pl.lower() or 'theme' in pl.lower()
+            for pl in preamble if pl.strip()
+        )
+        if has_scratchpad_or_bullets or True:
+            # When an explicit song section header exists, anchor strictly to the song sections
+            lines = lines[section_idx:]
+
     cleaned_lines = []
     
     # Pattern for wrong header format: "Intro:" or "Verse 1:" etc
@@ -445,10 +519,22 @@ class CoordinatorNode(BaseNode[SongState, GraphDeps, LyricsResponse]):
 # Graph Definition
 # ============================================================================
 
-lyrics_graph = Graph(
-    nodes=[CoordinatorNode, LyricistNode, StructureGuardNode],
-    state_type=SongState,
-)
+try:
+    lyrics_graph = Graph(
+        nodes=[CoordinatorNode, LyricistNode, StructureGuardNode],
+        state_type=SongState,
+    )
+except TypeError:
+    try:
+        from pydantic_graph import GraphBuilder
+        _builder = GraphBuilder(state_type=SongState, deps_type=GraphDeps, output_type=LyricsResponse)
+        _builder.add(_builder.node(CoordinatorNode))
+        _builder.add(_builder.node(LyricistNode))
+        _builder.add(_builder.node(StructureGuardNode))
+        lyrics_graph = _builder.build(validate_graph_structure=False)
+    except Exception as _e:
+        logger.warning(f"Could not initialize pydantic Graph: {_e}")
+        lyrics_graph = None
 
 
 # ============================================================================

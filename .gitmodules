@@ -1,0 +1,4 @@
+[submodule "muscriptor"]
+	path = muscriptor
+	url = https://github.com/muscriptor/muscriptor.git
+	branch = main

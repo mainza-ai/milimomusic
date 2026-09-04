@@ -1138,3 +1138,11 @@ Phase 5A design page: vendored RVC v2 stack (`backend/app/vendor/rvc/`: models/f
 
 ## [2026-09-03] create | Playlists & Studio Profile (concepts/playlists-profiles.md)
 Phase 6 design page: `Playlist` / `PlaylistTrack` (ordered join rows, unique constraint) / `StudioUserProfile` (singleton) tables, Alembic baseline strategy (legacy patch → `stamp 0001` → `upgrade head`), REST route map (`/playlists`, `/profile/studio`), localStorage migration table (migrate playlists + artist name/bio; keep theme/volume/composer prefs), one-time import flow, planned API tests. Status: design locked, not yet shipped.
+
+## [2026-09-04] update | README Brand Assets, Workflow Diagram & YouTube Video Explainer
+Integrated brand visual assets, architectural diagrams, and video walkthroughs into repository documentation:
+1. Embedded official logo badge (`assets/milimo_logo.png`) in `README.md`.
+2. Embedded YouTube video explainer & live workstation walkthrough (`https://youtu.be/Nsun12RGHi4`) with high-resolution video card and quick-access top navigation link.
+3. Created Studio Tour gallery displaying live workspace mode screenshots (`explore-studio.png`, `piano-roll.png`, `multitrack-arrange.png`, `console-mixer.png`, `track-studio.png`, `artist-profiles.png`).
+4. Added full studio workflow architecture infographic (`assets/misc/AI_Music_Production_Studio_Workflow.png`) and direct download links to the 15-slide PDF specification and PowerPoint presentation deck.
+5. Synchronized documentation across `develop` and `main` branches on GitHub.

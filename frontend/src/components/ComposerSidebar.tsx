@@ -338,7 +338,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
             <div className="p-4 border-b border-black/[0.06] dark:border-white/[0.08] bg-black/[0.02] dark:bg-white/[0.02] flex items-center justify-between">
                 <div className="flex items-center space-x-2">
                     <h2 className="text-sm font-bold text-slate-900 dark:text-white">Compose</h2>
-                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 font-semibold border border-teal-500/20">Studio 3.0</span>
+                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 font-semibold border border-teal-500/20">Studio v2</span>
                 </div>
                 <button onClick={() => setIsSettingsOpen(true)} className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-500">
                     <Settings size={15} />

@@ -32,9 +32,12 @@ a voice profile and select a "Sing as…" voice in the Composer.
   trained profiles + "+ Train New Voice…").
 
 > [!WARNING] **Fidelity note.** As implemented, `convert_vocals` currently copies/emits the
-> vocal stem rather than running a real RVC/SVC model. The v2 plan intends **RVC v2**
-> (via Applio forks) or So-VITS-SVC as the actual engines; those weights aren't wired in
-> this revision. Treat SVC as scaffolded with a consent + profile-management layer in place.
+> vocal stem rather than running a real RVC/SVC model — it never loads the `.pth`
+> checkpoint it checks for, and writes an empty file if the vocal stem is missing.
+> **Phase 5 (design locked 2026-09-03)** replaces this with real **RVC v2** inference
+> (vendored RVC-WebUI modules: RMVPE F0 + ContentVec HuBERT; inference only, users import
+> checkpoints) with honest method labeling — see
+> [Singing Voice Conversion](../concepts/singing-voice-conversion.md).
 
 ## Related pages
 - [Session workspace](session-workspace.md) | [Orchestration pipeline](../concepts/generation-pipeline.md)

@@ -43,6 +43,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Producer Service](entities/producer-service.md) — LLM producer that enhances weak prompts + writes real lyrics; captions now come from the [Caption Rewriter](concepts/caption-rewriter.md).
 - [Training Studio](entities/training-studio.md) — fine-tune HeartMuLa on custom audio datasets (LoRA/full).
 - [Artist Crew Agents](entities/artist-crew-agents.md) — the four registered agents (Experiencer, World Builder, Stylist, Critic) and how they hook into the album pipeline.
+- [Durable Task Queue](entities/task-queue.md) — Phase 4 design (locked): SQLite-backed `TaskRecord` queue, GPU/IO lanes, 202 + SSE endpoint conversions, re-enqueue-on-restart.
 - [Repair Segment / Inpainting Service](entities/inpainting.md) — regenerate a time-range or glitch region.
 - [LLM Service & Providers](entities/llm-service.md) — OpenCode, OMLX, Ollama, OpenAI, Gemini, OpenRouter, DeepSeek, LM Studio.
 - [Backend & API](entities/backend-api.md) — FastAPI/SQLModel backend, Job/Project models, endpoints, SSE.
@@ -59,7 +60,9 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Caption Rewriter](concepts/caption-rewriter.md) — official music-caption-rewriter port: brief → professional three-heading caption via the real LLM.
 - [Lyrics conditioning](concepts/lyrics-conditioning.md) — how audio is aligned to lyrics & prosody.
 - [Prompt structure & style tags](concepts/prompt-structure.md) — the [BOS] <tag>… format + supported HeartMuLa tags.
-- [Track extension](concepts/track-extension.md) — continuing generation from a prior track's tail.
+- [Track extension](concepts/track-extension.md) — continuing generation from a prior track's tail; Phase 5 locked design: analysis-conditioned + equal-power crossfade.
+- [Singing Voice Conversion](concepts/singing-voice-conversion.md) — Phase 5 locked design: vendored RVC v2 inference (RMVPE + ContentVec), honest DSP fallback, voice-convert bug fixes.
+- [Playlists & Studio Profile](concepts/playlists-profiles.md) — Phase 6 locked design: Playlist/PlaylistTrack/StudioUserProfile tables, Alembic baseline, localStorage one-time import.
 - [LM-guided inpainting](concepts/lm-guided-inpainting.md) — the two-stage repair strategy.
 - [LoRA fine-tuning](concepts/lora-finetuning.md) — low-rank adaptation in the Training Studio.
 - [AI Co-Writer graph](concepts/co-writer-graph.md) — the pydantic-graph workflow for lyrics editing.

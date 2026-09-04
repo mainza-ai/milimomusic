@@ -45,18 +45,22 @@ Comprehensive, production-grade roadmap remediating gaps across generation, crea
 - **Dependency Pinning**: Declare `demucs>=4.0.0` in `requirements.txt`; pin `pydantic-ai` and `pydantic-graph`.
 
 ### Phase 4: Durable Task Queue & Async Operations
+> [!NOTE] **Design locked 2026-09-03** — see [Task Queue](entities/task-queue.md) for the full design.
 - **Durable Task Queue**: Introduce `backend/app/core/queue.py` with SQLite backing. Separate GPU lane (`concurrency=1`) from DSP/IO lane (`concurrency=2`).
-- **Async Operations**: Convert `/transcribe/upload`, `/mastering/match`, and `/jobs/{id}/voice-convert` from blocking HTTP endpoints into queued async tasks returning `202 Accepted` with SSE progress tracking.
-- **Streamed Model Downloads**: Replace in-memory ledger with streamed Hugging Face downloads providing chunk-level progress and resumability.
+- **Locked semantics**: on restart, re-enqueue ALL tasks — `queued` stay queued, `running` re-enqueue with `attempts+1` (replaces fail-honest `reconcile_orphan_jobs` for queued work).
+- **Async Operations**: Convert `/transcribe/upload`, `/mastering/match`, `/jobs/{id}/voice-convert` from blocking HTTP endpoints into queued async tasks returning `202 Accepted` with SSE progress tracking; `/jobs/{id}/inpaint` and `/models/download` also move onto the queue (fixing the fire-and-forget `asyncio.create_task` and the in-memory download ledger).
+- **Streamed Model Downloads**: Replace in-memory ledger with streamed Hugging Face downloads providing chunk-level progress and resumability, persisted in `TaskRecord`.
 
 ### Phase 5: Real Audio Services (RVC SVC & MiniMax Extension)
-- **Real Singing Voice Conversion**: Replace `shutil.copyfile` in `voice_service.py` with real RVC v2 inference (RMVPE pitch extraction + HuBERT acoustic representations).
-- **Native MiniMax Track Extension**: Condition extension on the parent track's tail audio embedding and equal-power crossfading.
+> [!NOTE] **Design locked 2026-09-03** — see [Singing Voice Conversion](concepts/singing-voice-conversion.md) and [Track Extension](concepts/track-extension.md).
+- **Real Singing Voice Conversion**: Replace `shutil.copyfile` in `voice_service.py` with real RVC v2 inference (RMVPE pitch extraction + HuBERT acoustic representations). **Locked approach: vendor the MIT-licensed RVC-WebUI inference modules** (`SynthesizerTrnMs768NSFsid` v2, RMVPE, ContentVec) into `backend/app/vendor/rvc/`; inference only — users import standard `.pth` checkpoints, no voice training. Includes fixes for the `voice-convert` endpoint arg bug (`main.py:2961`) and the empty-file write (`voice_service.py:146`).
+- **Native MiniMax Track Extension**: The open MLX hook cannot consume reference audio, so **locked approach: analysis-conditioned extension** — parent BPM/key/caption/lyrics-derived conditioning, LLM lyric continuation, equal-power crossfade mixdown, honest `conditioning` metadata (no fabricated audio-embedding claims).
 
 ### Phase 6: Database Domain Completion & Alembic
-- **Alembic Baseline**: Versioned database migrations under `backend/alembic/`.
-- **Database Models**: Add formal `Playlist`, `PlaylistTrack`, and `StudioUserProfile` SQLModel tables.
-- **Frontend Storage Migration**: Wire `PlaylistsView.tsx` and `ProfileView.tsx` to backend REST endpoints, deprecating `localStorage`.
+> [!NOTE] **Design locked 2026-09-03** — see [Playlists & Studio Profile](concepts/playlists-profiles.md).
+- **Alembic Baseline**: Versioned database migrations under `backend/alembic/`; batch mode for SQLite; `0001_baseline` stamped onto legacy DBs after one final legacy column-patch pass; ad-hoc `PRAGMA/ALTER` blocks (`main.py:132-232`) retired after a transition release.
+- **Database Models**: Add formal `Playlist`, `PlaylistTrack`, and `StudioUserProfile` SQLModel tables (`PlaylistTrack` replaces the localStorage `songIds` array with ordered rows + unique constraint).
+- **Frontend Storage Migration**: Wire `PlaylistsView.tsx` and `ProfileView.tsx` to backend REST endpoints, deprecating `localStorage` via a one-time import; device-local prefs (theme/volume/composer) intentionally stay local.
 
 ### Phase 7: Live Server Boot, Frontend Hardening & Verification
 - **Video Studio Storyboard**: Replace mock `setTimeout` in `MusicVideosView.tsx` with backend `/generate/storyboard` endpoint.

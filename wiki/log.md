@@ -1115,3 +1115,26 @@ Comprehensive production audit conducted across backend and frontend:
    - Exported `.lrc` verified via `GET /tracks/{id}/lrc`.
    - Unit tests added in `backend/tests/test_lyrics_sync.py`; all 173 backend pytest tests pass.
    - Frontend production build (`tsc -b && vite build`) 100% clean.
+
+## [2026-09-03] plan | Phase 4–6 Design Lock: Durable Queue, Real RVC v2, Playlists/Profiles
+1. Full audit of current implementation vs the phased roadmap (`backend` @ `d3e3e38`, working tree clean, 173 tests passing).
+2. Key audit findings driving the designs:
+   - Task execution is not durable: `reconcile_orphan_jobs()` (`main.py:256`) fails queued/processing jobs on restart; `/transcribe/upload` and `/mastering/match` are blocking HTTP calls; `/jobs/{id}/inpaint` is fire-and-forget `asyncio.create_task`; model downloads live in an in-memory dict (`main.py:1039`).
+   - `voice_service.convert_vocals` never loads the `.pth` checkpoint it checks for, writes an empty file when the vocal stem is missing, and `POST /jobs/{id}/voice-convert` (`main.py:2961`) passes an output path as the `job_id` argument and ignores the returned path (created Jobs point at audio that is never written).
+   - `MiniMaxProvider.extend()` is a plain `generate()` call — no parent conditioning; the open MLX hook cannot consume reference audio.
+   - No Alembic exists; schema drift is patched by ad-hoc `PRAGMA/ALTER` blocks (`main.py:132-232`).
+3. Locked decisions (user-confirmed):
+   - Phase 4 restart semantics: **re-enqueue all** (queued stay queued; running re-enqueue with `attempts+1`).
+   - Phase 5 RVC: **vendor MIT-licensed RVC-WebUI inference modules** (SynthesizerTrnMs768NSFsid v2 + RMVPE + ContentVec); inference only, no voice training.
+   - Phase 5 extension: **analysis-conditioned** (BPM/key/caption/lyrics derivation + LLM continuation + equal-power crossfade) — no fabricated audio-embedding claims.
+   - Phase 6: **Alembic baseline** with `0001_baseline` stamping + batch mode; ad-hoc ALTER blocks retire after a transition release.
+4. Wiki updated: created [Task Queue](entities/task-queue.md), [Singing Voice Conversion](concepts/singing-voice-conversion.md), [Playlists & Studio Profile](concepts/playlists-profiles.md); updated [Track extension](concepts/track-extension.md), [Voice Studio (SVC)](entities/voice-service.md), [Production Readiness Plan](production-readiness-plan.md), [Index](index.md).
+
+## [2026-09-03] create | Durable Task Queue (entities/task-queue.md)
+Phase 4 design page: `TaskRecord` SQLModel table, GPU lane (1 worker) vs IO lane (2, env-tunable), handler registry + `TaskContext` cancel-event reuse, `recover()` re-enqueue semantics, 202 endpoint conversion table (`/transcribe/upload`, `/mastering/match`, `/voice-convert`, `/inpaint`, `/models/download`, `/generate/music`), planned `test_queue.py` coverage. Status: design locked, not yet shipped.
+
+## [2026-09-03] create | Singing Voice Conversion (concepts/singing-voice-conversion.md)
+Phase 5A design page: vendored RVC v2 stack (`backend/app/vendor/rvc/`: models/f0/hubert/pipeline), MPS→CPU device strategy with `MILIMO_RVC_DEVICE` override, weights via Model Manager + IO-lane downloads, honest modes (`rvc_v2` | `pitch_shift` | `VoiceModelMissingError`), fixes for `main.py:2961` and the empty-file write, planned `test_voice_conversion.py`. Status: design locked, not yet shipped.
+
+## [2026-09-03] create | Playlists & Studio Profile (concepts/playlists-profiles.md)
+Phase 6 design page: `Playlist` / `PlaylistTrack` (ordered join rows, unique constraint) / `StudioUserProfile` (singleton) tables, Alembic baseline strategy (legacy patch → `stamp 0001` → `upgrade head`), REST route map (`/playlists`, `/profile/studio`), localStorage migration table (migrate playlists + artist name/bio; keep theme/volume/composer prefs), one-time import flow, planned API tests. Status: design locked, not yet shipped.

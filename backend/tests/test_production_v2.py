@@ -277,6 +277,36 @@ def test_huggingface_search_and_custom_model(client):
     assert del_res.json()["status"] == "deleted"
 
 
+def test_model_manager_infer_category_and_download_flow(client):
+    """Test model category inference and download endpoint dispatch."""
+    from unittest.mock import patch, MagicMock
+    from app.services.model_manager import model_manager
+
+    # 1. Test infer_category
+    assert model_manager.infer_category("black-forest-labs/FLUX.1-schnell") == "image"
+    assert model_manager.infer_category("Wan-AI/Wan2.1-T2V-1.3B") == "video"
+    assert model_manager.infer_category("mlx-community/MiniMax-Music3-mxfp4") == "audio"
+    assert model_manager.infer_category("unknown/some-repo", filenames=["weights.vae.safetensors"]) == "image"
+
+    # 2. Test download endpoint with mocked HF metadata
+    mock_sibling = MagicMock()
+    mock_sibling.rfilename = "model.safetensors"
+    mock_sibling.size = 1000
+
+    mock_info = MagicMock()
+    mock_info.siblings = [mock_sibling]
+
+    with patch("huggingface_hub.HfApi.model_info", return_value=mock_info):
+        with patch("shutil.disk_usage", return_value=MagicMock(free=100 * 1024**3)):
+            with patch("app.main._model_download_worker"):
+                res = client.post("/models/download", json={"repo_id": "test-org/test-flux-model"})
+                assert res.status_code == 200
+                data = res.json()
+                assert data["repo_id"] == "test-org/test-flux-model"
+                assert data["category"] == "image"
+                assert data["status"] in ("queued", "downloading")
+
+
 def test_video_pipeline_planning_and_duration_constraints(client):
     """Test video scene segmentation respecting duration constraints and vocal detection."""
     from sqlmodel import Session

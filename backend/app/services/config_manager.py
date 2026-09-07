@@ -69,9 +69,11 @@ DEFAULT_CONFIG = {
         "model": "Llama-3.2-3B-Instruct-bf16"
     },
     "paths": {
-        "model_directory": "../heartlib/ckpt",
+        "models_directory": "./models",
+        "model_directory": "./models",
         "checkpoints_directory": "./data/checkpoints",
-        "datasets_directory": "./data/datasets"
+        "datasets_directory": "./data/datasets",
+        "heartmula_model_path": "../heartlib/ckpt"
     }
 }
 
@@ -107,8 +109,29 @@ def _apply_env_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
         config["provider"] = env_provider
     # Paths
     paths = config.setdefault("paths", {})
+
+    # Models directory: check MODELS_DIRECTORY or MODEL_DIRECTORY (if not legacy heartlib/ckpt)
+    env_models = os.environ.get("MODELS_DIRECTORY") or os.environ.get("MODEL_DIRECTORY")
+    if env_models and not env_models.strip().endswith("heartlib/ckpt") and not env_models.strip().endswith("heartlib/ckpt/"):
+        paths["models_directory"] = env_models
+        paths["model_directory"] = env_models
+    else:
+        current_md = paths.get("models_directory") or paths.get("model_directory")
+        if not current_md or current_md.endswith("heartlib/ckpt") or current_md.endswith("heartlib/ckpt/"):
+            paths["models_directory"] = "./models"
+            paths["model_directory"] = "./models"
+        else:
+            paths["models_directory"] = current_md
+            paths["model_directory"] = current_md
+
+    # HeartMuLa legacy path
+    env_hm = os.environ.get("HEARTMULA_MODEL_PATH")
+    if env_hm:
+        paths["heartmula_model_path"] = env_hm
+    else:
+        paths.setdefault("heartmula_model_path", "../heartlib/ckpt")
+
     for field, env_var, fallback in (
-        ("model_directory", "MODEL_DIRECTORY", "../heartlib/ckpt"),
         ("checkpoints_directory", "CHECKPOINTS_DIRECTORY", "./data/checkpoints"),
         ("datasets_directory", "DATASETS_DIRECTORY", "./data/datasets"),
     ):

@@ -162,6 +162,22 @@ class TestConfigEndpoints:
         # Restore original
         client.post("/config/paths", json=original)
 
+    def test_validate_paths(self, client):
+        """POST /config/paths/validate should return validity of directories."""
+        response = client.post(
+            "/config/paths/validate",
+            json={
+                "models_directory": "models",
+                "data_directory": "data",
+                "nonexistent": "nonexistent/dir/12345"
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["models_directory"]["valid"] is True
+        assert data["data_directory"]["valid"] is True
+        assert data["nonexistent"]["valid"] is False
+
 
 class TestTrainingEndpoints:
     """Test suite for training API endpoints."""

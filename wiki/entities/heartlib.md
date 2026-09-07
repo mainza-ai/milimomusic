@@ -2,7 +2,7 @@
 title: Heartlib
 type: entity
 created: 2026-08-19
-updated: 2026-08-19
+updated: 2026-09-07
 sources: [sources/heartlib-bible.md, sources/readme.md]
 tags: [heartlib, framework, audio, generation]
 aliases: [Heartlib framework]
@@ -37,6 +37,11 @@ predicts audio tokens, and decoding passes them to HeartCodec to produce a wavef
 - Lives under `heartlib/` in the repo; checkpoints are *not* committed and must be
   downloaded manually into `heartlib/ckpt/` (HeartMuLa-oss-3B, HeartCodec-oss, tokenizer,
   gen_config) — see [sources/readme.md](../sources/readme.md).
+- > [!NOTE]
+  > `heartlib/ckpt/` is **strictly legacy** and reserved solely for HeartMuLa and HeartCodec weights.
+  > All multi-modal foundation models (MiniMax Music 3, FLUX cover art diffusion, Wan2.1 video)
+  > and audio separation models are managed under the canonical `models/` directory framework
+  > (`models/audio/`, `models/image/`, `models/video/`, `models/audio_separator/`).
 - Wrapped by the backend's `MusicService` for generation, extension, and repair.
 
 ## Related pages

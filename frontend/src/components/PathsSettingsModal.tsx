@@ -12,9 +12,11 @@ interface PathsSettingsModalProps {
 
 export const PathsSettingsModal: React.FC<PathsSettingsModalProps> = ({ isOpen, onClose }) => {
     const [config, setConfig] = useState<PathsConfig>({
+        models_directory: '',
         model_directory: '',
         checkpoints_directory: '',
-        datasets_directory: ''
+        datasets_directory: '',
+        heartmula_model_path: ''
     });
     const [isLoading, setIsLoading] = useState(false);
     const [isSaving, setIsSaving] = useState(false);
@@ -33,7 +35,13 @@ export const PathsSettingsModal: React.FC<PathsSettingsModalProps> = ({ isOpen, 
         setIsLoading(true);
         try {
             const data = await pathsApi.getConfig();
-            setConfig(data);
+            setConfig({
+                models_directory: data.models_directory || data.model_directory || '',
+                model_directory: data.models_directory || data.model_directory || '',
+                checkpoints_directory: data.checkpoints_directory || '',
+                datasets_directory: data.datasets_directory || '',
+                heartmula_model_path: data.heartmula_model_path || ''
+            });
             // Validate on load
             const validationResult = await pathsApi.validate(data);
             setValidation(validationResult);
@@ -45,7 +53,11 @@ export const PathsSettingsModal: React.FC<PathsSettingsModalProps> = ({ isOpen, 
     };
 
     const handleChange = (field: keyof PathsConfig, value: string) => {
-        setConfig(prev => ({ ...prev, [field]: value }));
+        setConfig(prev => {
+            const next = { ...prev, [field]: value };
+            if (field === 'models_directory') next.model_directory = value;
+            return next;
+        });
         setMessage(null);
     };
 
@@ -74,21 +86,30 @@ export const PathsSettingsModal: React.FC<PathsSettingsModalProps> = ({ isOpen, 
         }
     };
 
-    const pathFields: { key: keyof PathsConfig; label: string; description: string }[] = [
+    const pathFields: { key: keyof PathsConfig; label: string; description: string; placeholder: string }[] = [
         {
-            key: 'model_directory',
-            label: 'Model Directory',
-            description: 'Base directory for HeartMuLa model files'
+            key: 'models_directory',
+            label: 'Models Storage Directory',
+            description: 'Where downloaded AI models (Audio, Image/Covers, Video) are stored',
+            placeholder: 'models'
         },
         {
             key: 'checkpoints_directory',
-            label: 'Checkpoints Directory',
-            description: 'Where trained model checkpoints are saved'
+            label: 'LoRA Checkpoints Directory',
+            description: 'Where fine-tuning checkpoints and trained model weights are saved',
+            placeholder: 'data/checkpoints'
         },
         {
             key: 'datasets_directory',
             label: 'Datasets Directory',
-            description: 'Where training datasets and audio files are stored'
+            description: 'Where training audio datasets and lyric pairs are stored',
+            placeholder: 'data/datasets'
+        },
+        {
+            key: 'heartmula_model_path',
+            label: 'Legacy HeartMuLa Weights Path',
+            description: 'Directory for legacy HeartMuLa-oss-3B and HeartCodec checkpoints',
+            placeholder: 'heartlib/ckpt'
         }
     ];
 
@@ -135,7 +156,7 @@ export const PathsSettingsModal: React.FC<PathsSettingsModalProps> = ({ isOpen, 
                                                     value={config[field.key] || ''}
                                                     onChange={(e) => handleChange(field.key, e.target.value)}
                                                     onBlur={handleValidate}
-                                                    placeholder={`/path/to/${field.key.replace('_', '-')}`}
+                                                    placeholder={field.placeholder || `/path/to/${field.key.replace('_', '-')}`}
                                                     className={`w-full px-3 py-2 pr-10 border rounded-md focus:ring-2 focus:outline-none text-sm ${validation[field.key]?.valid === false
                                                             ? 'border-red-300 focus:ring-red-400'
                                                             : validation[field.key]?.valid === true

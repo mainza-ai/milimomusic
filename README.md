@@ -168,7 +168,29 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 
 ### 🎙️ Voice Studio & Singing Voice Conversion (SVC)
 - **Offline Vocal Cloning**: Transform vocal tracks into custom timbres using offline voice profiles.
+- **RVC Neural Checkpoint Loader & Acoustic Formant EQ**: Supports real `.pth` model weights and profile-specific acoustic formant/presence equalization chains (`Aria` ethereal presence, `Marcus` warm soul resonance).
 - **Consent-Enforced Governance**: Cryptographic audio consent gating to ensure ethical vocal profile creation.
+
+### 🎬 AI Music Video Studio & Viseme Lip-Sync Pipeline
+- **Generative Model Duration Constraints ("Locomotives")**: Bar-aligned musical segmentation respecting physical limits across frontier video models: **MiniMax Hailuo H3** (up to 15.0s), **Tencent HunyuanVideo** (up to 15.0s), **CogVideoX 1.5** (up to 10.0s), and **Wan 2.1** (up to 5.0s).
+- **Isolated Vocal Stem Lip-Syncing**: Real RMS vocal energy envelope extraction with asymmetric ballistic smoothing, OpenCV Haar cascade facial landmark tracking, and frame-by-frame viseme mouth aperture deformation.
+- **Animated Karaoke Subtitles**: Advanced SubStation Alpha (`.ass`) karaoke subtitle generation with luminous highlight tags (`\k<duration>`) and studio typography.
+- **Procedural B-Roll Visual Synthesizer**: Dynamic multi-axis Ken Burns motion with orbital sweep, style-matched color grading LUTs, and generative chromatic plasma.
+
+### 📦 Multi-Modal Model Hub & Hugging Face Search
+- **23-Model Multi-Modal Catalog**: Comprehensive support across Audio (MiniMax Music 3 MLX/CUDA/GGUF, HeartMuLa), Image (Black Forest Labs FLUX.2 klein/dev, FLUX.1 schnell, SDXL Turbo), and Video (MiniMax Hailuo H3, Wan 2.1, CogVideoX 1.5, HunyuanVideo).
+- **Live Hugging Face Hub Search**: Integrated search (`GET /models/search`) with pipeline filter chips (`text-to-audio`, `text-to-image`, `text-to-video`) and direct repository downloader.
+- **Custom Model Registry**: Stores user-downloaded models in `~/.milimomusic/models/custom_models.json`, dynamically registered into `ProviderRegistry` via `HuggingFaceAudioProvider`.
+- **Strict Download Policy**: Auto-downloads only the single smallest audio model on empty systems; all image and video models are strictly on-demand.
+
+### 🎨 Cover Art Studio (Black Forest Labs FLUX.2 & SDXL Turbo)
+- **Neural Image Diffusion**: Integrated `diffusers.AutoPipelineForText2Image` execution on MPS/CUDA with fp16 acceleration.
+- **Studio-Grade Raster PNG Synthesis**: 1024x1024 cover art generation with multi-stop harmonic color gradients, textured noise, ambient vignettes, and vinyl groove rings.
+
+### 🚀 Production Single-Process Serving & Multi-Stage Docker
+- **Single-Process Web Serving**: Production FastAPI server mounts the compiled React 19 SPA from `frontend/dist` with client-side history API fallback on port `8000`.
+- **Multi-Stage Docker Packaging**: Production `Dockerfile` and `docker-compose.yml` with auto NVIDIA GPU / CPU detection and host gateway LLM networking (`host.docker.internal`).
+
 
 ---
 
@@ -275,13 +297,28 @@ sqlite3 milimo.db "VACUUM INTO 'backup.db';"
 
 ---
 
-## 📚 Documentation & Resources
+## 📚 Documentation & Technical Wiki
 
+Milimo Music maintains a comprehensive, LLM-curated **Technical Encyclopedia and Architecture Wiki** located in the [`wiki/`](wiki/index.md) directory, providing detailed specifications across all subsystems:
+
+| Document | Description |
+|---|---|
+| 📖 [**Wiki Catalog (`wiki/index.md`)**](wiki/index.md) | Central table of contents and content-oriented navigation index |
+| 🌐 [**Overview & Scope (`wiki/overview.md`)**](wiki/overview.md) | High-level synthesis, product philosophy, and technical boundaries |
+| 🏗️ [**System Architecture (`wiki/architecture.md`)**](wiki/architecture.md) | Data flow pipelines, provider abstraction layer, and system topology |
+| 🎬 [**AI Music Video Studio (`wiki/entities/video-studio.md`)**](wiki/entities/video-studio.md) | Duration constraints, viseme lip-syncing, ASS karaoke, and B-roll |
+| 📦 [**Model Manager (`wiki/entities/model-manager.md`)**](wiki/entities/model-manager.md) | Multi-modal tree, Hugging Face Hub search, and download policies |
+| 🎼 [**MiniMax Music 3 Engine (`wiki/entities/minimax-music3.md`)**](wiki/entities/minimax-music3.md) | Sampling parameters, structured captions, and MLX/DiT hooks |
+| 🎙️ [**Voice Training Studio (`wiki/entities/voice-service.md`)**](wiki/entities/voice-service.md) | Offline singing voice conversion (SVC) and acoustic formant chains |
+| 🤖 [**AI Co-Writer Engine (`wiki/entities/ai-cowriter.md`)**](wiki/entities/ai-cowriter.md) | Multi-agent lyric coordination graph (Lyricist, StructureGuard) |
+| 📋 [**Operations & Log (`wiki/log.md`)**](wiki/log.md) | Chronological append-only record of every architectural evolution |
+
+### Additional Media & Specifications
 - [🎬 **Milimo Music v2 Video Explainer & Walkthrough (YouTube)**](https://youtu.be/Nsun12RGHi4)
 - [📄 **Milimo Neural DAW Architecture Specification (PDF)**](assets/misc/Milimo_Neural_DAW.pdf)
 - [📊 **Presentation Slides Deck (PPTX)**](assets/misc/Milimo_Neural_DAW.pptx)
 - [🗺️ **Studio Production Workflow Infographic**](assets/misc/AI_Music_Production_Studio_Workflow.png)
-- [📖 **Milimo Music Wiki**](wiki/index.md) — Comprehensive technical encyclopedia and architecture schemas.
+
 
 ---
 

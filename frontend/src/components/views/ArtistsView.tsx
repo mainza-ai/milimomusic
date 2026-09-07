@@ -3,7 +3,8 @@ import { API_BASE_URL } from '../../api';
 import React, { useState, useEffect, useRef } from 'react';
 import {
     Users, Plus, ArrowLeft, Trash2, Save, Loader2, Sparkles,
-    Mic2, UserCog, Disc3, CheckCircle2, AlertTriangle, X, Copy, History
+    Mic2, UserCog, Disc3, CheckCircle2, AlertTriangle, X, Copy, History,
+    Upload, Tag, BookOpen, ChevronDown, ChevronRight
 } from 'lucide-react';
 import {
     agentsApi, profilesApi, albumApi, coverApi, api, releaseApi, projectApi, styleApi, voiceApi,
@@ -1032,205 +1033,512 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     return (
         <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 max-w-5xl mx-auto w-full animate-fade-in">
             {/* Header */}
-            <div className="flex items-start justify-between gap-4 mb-6">
+            <div className="flex items-center justify-between gap-4 mb-6">
                 <div className="flex items-center gap-3 min-w-0">
                     <button onClick={closeDetail} aria-label="Back to artists"
-                        className="p-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] text-slate-600 dark:text-slate-300">
-                        <ArrowLeft size={15} />
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 border border-black/[0.06] dark:border-white/10 text-xs font-semibold transition-all">
+                        <ArrowLeft size={14} />
+                        <span>Artists</span>
                     </button>
                     <div className="min-w-0">
-                        <h1 className="text-xl font-extrabold tracking-tight text-slate-900 dark:text-white truncate">{detail.profile.name}</h1>
-                        <p className="text-[11px] font-mono text-slate-400 truncate">
+                        <div className="flex items-center gap-2">
+                            <h1 className="text-xl sm:text-2xl font-black tracking-tight text-slate-900 dark:text-white truncate">{detail.profile.name}</h1>
+                            <span className="text-[10px] font-mono uppercase px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20 font-bold shrink-0">
+                                Artist
+                            </span>
+                        </div>
+                        <p className="text-xs font-mono text-slate-400 truncate mt-0.5">
                             {detail.assignments.length} crew · {detail.releases.length} releases
                         </p>
                     </div>
                 </div>
                 <button onClick={handleDeleteProfile}
-                    className="p-2 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                    className="p-2.5 rounded-xl text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 border border-transparent hover:border-rose-500/20 transition-all"
                     title="Delete artist profile">
-                    <Trash2 size={15} />
+                    <Trash2 size={16} />
                 </button>
             </div>
 
             {/* Identity editor */}
-            <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 space-y-3 mb-5">
-                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2"><UserCog size={13} /> Identity</h2>
-                <div className="flex items-center gap-3 mb-2">
-                    {detail.profile.cover_image_path ? (
-                        <img src={`${API_BASE_URL}${detail.profile.cover_image_path}`} alt="" className="w-14 h-14 rounded-2xl object-cover border border-black/10 dark:border-white/10" />
-                    ) : (
-                        <div className="w-14 h-14 rounded-2xl bg-gradient-to-br from-teal-400/30 to-fuchsia-500/30 flex items-center justify-center"><UserCog size={20} className="text-slate-500" /></div>
-                    )}
-                    <label className="text-[10px] font-bold px-2 py-1.5 rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 transition-colors cursor-pointer">
-                        {coverBusy ? 'Uploading…' : (detail.profile.cover_image_path ? 'Change image' : 'Add identity image')}
-                        <input type="file" accept="image/*" className="hidden" disabled={coverBusy}
-                            onChange={e => { const f = e.target.files?.[0]; if (f) uploadCover(f); }} />
-                    </label>
-                    <button onClick={() => generateCover('profile')} disabled={coverGenBusy !== null}
-                        className="text-[10px] font-bold px-2 py-1.5 rounded-lg bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 hover:bg-fuchsia-500 hover:text-slate-950 disabled:opacity-50 transition-colors"
-                        title="Generate identity art from this artist's lore and tags">
-                        {coverGenBusy === 'profile' ? 'Imagining…' : 'Generate art'}
-                    </button>
-                </div>
-                <input value={identityForm.values.name} onChange={e => identityForm.setField('name', e.target.value)}
-                    onBlur={() => identityForm.markTouched('name')}
-                    placeholder="Artist name" className="apple-input text-sm font-bold" aria-label="Artist name" />
-                {identityForm.showError('name') && (
-                    <span className="text-[10px] text-rose-500 font-mono block -mt-1" role="alert">{identityForm.showError('name')}</span>
-                )}
-                <textarea value={identityForm.values.bio} onChange={e => identityForm.setField('bio', e.target.value)} rows={3}
-                    placeholder="Bio — who is this artist? The crew reads this for grounding." className="apple-input text-xs" aria-label="Artist bio" />
-                <input value={identityForm.values.tags} onChange={e => identityForm.setField('tags', e.target.value)}
-                    placeholder="Style tags, comma-separated" className="apple-input text-xs font-mono" aria-label="Artist style tags" />
-                <div className="flex justify-end items-center gap-2">
-                    {saveState === 'saving' && <Loader2 size={13} className="animate-spin text-teal-500" />}
-                    {saveState === 'saved' && <CheckCircle2 size={13} className="text-emerald-500" />}
-                    <button onClick={handleSaveIdentity} disabled={saveState === 'saving' || !identityDirty || !identityForm.isValid}
-                        className={`inline-flex items-center gap-1.5 px-3 py-1.5 rounded-xl border text-xs font-bold transition-colors disabled:opacity-50 ${saveState === 'error'
-                            ? 'bg-rose-500/10 border-rose-500/30 text-rose-600 dark:text-rose-400'
-                            : 'bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 border-black/[0.06] dark:border-white/10 text-slate-700 dark:text-slate-200'}`}>
-                        <Save size={12} /> Save Identity
-                    </button>
-                </div>
-                {saveState === 'error' && saveError && (
-                    <p className="text-[11px] font-mono text-rose-600 dark:text-rose-400" role="alert">{saveError}</p>
-                )}
-                {/* A1: Singing voice — applied to every album track this artist produces */}
-                <label className="block">
-                    <span className="text-[10px] font-mono font-bold uppercase text-slate-400 block mb-1">Singing voice (album tracks)</span>
-                    <select
-                        value={detail.profile.voice_profile_id || ''}
-                        onChange={e => handleChangeVoice(e.target.value)}
-                        disabled={voiceSaving}
-                        className="apple-input text-xs" aria-label="Singing voice">
-                        <option value="">Provider default (no custom voice)</option>
-                        {voiceProfiles.filter(v => v.status === 'ready').map(v => (
-                            <option key={v.id} value={v.id}>{v.name}</option>
-                        ))}
-                    </select>
-                    {voiceProfiles.filter(v => v.status === 'ready').length === 0 && (
-                        <span className="text-[9px] font-mono text-slate-400 mt-1 block">No voice profiles yet — create one in the Voice Lab.</span>
-                    )}
-                </label>
-                {/* World Lore (F10): canonical artist document — read/edit, feeds agent grounding */}
-                <details className="rounded-xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/5 px-3 py-2">
-                    <summary className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 cursor-pointer select-none">
-                        World Lore {detail.profile.lore_json && detail.profile.lore_json !== '{}' ? '· set' : '· empty'}
-                    </summary>
-                    <textarea
-                        value={editLore}
-                        onChange={e => setEditLore(e.target.value)}
-                        rows={5}
-                        placeholder={'Structured lore as JSON or freeform text — the crew reads this as canonical history.\ne.g. {"hometown": "Lusaka", "era": "1970s"}'}
-                        className="apple-input !bg-transparent text-[11px] font-mono mt-2 w-full" aria-label="World lore" />
-                    <div className="flex justify-end gap-1.5 mt-1">
-                        <button onClick={handleGenerateLore} disabled={loreGenerating || loreSaving}
-                            className="text-[10px] font-bold px-2 py-1 rounded-lg bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 disabled:opacity-50 transition-colors">
-                            {loreGenerating ? 'Imagining…' : 'Generate with World-Builder'}
-                        </button>
-                        <button onClick={handleSaveLore} disabled={loreSaving || loreGenerating}
-                            className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] dark:hover:bg-white/10 disabled:opacity-50 transition-colors">
-                            {loreSaving ? 'Saving…' : 'Save Lore'}
+            <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 sm:p-6 mb-6 space-y-5">
+                {/* Section Header with Title and Aligned Save Button */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-black/[0.05] dark:border-white/[0.06]">
+                    <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-teal-500/10 dark:bg-teal-500/20 border border-teal-500/20 flex items-center justify-center text-teal-600 dark:text-teal-400 shrink-0">
+                            <UserCog size={16} />
+                        </div>
+                        <div>
+                            <h2 className="text-sm font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+                                Artist Identity
+                                {identityDirty && (
+                                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/15 text-amber-600 dark:text-amber-400 border border-amber-500/20 font-medium">
+                                        Unsaved edits
+                                    </span>
+                                )}
+                            </h2>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Core persona, sonic branding, and vocal style</p>
+                        </div>
+                    </div>
+
+                    <div className="flex items-center gap-2 self-end sm:self-auto shrink-0">
+                        {saveState === 'saving' && (
+                            <span className="text-xs text-teal-500 font-mono flex items-center gap-1.5 mr-1">
+                                <Loader2 size={13} className="animate-spin" /> Saving…
+                            </span>
+                        )}
+                        {saveState === 'saved' && (
+                            <span className="text-xs text-emerald-500 font-mono flex items-center gap-1.5 mr-1">
+                                <CheckCircle2 size={13} /> Saved
+                            </span>
+                        )}
+                        <button
+                            onClick={handleSaveIdentity}
+                            disabled={saveState === 'saving' || !identityDirty || !identityForm.isValid}
+                            className={`inline-flex items-center gap-1.5 px-3.5 py-1.5 rounded-xl text-xs font-bold transition-all shadow-sm active:scale-[0.98] disabled:opacity-40 disabled:cursor-not-allowed ${
+                                identityDirty && identityForm.isValid
+                                    ? 'bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 shadow-teal-500/20'
+                                    : 'bg-black/[0.04] dark:bg-white/5 border border-black/[0.06] dark:border-white/10 text-slate-700 dark:text-slate-200'
+                            }`}
+                        >
+                            <Save size={13} />
+                            <span>Save Identity</span>
                         </button>
                     </div>
-                </details>
-            </section>
+                </div>
 
-            {/* Crew */}
-            <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 space-y-3 mb-5">
-                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2"><UserCog size={13} /> AI Crew</h2>
-                {detail.assignments.length === 0 ? (
-                    <p className="text-xs text-slate-500 italic py-2">No agents assigned yet — this artist has no crew.</p>
-                ) : detail.assignments.map(a => (
-                    <div key={a.id} className="flex items-center justify-between gap-3 p-2.5 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/5">
-                        <div className="min-w-0">
-                            <span className="text-xs font-extrabold text-slate-800 dark:text-slate-100">{ROLE_LABELS[a.role] || a.role}</span>
-                            <span className="text-[10px] font-mono text-slate-400 ml-2">agent: {a.agent_name}</span>
-                            {a.model_provider && (
-                                <span className="text-[9px] font-mono text-teal-600 dark:text-teal-400 ml-2">pinned: {a.model_provider}{a.model ? `/${a.model}` : ''}</span>
+                {saveState === 'error' && saveError && (
+                    <p className="text-[11px] font-mono text-rose-600 dark:text-rose-400 bg-rose-500/10 border border-rose-500/20 rounded-xl p-2.5" role="alert">{saveError}</p>
+                )}
+
+                {/* Avatar & Visual Branding Header Block */}
+                <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 p-4 rounded-xl bg-black/[0.02] dark:bg-white/[0.02] border border-black/[0.04] dark:border-white/5">
+                    <div className="relative group shrink-0">
+                        {detail.profile.cover_image_path ? (
+                            <img
+                                src={`${API_BASE_URL}${detail.profile.cover_image_path}`}
+                                alt={detail.profile.name}
+                                className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl object-cover border border-black/10 dark:border-white/10 shadow-sm"
+                            />
+                        ) : (
+                            <div className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl bg-gradient-to-br from-teal-400/20 via-cyan-500/15 to-fuchsia-500/20 border border-teal-500/20 flex items-center justify-center">
+                                <UserCog size={28} className="text-teal-600/70 dark:text-teal-400/70" />
+                            </div>
+                        )}
+                    </div>
+                    <div className="flex-1 min-w-0 space-y-1.5">
+                        <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Portrait & Cover Art</h3>
+                        <p className="text-xs text-slate-500 dark:text-slate-400 leading-relaxed">
+                            Upload a custom portrait or generate neural concept art grounded in the artist's backstory and style.
+                        </p>
+                        <div className="flex flex-wrap items-center gap-2 pt-1">
+                            <label className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 border border-black/[0.06] dark:border-white/10 text-slate-700 dark:text-slate-200 transition-colors cursor-pointer">
+                                <Upload size={12} className="text-teal-500" />
+                                <span>{coverBusy ? 'Uploading…' : (detail.profile.cover_image_path ? 'Change image' : 'Add identity image')}</span>
+                                <input type="file" accept="image/*" className="hidden" disabled={coverBusy}
+                                    onChange={e => { const f = e.target.files?.[0]; if (f) uploadCover(f); }} />
+                            </label>
+                            <button
+                                onClick={() => generateCover('profile')}
+                                disabled={coverGenBusy !== null}
+                                className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 hover:bg-fuchsia-500 hover:text-slate-950 border border-fuchsia-500/20 disabled:opacity-50 transition-colors"
+                                title="Generate identity art from this artist's lore and tags"
+                            >
+                                <Sparkles size={12} />
+                                <span>{coverGenBusy === 'profile' ? 'Imagining…' : 'Generate art'}</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Form Fields: Grid Layout with clear labels */}
+                <div className="space-y-4">
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Artist Name */}
+                        <div className="space-y-1.5">
+                            <label htmlFor="identity-name" className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                                <span>Artist Name</span>
+                                <span className="text-[11px] text-slate-400 font-normal">Public identity</span>
+                            </label>
+                            <input
+                                id="identity-name"
+                                value={identityForm.values.name}
+                                onChange={e => identityForm.setField('name', e.target.value)}
+                                onBlur={() => identityForm.markTouched('name')}
+                                placeholder="e.g. Nova Eclipse"
+                                className="w-full apple-input text-sm font-semibold"
+                                aria-label="Artist name"
+                            />
+                            {identityForm.showError('name') && (
+                                <span className="text-[10px] text-rose-500 font-mono block" role="alert">{identityForm.showError('name')}</span>
                             )}
                         </div>
-                        <button onClick={() => removeCrewMember(a.id)} aria-label={`Remove ${a.role}`}
-                            className="p-1 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors">
-                            <X size={13} />
-                        </button>
+
+                        {/* Singing Voice (paired in 2-col grid for clean hierarchy) */}
+                        <div className="space-y-1.5">
+                            <label htmlFor="identity-voice" className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                                <span className="flex items-center gap-1.5"><Mic2 size={12} className="text-teal-500" /> Singing Voice</span>
+                                {voiceSaving && <span className="text-[10px] text-teal-500 font-mono flex items-center gap-1"><Loader2 size={10} className="animate-spin" /> saving</span>}
+                            </label>
+                            <select
+                                id="identity-voice"
+                                value={detail.profile.voice_profile_id || ''}
+                                onChange={e => handleChangeVoice(e.target.value)}
+                                disabled={voiceSaving}
+                                className="w-full apple-input text-xs"
+                                aria-label="Singing voice"
+                            >
+                                <option value="">Provider default (no custom voice)</option>
+                                {voiceProfiles.filter(v => v.status === 'ready').map(v => (
+                                    <option key={v.id} value={v.id}>{v.name}</option>
+                                ))}
+                            </select>
+                            {voiceProfiles.filter(v => v.status === 'ready').length === 0 && (
+                                <span className="text-[10px] text-slate-400 block">No voice profiles yet — create one in Voice Lab.</span>
+                            )}
+                        </div>
                     </div>
-                ))}
-                <div className="flex items-center gap-2 pt-1">
-                    <select value={crewRole} onChange={e => setCrewRole(e.target.value)} className="apple-input !py-1.5 !px-2 text-[11px] font-mono flex-1" aria-label="Crew role">
-                        {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r] || r}</option>)}
-                    </select>
-                    <select value={crewAgent} onChange={e => setCrewAgent(e.target.value)} className="apple-input !py-1.5 !px-2 text-[11px] font-mono flex-1" aria-label="Agent">
-                        {agentsRegistry.map(a => <option key={a.name} value={a.name}>{a.display_name}</option>)}
-                    </select>
-                    <button onClick={addCrewMember} aria-label="Add crew member"
-                        className="p-2 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 transition-colors">
-                        <Plus size={14} />
-                    </button>
+
+                    {/* Artist Bio */}
+                    <div className="space-y-1.5">
+                        <label htmlFor="identity-bio" className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                            <span>Artist Bio & Concept</span>
+                            <span className="text-[11px] text-slate-400 font-normal">Grounds the AI crew on backstory and character</span>
+                        </label>
+                        <textarea
+                            id="identity-bio"
+                            value={identityForm.values.bio}
+                            onChange={e => identityForm.setField('bio', e.target.value)}
+                            rows={3}
+                            placeholder="Bio — who is this artist? Where do they come from, what do they sound like, what do they care about? The crew reads this for grounding."
+                            className="w-full apple-input text-xs leading-relaxed resize-y"
+                            aria-label="Artist bio"
+                        />
+                    </div>
+
+                    {/* Genre & Style Tags */}
+                    <div className="space-y-1.5">
+                        <label htmlFor="identity-tags" className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                            <span className="flex items-center gap-1.5"><Tag size={12} className="text-teal-500" /> Style & Genre Tags</span>
+                            <span className="text-[11px] text-slate-400 font-normal">Comma-separated</span>
+                        </label>
+                        <input
+                            id="identity-tags"
+                            value={identityForm.values.tags}
+                            onChange={e => identityForm.setField('tags', e.target.value)}
+                            placeholder="e.g. ambient, synthwave, electronic, cinematic percussion"
+                            className="w-full apple-input text-xs font-mono"
+                            aria-label="Artist style tags"
+                        />
+                        {identityForm.values.tags && (
+                            <div className="flex flex-wrap gap-1.5 pt-1">
+                                {identityForm.values.tags.split(',').map(t => t.trim()).filter(Boolean).map(t => (
+                                    <span key={t} className="text-[10px] font-mono px-2 py-0.5 rounded-md bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20">
+                                        {t}
+                                    </span>
+                                ))}
+                            </div>
+                        )}
+                    </div>
+
+                    {/* World Lore (Canonical Artist Lore Document) */}
+                    <details className="group rounded-xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/5 transition-all">
+                        <summary className="p-3.5 flex items-center justify-between cursor-pointer select-none text-xs font-semibold text-slate-700 dark:text-slate-300 hover:text-teal-600 dark:hover:text-teal-400 transition-colors">
+                            <div className="flex items-center gap-2">
+                                <BookOpen size={14} className="text-teal-500" />
+                                <span>World Lore & Canon</span>
+                                <span className={`text-[10px] font-mono px-2 py-0.5 rounded-full border ${
+                                    detail.profile.lore_json && detail.profile.lore_json !== '{}'
+                                        ? 'bg-emerald-500/10 text-emerald-600 dark:text-emerald-400 border-emerald-500/20'
+                                        : 'bg-black/[0.04] dark:bg-white/5 text-slate-400 border-black/[0.06] dark:border-white/10'
+                                }`}>
+                                    {detail.profile.lore_json && detail.profile.lore_json !== '{}' ? 'Configured' : 'Empty'}
+                                </span>
+                            </div>
+                            <ChevronDown size={14} className="text-slate-400 transition-transform group-open:rotate-180" />
+                        </summary>
+                        <div className="p-3.5 pt-0 space-y-3 border-t border-black/[0.04] dark:border-white/5 mt-1">
+                            <p className="text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed pt-2">
+                                Structured canon as JSON or freeform narrative text. The World-Builder and Experiencer agents ground on this document during album generation.
+                            </p>
+                            <textarea
+                                value={editLore}
+                                onChange={e => setEditLore(e.target.value)}
+                                rows={5}
+                                placeholder={'Structured lore as JSON or freeform text — the crew reads this as canonical history.\ne.g. {"hometown": "Lusaka", "era": "1970s", "themes": ["resilience", "night drive"]}'}
+                                className="w-full apple-input !bg-black/[0.02] dark:!bg-black/20 text-xs font-mono leading-relaxed"
+                                aria-label="World lore"
+                            />
+                            <div className="flex items-center justify-end gap-2">
+                                <button
+                                    onClick={handleGenerateLore}
+                                    disabled={loreGenerating || loreSaving}
+                                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 border border-teal-500/20 disabled:opacity-50 transition-colors"
+                                >
+                                    <Sparkles size={12} />
+                                    <span>{loreGenerating ? 'Imagining…' : 'Generate with World-Builder'}</span>
+                                </button>
+                                <button
+                                    onClick={handleSaveLore}
+                                    disabled={loreSaving || loreGenerating}
+                                    className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-black/[0.04] dark:bg-white/5 text-slate-700 dark:text-slate-200 hover:bg-black/[0.08] dark:hover:bg-white/10 border border-black/[0.06] dark:border-white/10 disabled:opacity-50 transition-colors"
+                                >
+                                    <Save size={12} />
+                                    <span>{loreSaving ? 'Saving…' : 'Save Lore'}</span>
+                                </button>
+                            </div>
+                        </div>
+                    </details>
                 </div>
-                <details className="rounded-xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.04] dark:border-white/5 px-3 py-2">
-                    <summary className="text-[10px] font-mono font-bold uppercase tracking-wider text-slate-400 cursor-pointer select-none">
-                        Model override for new assignment (optional)
-                    </summary>
-                    <div className="flex items-center gap-2 mt-2">
-                        <select value={crewProvider} onChange={e => setCrewProvider(e.target.value)}
-                            className="apple-input !py-1.5 !px-2 text-[10px] font-mono flex-1" aria-label="Override provider">
-                            <option value="">— artist default —</option>
-                            {LLM_PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
-                        </select>
-                        <input value={crewModel} onChange={e => setCrewModel(e.target.value)}
-                            placeholder="model id (optional)" aria-label="Override model"
-                            className="apple-input !py-1.5 !px-2 text-[10px] font-mono flex-1" />
+            </section>
+
+            {/* AI Crew */}
+            <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 sm:p-6 mb-6 space-y-5">
+                {/* Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-black/[0.05] dark:border-white/[0.06]">
+                    <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-teal-500/10 dark:bg-teal-500/20 border border-teal-500/20 flex items-center justify-center text-teal-600 dark:text-teal-400 shrink-0">
+                            <Users size={16} />
+                        </div>
+                        <div>
+                            <h2 className="text-sm font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+                                AI Creative Crew
+                                <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/5 text-slate-500 dark:text-slate-400 font-normal">
+                                    {detail.assignments.length} assigned
+                                </span>
+                            </h2>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Specialized autonomous agents collaborating on the artist's discography</p>
+                        </div>
                     </div>
-                    <p className="text-[9px] font-mono text-slate-400 mt-1.5">
-                        Pinned here → attempted FIRST for this artist, global failover chain stays behind it.
-                    </p>
-                </details>
+                </div>
+
+                {/* Crew Cards: Compact Responsive Grid */}
+                {detail.assignments.length === 0 ? (
+                    <div className="p-6 text-center rounded-xl bg-black/[0.02] dark:bg-white/[0.02] border border-dashed border-black/[0.08] dark:border-white/[0.08]">
+                        <Users size={24} className="mx-auto text-slate-400 mb-2" />
+                        <p className="text-xs font-bold text-slate-700 dark:text-slate-300">No agents assigned yet</p>
+                        <p className="text-[11px] text-slate-500 dark:text-slate-400 max-w-sm mx-auto mt-0.5">
+                            Assign at least an Experiencer to unlock album concept generation and lifecycle production.
+                        </p>
+                    </div>
+                ) : (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3">
+                        {detail.assignments.map(a => (
+                            <div
+                                key={a.id}
+                                className="p-3.5 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.05] dark:border-white/[0.06] hover:border-teal-500/30 dark:hover:border-teal-500/30 transition-all flex flex-col justify-between gap-3 group relative"
+                            >
+                                <div className="flex items-start justify-between gap-2">
+                                    <div className="min-w-0">
+                                        <span className="text-xs font-bold text-slate-900 dark:text-white truncate block">
+                                            {ROLE_LABELS[a.role] || a.role}
+                                        </span>
+                                        <span className="text-[10px] font-mono text-slate-400 block mt-0.5">
+                                            agent: <span className="text-slate-600 dark:text-slate-300 font-medium">{a.agent_name}</span>
+                                        </span>
+                                    </div>
+                                    <button
+                                        onClick={() => removeCrewMember(a.id)}
+                                        aria-label={`Remove ${a.role}`}
+                                        className="p-1 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors opacity-70 group-hover:opacity-100"
+                                        title={`Remove ${ROLE_LABELS[a.role] || a.role}`}
+                                    >
+                                        <X size={13} />
+                                    </button>
+                                </div>
+
+                                <div className="pt-2 border-t border-black/[0.04] dark:border-white/5 flex items-center justify-between gap-2">
+                                    {a.model_provider ? (
+                                        <span
+                                            className="text-[9px] font-mono text-teal-600 dark:text-teal-400 bg-teal-500/10 border border-teal-500/20 px-2 py-0.5 rounded-md truncate max-w-full"
+                                            title={`Pinned Model: ${a.model_provider}${a.model ? `/${a.model}` : ''}`}
+                                        >
+                                            pinned: {a.model_provider}{a.model ? `/${a.model}` : ''}
+                                        </span>
+                                    ) : (
+                                        <span className="text-[9px] font-mono text-slate-400 bg-black/[0.03] dark:bg-white/[0.04] px-2 py-0.5 rounded-md">
+                                            Default failover chain
+                                        </span>
+                                    )}
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
+                {/* Add Crew Member Panel */}
+                <div className="p-4 rounded-xl bg-black/[0.02] dark:bg-white/[0.02] border border-black/[0.05] dark:border-white/[0.06] space-y-3">
+                    <h3 className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+                        Assign Crew Member
+                    </h3>
+                    <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-5 gap-2.5 items-end">
+                        <div className="sm:col-span-1 md:col-span-2 space-y-1">
+                            <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-400 block">Role</label>
+                            <select
+                                value={crewRole}
+                                onChange={e => setCrewRole(e.target.value)}
+                                className="w-full apple-input !py-1.5 !px-2.5 text-xs font-medium"
+                                aria-label="Crew role"
+                            >
+                                {ROLES.map(r => <option key={r} value={r}>{ROLE_LABELS[r] || r}</option>)}
+                            </select>
+                        </div>
+                        <div className="sm:col-span-1 md:col-span-2 space-y-1">
+                            <label className="text-[10px] font-semibold text-slate-600 dark:text-slate-400 block">Agent Persona</label>
+                            <select
+                                value={crewAgent}
+                                onChange={e => setCrewAgent(e.target.value)}
+                                className="w-full apple-input !py-1.5 !px-2.5 text-xs font-medium"
+                                aria-label="Agent"
+                            >
+                                {agentsRegistry.map(a => <option key={a.name} value={a.name}>{a.display_name}</option>)}
+                            </select>
+                        </div>
+                        <div className="sm:col-span-2 md:col-span-1">
+                            <button
+                                onClick={addCrewMember}
+                                aria-label="Add crew member"
+                                className="w-full h-[34px] px-3 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-[0.98] transition-all"
+                            >
+                                <Plus size={14} /> <span>Add</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* Optional Model Override Collapsible */}
+                    <details className="group pt-1">
+                        <summary className="text-[11px] text-slate-500 dark:text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 cursor-pointer select-none font-medium flex items-center gap-1.5 transition-colors">
+                            <ChevronRight size={12} className="transition-transform group-open:rotate-90" />
+                            <span>Model override for new assignment (optional)</span>
+                        </summary>
+                        <div className="pt-2 pl-4 space-y-2">
+                            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                                <select
+                                    value={crewProvider}
+                                    onChange={e => setCrewProvider(e.target.value)}
+                                    className="w-full apple-input !py-1.5 !px-2 text-xs font-mono"
+                                    aria-label="Override provider"
+                                >
+                                    <option value="">— artist default —</option>
+                                    {LLM_PROVIDERS.map(p => <option key={p} value={p}>{p}</option>)}
+                                </select>
+                                <input
+                                    value={crewModel}
+                                    onChange={e => setCrewModel(e.target.value)}
+                                    placeholder="model id (optional)"
+                                    aria-label="Override model"
+                                    className="w-full apple-input !py-1.5 !px-2 text-xs font-mono"
+                                />
+                            </div>
+                            <p className="text-[10px] text-slate-400 leading-normal">
+                                Pinned here → attempted FIRST for this artist, global failover chain stays behind it.
+                            </p>
+                        </div>
+                    </details>
+                </div>
             </section>
 
             {/* Experiencer Studio */}
-            <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 space-y-3 mb-5">
-                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2"><Sparkles size={13} /> Experiencer Studio</h2>
-                {!hasExperiencerCrew && (
-                    <p className="text-[11px] text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
-                        <AlertTriangle size={12} /> Assign an experiencer above to ground runs in this artist.
-                    </p>
-                )}
-                <input value={briefTitle} onChange={e => setBriefTitle(e.target.value)} placeholder="Album title"
-                    aria-label="Album title"
-                    className="apple-input text-sm font-bold" />
-                <textarea value={briefConcept} onChange={e => setBriefConcept(e.target.value)} rows={3}
-                    placeholder="Album concept — the premise the experiencer will live inside…" className="apple-input text-xs" aria-label="Album concept" />
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-                    <label className="space-y-1">
-                        <span className="text-[10px] font-mono font-bold uppercase text-slate-400 block">Tracks</span>
-                        <input type="number" min={1} max={30} value={briefTarget}
-                            onChange={e => setBriefTarget(Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))}
-                            className="apple-input !py-1.5 text-xs font-mono" />
-                    </label>
-                    <label className="space-y-1 sm:col-span-2">
-                        <span className="text-[10px] font-mono font-bold uppercase text-slate-400 block">Extra direction (optional)</span>
-                        <input value={briefDirection} onChange={e => setBriefDirection(e.target.value)}
-                            placeholder="mood, references, constraints…" className="apple-input !py-1.5 text-xs" />
-                    </label>
+            <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 sm:p-6 mb-6 space-y-5">
+                {/* Header */}
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-black/[0.05] dark:border-white/[0.06]">
+                    <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-teal-500/10 dark:bg-teal-500/20 border border-teal-500/20 flex items-center justify-center text-teal-600 dark:text-teal-400 shrink-0">
+                            <Sparkles size={16} />
+                        </div>
+                        <div>
+                            <h2 className="text-sm font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+                                Experiencer Studio
+                            </h2>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Conceptualize journey arcs, emotional beats, and full album narrative visions</p>
+                        </div>
+                    </div>
                 </div>
-                <div className="flex items-center justify-between gap-3 pt-1">
+
+                {!hasExperiencerCrew && (
+                    <div className="p-3 rounded-xl bg-amber-500/10 border border-amber-500/20 text-[11px] text-amber-700 dark:text-amber-300 flex items-center gap-2">
+                        <AlertTriangle size={14} className="shrink-0 text-amber-500" />
+                        <span>Assign an experiencer above to ground runs in this artist.</span>
+                    </div>
+                )}
+
+                <div className="space-y-4">
+                    <div className="space-y-1.5">
+                        <label htmlFor="brief-title" className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                            Album Title
+                        </label>
+                        <input
+                            id="brief-title"
+                            value={briefTitle}
+                            onChange={e => setBriefTitle(e.target.value)}
+                            placeholder="Album title"
+                            aria-label="Album title"
+                            className="w-full apple-input text-sm font-semibold"
+                        />
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <label htmlFor="brief-concept" className="text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center justify-between">
+                            <span>Album Concept & Vision</span>
+                            <span className="text-[11px] text-slate-400 font-normal">The narrative premise the Experiencer inhabits</span>
+                        </label>
+                        <textarea
+                            id="brief-concept"
+                            value={briefConcept}
+                            onChange={e => setBriefConcept(e.target.value)}
+                            rows={3}
+                            placeholder="Album concept — the premise the experiencer will live inside…"
+                            className="w-full apple-input text-xs leading-relaxed resize-y"
+                            aria-label="Album concept"
+                        />
+                    </div>
+
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                        <div className="space-y-1.5">
+                            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
+                                Tracks
+                            </label>
+                            <input
+                                type="number"
+                                min={1}
+                                max={30}
+                                value={briefTarget}
+                                onChange={e => setBriefTarget(Math.max(1, Math.min(30, parseInt(e.target.value) || 1)))}
+                                className="w-full apple-input !py-1.5 text-xs font-mono"
+                            />
+                        </div>
+                        <div className="sm:col-span-2 space-y-1.5">
+                            <label className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
+                                Extra direction (optional)
+                            </label>
+                            <input
+                                value={briefDirection}
+                                onChange={e => setBriefDirection(e.target.value)}
+                                placeholder="mood, references, constraints…"
+                                className="w-full apple-input !py-1.5 text-xs"
+                            />
+                        </div>
+                    </div>
+                </div>
+
+                <div className="flex items-center justify-between gap-3 pt-2">
                     {runPhase === 'running' ? (
                         <span className="text-xs font-mono text-slate-500 flex items-center gap-2">
                             <Loader2 size={13} className="animate-spin text-teal-500" />
                             {runStage || 'Imagining'} · {elapsed}s (large models: 1-4 min)
                         </span>
                     ) : <span />}
-                    <button onClick={runExperiencer}
+                    <button
+                        onClick={runExperiencer}
                         disabled={runPhase === 'running' || !briefTitle.trim() || !briefConcept.trim()}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 active:scale-[0.98] transition-all disabled:opacity-40 disabled:pointer-events-none">
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 active:scale-[0.98] transition-all disabled:opacity-40 disabled:pointer-events-none"
+                    >
                         {runPhase === 'running' ? <Loader2 size={13} className="animate-spin" /> : <Mic2 size={13} />}
-                        {runPhase === 'running' ? 'Imagining…' : 'Run Experiencer'}
+                        <span>{runPhase === 'running' ? 'Imagining…' : 'Run Experiencer'}</span>
                     </button>
                 </div>
 
                 {runError && (
-                    <pre className="text-[11px] font-mono text-rose-600 dark:text-rose-400 whitespace-pre-wrap bg-rose-500/10 rounded-xl p-3 select-text">{runError}</pre>
+                    <pre className="text-[11px] font-mono text-rose-600 dark:text-rose-400 whitespace-pre-wrap bg-rose-500/10 border border-rose-500/20 rounded-xl p-3.5 select-text">{runError}</pre>
                 )}
             </section>
 
@@ -1324,8 +1632,23 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
             )}
 
             {/* Releases */}
-            <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 space-y-3">
-                <h2 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2"><Disc3 size={13} /> Releases</h2>
+            <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 sm:p-6 mb-6 space-y-5">
+                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-black/[0.05] dark:border-white/[0.06]">
+                    <div className="flex items-center gap-2.5">
+                        <div className="w-8 h-8 rounded-xl bg-teal-500/10 dark:bg-teal-500/20 border border-teal-500/20 flex items-center justify-center text-teal-600 dark:text-teal-400 shrink-0">
+                            <Disc3 size={16} />
+                        </div>
+                        <div>
+                            <h2 className="text-sm font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+                                Releases & Discography
+                                <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/5 text-slate-500 dark:text-slate-400 font-normal">
+                                    {detail.releases.length} releases
+                                </span>
+                            </h2>
+                            <p className="text-xs text-slate-500 dark:text-slate-400">Multi-track albums, EPs, and neural production pipeline</p>
+                        </div>
+                    </div>
+                </div>
                     {albumRun && (
                         <div className={`p-2.5 rounded-xl border ${albumRun.status === 'failed' ? 'border-red-500/30 bg-red-500/5'
                             : albumRun.status === 'done' ? 'border-emerald-500/30 bg-emerald-500/5'
@@ -1561,10 +1884,22 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
             </section>
 
             {/* Run history (C5): this artist's agent ledger — newest first. */}
-            <section className="mt-5 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5">
-                <details>
-                    <summary className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2 cursor-pointer select-none">
-                        <History size={13} /> Run History {runHistory.length > 0 && <span className="font-mono normal-case">({runHistory.length})</span>}
+            <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 sm:p-6 mb-6">
+                <details className="group">
+                    <summary className="flex items-center justify-between cursor-pointer select-none">
+                        <div className="flex items-center gap-2.5">
+                            <div className="w-8 h-8 rounded-xl bg-teal-500/10 dark:bg-teal-500/20 border border-teal-500/20 flex items-center justify-center text-teal-600 dark:text-teal-400 shrink-0">
+                                <History size={16} />
+                            </div>
+                            <div>
+                                <h2 className="text-sm font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-2">
+                                    Agent Run History
+                                    {runHistory.length > 0 && <span className="text-[11px] font-mono px-2 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/5 text-slate-500 dark:text-slate-400 font-normal">({runHistory.length})</span>}
+                                </h2>
+                                <p className="text-xs text-slate-500 dark:text-slate-400">Autonomous execution log and telemetry for this artist</p>
+                            </div>
+                        </div>
+                        <ChevronDown size={15} className="text-slate-400 transition-transform group-open:rotate-180" />
                     </summary>
                     {runHistory.length === 0 ? (
                         <p className="text-xs text-slate-500 italic py-2">No agent runs yet — visions and album production will appear here.</p>

@@ -167,4 +167,42 @@ test.describe('Artist section', () => {
     await search.fill('zzz-no-match');
     await expect(page.getByText(/no artists match/i)).toBeVisible();
   });
+
+  test('visual presentation of artist detail with full crew and identity', async ({ page }) => {
+    const novaProfile = {
+      ...profile,
+      name: 'Nova Eclipse',
+      bio: 'Electronic ambient producer blending ethereal synths with cinematic percussion.',
+      tags: 'ambient, synthwave, electronic, cinematic percussion',
+      lore_json: '{"era": "2080s", "setting": "Neo-Kyoto orbital sanctuary"}',
+    };
+    const assignments = [
+      { id: 'a1', role: 'experiencer', agent_name: 'experiencer', model_provider: 'opencode', model: 'deepseek-v4-flash' },
+      { id: 'a2', role: 'stylist', agent_name: 'stylist', model_provider: 'opencode', model: 'deepseek-v4-flash' },
+      { id: 'a3', role: 'critic', agent_name: 'critic', model_provider: 'opencode', model: 'deepseek-v4-flash' },
+    ];
+    await page.route(`${API}/projects`, r => r.fulfill({ json: [] }));
+    await page.route(`${API}/styles`, r => r.fulfill({ json: { styles: [] } }));
+    await page.route(`${API}/agents`, r => r.fulfill({ json: { agents: [
+      { name: 'experiencer', display_name: 'The Experiencer', role: 'experiencer' },
+      { name: 'stylist', display_name: 'The Stylist', role: 'stylist' },
+      { name: 'critic', display_name: 'The Critic', role: 'critic' },
+    ] } }));
+    await page.route(`${API}/agents/runs*`, r => r.fulfill({ json: { runs: [], total: 0 } }));
+    await page.route(`${API}/profiles/p1`, r => r.fulfill({ json: { profile: novaProfile, assignments, releases: [release, { ...release, id: 'r2', title: 'Solar Echoes' }] } }));
+    await page.route(`${API}/voices`, r => r.fulfill({ json: { voice_profiles: [] } }));
+    await page.addInitScript(() => {
+      localStorage.setItem('milimo_theme', 'dark');
+    });
+    await page.goto('/?view=artists&id=p1');
+
+    await expect(page.getByRole('heading', { name: /nova eclipse/i })).toBeVisible();
+    await expect(page.getByText('3 crew · 2 releases')).toBeVisible();
+    await page.screenshot({ path: '/Users/mck/.gemini/antigravity/brain/900c1164-8e4e-4006-82c2-6fbaa039ba01/refactored_artist_dark_full.png', fullPage: true });
+
+    // Also scroll down into the AI crew section and take a screenshot
+    const crewSection = page.getByRole('heading', { name: /ai creative crew/i });
+    await crewSection.scrollIntoViewIfNeeded();
+    await page.screenshot({ path: '/Users/mck/.gemini/antigravity/brain/900c1164-8e4e-4006-82c2-6fbaa039ba01/refactored_crew_dark.png' });
+  });
 });

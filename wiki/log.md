@@ -1146,3 +1146,17 @@ Integrated brand visual assets, architectural diagrams, and video walkthroughs i
 3. Created Studio Tour gallery displaying live workspace mode screenshots (`explore-studio.png`, `piano-roll.png`, `multitrack-arrange.png`, `console-mixer.png`, `track-studio.png`, `artist-profiles.png`).
 4. Added full studio workflow architecture infographic (`assets/misc/AI_Music_Production_Studio_Workflow.png`) and direct download links to the 15-slide PDF specification and PowerPoint presentation deck.
 5. Synchronized documentation across `develop` and `main` branches on GitHub.
+
+## [2026-09-07] create | Production Packaging, Multi-Modal Hub, Docker & Studio Release
+Completed full productionization and deployment architecture for Milimo Music:
+1. Unified single-process serving: FastAPI mounts compiled React SPA from `frontend/dist` with client-side history API fallback on port 8000.
+2. Multi-stage Docker packaging (`Dockerfile`, `docker-compose.yml`, `docker-compose.cpu.yml`, `.dockerignore`, `docker-start.sh`) with auto NVIDIA GPU/CPU detection.
+3. Host gateway routing for local LLMs: auto-rewrites `localhost` / `127.0.0.1` to `host.docker.internal` in containerized environments.
+4. Multi-Modal Model Manager: comprehensive catalog covering 9 Audio variants (MLX mxfp4..bf16, PyTorch CUDA INT8, GGUF Q4, Official), 3 Image variants (FLUX.1 schnell, SDXL Turbo), and 3 Video variants (MiniMax Hailuo 3, Wan2.1 T2V, CogVideoX-2B).
+5. Strict download policy: on-demand downloads for image/video; auto-download only smallest audio model on empty systems.
+6. Real AI Music Video Studio: LLM storyboard synthesis and FFmpeg audio-reactive MP4 video rendering.
+7. SQLite persistent playlists & studio user profile with REST CRUD endpoints.
+8. DAW A/B Master Audition toggle: sample-locked zero-drift auditioning between unmastered mix and Matchering reference master.
+9. Executable `./milimo` CLI with install, start, stop, status, build, models, and docker management.
+10. Automated tests: 25/25 integration and unit tests passing in 1.61s.
+

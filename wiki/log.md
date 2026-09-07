@@ -1331,11 +1331,26 @@ Fixed 4 environment differences causing test failures on fresh Linux CI runners:
    - Completely resolved `ImportError: TorchCodec is required for load_with_torchcodec` on Linux.
 4. CPU CI Hardware Assertion Normalization (`backend/tests/test_v2_core.py`):
    - Updated `test_model_tree_and_hardware` to dynamically assert `can_run_minimax_full` matching detected hardware (True on Apple Silicon/CUDA >=12GB, False on headless CPU CI runners).
-
 ## [2026-09-07] lint | Normalize Platform-Aware Default MiniMax Model in test_v2_core
 Fixed test expectation for default MiniMax model in model tree:
 - In `backend/tests/test_v2_core.py`, `minimax_entry = next((m for m in tree if "minimax" in m["id"]), None)` picked the first MiniMax model in catalog (`minimax_music3_mxfp4`), whose `is_default` flag is `True` on Apple Silicon but `False` on Linux.
 - Updated `minimax_entry` lookup to filter for `m.get("is_default")`, matching the platform-specific default (MLX `mxfp4` on Apple Silicon, CUDA `comfy_int8` on NVIDIA, and GGUF `q4` on CPU Linux).
+
+## [2026-09-07] create | Hugging Face Search Model Size Display & Concurrent Resolution
+Implemented model size computation and UI indicators for Hugging Face Hub search results:
+1. Backend Concurrent Size Resolution (`backend/app/services/model_manager.py`):
+   - Hugging Face `api.list_models()` omits file sizes by default; added parallel file metadata resolution using `ThreadPoolExecutor` and `api.model_info(repo_id, files_metadata=True)`.
+   - Pre-computed weights sizes checked against known catalog models from `get_model_tree()` for instant local response.
+   - Computes `size_bytes`, `size_gb`, and human-readable `size_formatted` (e.g., `11.14 GB`, `743.7 MB`).
+2. Frontend Indicator Integration (`frontend/src/components/models/ModelsManagerModal.tsx`):
+   - Added `💾 {res.size_formatted}` pill badge adjacent to pipeline tag.
+   - Added formatted size chip to metadata row alongside Author, Downloads, and Likes.
+   - Updated download button text to display size preview: `Download (5.41 GB)`.
+   - Updated `HuggingFaceSearchResult` interface in `frontend/src/api.ts`.
+3. Test Suite & Verification:
+   - Updated `test_huggingface_search_and_custom_model` in `backend/tests/test_production_v2.py` asserting `size_formatted` and `size_gb`.
+   - Verified 195/195 tests passing in pytest and clean TypeScript build.
+
 
 
 

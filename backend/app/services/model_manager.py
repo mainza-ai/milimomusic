@@ -671,7 +671,8 @@ class ModelManager:
         return True
 
     def search_huggingface(self, query: str, pipeline_tag: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
-        """Search Hugging Face Hub for models."""
+        """Search Hugging Face Hub for models and calculate repository file sizes."""
+        from concurrent.futures import ThreadPoolExecutor
         from huggingface_hub import HfApi
         api = HfApi()
         limit = min(max(1, limit), 50)
@@ -680,6 +681,45 @@ class ModelManager:
             kwargs["pipeline_tag"] = pipeline_tag
 
         models = list(api.list_models(**kwargs))
+
+        # Check known catalog models for pre-computed weights sizes
+        catalog_sizes: Dict[str, float] = {}
+        try:
+            for m in self.get_model_tree():
+                if m.get("repo_id") and m.get("size_gb"):
+                    catalog_sizes[m["repo_id"]] = float(m["size_gb"])
+        except Exception:
+            pass
+
+        def _get_size_tuple(repo_id: str) -> tuple[int, float, str]:
+            if repo_id in catalog_sizes and catalog_sizes[repo_id] > 0:
+                gb = catalog_sizes[repo_id]
+                b = int(gb * (1024**3))
+                return b, gb, f"{gb:.2f} GB"
+            try:
+                info = api.model_info(repo_id, files_metadata=True)
+                total_b = sum(getattr(s, "size", 0) or 0 for s in (info.siblings or []))
+                if total_b >= 1024**3:
+                    fmt = f"{total_b / (1024**3):.2f} GB"
+                elif total_b >= 1024**2:
+                    fmt = f"{total_b / (1024**2):.1f} MB"
+                elif total_b > 0:
+                    fmt = f"{total_b / 1024:.1f} KB"
+                else:
+                    fmt = "Unknown"
+                return total_b, round(total_b / (1024**3), 2), fmt
+            except Exception:
+                return 0, 0.0, "Unknown"
+
+        # Concurrently fetch model file sizes
+        repo_ids = [m.id for m in models]
+        size_map: Dict[str, tuple[int, float, str]] = {}
+        if repo_ids:
+            with ThreadPoolExecutor(max_workers=min(12, len(repo_ids))) as executor:
+                size_results = list(executor.map(_get_size_tuple, repo_ids))
+                for rid, sz_tup in zip(repo_ids, size_results):
+                    size_map[rid] = sz_tup
+
         results = []
         for m in models:
             pipe = getattr(m, "pipeline_tag", "") or ""
@@ -700,6 +740,8 @@ class ModelManager:
                     category = "video"
 
             is_installed = resolve_hf_snapshot(m.id) is not None
+            sz_bytes, sz_gb, sz_fmt = size_map.get(m.id, (0, 0.0, "Unknown"))
+
             results.append({
                 "repo_id": m.id,
                 "name": m.id.split("/")[-1],
@@ -709,6 +751,9 @@ class ModelManager:
                 "pipeline_tag": pipe,
                 "category": category,
                 "is_installed": is_installed,
+                "size_bytes": sz_bytes,
+                "size_gb": sz_gb,
+                "size_formatted": sz_fmt,
                 "last_modified": str(getattr(m, "last_modified", "") or "")
             })
         return results

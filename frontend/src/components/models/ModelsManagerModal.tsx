@@ -378,9 +378,17 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                                     {res.pipeline_tag}
                                                                 </span>
                                                             )}
+                                                            {res.size_formatted && res.size_formatted !== 'Unknown' && (
+                                                                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-400 border border-teal-500/20 font-semibold">
+                                                                    💾 {res.size_formatted}
+                                                                </span>
+                                                            )}
                                                         </div>
-                                                        <div className="text-[11px] text-slate-500 flex items-center gap-3">
+                                                        <div className="text-[11px] text-slate-500 flex items-center gap-3 flex-wrap">
                                                             <span>Author: <strong className="text-slate-700 dark:text-slate-300">{res.author}</strong></span>
+                                                            {res.size_formatted && res.size_formatted !== 'Unknown' && (
+                                                                <span>Size: <strong className="text-slate-700 dark:text-slate-300">{res.size_formatted}</strong></span>
+                                                            )}
                                                             <span>⬇️ {res.downloads.toLocaleString()} downloads</span>
                                                             <span>❤️ {res.likes.toLocaleString()} likes</span>
                                                         </div>
@@ -413,7 +421,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                                 ) : (
                                                                     <Download size={13} />
                                                                 )}
-                                                                <span>Download</span>
+                                                                <span>Download{res.size_formatted && res.size_formatted !== 'Unknown' ? ` (${res.size_formatted})` : ''}</span>
                                                             </button>
                                                         )}
                                                     </div>

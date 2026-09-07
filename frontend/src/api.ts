@@ -274,6 +274,9 @@ export interface HuggingFaceSearchResult {
     category: string;
     is_installed: boolean;
     last_modified?: string;
+    size_bytes?: number;
+    size_gb?: number;
+    size_formatted?: string;
 }
 
 export interface HardwareProfile {

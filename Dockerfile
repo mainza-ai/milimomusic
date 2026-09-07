@@ -30,8 +30,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 
 # Install Python dependencies
 COPY backend/requirements.txt /app/backend/requirements.txt
-RUN pip install --no-cache-dir --upgrade pip && \
-    pip install --no-cache-dir -r /app/backend/requirements.txt
+RUN pip install --no-cache-dir --upgrade pip uv && \
+    uv pip install --system --no-cache -r /app/backend/requirements.txt
 
 # Copy backend, neural transcription, legacy heartlib
 COPY backend /app/backend

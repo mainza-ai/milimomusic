@@ -46,10 +46,10 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
         return () => window.clearInterval(pollRef.current);
     }, [isOpen]);
 
-    const handleDownload = async (repoId: string) => {
+    const handleDownload = async (repoId: string, category?: 'audio' | 'image' | 'video') => {
         setDownloadError('');
         try {
-            const started = await modelsApi.startModelDownload(repoId);
+            const started = await modelsApi.startModelDownload(repoId, category);
             setDownload(started);
             window.clearInterval(pollRef.current);
             pollRef.current = window.setInterval(async () => {
@@ -121,7 +121,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
 
     const handleDownloadCustomRepo = async () => {
         if (!customRepoInput.trim()) return;
-        await handleDownload(customRepoInput.trim());
+        await handleDownload(customRepoInput.trim(), customCategory);
         setCustomRepoInput('');
     };
 
@@ -451,7 +451,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                             </div>
                                                         ) : (
                                                             <button
-                                                                onClick={() => handleDownload(res.repo_id)}
+                                                                onClick={() => handleDownload(res.repo_id, (['audio', 'image', 'video'] as const).includes(res.category as any) ? (res.category as any) : undefined)}
                                                                 disabled={busy}
                                                                 className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-50"
                                                             >

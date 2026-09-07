@@ -1133,6 +1133,7 @@ def _models_root(category: Optional[str] = None) -> str:
 class ModelDownloadRequest(SQLModel):
     repo_id: Optional[str] = None
     model_id: Optional[str] = None
+    category: Optional[str] = None  # explicit user override: audio | image | video
 
 
 @app.post("/models/download")
@@ -1141,6 +1142,7 @@ async def start_model_download(payload: ModelDownloadRequest, background_tasks: 
 
     target_repo = payload.repo_id
     category = None
+    category_source = "catalog"
     if payload.model_id:
         tree = model_manager.get_model_tree()
         matched = next((m for m in tree if m["id"] == payload.model_id), None)
@@ -1148,6 +1150,13 @@ async def start_model_download(payload: ModelDownloadRequest, background_tasks: 
             if not target_repo and matched.get("repo_id"):
                 target_repo = matched["repo_id"]
             category = matched.get("category")
+
+    if payload.category:
+        from app.services.modality import VALID_CATEGORIES
+        if payload.category not in VALID_CATEGORIES:
+            raise HTTPException(status_code=400, detail={"error": {"code": "bad_category", "message": "category must be audio, image, or video."}})
+        category = payload.category
+        category_source = "user"
 
     if not target_repo or not _REPO_ID_RE.match(target_repo):
         raise HTTPException(status_code=400, detail={"error": {"code": "bad_repo_id", "message": "repo_id must look like 'org/model'."}})
@@ -1163,10 +1172,41 @@ async def start_model_download(payload: ModelDownloadRequest, background_tasks: 
     files = [(s.rfilename, int(s.size or 0)) for s in (info.siblings or []) if s.size]
     total_bytes = sum(sz for _, sz in files)
     if not category:
-        category = model_manager._infer_category(target_repo, [s.rfilename for s in (info.siblings or [])])
+        from app.services.modality import infer_modality
+        pipe = getattr(info, "pipeline_tag", "") or ""
+        hf_tags = list(getattr(info, "tags", None) or [])
+        try:
+            card = getattr(info, "cardData", None)
+            if isinstance(card, dict):
+                for k in ("pipeline_tag", "tags"):
+                    v = card.get(k)
+                    if not pipe and k == "pipeline_tag" and isinstance(v, str):
+                        pipe = v
+                    if isinstance(v, list):
+                        hf_tags.extend(str(t) for t in v)
+        except Exception:
+            pass
+        category, reason = infer_modality(
+            target_repo,
+            filenames=[s.rfilename for s in (info.siblings or [])],
+            pipeline_tag=pipe,
+            hf_tags=hf_tags,
+        )
+        category_source = reason
+    else:
+        reason = category_source
 
     models_dir = _models_root(category)
     local_dir = os.path.join(models_dir, target_repo.replace("/", "__"))
+
+    # Concurrency guard: refuse a second active download targeting the same dir.
+    for existing in _model_downloads.values():
+        if existing.get("status") in ("queued", "downloading") and os.path.abspath(
+            existing.get("local_dir", "")
+        ) == os.path.abspath(local_dir):
+            raise HTTPException(status_code=409, detail={
+                "error": {"code": "download_in_progress",
+                          "message": f"'{target_repo}' is already downloading (id {existing.get('id')})."}})
 
     disk = shutil.disk_usage(models_dir)
     if total_bytes and disk.free < int(total_bytes * 1.1) + 512 * 1024 * 1024:
@@ -1179,7 +1219,8 @@ async def start_model_download(payload: ModelDownloadRequest, background_tasks: 
         "id": download_id, "repo_id": target_repo, "status": "queued",
         "total_files": len(files), "files_done": 0, "current_file": "",
         "received_bytes": 0, "total_bytes": total_bytes,
-        "local_dir": os.path.abspath(local_dir), "category": category, "error": "",
+        "local_dir": os.path.abspath(local_dir), "category": category,
+        "category_source": category_source, "error": "",
     }
     cancel_event = threading.Event()
     _download_cancels[download_id] = cancel_event
@@ -1259,16 +1300,54 @@ def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files
     rec = _model_downloads[download_id]
     rec["status"] = "downloading"
     try:
+        os.makedirs(local_dir, exist_ok=True)
+        # Account for already-present complete shards (resume / retry of same repo).
+        for fname, size in files:
+            dest = os.path.join(local_dir, fname)
+            try:
+                if os.path.isfile(dest) and os.path.getsize(dest) == size:
+                    rec["files_done"] += 1
+                    rec["received_bytes"] += size
+            except OSError:
+                pass
         for fname, size in files:
             if cancel_event.is_set():
                 rec["status"] = "cancelled"
                 return
+            dest = os.path.join(local_dir, fname)
+            try:
+                if os.path.isfile(dest) and os.path.getsize(dest) == size:
+                    continue  # already complete; counted above
+            except OSError:
+                pass
             rec["current_file"] = fname
-            hf_hub_download(repo_id=repo_id, filename=fname, local_dir=local_dir)
+            last_err: Optional[Exception] = None
+            for attempt in range(3):
+                try:
+                    hf_hub_download(repo_id=repo_id, filename=fname, local_dir=local_dir)
+                    last_err = None
+                    break
+                except Exception as e:
+                    last_err = e
+                    logger.warning(f"Download {download_id} {fname} attempt {attempt + 1}/3 failed: {e}")
+                    import time as _time
+                    _time.sleep(2 ** attempt)
+            if last_err is not None:
+                raise last_err
             rec["files_done"] += 1
             rec["received_bytes"] += size
         rec["status"] = "completed"
         rec["current_file"] = ""
+        try:
+            # Remove hf transfer bookkeeping polluting the weights dir (harmless, keeps layout canonical).
+            import glob as _glob
+            for stray in _glob.glob(os.path.join(local_dir, ".cache", "huggingface", "download", "*.lock")):
+                try:
+                    os.remove(stray)
+                except OSError:
+                    pass
+        except Exception:
+            pass
         try:
             meta = {"local_path": os.path.abspath(local_dir)}
             if category:
@@ -1280,6 +1359,8 @@ def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files
         rec["status"] = "error"
         rec["error"] = str(e)[:500]
         logger.error(f"Model download {download_id} failed: {e}")
+    finally:
+        _download_cancels.pop(download_id, None)
 
 
 @app.get("/profiles")

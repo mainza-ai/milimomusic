@@ -2,7 +2,7 @@
 title: Milimo Music Wiki — Index
 type: index
 created: 2026-08-19
-updated: 2026-09-03
+updated: 2026-09-07
 ---
 
 # Milimo Music Wiki — Index
@@ -75,6 +75,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Artist Production Gap Report](concepts/artist-production-gap-report.md) — evidence-based artist-domain audit; its E–H plan is fully shipped (status header inside).
 - [Artist Remaining Roadmap](concepts/artist-remaining-roadmap.md) — waves 1–3 shipped (voice identity, World-Builder, observability…); only LoRA links deferred.
 - [Artist Domain](concepts/artist-domain.md) — current state: data model, album pipeline with crew hooks, endpoints, frontend surface.
+- [Modality Taxonomy](concepts/modality-taxonomy.md) — canonical audio|image|video decision chain, H3 misrouting case study, relocate/delete/guard rules. `tags: [modality, taxonomy, model-manager]`
 
 ## Reports
 

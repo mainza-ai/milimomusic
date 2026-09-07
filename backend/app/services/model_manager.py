@@ -439,7 +439,7 @@ class ModelManager:
                 "architecture": "Hailuo DiT Video + Audio Synthesis",
                 "quantization": "BF16 Full",
                 "size_gb": 24.0,
-                "license": "MiniMax Open Weights",
+                "license": "MiniMax H3 Community License",
                 "recommended_hardware": "High-End GPU (24GB+ VRAM) / Cloud",
                 "category": "video",
                 "repo_id": "MiniMaxAI/MiniMax-H3",
@@ -451,10 +451,22 @@ class ModelManager:
                 "architecture": "Hailuo DiT Video + Audio Synthesis",
                 "quantization": "GGUF Q4 Quantized",
                 "size_gb": 14.2,
-                "license": "MiniMax Open Weights",
+                "license": "MiniMax H3 Community License",
                 "recommended_hardware": "Consumer GPU (16GB VRAM) / Apple Silicon",
                 "category": "video",
                 "repo_id": "unsloth/MiniMax-H3-GGUF",
+                "is_default": False
+            },
+            {
+                "id": "minimax_h3_mlx_8bit",
+                "name": "MiniMax Hailuo 3 (MLX 8-bit Apple Silicon)",
+                "architecture": "Hailuo DiT Video + Audio Synthesis (transformer weights only; needs upstream VAEs + Qwen3-VL-32B encoder + minimax-h3-mlx pipeline)",
+                "quantization": "MLX 8-bit Quantized (group size 64; ~21.5 GB resident after AdaLN drop)",
+                "size_gb": 35.3,
+                "license": "MiniMax H3 Community License",
+                "recommended_hardware": "Apple Silicon (32GB+ unified memory)",
+                "category": "video",
+                "repo_id": "pipenetwork/MiniMax-H3-MLX-8bit",
                 "is_default": False
             },
             {
@@ -696,29 +708,22 @@ class ModelManager:
             return existing
 
         name = repo_id.split("/")[-1]
-        category = "custom"
+        # Never persist the invalid "custom" taxonomy value: unknown -> audio
+        # (callers surface needs_review via infer_modality reason when needed).
+        category = "audio"
         size_gb = 0.0
         architecture = "Hugging Face Model"
         license_type = "Open Weights"
 
         try:
             from huggingface_hub import HfApi
+            from app.services.modality import infer_modality
             info = HfApi().model_info(repo_id=repo_id, files_metadata=True)
             pipe = getattr(info, "pipeline_tag", "") or ""
-            if pipe in ["text-to-audio", "audio-to-audio", "automatic-speech-recognition", "voice-conversion"]:
-                category = "audio"
-            elif pipe in ["text-to-image", "image-to-image"]:
-                category = "image"
-            elif pipe in ["text-to-video", "image-to-video", "video-to-video"]:
-                category = "video"
-            else:
-                low = repo_id.lower()
-                if any(k in low for k in ["music", "audio", "sound", "voice"]):
-                    category = "audio"
-                elif any(k in low for k in ["flux", "sdxl", "image", "diffusion", "paint"]):
-                    category = "image"
-                elif any(k in low for k in ["video", "wan", "cogvideo", "hailuo", "hunyuan"]):
-                    category = "video"
+            hf_tags = list(getattr(info, "tags", None) or [])
+            siblings = [getattr(s, "rfilename", "") for s in (info.siblings or [])]
+            category, _reason = infer_modality(repo_id, filenames=siblings, pipeline_tag=pipe, hf_tags=hf_tags)
+            # Preserve explicit caller override below; canonical result stands otherwise.
 
             total_bytes = sum(getattr(s, "size", 0) or 0 for s in (info.siblings or []))
             if total_bytes > 0:
@@ -759,20 +764,65 @@ class ModelManager:
         return model_entry
 
     def update_custom_model(self, model_id_or_repo: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-        """Update metadata (category, name, local_path) for a registered custom model."""
+        """Update metadata (category, name, local_path) for a registered custom model.
+
+        A category change RELOCATES the model directory on disk
+        (models/<old>/<slug> -> models/<new>/<slug>) so registry metadata and
+        bytes can never split-brain. Non-category updates only touch JSON.
+        """
+        from app.services.modality import VALID_CATEGORIES
         custom_models = self._load_custom_models()
         target = next((m for m in custom_models if m["id"] == model_id_or_repo or m.get("repo_id") == model_id_or_repo), None)
         if not target:
             return None
+        old_category = target.get("category")
+        new_category = updates.get("category", old_category)
+        if new_category is not None and new_category not in VALID_CATEGORIES:
+            raise ValueError(f"Invalid category '{new_category}'. Must be one of {list(VALID_CATEGORIES)}.")
         for k, v in updates.items():
             if k in ["name", "category", "architecture", "license", "local_path"]:
                 target[k] = v
+        # Relocate on disk when the category actually changed and the current
+        # local_path sits under models/<old_category>/.
+        if new_category and old_category and new_category != old_category:
+            relocated = self._relocate_model_dir(target, old_category, new_category)
+            if relocated:
+                target["local_path"] = relocated
         self._save_custom_models(custom_models)
         logger.info(f"Updated custom model {target['id']}: {updates}")
         return target
 
+    @staticmethod
+    def _relocate_model_dir(entry: Dict[str, Any], old_category: str, new_category: str) -> Optional[str]:
+        """Move entry['local_path'] from models/<old> to models/<new>. Returns new abspath or None."""
+        current = entry.get("local_path")
+        repo_id = entry.get("repo_id", "")
+        if not current or not os.path.isdir(current):
+            return None
+        try:
+            models_root = str(get_models_dir())
+            cur_abs = os.path.abspath(current)
+            expected_parent = os.path.abspath(os.path.join(models_root, old_category))
+            if os.path.dirname(cur_abs) != expected_parent:
+                return None  # custom location; leave bytes where the user put them
+            slug = os.path.basename(cur_abs)
+            dest_dir = os.path.abspath(os.path.join(models_root, new_category))
+            os.makedirs(dest_dir, exist_ok=True)
+            dest = os.path.join(dest_dir, slug)
+            if os.path.abspath(dest) == cur_abs:
+                return None
+            if os.path.exists(dest):
+                logger.warning(f"Relocate skipped: destination exists: {dest}")
+                return None
+            shutil.move(cur_abs, dest)
+            logger.info(f"Relocated custom model {repo_id}: {cur_abs} -> {dest}")
+            return dest
+        except Exception as e:
+            logger.error(f"Failed to relocate {repo_id} to category '{new_category}': {e}")
+            return None
+
     def delete_custom_model(self, model_id_or_repo: str) -> bool:
-        """Delete custom model from registry and disk."""
+        """Delete custom model from registry and disk (incl. models/<modality>/ roots)."""
         custom_models = self._load_custom_models()
         target = next((m for m in custom_models if m["id"] == model_id_or_repo or m.get("repo_id") == model_id_or_repo), None)
         if not target:
@@ -782,15 +832,22 @@ class ModelManager:
         self._save_custom_models(custom_models)
 
         # Remove local disk files if present
-        import shutil
         paths_to_check = []
         if target.get("local_path"):
             paths_to_check.append(target["local_path"])
         repo_id = target.get("repo_id")
         if repo_id:
-            paths_to_check.append(os.path.join("data", "models", repo_id.replace("/", "__")))
-            paths_to_check.append(os.path.join("heartlib", "ckpt", repo_id.replace("/", "__")))
-            paths_to_check.append(os.path.join("..", "heartlib", "ckpt", repo_id.replace("/", "__")))
+            slug = repo_id.replace("/", "__")
+            try:
+                models_root = str(get_models_dir())
+                for cat in ("audio", "image", "video", "audio_separator"):
+                    paths_to_check.append(os.path.join(models_root, cat, slug))
+                paths_to_check.append(os.path.join(models_root, slug))
+            except Exception:
+                pass
+            paths_to_check.append(os.path.join("data", "models", slug))
+            paths_to_check.append(os.path.join("heartlib", "ckpt", slug))
+            paths_to_check.append(os.path.join("..", "heartlib", "ckpt", slug))
 
         for p in paths_to_check:
             if p and os.path.isdir(p):
@@ -802,31 +859,14 @@ class ModelManager:
         return True
 
     def infer_category(self, repo_id: str, filenames: Optional[List[str]] = None, pipeline_tag: Optional[str] = None) -> str:
-        """Infer modality category (audio, image, video) from repo ID, filenames, or pipeline tag."""
-        if pipeline_tag:
-            if pipeline_tag in ["text-to-audio", "audio-to-audio", "automatic-speech-recognition", "voice-conversion"]:
-                return "audio"
-            elif pipeline_tag in ["text-to-image", "image-to-image"]:
-                return "image"
-            elif pipeline_tag in ["text-to-video", "image-to-video", "video-to-video"]:
-                return "video"
+        """Infer modality category (audio, image, video) from repo ID, filenames, or pipeline tag.
 
-        low = repo_id.lower()
-        if any(k in low for k in ["flux", "sdxl", "diffusion", "paint", "image", "lora-art"]):
-            return "image"
-        if any(k in low for k in ["video", "wan", "cogvideo", "hailuo", "hunyuan"]):
-            return "video"
-        if any(k in low for k in ["music", "audio", "sound", "voice", "speech", "tts", "minimax"]):
-            return "audio"
-
-        if filenames:
-            file_str = " ".join(filenames).lower()
-            if any(k in file_str for k in ["transformer_blocks", "text_encoder_2", "vae"]):
-                return "image"
-            if any(k in file_str for k in ["codec", "mel", "audio", "vocoder"]):
-                return "audio"
-
-        return "audio"
+        Delegates to the canonical taxonomy in app.services.modality so the
+        bare `minimax` org name can never outrank video disambiguators
+        (h3 / hailuo / image-text-to-video). Never returns 'custom'.
+        """
+        from app.services.modality import infer_category as _canonical
+        return _canonical(repo_id, filenames=filenames, pipeline_tag=pipeline_tag)
 
     _infer_category = infer_category
 

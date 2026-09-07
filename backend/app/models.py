@@ -157,6 +157,25 @@ class CoverImageRequest(SQLModel):
     model_id: Optional[str] = None
 
 
+class VideoPlanRequest(SQLModel):
+    max_clip_duration: Optional[float] = 5.0
+    model_name: Optional[str] = "Wan2.1 T2V (5.0s clips)"
+    visual_style: Optional[str] = "neon-cyberpunk"
+    bpm: Optional[float] = None
+
+
+class VideoRenderRequest(SQLModel):
+    visual_style: Optional[str] = "neon-cyberpunk"
+    resolution: Optional[str] = "720p"
+    aspect_ratio: Optional[str] = "16:9"
+    enable_lip_sync: Optional[bool] = True
+    burn_lyrics: Optional[bool] = True
+    subtitle_style: Optional[str] = "neon-cyan"
+    max_clip_duration: Optional[float] = 5.0
+    mode: Optional[str] = "production_multiclip"
+    face_image_path: Optional[str] = None
+
+
 class GenerationRequest(SQLModel):
     model_config = {"protected_namespaces": ()}
     prompt: str

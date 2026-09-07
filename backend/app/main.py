@@ -30,7 +30,7 @@ logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Body
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Body, Query
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -87,7 +87,9 @@ from app.models import (
     PlaylistCreate,
     PlaylistUpdate,
     StudioUserProfile,
-    StudioUserProfileUpdate
+    StudioUserProfileUpdate,
+    VideoPlanRequest,
+    VideoRenderRequest
 )
 from app.agents.registry import AGENTS, get_agent, list_agents
 from app.agents.runtime.context import RunContext
@@ -1153,6 +1155,30 @@ def cancel_model_download(download_id: str):
     return {"id": download_id, "status": rec["status"], "cancel_requested": True}
 
 
+@app.get("/models/search")
+def search_models(
+    q: str = Query(..., min_length=1, description="Search query for Hugging Face models"),
+    pipeline: Optional[str] = Query(None, description="Optional pipeline tag filter (e.g. text-to-audio, text-to-image)"),
+    limit: int = Query(20, ge=1, le=50, description="Max results to return")
+):
+    """Dynamically search Hugging Face Hub for models."""
+    try:
+        results = model_manager.search_huggingface(query=q, pipeline_tag=pipeline, limit=limit)
+        return {"query": q, "count": len(results), "models": results}
+    except Exception as e:
+        logger.error(f"Hugging Face search failed for query '{q}': {e}")
+        raise HTTPException(status_code=500, detail=f"Hugging Face search failed: {str(e)}")
+
+
+@app.delete("/models/custom/{model_id}")
+def delete_custom_model(model_id: str):
+    """Delete a custom registered model and its local files."""
+    success = model_manager.delete_custom_model(model_id)
+    if not success:
+        raise HTTPException(status_code=404, detail=f"Custom model '{model_id}' not found.")
+    return {"status": "deleted", "model_id": model_id}
+
+
 def _snapshot_download(download_id: str) -> Optional[Dict[str, Any]]:
     rec = _model_downloads.get(download_id)
     if not rec:
@@ -1177,6 +1203,10 @@ def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files
             rec["received_bytes"] += size
         rec["status"] = "completed"
         rec["current_file"] = ""
+        try:
+            model_manager.register_custom_model(repo_id)
+        except Exception as reg_err:
+            logger.warning(f"Could not auto-register custom model {repo_id}: {reg_err}")
     except Exception as e:
         rec["status"] = "error"
         rec["error"] = str(e)[:500]
@@ -3331,6 +3361,79 @@ def get_music_video(job_id: str):
             "video_path": job.video_path,
             "has_video": bool(job.video_path)
         }
+
+
+@app.post("/videos/plan/{job_id}")
+async def plan_music_video(job_id: str, req: VideoPlanRequest = Body(default=VideoPlanRequest())):
+    """Plan multi-scene video clips respecting model duration constraints (e.g. Wan2.1 5s, CogVideoX 6s, H3 8s)."""
+    from app.services.video_service import video_service
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        clips = video_service.segment_song_for_video(
+            job=job,
+            max_clip_duration=req.max_clip_duration or 5.0,
+            bpm=req.bpm,
+            visual_style=req.visual_style or "neon-cyberpunk"
+        )
+        vocal_count = sum(1 for c in clips if c.get("is_vocal"))
+        broll_count = len(clips) - vocal_count
+        return {
+            "status": "ok",
+            "job_id": job_id,
+            "total_clips": len(clips),
+            "vocal_clips_count": vocal_count,
+            "broll_clips_count": broll_count,
+            "max_clip_duration": req.max_clip_duration,
+            "model_name": req.model_name,
+            "clips": clips
+        }
+
+
+@app.post("/videos/render-advanced/{job_id}")
+async def render_advanced_music_video_endpoint(job_id: str, req: VideoRenderRequest = Body(default=VideoRenderRequest())):
+    """Start production multi-clip video pipeline with lip-sync, karaoke lyric burning, and scene stitching."""
+    from app.services.video_service import video_service
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if not job.audio_path:
+            raise HTTPException(status_code=400, detail="Job has no completed audio to render.")
+
+        task_id = str(uuid.uuid4())
+        config = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+
+        async def _run_bg():
+            try:
+                url = await video_service.render_advanced_music_video(job, task_id, config)
+                with Session(engine) as s:
+                    j = s.get(Job, job.id)
+                    if j:
+                        j.video_path = url
+                        s.add(j)
+                        s.commit()
+            except Exception as e:
+                logger.error(f"Background advanced video render failed for {job_id}: {e}")
+
+        asyncio.create_task(_run_bg())
+        return {
+            "status": "queued",
+            "task_id": task_id,
+            "job_id": job_id,
+            "message": "Production music video rendering started in background."
+        }
+
+
+@app.get("/videos/tasks/{task_id}")
+def get_video_task_status(task_id: str):
+    """Check status and progress of an active background music video render task."""
+    from app.services.video_service import video_service
+    task = video_service.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Video task not found.")
+    return task
 
 
 # ==========================================

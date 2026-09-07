@@ -261,6 +261,19 @@ export interface ModelVariant {
     repo_id?: string;
     is_default: boolean;
     is_active?: boolean;
+    is_custom?: boolean;
+}
+
+export interface HuggingFaceSearchResult {
+    repo_id: string;
+    name: string;
+    author: string;
+    downloads: number;
+    likes: number;
+    pipeline_tag: string;
+    category: string;
+    is_installed: boolean;
+    last_modified?: string;
 }
 
 export interface HardwareProfile {
@@ -544,6 +557,16 @@ export const modelsApi = {
     },
     checkAutoInstall: async (): Promise<{ needs_download: boolean; recommended_repo_id: string | null }> => {
         const res = await axios.get(`${API_BASE_URL}/models/auto-install-check`);
+        return res.data;
+    },
+    searchHuggingFace: async (query: string, pipeline?: string, limit: number = 20): Promise<{ query: string; count: number; models: HuggingFaceSearchResult[] }> => {
+        const res = await axios.get(`${API_BASE_URL}/models/search`, {
+            params: { q: query, pipeline: pipeline || undefined, limit }
+        });
+        return res.data;
+    },
+    deleteCustomModel: async (modelId: string): Promise<{ status: string; model_id: string }> => {
+        const res = await axios.delete(`${API_BASE_URL}/models/custom/${encodeURIComponent(modelId)}`);
         return res.data;
     }
 };
@@ -1226,10 +1249,78 @@ export interface StoryboardScene {
     lighting?: string;
 }
 
+export interface VideoClipSegment {
+    clip_index: number;
+    start_time: number;
+    end_time: number;
+    duration: number;
+    time_str: string;
+    is_vocal: boolean;
+    scene_type: 'VOCAL_PERFORMANCE' | 'CINEMATIC_BROLL';
+    lyrics: string;
+    prompt: string;
+    camera: string;
+    lighting?: string;
+}
+
+export interface VideoPlanResult {
+    status: string;
+    job_id: string;
+    total_clips: number;
+    vocal_clips_count: number;
+    broll_clips_count: number;
+    max_clip_duration: number;
+    model_name: string;
+    clips: VideoClipSegment[];
+}
+
+export interface VideoTaskStatus {
+    id: string;
+    job_id: string;
+    status: 'processing' | 'completed' | 'error';
+    step: string;
+    progress: number;
+    total_clips: number;
+    current_clip: number;
+    video_url?: string | null;
+    error?: string | null;
+}
+
+export interface VideoPlanParams {
+    max_clip_duration?: number;
+    bpm?: number;
+    visual_style?: string;
+    model_name?: string;
+}
+
+export interface VideoRenderParams {
+    visual_style?: string;
+    resolution?: '720p' | '1080p';
+    aspect_ratio?: '16:9' | '9:16';
+    enable_lip_sync?: boolean;
+    burn_lyrics?: boolean;
+    subtitle_style?: string;
+    max_clip_duration?: number;
+    mode?: 'production_multiclip' | 'fast_preview';
+    face_image_path?: string | null;
+}
+
 export const videoApi = {
     generateStoryboard: async (jobId: string, visualStyle: string = 'neon-cyberpunk'): Promise<StoryboardScene[]> => {
         const res = await axios.post(`${API_BASE_URL}/videos/storyboard/${jobId}`, { visual_style: visualStyle });
         return res.data.scenes;
+    },
+    planVideo: async (jobId: string, params: VideoPlanParams = {}): Promise<VideoPlanResult> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/plan/${jobId}`, params);
+        return res.data;
+    },
+    renderAdvancedVideo: async (jobId: string, params: VideoRenderParams = {}): Promise<{ status: string; task_id: string; job_id: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/render-advanced/${jobId}`, params);
+        return res.data;
+    },
+    getVideoTaskStatus: async (taskId: string): Promise<VideoTaskStatus> => {
+        const res = await axios.get(`${API_BASE_URL}/videos/tasks/${taskId}`);
+        return res.data;
     },
     renderVideo: async (jobId: string, visualStyle: string = 'neon-cyberpunk', resolution: string = '720p'): Promise<{ status: string; video_url: string }> => {
         const res = await axios.post(`${API_BASE_URL}/videos/render/${jobId}`, { visual_style: visualStyle, resolution });

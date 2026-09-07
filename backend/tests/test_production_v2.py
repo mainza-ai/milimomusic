@@ -327,9 +327,10 @@ def test_video_model_duration_constraints_and_clamping(client):
     # 1. Test VideoService static lookup
     assert VideoService.get_model_max_duration("wan2.1") == 5.0
     assert VideoService.get_model_max_duration("Wan2.1 T2V (5.0s clips)") == 5.0
-    assert VideoService.get_model_max_duration("cogvideox") == 6.0
-    assert VideoService.get_model_max_duration("hailuo_h3") == 8.0
-    assert VideoService.get_model_max_duration("MiniMax Hailuo H3 (8.0s clips)") == 8.0
+    assert VideoService.get_model_max_duration("cogvideox") == 10.0
+    assert VideoService.get_model_max_duration("hailuo_h3") == 15.0
+    assert VideoService.get_model_max_duration("MiniMax Hailuo H3 (15.0s clips)") == 15.0
+    assert VideoService.get_model_max_duration("hunyuan") == 15.0
     assert VideoService.get_model_max_duration("audioreactive") == 120.0
     assert VideoService.get_model_max_duration("unknown_model") == 5.0
 
@@ -358,23 +359,23 @@ def test_video_model_duration_constraints_and_clamping(client):
     for clip in plan["clips"]:
         assert clip["duration"] <= 5.0
 
-    # Omitted max_clip_duration with Hailuo should default to 8.0s
+    # Omitted max_clip_duration with Hailuo H3 should default to 15.0s
     res_hailuo = client.post(f"/videos/plan/{job_id}", json={
         "model_name": "hailuo_h3"
     })
     assert res_hailuo.status_code == 200
     plan_hailuo = res_hailuo.json()
-    assert plan_hailuo["model_max_duration"] == 8.0
-    assert plan_hailuo["max_clip_duration"] == 8.0
+    assert plan_hailuo["model_max_duration"] == 15.0
+    assert plan_hailuo["max_clip_duration"] == 15.0
 
-    # User requesting 20.0s for Wan 2.1 should be clamped to 5.0s
+    # User requesting 30.0s for Hailuo H3 should be clamped to 15.0s
     res_clamped = client.post(f"/videos/plan/{job_id}", json={
-        "model_name": "wan2.1",
-        "max_clip_duration": 20.0
+        "model_name": "hailuo_h3",
+        "max_clip_duration": 30.0
     })
     assert res_clamped.status_code == 200
     plan_clamped = res_clamped.json()
-    assert plan_clamped["max_clip_duration"] == 5.0
+    assert plan_clamped["max_clip_duration"] == 15.0
 
 
 def test_docker_llm_url_normalization(monkeypatch):

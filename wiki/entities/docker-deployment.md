@@ -24,7 +24,7 @@ The build process is codified in [`Dockerfile`](../../Dockerfile):
 
 ### Stage 2: Production Python & DSP Audio Runtime (`python:3.11-slim`)
 - **System Audio & Video Dependencies**: Installs `ffmpeg`, `libsndfile1`, `fluidsynth` (for SoundFont MIDI audio synthesis), `libgl1` and `libglib2.0-0` (for OpenCV headless video generation and facial landmark tracking), `git`, `curl`, and `build-essential`.
-- **Python Dependencies**: Upgrades `pip` and installs the complete backend requirements from `backend/requirements.txt` (including `scipy`, `librosa`, `demucs`, `diffusers`, `transformers`, `opencv-python-headless`, and `pillow`).
+- **Python Dependencies**: Upgrades `pip` and `uv`, installing the complete backend requirements from `backend/requirements.txt` via high-speed Rust-based dependency resolution (`uv pip install --system`).
 - **Code & Asset Injection**: Copies `backend`, `muscriptor`, `heartlib`, and compiled frontend assets from Stage 1 into `/app/frontend/dist`.
 - **Single-Process Web Serving**: The FastAPI application in `backend/app/main.py` detects `/app/frontend/dist` and mounts it at the root with a client-side routing fallback handler:
   - Non-API routes (`/`, `/tracks`, `/arrange`, `/studio`) serve `dist/index.html`.

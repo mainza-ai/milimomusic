@@ -1309,4 +1309,16 @@ Synchronized runtime environments, Docker builds, persistent volumes, and system
    - Defined hardware specification tiers (Minimum 16GB RAM for BS-Roformer, Recommended 32GB RAM for MiniMax Music 3 MLX, Cloud/Studio Ultra 64-128GB RAM).
    - Included feature acceleration matrix detailing Apple Silicon MLX/MPS vs NVIDIA CUDA vs CPU Fallback behavior across all studio engines.
 
+## [2026-09-07] lint | Resolve CI Dependency Backtracking Timeout (resolution-too-deep)
+Resolved pip resolution-too-deep error in GitHub Actions Backend Test Suite:
+1. Removed Unconstrained `pydantic-ai` Meta-Package:
+   - Diagnosed that `pydantic-ai` was an unconstrained meta-package pulling in conflicting multi-provider SDKs (`anthropic`, `mistralai`, `groq`, etc.) while never being imported in the codebase.
+   - Constrained `pydantic-graph>=0.4.0` in `backend/requirements.txt` (the only package imported by `lyrics_graph.py`).
+2. High-Speed SAT Solver Integration (`uv`):
+   - Updated `.github/workflows/ci.yml` to install `uv` and use `uv pip install --system -r backend/requirements.txt` (resolving dependencies in <1s instead of 6m+ timeout).
+   - Added `fluidsynth` to CI `apt-get` audio packages.
+   - Updated `Dockerfile` to leverage `uv pip install --system --no-cache` for instantaneous container dependency builds.
+   - Updated `wiki/entities/docker-deployment.md` documentation.
+
+
 

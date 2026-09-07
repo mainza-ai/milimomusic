@@ -10,8 +10,7 @@ pydantic>=2.9.0
 # LLM Providers & Multi-Agent Co-Writer
 openai>=1.90.0
 google-genai>=0.6.0
-pydantic-ai
-pydantic-graph
+pydantic-graph>=0.4.0
 
 # Audio Processing, DSP, SVC & Dynamic Stems
 numpy>=1.26.0

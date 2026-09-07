@@ -1234,3 +1234,14 @@ Thoroughly overhauled and implemented production-grade solutions across all subs
    - 187/187 full backend test suite passing.
    - Frontend bundle built cleanly with Vite in 1.67s.
 
+## [2026-09-07] ingest | README & Technical Wiki Cross-Reference Synchronization
+Updated the project README and Technical Wiki to maintain bidirectional synchronization:
+1. Created `wiki/entities/video-studio.md` documenting the AI Music Video Studio, duration constraints across frontier models (Hailuo H3, Wan 2.1, CogVideoX, HunyuanVideo), isolated vocal-stem viseme lip-syncing with OpenCV landmark tracking, ASS karaoke subtitle burning, and procedural B-roll.
+2. Overhauled `wiki/entities/model-manager.md` with complete 23-model multi-modal catalog (Audio, Image, Video), live Hugging Face Hub search, custom model download manager, and empty-system auto-download policies.
+3. Updated `wiki/sources/readme.md` reflecting current production features, visual workflows, multi-modal model trees, and deployment architectures.
+4. Updated `wiki/overview.md` and `wiki/index.md` with new entities and accurate production status.
+5. Enhanced `README.md` with:
+   - Feature highlights for AI Music Video Studio, Multi-Modal Model Hub & Hugging Face Hub live search, Black Forest Labs FLUX.2 Cover Art Studio, and Docker deployment.
+   - Dedicated "Documentation & Technical Wiki" structured navigation hub linking directly to the wiki index, architecture, video studio, model manager, and subsystems.
+
+

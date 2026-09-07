@@ -35,6 +35,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Matchering Reference Mastering](entities/matchering-mastering.md) — -14 LUFS reference mastering.
 - [Karaoke & Lyric Sync](entities/karaoke-lyricsync.md) — TorchAudio MMS_FA neural forced alignment, sub-100ms word sync, .lrc/.srt export.
 - [Voice Studio (SVC)](entities/voice-service.md) — offline voice conversion + consent-gated profiles.
+- [AI Music Video Studio](entities/video-studio.md) — multi-scene generation, isolated vocal stem viseme lip-syncing, duration constraint clamping, and karaoke ASS subtitles.
 - [Session Workspace (DAW)](entities/session-workspace.md) — Listen/Arrange/Piano Roll/Notation/Mix/Lyrics.
 
 ## Entities — in-app services & agents

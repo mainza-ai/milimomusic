@@ -1332,6 +1332,12 @@ Fixed 4 environment differences causing test failures on fresh Linux CI runners:
 4. CPU CI Hardware Assertion Normalization (`backend/tests/test_v2_core.py`):
    - Updated `test_model_tree_and_hardware` to dynamically assert `can_run_minimax_full` matching detected hardware (True on Apple Silicon/CUDA >=12GB, False on headless CPU CI runners).
 
+## [2026-09-07] lint | Normalize Platform-Aware Default MiniMax Model in test_v2_core
+Fixed test expectation for default MiniMax model in model tree:
+- In `backend/tests/test_v2_core.py`, `minimax_entry = next((m for m in tree if "minimax" in m["id"]), None)` picked the first MiniMax model in catalog (`minimax_music3_mxfp4`), whose `is_default` flag is `True` on Apple Silicon but `False` on Linux.
+- Updated `minimax_entry` lookup to filter for `m.get("is_default")`, matching the platform-specific default (MLX `mxfp4` on Apple Silicon, CUDA `comfy_int8` on NVIDIA, and GGUF `q4` on CPU Linux).
+
+
 
 
 

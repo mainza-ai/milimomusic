@@ -260,7 +260,11 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
         if (!selectedVoiceProfile) return;
         setIsConvertingVoice(true);
         try {
-            const derivative = await trackApi.voiceConvertTrack(track.id, selectedVoiceProfile);
+            const derivative = await trackApi.voiceConvertTrack(track.id, selectedVoiceProfile, {
+                pitch_shift: pitchShift,
+                dry_wet: dryWet,
+                formant_preserve: formantPreserve
+            });
             onTrackUpdated?.(derivative);
             if (onSelectTrack) onSelectTrack(derivative);
         } catch (e: any) {

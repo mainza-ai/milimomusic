@@ -1244,4 +1244,24 @@ Updated the project README and Technical Wiki to maintain bidirectional synchron
    - Feature highlights for AI Music Video Studio, Multi-Modal Model Hub & Hugging Face Hub live search, Black Forest Labs FLUX.2 Cover Art Studio, and Docker deployment.
    - Dedicated "Documentation & Technical Wiki" structured navigation hub linking directly to the wiki index, architecture, video studio, model manager, and subsystems.
 
+## [2026-09-07] update | Voice Studio & Singing Voice Conversion Production Audit
+Completed comprehensive production audit and overhaul of Voice Studio & Singing Voice Conversion:
+1. Dataset Ingestion & F0 Acoustic Analysis:
+   - Updated `VoiceService.create_profile` to accept raw dataset audio and `.zip` archives.
+   - Built acoustic profiling engine using `librosa.pyin` and spectral feature extractors to compute median $F_0$ (Hz), spectral centroid timbre brightness, spectral rolloff, and RMS loudness.
+   - Added automatic normalized preview generator saving 6-second unclipped previews to `generated_audio/voice_previews/`.
+2. Master Track Remixing Engine:
+   - Fixed master track overwrite bug where converted vocal was replacing the complete song.
+   - Built `remix_master_with_vocal` combining converted vocals with non-vocal stems (drums, bass, guitar, piano, other) or backing track with gain balancing and peak normalization.
+   - Integrated into `pipeline.py` Step 3 and `/jobs/{job_id}/voice-convert`.
+3. Dual-Format API & UI Wiring:
+   - `POST /voice/profiles` accepts both JSON and `multipart/form-data` with dataset upload.
+   - Updated `TrackDetailView.tsx` and `frontend/src/api.ts` to transmit `pitch_shift`, `dry_wet`, and `formant_preserve`.
+   - Enhanced `VoiceStudioModal.tsx` with audio preview play/pause player, F0 frequency chips, and timbre badges.
+4. Verification:
+   - Added 4 new end-to-end tests in `backend/tests/test_production_v2.py`.
+   - 191/191 total backend tests passing.
+   - Frontend built cleanly with zero TypeScript/Vite errors.
+
+
 

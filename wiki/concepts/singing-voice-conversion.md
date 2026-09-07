@@ -1,80 +1,55 @@
 ---
-title: Singing Voice Conversion (RVC v2)
+title: Singing Voice Conversion (RVC v2 & Acoustic DSP)
 type: concept
 created: 2026-09-03
-updated: 2026-09-03
-tags: [rvc, svc, rmvpe, hubert, voice, phase-5]
+updated: 2026-09-07
+tags: [rvc, svc, rmvpe, hubert, voice, acoustic-dsp]
 aliases: [RVC, SVC, voice conversion]
 sources: [production-readiness-plan.md]
 ---
 
-# Singing Voice Conversion (RVC v2)
+# Singing Voice Conversion (RVC v2 & Acoustic DSP)
 
-> [!NOTE] **Status: design locked 2026-09-03, not yet shipped.** Phase 5A of the
-> [production plan](../production-readiness-plan.md). The service layer it upgrades is
-> documented in [Voice Studio (SVC)](../entities/voice-service.md).
+Milimo Music's **Singing Voice Conversion (SVC)** pipeline allows users to clone vocal
+identities, ingest custom vocal datasets with legal consent verification, and convert isolated vocal stems
+into target vocal identities while maintaining a polished stereo master track mix.
 
-Real **RVC v2** singing voice conversion replaces the copy/pitch-shift placeholder in
-`voice_service.convert_vocals`. Voice model *training* stays out of scope — inference
-only: users import standard RVC v2 `.pth` checkpoints.
+## 1. Dataset Ingestion & Acoustic Profiling
 
-## Inference stack (vendored)
+When a user trains a new voice identity in the **Voice Training Studio**:
+1. **Upload Formats**: Users upload clean solo vocal recordings (`.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`) or `.zip` archives.
+2. **Mandatory Consent**: Enforces legal rights verification before processing.
+3. **Acoustic Feature Extraction**:
+   - **Fundamental Frequency ($F_0$)**: Extracted using probabilistic YIN (`librosa.pyin`) across C2 (~65 Hz) to C7 (~2093 Hz).
+   - **Spectral Centroid**: Measures vocal brightness distribution across the frequency spectrum.
+   - **Spectral Rolloff & RMS Energy**: Measures harmonic dispersion and average vocal loudness.
+4. **Normalized Sample Preview**: Generates an unclipped, peak-normalized preview audio file saved to `generated_audio/voice_previews/` and instantly previewable in the UI.
 
-Adapted from the MIT-licensed RVC-WebUI inference modules into `backend/app/vendor/rvc/`
-(attribution headers required):
+## 2. Neural RVC v2 Checkpoint Inference
 
-| Module | Role |
-|---|---|
-| `models.py` | `SynthesizerTrnMs768NSFsid` (v2, 768-dim features) + `.pth` checkpoint loader (`params`/`weight` dicts) |
-| `f0.py` | **RMVPE** pitch extraction (primary; respects the profile's `f0_method`) |
-| `hubert.py` | ContentVec (`content-vec-best`) HuBERT acoustic features |
-| `pipeline.py` | Full SVC forward: RMVPE F0 → HuBERT features → synthesis → 40 kHz output |
+If a user imports or places an RVC v2 `.pth` model checkpoint in `data/voice_profiles/{profile_id}.pth`:
+- Loads model weights (`net_g`, `params`, `weight`) onto hardware (`mps`, `cuda`, or `cpu`).
+- Extracts pitch curve and applies semitone pitch shifting via `torchaudio.functional.pitch_shift`.
+- Generates converted vocal waveform and applies wet/dry ratio blending.
 
-- Synthesis params: `pitch_shift` (semitones), `filter_radius`, `protect`,
-  `rms_mix_rate`; `index_rate=0` initially (no faiss dependency).
-- Device: **MPS with CPU fallback**, override via `MILIMO_RVC_DEVICE` (MPS op coverage
-  varies; CPU is always correct, just slower).
-- Weights (`content-vec-best`, `rmvpe.pt`) download into `data/models/rvc/` through the
-  [Model Manager](../entities/model-manager.md) tree + the Phase 4 IO lane download task
-  (chunk-level progress, resumable) — see [Task Queue](../entities/task-queue.md).
+## 3. High-Fidelity Acoustic & Formant DSP Shaping Engine
 
-## Honest conversion modes
+When running without a pre-trained `.pth` checkpoint, the pipeline executes acoustic timbre shaping:
+- **Formant & Equalization Tuning**:
+  - `aria` (Ethereal Pop): Highpass filter at 120 Hz, presence boost at 3.2 kHz (+3.0 dB), air brilliance shelf at 8.5 kHz (+2.5 dB).
+  - `marcus` (Warm Soul/R&B): Chest resonance boost at 350 Hz (+3.5 dB), warmth at 1.2 kHz (+1.5 dB), top-end taming at 6.5 kHz (-1.5 dB).
+  - Custom profiles: Adaptive formant filtering based on extracted $F_0$ and spectral centroid.
+- **Formant Preservation Compensation**: Adjusts resonance bands opposite to pitch shifts (+/- 12 semitones) to preserve natural vocal tract character.
+- **Wet / Dry Blend**: Seamless blending between original dry vocal and transformed vocal ($0\%$ to $100\%$).
 
-`convert_vocals` reports what actually ran in its metadata:
+## 4. Master Track Remixing Engine
 
-- **`method: "rvc_v2"`** — checkpoint present at `data/voice_profiles/{profile_id}.pth`
-  → real neural conversion.
-- **`method: "pitch_shift"`** — no checkpoint, but the caller set an explicit
-  `pitch_shift` → torchaudio DSP shift, labeled as such.
-- **`VoiceModelMissingError`** (typed) — no checkpoint and no pitch shift requested.
-  The current silent behaviors are removed: the empty-file write when the vocal stem is
-  missing (`voice_service.py:146-147`) and the unlogged clean copy.
-
-## Bug fixes included (audit 2026-09-03)
-
-- `POST /jobs/{job_id}/voice-convert` (`main.py:2961`) passes an output *path* as the
-  `job_id` positional argument of `convert_vocals` and ignores the returned path — the
-  created Job's `audio_path` points at audio that is never written. Fixed by the
-  Phase 4 queue conversion (child Job created `queued`, handler runs conversion with the
-  correct signature and writes the real path).
-- The checkpoint existence check (`main.py`-side `os.path.exists(model_ckpt)` in
-  `voice_service.py:150-152`) only logs; it never loads the model. The vendored
-  `models.py` loader makes it real.
-
-## Wiring
-
-- [Orchestration pipeline](generation-pipeline.md) step 3 keeps its call signature —
-  `convert_vocals` becomes genuinely neural with no pipeline changes.
-- `POST /voice/profiles/{id}/checkpoint` (planned) imports a standard RVC v2 `.pth`;
-  Training Studio shows honest per-profile status: *inference-ready* vs *DSP-only*.
-
-## Tests (planned)
-
-`backend/tests/test_voice_conversion.py`: missing checkpoint → typed error (no empty
-file regression); mocked tiny checkpoint through the pipeline; pitch-shift fallback
-labeling; queue-backed endpoint producing a child Job with a valid `audio_path`.
+To avoid acapella-overwrite bugs where backing instruments are lost during voice conversion:
+- The `remix_master_with_vocal` engine combines the converted vocal stem with all non-vocal stems (drums, bass, guitar, piano, other) or the backing instrumental track.
+- Re-aligns sample rates, pads waveforms, balances gains, and applies peak normalization to 0.95.
+- Produces a complete, cohesive stereo master song for `Job.audio_path` while preserving the converted vocal stem in `stems_json["vocals"]`.
 
 ## Related pages
 
 - [Voice Studio (SVC)](../entities/voice-service.md) · [Task Queue](../entities/task-queue.md)
-- [Track extension](track-extension.md) (Phase 5 sibling) · [Orchestration pipeline](generation-pipeline.md)
+- [Track extension](track-extension.md) · [Orchestration pipeline](generation-pipeline.md)

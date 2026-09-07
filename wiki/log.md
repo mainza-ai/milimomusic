@@ -1345,11 +1345,26 @@ Implemented model size computation and UI indicators for Hugging Face Hub search
 2. Frontend Indicator Integration (`frontend/src/components/models/ModelsManagerModal.tsx`):
    - Added `💾 {res.size_formatted}` pill badge adjacent to pipeline tag.
    - Added formatted size chip to metadata row alongside Author, Downloads, and Likes.
-   - Updated download button text to display size preview: `Download (5.41 GB)`.
-   - Updated `HuggingFaceSearchResult` interface in `frontend/src/api.ts`.
 3. Test Suite & Verification:
    - Updated `test_huggingface_search_and_custom_model` in `backend/tests/test_production_v2.py` asserting `size_formatted` and `size_gb`.
    - Verified 195/195 tests passing in pytest and clean TypeScript build.
+
+## [2026-09-07] fix | Custom Model Resolution, Right Panel Sync & Universal Activation
+Resolved downloaded Hugging Face models not appearing in the right panel or being selectable:
+1. Backend Local Path & Candidate Discovery (`backend/app/services/model_manager.py`):
+   - `resolve_hf_snapshot` now inspects `MODEL_DIRECTORY`, `heartlib/ckpt/`, `data/models/`, and `custom_models.json`.
+   - `_model_download_worker` passes downloaded `local_path` into `register_custom_model`.
+   - `get_model_tree()` detects installed custom models and marks `is_installed: true` with absolute local path.
+   - Added `update_custom_model` and `PATCH /models/custom/{model_id}` allowing category adjustments (audio/image/video).
+   - Upgraded `set_active_model` to support modality-specific active engines (audio, image, video).
+2. Right Panel (Composer) Multi-Modal Integration (`frontend/src/components/ComposerSidebar.tsx`):
+   - Added Cover Art Engine (FLUX / Image Diffusion) selector to "Details & Artwork" with live model listing and download link.
+   - Connected `selectedImageModel` to `coverApi.generateCoverImage({ prompt, model_id })`.
+   - Wired `loadModels()` on `ModelsManagerModal` close and `onModelActivated` callback so custom audio & image models appear immediately without page refresh.
+3. Model Manager UI Interactive Upgrades (`frontend/src/components/models/ModelsManagerModal.tsx`):
+   - Replaced static custom cards with interactive cards featuring a modality dropdown (`Audio`, `Image / Covers`, `Video`), `Ready` badge, `Select / Activate` button, and delete trigger.
+   - Added `Installed` + `Activate` button directly inside Hugging Face search result cards.
+
 
 
 

@@ -5,9 +5,10 @@ import { modelsApi, type ModelVariant, type HardwareProfile, type ModelDownloadS
 interface ModelsManagerModalProps {
     isOpen: boolean;
     onClose: () => void;
+    onModelActivated?: () => void;
 }
 
-export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, onClose }) => {
+export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, onClose, onModelActivated }) => {
     const [models, setModels] = useState<ModelVariant[]>([]);
     const [hardware, setHardware] = useState<HardwareProfile | null>(null);
     const [download, setDownload] = useState<ModelDownloadStatus | null>(null);
@@ -57,7 +58,10 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                     setDownload(s);
                     if (['completed', 'cancelled', 'error'].includes(s.status)) {
                         window.clearInterval(pollRef.current);
-                        if (s.status === 'completed') loadData();
+                        if (s.status === 'completed') {
+                            await loadData();
+                            onModelActivated?.();
+                        }
                     }
                 } catch { /* transient poll error */ }
             }, 800);
@@ -74,10 +78,21 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
             setActivatingId(modelId);
             await modelsApi.selectActiveModel(modelId);
             await loadData();
+            onModelActivated?.();
         } catch (e: any) {
             console.error('Failed to activate model:', e);
         } finally {
             setActivatingId(null);
+        }
+    };
+
+    const handleUpdateCategory = async (modelId: string, newCategory: 'audio' | 'image' | 'video') => {
+        try {
+            await modelsApi.updateCustomModel(modelId, { category: newCategory });
+            await loadData();
+            onModelActivated?.();
+        } catch (e) {
+            console.error('Failed to update custom model category:', e);
         }
     };
 
@@ -406,10 +421,34 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                         </a>
 
                                                         {isInstalled ? (
-                                                            <span className="flex items-center space-x-1 text-xs font-semibold text-teal-700 dark:text-teal-400 bg-teal-500/10 px-2.5 py-1 rounded-xl border border-teal-500/20">
-                                                                <CheckCircle2 size={13} />
-                                                                <span>Installed</span>
-                                                            </span>
+                                                            <div className="flex items-center space-x-2">
+                                                                <span className="flex items-center space-x-1 text-xs font-semibold text-teal-700 dark:text-teal-400 bg-teal-500/10 px-2.5 py-1 rounded-xl border border-teal-500/20">
+                                                                    <CheckCircle2 size={13} />
+                                                                    <span>Installed</span>
+                                                                </span>
+                                                                {(() => {
+                                                                    const matched = models.find(m => m.repo_id === res.repo_id);
+                                                                    if (matched && !matched.is_active) {
+                                                                        return (
+                                                                            <button
+                                                                                onClick={() => handleActivateModel(matched.id)}
+                                                                                disabled={activatingId === matched.id}
+                                                                                className="px-2.5 py-1 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-sm active:scale-95 disabled:opacity-50"
+                                                                            >
+                                                                                {activatingId === matched.id ? 'Activating…' : 'Select'}
+                                                                            </button>
+                                                                        );
+                                                                    }
+                                                                    if (matched?.is_active) {
+                                                                        return (
+                                                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-500 text-slate-950 shadow-sm">
+                                                                                Active
+                                                                            </span>
+                                                                        );
+                                                                    }
+                                                                    return null;
+                                                                })()}
+                                                            </div>
                                                         ) : (
                                                             <button
                                                                 onClick={() => handleDownload(res.repo_id)}
@@ -435,35 +474,86 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                             {/* Installed Custom Models */}
                             {models.some(m => (m as any).is_custom) && (
                                 <div className="space-y-3 pt-2">
-                                    <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                                        Custom Downloaded Models
-                                    </h4>
-                                    <div className="space-y-2">
+                                    <div className="flex items-center justify-between">
+                                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
+                                            Custom Downloaded Models ({models.filter(m => (m as any).is_custom).length})
+                                        </h4>
+                                        <span className="text-[10px] text-slate-500 font-normal">
+                                            Select modality to use in Composer & Studios
+                                        </span>
+                                    </div>
+                                    <div className="space-y-2.5">
                                         {models.filter(m => (m as any).is_custom).map(m => (
                                             <div
                                                 key={m.id}
-                                                className="p-3.5 rounded-xl border border-teal-500/20 bg-teal-500/5 flex items-center justify-between"
+                                                className={`p-4 rounded-2xl border transition-all flex flex-col md:flex-row md:items-center justify-between gap-3 ${
+                                                    m.is_active
+                                                        ? 'bg-teal-500/10 border-teal-500/40 shadow-apple-sm'
+                                                        : 'bg-white dark:bg-[#181a24] border-black/[0.06] dark:border-white/10'
+                                                }`}
                                             >
-                                                <div>
-                                                    <span className="text-xs font-bold text-slate-900 dark:text-slate-100">
-                                                        {m.name}
-                                                    </span>
-                                                    <span className="ml-2 text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-700 dark:text-teal-300">
-                                                        {m.category || 'custom'}
-                                                    </span>
+                                                <div className="min-w-0 space-y-1">
+                                                    <div className="flex items-center space-x-2 flex-wrap gap-y-1">
+                                                        <span className="text-xs font-bold text-slate-900 dark:text-slate-100 font-mono">
+                                                            {m.name}
+                                                        </span>
+                                                        {m.is_active && (
+                                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-500 text-slate-950 shadow-sm">
+                                                                Active {m.category}
+                                                            </span>
+                                                        )}
+                                                        {m.is_installed && (
+                                                            <span className="flex items-center space-x-1 text-[10px] font-semibold text-teal-700 dark:text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded-full border border-teal-500/20">
+                                                                <CheckCircle2 size={11} />
+                                                                <span>Ready</span>
+                                                            </span>
+                                                        )}
+                                                        <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-400">
+                                                            {m.size_gb} GB
+                                                        </span>
+                                                    </div>
+                                                    {m.repo_id && (
+                                                        <p className="text-[11px] text-slate-500 font-mono">
+                                                            {m.repo_id}
+                                                        </p>
+                                                    )}
                                                     {m.local_path && (
-                                                        <p className="text-[10px] font-mono text-slate-400 truncate max-w-md mt-0.5">
-                                                            {m.local_path}
+                                                        <p className="text-[10px] font-mono text-slate-400 truncate max-w-lg">
+                                                            📁 {m.local_path}
                                                         </p>
                                                     )}
                                                 </div>
-                                                <button
-                                                    onClick={() => handleDeleteCustom(m.id)}
-                                                    className="p-1.5 text-rose-500 hover:bg-rose-500/10 rounded-lg transition-colors"
-                                                    title="Delete Custom Model"
-                                                >
-                                                    <Trash2 size={14} />
-                                                </button>
+
+                                                <div className="flex items-center space-x-2 flex-shrink-0 self-end md:self-center">
+                                                    <select
+                                                        value={m.category || 'audio'}
+                                                        onChange={(e) => handleUpdateCategory(m.id, e.target.value as any)}
+                                                        className="apple-input py-1 px-2 text-[11px] font-mono rounded-lg border border-black/10 dark:border-white/10"
+                                                        title="Select how this model will be used in Milimo Music"
+                                                    >
+                                                        <option value="audio">🎵 Audio</option>
+                                                        <option value="image">🎨 Image / Covers</option>
+                                                        <option value="video">🎬 Video</option>
+                                                    </select>
+
+                                                    {m.is_installed && !m.is_active && (
+                                                        <button
+                                                            onClick={() => handleActivateModel(m.id)}
+                                                            disabled={activatingId === m.id}
+                                                            className="px-3 py-1.5 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-sm active:scale-95 disabled:opacity-50"
+                                                        >
+                                                            {activatingId === m.id ? 'Activating…' : 'Select'}
+                                                        </button>
+                                                    )}
+
+                                                    <button
+                                                        onClick={() => handleDeleteCustom(m.id)}
+                                                        className="p-1.5 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors"
+                                                        title="Delete Custom Model"
+                                                    >
+                                                        <Trash2 size={15} />
+                                                    </button>
+                                                </div>
                                             </div>
                                         ))}
                                     </div>
@@ -544,7 +634,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                             <span>Ready</span>
                                                         </span>
 
-                                                        {m.category === 'audio' && !m.is_active && (
+                                                        {!m.is_active && (
                                                             <button
                                                                 onClick={() => handleActivateModel(m.id)}
                                                                 disabled={activatingId === m.id}

@@ -63,17 +63,43 @@ CUSTOM_MODELS_PATH = os.path.join("data", "models", "custom_models.json")
 
 def resolve_hf_snapshot(repo_id: str) -> Optional[str]:
     """Find local snapshot directory for a huggingface repo ID.
-    Supports local ./data/models, HF hub cache, or explicit snapshots.
+    Supports local ./data/models, MODEL_DIRECTORY, heartlib/ckpt, HF hub cache, or custom registry.
     """
     try:
-        # 1. Check data/models/{org}__{repo}
-        data_path = os.path.join("data", "models", repo_id.replace("/", "__"))
-        if os.path.isdir(data_path):
+        # 0. Check custom_models.json for explicit existing local_path
+        if os.path.exists(CUSTOM_MODELS_PATH):
             try:
-                if os.listdir(data_path):
-                    return os.path.abspath(data_path)
-            except (OSError, PermissionError):
+                with open(CUSTOM_MODELS_PATH, "r", encoding="utf-8") as f:
+                    c_list = json.load(f)
+                    for c in c_list:
+                        if c.get("repo_id") == repo_id and c.get("local_path"):
+                            if os.path.isdir(c["local_path"]) and os.listdir(c["local_path"]):
+                                return os.path.abspath(c["local_path"])
+            except Exception:
                 pass
+
+        # 1. Search candidate directories where models are stored
+        escaped_repo = repo_id.replace("/", "__")
+        search_roots = [
+            os.environ.get("MODEL_DIRECTORY"),
+            os.path.join("data", "models"),
+            os.path.join("backend", "data", "models"),
+            os.path.join("..", "data", "models"),
+            os.path.join("heartlib", "ckpt"),
+            os.path.join("..", "heartlib", "ckpt"),
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "heartlib", "ckpt")),
+            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "models")),
+        ]
+        for root in search_roots:
+            if not root:
+                continue
+            data_path = os.path.join(root, escaped_repo)
+            if os.path.isdir(data_path):
+                try:
+                    if os.listdir(data_path):
+                        return os.path.abspath(data_path)
+                except (OSError, PermissionError):
+                    pass
 
         # 2. Check ~/.cache/huggingface/hub/models--{org}--{repo}
         hf_hub_name = f"models--{repo_id.replace('/', '--')}"
@@ -473,14 +499,35 @@ class ModelManager:
                         is_installed = True
                         local_path = DEFAULT_MINIMAX_SNAPSHOT
 
-                # Next check huggingface cache / data directory
+                # Check if item has explicit local_path that exists on disk
+                if not is_installed and item.get("local_path") and os.path.isdir(item["local_path"]):
+                    try:
+                        if os.listdir(item["local_path"]):
+                            is_installed = True
+                            local_path = os.path.abspath(item["local_path"])
+                    except (OSError, PermissionError):
+                        pass
+
+                # Next check huggingface cache / data directory / candidate directories
                 if not is_installed and item.get("repo_id"):
                     resolved = resolve_hf_snapshot(item["repo_id"])
                     if resolved:
                         is_installed = True
                         local_path = resolved
 
-            is_active = (item["id"] == self._active_model_id) or (local_path and DEFAULT_MINIMAX_SNAPSHOT and os.path.abspath(local_path) == os.path.abspath(DEFAULT_MINIMAX_SNAPSHOT))
+            cat = item.get("category", "audio")
+            if cat == "image":
+                is_active = (item["id"] == getattr(self, "_active_image_model_id", None)) or (
+                    not getattr(self, "_active_image_model_id", None) and item.get("is_default", False)
+                )
+            elif cat == "video":
+                is_active = (item["id"] == getattr(self, "_active_video_model_id", None)) or (
+                    not getattr(self, "_active_video_model_id", None) and item.get("is_default", False)
+                )
+            else:
+                is_active = (item["id"] == self._active_model_id) or (
+                    local_path and DEFAULT_MINIMAX_SNAPSHOT and os.path.abspath(local_path) == os.path.abspath(DEFAULT_MINIMAX_SNAPSHOT)
+                )
 
             variant = ModelVariant(
                 id=item["id"],
@@ -501,28 +548,41 @@ class ModelManager:
 
         return results
 
-    def get_active_model(self) -> Dict[str, Any]:
-        """Get the currently active model."""
+    def get_active_model(self, category: str = "audio") -> Dict[str, Any]:
+        """Get the currently active model for the given category (audio, image, video)."""
         tree = self.get_model_tree()
-        active = next((m for m in tree if m.get("is_active")), None)
+        cat_models = [m for m in tree if m.get("category") == category]
+        active = next((m for m in cat_models if m.get("is_active")), None)
         if not active:
-            installed = [m for m in tree if m["is_installed"] and m["category"] == "audio"]
-            active = installed[0] if installed else tree[0]
+            installed = [m for m in cat_models if m["is_installed"]]
+            active = installed[0] if installed else (cat_models[0] if cat_models else tree[0])
         return active
 
     def set_active_model(self, model_id: str) -> Dict[str, Any]:
-        """Set the active model and update runtime path."""
+        """Set the active model and update runtime path based on its category."""
         tree = self.get_model_tree()
         match = next((m for m in tree if m["id"] == model_id or m.get("repo_id") == model_id), None)
         if not match:
             raise ValueError(f"Model ID '{model_id}' not found in catalog.")
 
-        self._active_model_id = match["id"]
-        if match["local_path"]:
-            global DEFAULT_MINIMAX_SNAPSHOT
-            DEFAULT_MINIMAX_SNAPSHOT = match["local_path"]
-            os.environ["MINIMAX_MODEL_PATH"] = match["local_path"]
-            logger.info(f"Active model switched to {match['name']} at {match['local_path']}")
+        cat = match.get("category", "audio")
+        if cat == "image":
+            self._active_image_model_id = match["id"]
+            if match.get("local_path"):
+                os.environ["IMAGE_MODEL_PATH"] = match["local_path"]
+            logger.info(f"Active image/cover model switched to {match['name']}")
+        elif cat == "video":
+            self._active_video_model_id = match["id"]
+            if match.get("local_path"):
+                os.environ["VIDEO_MODEL_PATH"] = match["local_path"]
+            logger.info(f"Active video model switched to {match['name']}")
+        else:
+            self._active_model_id = match["id"]
+            if match.get("local_path"):
+                global DEFAULT_MINIMAX_SNAPSHOT
+                DEFAULT_MINIMAX_SNAPSHOT = match["local_path"]
+                os.environ["MINIMAX_MODEL_PATH"] = match["local_path"]
+            logger.info(f"Active audio model switched to {match['name']} at {match.get('local_path')}")
 
         return match
 
@@ -592,6 +652,14 @@ class ModelManager:
         custom_models = self._load_custom_models()
         existing = next((m for m in custom_models if m.get("repo_id") == repo_id), None)
         if existing:
+            if metadata and "local_path" in metadata and metadata["local_path"]:
+                existing["local_path"] = metadata["local_path"]
+                self._save_custom_models(custom_models)
+            elif not existing.get("local_path"):
+                resolved = resolve_hf_snapshot(repo_id)
+                if resolved:
+                    existing["local_path"] = resolved
+                    self._save_custom_models(custom_models)
             return existing
 
         name = repo_id.split("/")[-1]
@@ -626,12 +694,17 @@ class ModelManager:
         except Exception as e:
             logger.warning(f"Could not query HF metadata for {repo_id}: {e}")
 
+        local_path = None
         if metadata:
             if "name" in metadata: name = metadata["name"]
             if "category" in metadata: category = metadata["category"]
             if "size_gb" in metadata: size_gb = metadata["size_gb"]
             if "architecture" in metadata: architecture = metadata["architecture"]
             if "license" in metadata: license_type = metadata["license"]
+            if "local_path" in metadata: local_path = metadata["local_path"]
+
+        if not local_path:
+            local_path = resolve_hf_snapshot(repo_id)
 
         model_entry = {
             "id": "custom_" + repo_id.replace("/", "_").replace("-", "_").lower(),
@@ -643,13 +716,27 @@ class ModelManager:
             "recommended_hardware": "System Compatible",
             "category": category,
             "repo_id": repo_id,
+            "local_path": local_path,
             "is_default": False,
             "is_custom": True
         }
         custom_models.append(model_entry)
         self._save_custom_models(custom_models)
-        logger.info(f"Registered custom model {repo_id} ({category})")
+        logger.info(f"Registered custom model {repo_id} ({category}) with local_path={local_path}")
         return model_entry
+
+    def update_custom_model(self, model_id_or_repo: str, updates: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+        """Update metadata (category, name, local_path) for a registered custom model."""
+        custom_models = self._load_custom_models()
+        target = next((m for m in custom_models if m["id"] == model_id_or_repo or m.get("repo_id") == model_id_or_repo), None)
+        if not target:
+            return None
+        for k, v in updates.items():
+            if k in ["name", "category", "architecture", "license", "local_path"]:
+                target[k] = v
+        self._save_custom_models(custom_models)
+        logger.info(f"Updated custom model {target['id']}: {updates}")
+        return target
 
     def delete_custom_model(self, model_id_or_repo: str) -> bool:
         """Delete custom model from registry and disk."""
@@ -661,13 +748,24 @@ class ModelManager:
         custom_models = [m for m in custom_models if m["id"] != target["id"]]
         self._save_custom_models(custom_models)
 
+        # Remove local disk files if present
+        import shutil
+        paths_to_check = []
+        if target.get("local_path"):
+            paths_to_check.append(target["local_path"])
         repo_id = target.get("repo_id")
         if repo_id:
-            import shutil
-            local_dir = os.path.join("data", "models", repo_id.replace("/", "__"))
-            if os.path.isdir(local_dir):
-                shutil.rmtree(local_dir, ignore_errors=True)
-                logger.info(f"Removed custom model directory: {local_dir}")
+            paths_to_check.append(os.path.join("data", "models", repo_id.replace("/", "__")))
+            paths_to_check.append(os.path.join("heartlib", "ckpt", repo_id.replace("/", "__")))
+            paths_to_check.append(os.path.join("..", "heartlib", "ckpt", repo_id.replace("/", "__")))
+
+        for p in paths_to_check:
+            if p and os.path.isdir(p):
+                try:
+                    shutil.rmtree(p, ignore_errors=True)
+                    logger.info(f"Removed custom model directory: {p}")
+                except Exception as e:
+                    logger.warning(f"Could not remove {p}: {e}")
         return True
 
     def search_huggingface(self, query: str, pipeline_tag: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:

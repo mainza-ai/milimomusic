@@ -57,6 +57,12 @@ class SyncClient:
                 return await c.put(url, **kwargs)
         return self._run(_call())
 
+    def patch(self, url, **kwargs):
+        async def _call():
+            async with httpx.AsyncClient(transport=self.transport, base_url="http://testserver") as c:
+                return await c.patch(url, **kwargs)
+        return self._run(_call())
+
     def delete(self, url, **kwargs):
         async def _call():
             async with httpx.AsyncClient(transport=self.transport, base_url="http://testserver") as c:
@@ -254,6 +260,16 @@ def test_huggingface_search_and_custom_model(client):
     matched = next((m for m in tree if m.get("repo_id") == dummy_repo), None)
     assert matched is not None
     assert matched["name"] == "Custom Synth Music Engine"
+
+    # Test PATCH custom model category
+    patch_res = client.patch(f"/models/custom/{entry['id']}", json={"category": "image", "name": "Custom Synth Art"})
+    assert patch_res.status_code == 200
+    assert patch_res.json()["model"]["category"] == "image"
+
+    # Test selecting/activating custom model
+    sel_res = client.post("/models/select", json={"model_id": entry["id"]})
+    assert sel_res.status_code == 200
+    assert sel_res.json()["status"] == "ok"
 
     # Clean up custom model
     del_res = client.delete(f"/models/custom/{entry['id']}")

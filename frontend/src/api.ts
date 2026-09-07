@@ -580,6 +580,10 @@ export const modelsApi = {
     deleteCustomModel: async (modelId: string): Promise<{ status: string; model_id: string }> => {
         const res = await axios.delete(`${API_BASE_URL}/models/custom/${encodeURIComponent(modelId)}`);
         return res.data;
+    },
+    updateCustomModel: async (modelId: string, updates: { category?: string; name?: string }): Promise<any> => {
+        const res = await axios.patch(`${API_BASE_URL}/models/custom/${encodeURIComponent(modelId)}`, updates);
+        return res.data;
     }
 };
 
@@ -886,7 +890,7 @@ export const coverApi = {
         const res = await axios.post(`${API_BASE_URL}/generate/cover-prompt`, params);
         return res.data;
     },
-    generateCoverImage: async (params: { prompt: string; style?: string }): Promise<{ url: string; prompt: string }> => {
+    generateCoverImage: async (params: { prompt: string; style?: string; model_id?: string }): Promise<{ url: string; prompt: string }> => {
         const res = await axios.post(`${API_BASE_URL}/generate/cover-image`, params);
         return res.data;
     }

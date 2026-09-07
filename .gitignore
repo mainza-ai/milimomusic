@@ -56,7 +56,7 @@ backend/database.db
 *.db-journal
 *.db-wal
 *.db-shm
-models/
+/models/
 backend/models/
 backend/llm_config.json
 backend/llm_config.backup.json

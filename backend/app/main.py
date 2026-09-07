@@ -1213,6 +1213,21 @@ def delete_custom_model(model_id: str):
     return {"status": "deleted", "model_id": model_id}
 
 
+class CustomModelUpdateRequest(SQLModel):
+    category: Optional[str] = None
+    name: Optional[str] = None
+
+
+@app.patch("/models/custom/{model_id}")
+def update_custom_model(model_id: str, req: CustomModelUpdateRequest):
+    """Update custom model metadata (e.g. category audio/image/video)."""
+    updates = {k: v for k, v in req.model_dump().items() if v is not None}
+    updated = model_manager.update_custom_model(model_id, updates)
+    if not updated:
+        raise HTTPException(status_code=404, detail=f"Custom model '{model_id}' not found.")
+    return {"status": "success", "model": updated}
+
+
 def _snapshot_download(download_id: str) -> Optional[Dict[str, Any]]:
     rec = _model_downloads.get(download_id)
     if not rec:
@@ -1238,7 +1253,7 @@ def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files
         rec["status"] = "completed"
         rec["current_file"] = ""
         try:
-            model_manager.register_custom_model(repo_id)
+            model_manager.register_custom_model(repo_id, metadata={"local_path": os.path.abspath(local_dir)})
         except Exception as reg_err:
             logger.warning(f"Could not auto-register custom model {repo_id}: {reg_err}")
     except Exception as e:

@@ -98,6 +98,8 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     const [voiceProfiles, setVoiceProfiles] = useState<VoiceProfile[]>([]);
     const [selectedVoiceProfile, setSelectedVoiceProfile] = useState<string>('');
     const [audioModelVariants, setAudioModelVariants] = useState<ModelVariant[]>([]);
+    const [imageModelVariants, setImageModelVariants] = useState<ModelVariant[]>([]);
+    const [selectedImageModel, setSelectedImageModel] = useState<string>('');
     const [isVoiceStudioOpen, setIsVoiceStudioOpen] = useState(false);
     const [isModelsManagerOpen, setIsModelsManagerOpen] = useState(false);
     const [isInspiring, setIsInspiring] = useState(false);
@@ -120,13 +122,25 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
         }
     };
 
-    const loadAudioModels = async () => {
+    const loadModels = async () => {
         try {
             const tree = await modelsApi.getModelTree();
-            const audioVariants = tree.filter(m => (m.category || 'audio') === 'audio');
+            const audioVariants = tree.filter(m => (m.category || 'audio') === 'audio' || (m as any).is_custom);
+            const imageVariants = tree.filter(m => m.category === 'image');
             setAudioModelVariants(audioVariants);
+            setImageModelVariants(imageVariants);
+
+            const activeAudio = audioVariants.find(m => m.is_active);
+            if (activeAudio) {
+                setModelProvider(activeAudio.id);
+            }
+
+            const activeImg = imageVariants.find(m => m.is_active) || imageVariants.find(m => m.is_installed) || imageVariants[0];
+            if (activeImg) {
+                setSelectedImageModel(prev => prev || activeImg.id);
+            }
         } catch (e) {
-            console.error('Failed to load audio models in ComposerSidebar', e);
+            console.error('Failed to load models in ComposerSidebar', e);
         }
     };
 
@@ -162,7 +176,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
 
     useEffect(() => {
         loadVoiceProfiles();
-        loadAudioModels();
+        loadModels();
         loadLlmConfig();
     }, []);
 
@@ -276,7 +290,10 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                 title: title || topic || 'Studio Track',
                 tags: style
             });
-            const imgRes = await coverApi.generateCoverImage({ prompt: promptRes.prompt });
+            const imgRes = await coverApi.generateCoverImage({
+                prompt: promptRes.prompt,
+                model_id: selectedImageModel || undefined
+            });
             const fullUrl = imgRes.url.startsWith('http') ? imgRes.url : `${API_BASE_URL}${imgRes.url}`;
             setCoverImagePath(fullUrl);
             setCoverImagePrompt(promptRes.prompt);
@@ -375,7 +392,16 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
 
             <LLMSettingsModal isOpen={isSettingsOpen} currentConfig={llmConfig} onConfigUpdate={loadLlmConfig} onClose={() => setIsSettingsOpen(false)} />
             <VoiceStudioModal isOpen={isVoiceStudioOpen} onClose={() => { setIsVoiceStudioOpen(false); loadVoiceProfiles(); }} />
-            <ModelsManagerModal isOpen={isModelsManagerOpen} onClose={() => setIsModelsManagerOpen(false)} />
+            <ModelsManagerModal
+                isOpen={isModelsManagerOpen}
+                onClose={() => {
+                    setIsModelsManagerOpen(false);
+                    loadModels();
+                }}
+                onModelActivated={() => {
+                    loadModels();
+                }}
+            />
 
             <div className="flex-1 overflow-y-auto p-3.5 space-y-3">
                 <div className="rounded-2xl border border-black/[0.06] dark:border-white/[0.08] bg-black/[0.015] dark:bg-white/[0.02] overflow-hidden transition-all">
@@ -661,6 +687,33 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                         {openSections.details && (
                             <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="p-3.5 space-y-3.5 overflow-hidden">
                                 <input type="text" value={title} onChange={(e) => setTitle(e.target.value)} placeholder="Song Title" className="apple-input text-xs py-2 px-3" />
+                                {imageModelVariants.length > 0 && (
+                                    <div className="space-y-1">
+                                        <div className="flex items-center justify-between">
+                                            <label className="text-[10px] font-semibold text-slate-500 dark:text-slate-400">
+                                                Cover Art Engine (FLUX)
+                                            </label>
+                                            <button
+                                                type="button"
+                                                onClick={() => setIsModelsManagerOpen(true)}
+                                                className="text-[10px] text-teal-600 dark:text-teal-400 hover:underline font-mono"
+                                            >
+                                                Manage Models
+                                            </button>
+                                        </div>
+                                        <select
+                                            value={selectedImageModel}
+                                            onChange={(e) => setSelectedImageModel(e.target.value)}
+                                            className="apple-input py-1.5 px-2 text-[11px] font-mono w-full"
+                                        >
+                                            {imageModelVariants.map(m => (
+                                                <option key={m.id} value={m.id}>
+                                                    {m.name} {m.is_installed ? '✓ Ready' : '(Needs download)'}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    </div>
+                                )}
                                 <div className="flex items-start gap-3">
                                     <div onClick={() => fileInputRef.current?.click()} className="w-20 h-20 rounded-xl bg-black/5 dark:bg-white/5 border border-dashed border-black/15 dark:border-white/15 flex items-center justify-center cursor-pointer overflow-hidden relative group">
                                         {coverImagePath ? (

@@ -241,7 +241,7 @@ class ModelManager:
                 "license": "MiniMax Open Weights",
                 "recommended_hardware": "CPU / Windows / Linux (16GB RAM)",
                 "category": "audio",
-                "repo_id": "audio-cpp/MiniMax-Music3-GGUF",
+                "repo_id": "molbal/Minimax-Music3-GGUF",
                 "is_default": not is_apple_silicon and not hw.has_cuda
             },
             {
@@ -285,6 +285,18 @@ class ModelManager:
                 "is_default": False
             },
             {
+                "id": "flux_1_dev",
+                "name": "FLUX.1 [dev] (12B Studio Reference)",
+                "architecture": "Flow Transformer (12B Rectified Flow)",
+                "quantization": "BF16",
+                "size_gb": 12.0,
+                "license": "FLUX.1-dev Non-Commercial License",
+                "recommended_hardware": "CUDA (24GB+ VRAM) / High RAM",
+                "category": "image",
+                "repo_id": "black-forest-labs/FLUX.1-dev",
+                "is_default": False
+            },
+            {
                 "id": "flux_1_schnell_mlx",
                 "name": "FLUX.1 [schnell] (MLX 4-bit)",
                 "architecture": "Flow Transformer (12B Rectified Flow)",
@@ -310,18 +322,30 @@ class ModelManager:
             },
 
             # -------------------------------------------------------------
-            # VIDEO MODELS: MiniMax H3 & Wan2.1 (On-Demand Video Studio)
+            # VIDEO MODELS: MiniMax H3, Wan2.1, HunyuanVideo & CogVideoX
             # -------------------------------------------------------------
             {
                 "id": "minimax_h3",
-                "name": "MiniMax Hailuo 3 (Open Video Weights)",
-                "architecture": "Hailuo DiT Video Synthesis",
+                "name": "MiniMax Hailuo 3 (Official 33B Omni-Modal Video)",
+                "architecture": "Hailuo DiT Video + Audio Synthesis",
                 "quantization": "BF16 Full",
                 "size_gb": 24.0,
                 "license": "MiniMax Open Weights",
                 "recommended_hardware": "High-End GPU (24GB+ VRAM) / Cloud",
                 "category": "video",
                 "repo_id": "MiniMaxAI/MiniMax-H3",
+                "is_default": False
+            },
+            {
+                "id": "minimax_h3_gguf",
+                "name": "MiniMax Hailuo 3 (GGUF Q4 Consumer GPU)",
+                "architecture": "Hailuo DiT Video + Audio Synthesis",
+                "quantization": "GGUF Q4 Quantized",
+                "size_gb": 14.2,
+                "license": "MiniMax Open Weights",
+                "recommended_hardware": "Consumer GPU (16GB VRAM) / Apple Silicon",
+                "category": "video",
+                "repo_id": "unsloth/MiniMax-H3-GGUF",
                 "is_default": False
             },
             {
@@ -337,15 +361,39 @@ class ModelManager:
                 "is_default": True
             },
             {
-                "id": "cogvideox_2b",
-                "name": "CogVideoX-2B (Efficient Video)",
+                "id": "wan2_1_t2v_14b",
+                "name": "Wan2.1 T2V (14B Open Flagship)",
+                "architecture": "Wan DiT 14B High-Fidelity Text-to-Video",
+                "quantization": "BF16 / FP8",
+                "size_gb": 28.0,
+                "license": "Apache-2.0",
+                "recommended_hardware": "NVIDIA GPU (24GB+ VRAM) / Dual GPU",
+                "category": "video",
+                "repo_id": "Wan-AI/Wan2.1-T2V-14B",
+                "is_default": False
+            },
+            {
+                "id": "hunyuan_video",
+                "name": "Tencent HunyuanVideo (13B Open DiT)",
+                "architecture": "Hunyuan DiT 13B Video Generation",
+                "quantization": "BF16 / FP8",
+                "size_gb": 24.0,
+                "license": "Apache-2.0",
+                "recommended_hardware": "NVIDIA GPU (24GB+ VRAM)",
+                "category": "video",
+                "repo_id": "tencent/HunyuanVideo",
+                "is_default": False
+            },
+            {
+                "id": "cogvideox_5b",
+                "name": "CogVideoX-1.5-5B (High-Fidelity Video)",
                 "architecture": "3D DiT Video Synthesis",
                 "quantization": "BF16",
-                "size_gb": 4.5,
+                "size_gb": 10.0,
                 "license": "Apache-2.0",
-                "recommended_hardware": "Consumer GPU / Apple Silicon (16GB+ RAM)",
+                "recommended_hardware": "GPU (16GB+ VRAM) / Apple Silicon (32GB+ RAM)",
                 "category": "video",
-                "repo_id": "THUDM/CogVideoX-2b",
+                "repo_id": "THUDM/CogVideoX1.5-5B",
                 "is_default": False
             }
         ]
@@ -459,7 +507,7 @@ class ModelManager:
         elif hw.has_cuda:
             smallest = "Comfy-Org/MiniMax-Music-3"
         else:
-            smallest = "audio-cpp/MiniMax-Music3-GGUF"
+            smallest = "molbal/Minimax-Music3-GGUF"
 
         logger.info(f"Fresh installation detected with zero installed audio models. Smallest model recommended: {smallest}")
         return smallest

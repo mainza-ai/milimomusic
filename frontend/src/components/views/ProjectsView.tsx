@@ -16,7 +16,10 @@ import {
   FolderPlus,
   Upload,
   Image as ImageIcon,
-  X
+  X,
+  Copy,
+  Search,
+  Package
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { AppFooter } from '../ui/AppFooter';
@@ -52,7 +55,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   // Image Upload / AI Cover State
   const [isUploadingCover, setIsUploadingCover] = useState(false);
   const [isGeneratingCover, setIsGeneratingCover] = useState(false);
+  const [coverTarget, setCoverTarget] = useState<'create' | 'edit'>('create');
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // Search & Filter State
+  const [searchQuery, setSearchQuery] = useState('');
+  const [selectedTag, setSelectedTag] = useState('all');
 
   // Form State
   const [newProject, setNewProject] = useState<ProjectCreate>({
@@ -102,7 +110,11 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
       setIsUploadingCover(true);
       const res = await coverApi.uploadCoverImage(file);
       const fullUrl = res.url.startsWith('http') ? res.url : `${API_BASE_URL}${res.url}`;
-      setNewProject(prev => ({ ...prev, cover_image_path: fullUrl }));
+      if (coverTarget === 'create') {
+        setNewProject(prev => ({ ...prev, cover_image_path: fullUrl }));
+      } else {
+        setEditProjectData(prev => ({ ...prev, cover_image_path: fullUrl }));
+      }
     } catch (err) {
       console.error('Failed to upload image:', err);
     } finally {
@@ -113,22 +125,56 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   const handlePromptCover = async () => {
     try {
       setIsGeneratingCover(true);
+      const targetData = coverTarget === 'create' ? newProject : editProjectData;
       const promptRes = await coverApi.generateCoverPrompt({
-        title: newProject.name || 'Studio Project',
-        description: newProject.description,
-        tags: newProject.tags
+        title: targetData.name || 'Studio Project',
+        description: targetData.description,
+        tags: targetData.tags
       });
       const imgRes = await coverApi.generateCoverImage({ prompt: promptRes.prompt });
       const fullUrl = imgRes.url.startsWith('http') ? imgRes.url : `${API_BASE_URL}${imgRes.url}`;
-      setNewProject(prev => ({
-        ...prev,
-        cover_image_path: fullUrl,
-        image_prompt: promptRes.prompt
-      }));
+      if (coverTarget === 'create') {
+        setNewProject(prev => ({
+          ...prev,
+          cover_image_path: fullUrl,
+          image_prompt: promptRes.prompt
+        }));
+      } else {
+        setEditProjectData(prev => ({
+          ...prev,
+          cover_image_path: fullUrl,
+          image_prompt: promptRes.prompt
+        }));
+      }
     } catch (err) {
       console.error('Failed to generate cover:', err);
     } finally {
       setIsGeneratingCover(false);
+    }
+  };
+
+  const handleDuplicateProject = async (projectId: string, e?: React.MouseEvent) => {
+    e?.stopPropagation();
+    try {
+      const duplicated = await projectApi.duplicateProject(projectId);
+      setProjects(prev => [duplicated, ...prev]);
+      if (activeProject?.id === projectId) {
+        setActiveProject(duplicated);
+      }
+    } catch (err) {
+      console.error('Failed to duplicate project:', err);
+    }
+  };
+
+  const handleExportProjectPack = (projectId: string) => {
+    window.open(projectApi.exportProjectPackUrl(projectId), '_blank');
+  };
+
+  const handlePlayAll = () => {
+    if (!activeProject) return;
+    const projectJobs = allJobs.filter((j) => j.project_id === activeProject.id);
+    if (projectJobs.length > 0) {
+      onPlay(projectJobs[0]);
     }
   };
 
@@ -273,10 +319,32 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
 
           <div className="flex items-center gap-2">
             <button
+              onClick={() => handleExportProjectPack(activeProject.id)}
+              title="Download full project studio pack (multitrack stems, audio, MIDI, score, lyrics zip)"
+              aria-label="Export Project Studio Pack"
+              className="p-2 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300 text-xs font-bold transition-colors flex items-center gap-1.5 border border-teal-500/20"
+            >
+              <Package size={13} />
+              <span>Export Studio Pack</span>
+            </button>
+
+            <button
+              onClick={(e) => handleDuplicateProject(activeProject.id, e)}
+              title="Duplicate this project and its settings"
+              aria-label="Duplicate Project Folder"
+              className="p-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 text-xs font-bold transition-colors flex items-center gap-1.5"
+            >
+              <Copy size={13} />
+              <span>Duplicate</span>
+            </button>
+
+            <button
               onClick={() => {
                 setEditProjectData({
                   name: activeProject.name,
                   description: activeProject.description || '',
+                  cover_image_path: activeProject.cover_image_path || '',
+                  image_prompt: activeProject.image_prompt || '',
                   tags: activeProject.tags || '',
                   bpm: activeProject.bpm || 120,
                   key_signature: activeProject.key_signature || 'C Major',
@@ -360,6 +428,18 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
 
             {/* Quick Actions in Project */}
             <div className="flex flex-wrap items-center gap-2 w-full md:w-auto justify-end">
+              {projectJobs.length > 0 && (
+                <button
+                  onClick={handlePlayAll}
+                  title="Play all tracks in this project starting from the first session"
+                  aria-label="Play All Tracks"
+                  className="px-3.5 py-2.5 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-200 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition-colors border border-black/[0.06] dark:border-white/10"
+                >
+                  <Play size={14} className="text-teal-500 fill-teal-500" />
+                  <span>Play All</span>
+                </button>
+              )}
+
               <button
                 onClick={() => onGenerateInProject(activeProject)}
                 title="Open Composer pre-configured with this Project's BPM and Key Signature"
@@ -616,6 +696,53 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
               <form onSubmit={handleUpdateProject} className="space-y-3">
                 <div>
                   <label className="text-[11px] font-bold uppercase text-slate-400 block mb-1">
+                    Project Artwork
+                  </label>
+                  <div className="flex items-center gap-3">
+                    <div className="w-12 h-12 rounded-xl overflow-hidden bg-slate-900 border border-black/10 dark:border-white/10 flex-shrink-0 relative">
+                      {editProjectData.cover_image_path ? (
+                        <img
+                          src={editProjectData.cover_image_path.startsWith('http') ? editProjectData.cover_image_path : `${API_BASE_URL}${editProjectData.cover_image_path}`}
+                          alt="Cover"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center bg-teal-500/20 text-teal-400">
+                          <ImageIcon size={18} />
+                        </div>
+                      )}
+                    </div>
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCoverTarget('edit');
+                          fileInputRef.current?.click();
+                        }}
+                        disabled={isUploadingCover}
+                        className="py-1.5 px-3 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center space-x-1 border border-black/10 dark:border-white/10"
+                      >
+                        <Upload size={12} />
+                        <span>{isUploadingCover && coverTarget === 'edit' ? 'Uploading...' : 'Upload'}</span>
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setCoverTarget('edit');
+                          handlePromptCover();
+                        }}
+                        disabled={isGeneratingCover}
+                        className="py-1.5 px-3 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-xs font-semibold text-teal-600 dark:text-teal-400 flex items-center space-x-1 border border-teal-500/20"
+                      >
+                        <Sparkles size={12} />
+                        <span>{isGeneratingCover && coverTarget === 'edit' ? 'Generating...' : 'AI Cover'}</span>
+                      </button>
+                    </div>
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-[11px] font-bold uppercase text-slate-400 block mb-1">
                     Project Name
                   </label>
                   <input
@@ -760,6 +887,60 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
         </button>
       </div>
 
+      {/* Search & Tag Filter Bar */}
+      {projects.length > 0 && (
+        <div className="flex flex-col sm:flex-row items-stretch sm:items-center justify-between gap-3">
+          <div className="relative flex-1 max-w-md">
+            <Search className="absolute left-3.5 top-1/2 -translate-y-1/2 text-slate-400" size={15} />
+            <input
+              type="text"
+              placeholder="Search projects by name, tags, or description..."
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              className="w-full pl-10 pr-8 py-2 rounded-xl bg-black/[0.03] dark:bg-white/5 border border-black/[0.08] dark:border-white/10 text-xs text-slate-900 dark:text-white placeholder:text-slate-400 focus:outline-none focus:border-teal-500 transition-colors"
+            />
+            {searchQuery && (
+              <button
+                onClick={() => setSearchQuery('')}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-white"
+              >
+                <X size={13} />
+              </button>
+            )}
+          </div>
+
+          {Array.from(new Set(projects.flatMap(p => (p.tags ? p.tags.split(',').map(t => t.trim()) : [])).filter(Boolean))).length > 0 && (
+            <div className="flex items-center gap-1.5 overflow-x-auto pb-1 sm:pb-0 scrollbar-none">
+              <button
+                onClick={() => setSelectedTag('all')}
+                className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                  selectedTag === 'all'
+                    ? 'bg-teal-500 text-slate-950 shadow-sm'
+                    : 'bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                }`}
+              >
+                All
+              </button>
+              {Array.from(new Set(projects.flatMap(p => (p.tags ? p.tags.split(',').map(t => t.trim()) : [])).filter(Boolean)))
+                .slice(0, 6)
+                .map((tag) => (
+                  <button
+                    key={tag}
+                    onClick={() => setSelectedTag(selectedTag === tag ? 'all' : tag)}
+                    className={`px-3 py-1.5 rounded-xl text-xs font-semibold whitespace-nowrap transition-all ${
+                      selectedTag === tag
+                        ? 'bg-teal-500 text-slate-950 shadow-sm'
+                        : 'bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                    }`}
+                  >
+                    #{tag}
+                  </button>
+                ))}
+            </div>
+          )}
+        </div>
+      )}
+
       {/* Projects Grid */}
       {isLoading ? (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
@@ -789,71 +970,141 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           </button>
         </GlassCard>
       ) : (
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-          {projects.map((project) => {
-            const colorStyle = getColorClasses(project.color);
-            const projectJobs = allJobs.filter((j) => j.project_id === project.id);
-            const totalDuration = projectJobs.reduce((acc, j) => acc + (j.duration_ms || 0) / 1000, 0);
+        (() => {
+          const q = searchQuery.toLowerCase().trim();
+          const filteredProjects = projects.filter((p) => {
+            const matchesSearch =
+              !q ||
+              (p.name || '').toLowerCase().includes(q) ||
+              (p.description || '').toLowerCase().includes(q) ||
+              (p.tags || '').toLowerCase().includes(q);
+            const matchesTag =
+              selectedTag === 'all' ||
+              (p.tags && p.tags.toLowerCase().includes(selectedTag.toLowerCase()));
+            return matchesSearch && matchesTag;
+          });
 
+          if (filteredProjects.length === 0) {
             return (
-              <GlassCard
-                key={project.id}
-                onClick={() => setActiveProject(project)}
-                className="p-5 space-y-4 hover:border-teal-500/40 cursor-pointer transition-all hover:scale-[1.01] group flex flex-col justify-between overflow-hidden"
-              >
-                <div className="space-y-3">
-                  <div className="flex items-start gap-3">
-                    {/* Project Artwork Thumbnail */}
-                    <div className="w-16 h-16 rounded-2xl overflow-hidden bg-slate-900 border border-black/10 dark:border-white/10 flex-shrink-0 shadow-md relative group-hover:scale-105 transition-transform">
-                      {project.cover_image_path ? (
-                        <img
-                          src={project.cover_image_path.startsWith('http') ? project.cover_image_path : `${API_BASE_URL}${project.cover_image_path}`}
-                          alt={project.name}
-                          className="w-full h-full object-cover"
-                          onError={(e) => {
-                            (e.target as HTMLElement).style.display = 'none';
-                          }}
-                        />
-                      ) : (
-                        <div className={`w-full h-full bg-gradient-to-tr ${colorStyle.gradient} flex items-center justify-center`}>
-                          <FolderKanban size={24} className="text-white drop-shadow" />
-                        </div>
-                      )}
-                    </div>
-
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-center gap-1.5 flex-wrap justify-end mb-1">
-                        <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${colorStyle.badge}`}>
-                          {project.bpm || 120} BPM
-                        </span>
-                        <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/5 text-slate-600 dark:text-slate-400 border border-black/10 dark:border-white/10">
-                          {project.key_signature || 'C Major'}
-                        </span>
-                      </div>
-                      <h3 className="text-base font-bold text-slate-900 dark:text-white group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors truncate">
-                        {project.name}
-                      </h3>
-                      <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">
-                        {project.description || 'Studio sessions container'}
-                      </p>
-                    </div>
-                  </div>
-                </div>
-
-                <div className="pt-3 border-t border-black/[0.06] dark:border-white/10 flex items-center justify-between text-xs font-mono text-slate-500 dark:text-slate-400">
-                  <span className="flex items-center gap-1">
-                    <Music size={12} className="text-teal-500" />
-                    {projectJobs.length} {projectJobs.length === 1 ? 'song' : 'songs'}
-                  </span>
-                  <span className="flex items-center gap-1">
-                    <Clock size={12} />
-                    {formatDuration(totalDuration)}
-                  </span>
-                </div>
+              <GlassCard className="p-8 text-center space-y-3">
+                <p className="text-sm font-semibold text-slate-500">
+                  No projects matching "{searchQuery}" {selectedTag !== 'all' ? `with tag #${selectedTag}` : ''}
+                </p>
+                <button
+                  onClick={() => {
+                    setSearchQuery('');
+                    setSelectedTag('all');
+                  }}
+                  className="px-4 py-1.5 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400 text-xs font-bold transition-colors"
+                >
+                  Reset filters
+                </button>
               </GlassCard>
             );
-          })}
-        </div>
+          }
+
+          return (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+              {filteredProjects.map((project) => {
+                const colorStyle = getColorClasses(project.color);
+                const projectJobs = allJobs.filter((j) => j.project_id === project.id);
+                const totalDuration = projectJobs.reduce((acc, j) => acc + (j.duration_ms || 0) / 1000, 0);
+
+                return (
+                  <GlassCard
+                    key={project.id}
+                    onClick={() => setActiveProject(project)}
+                    className="p-5 space-y-4 hover:border-teal-500/40 cursor-pointer transition-all hover:scale-[1.01] group flex flex-col justify-between overflow-hidden"
+                  >
+                    <div className="space-y-3">
+                      <div className="flex items-start gap-3">
+                        {/* Project Artwork Thumbnail */}
+                        <div className="w-16 h-16 rounded-2xl overflow-hidden bg-slate-900 border border-black/10 dark:border-white/10 flex-shrink-0 shadow-md relative group-hover:scale-105 transition-transform">
+                          {project.cover_image_path ? (
+                            <img
+                              src={project.cover_image_path.startsWith('http') ? project.cover_image_path : `${API_BASE_URL}${project.cover_image_path}`}
+                              alt={project.name}
+                              className="w-full h-full object-cover"
+                              onError={(e) => {
+                                (e.target as HTMLElement).style.display = 'none';
+                              }}
+                            />
+                          ) : (
+                            <div className={`w-full h-full bg-gradient-to-tr ${colorStyle.gradient} flex items-center justify-center`}>
+                              <FolderKanban size={24} className="text-white drop-shadow" />
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="min-w-0 flex-1">
+                          <div className="flex items-center gap-1.5 flex-wrap justify-end mb-1">
+                            <span className={`text-[10px] font-mono font-bold px-2 py-0.5 rounded-full border ${colorStyle.badge}`}>
+                              {project.bpm || 120} BPM
+                            </span>
+                            <span className="text-[10px] font-mono font-bold px-2 py-0.5 rounded-full bg-black/5 dark:bg-white/5 text-slate-600 dark:text-slate-400 border border-black/10 dark:border-white/10">
+                              {project.key_signature || 'C Major'}
+                            </span>
+                          </div>
+                          <h3 className="text-base font-bold text-slate-900 dark:text-white group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors truncate">
+                            {project.name}
+                          </h3>
+                          <p className="text-xs text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5">
+                            {project.description || 'Studio sessions container'}
+                          </p>
+                          {project.tags && (
+                            <div className="flex flex-wrap gap-1 mt-2">
+                              {project.tags.split(',').slice(0, 3).map((t, idx) => (
+                                <span
+                                  key={idx}
+                                  className="text-[9px] font-mono text-slate-500 dark:text-slate-400 bg-black/[0.03] dark:bg-white/[0.04] px-1.5 py-0.5 rounded"
+                                >
+                                  #{t.trim()}
+                                </span>
+                              ))}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    </div>
+
+                    <div className="pt-3 border-t border-black/[0.06] dark:border-white/10 flex items-center justify-between text-xs font-mono text-slate-500 dark:text-slate-400">
+                      <div className="flex items-center gap-3">
+                        <span className="flex items-center gap-1">
+                          <Music size={12} className="text-teal-500" />
+                          {projectJobs.length} {projectJobs.length === 1 ? 'song' : 'songs'}
+                        </span>
+                        <span className="flex items-center gap-1">
+                          <Clock size={12} />
+                          {formatDuration(totalDuration)}
+                        </span>
+                      </div>
+
+                      <div className="flex items-center gap-1 opacity-70 group-hover:opacity-100 transition-opacity">
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleExportProjectPack(project.id);
+                          }}
+                          title="Export Project Studio Pack (.zip)"
+                          className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-teal-500 transition-colors"
+                        >
+                          <Package size={13} />
+                        </button>
+                        <button
+                          onClick={(e) => handleDuplicateProject(project.id, e)}
+                          title="Duplicate Project"
+                          className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-teal-500 transition-colors"
+                        >
+                          <Copy size={13} />
+                        </button>
+                      </div>
+                    </div>
+                  </GlassCard>
+                );
+              })}
+            </div>
+          );
+        })()
       )}
 
       {/* Hidden File Input for Image Upload */}
@@ -931,58 +1182,136 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
-                      onClick={() => fileInputRef.current?.click()}
+                      onClick={() => {
+                        setCoverTarget('create');
+                        fileInputRef.current?.click();
+                      }}
                       disabled={isUploadingCover}
                       className="py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-semibold text-slate-300 hover:text-white flex items-center justify-center space-x-1.5 transition-colors border border-white/5"
                     >
                       <Upload size={14} />
-                      <span>Upload</span>
+                      <span>{isUploadingCover && coverTarget === 'create' ? 'Uploading...' : 'Upload'}</span>
                     </button>
 
                     <button
                       type="button"
-                      onClick={handlePromptCover}
+                      onClick={() => {
+                        setCoverTarget('create');
+                        handlePromptCover();
+                      }}
                       disabled={isGeneratingCover}
                       className="py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-semibold text-teal-300 hover:text-teal-200 flex items-center justify-center space-x-1.5 transition-colors border border-white/5"
                     >
                       <Sparkles size={14} />
-                      <span>Prompt</span>
+                      <span>{isGeneratingCover && coverTarget === 'create' ? 'Generating...' : 'Prompt'}</span>
                     </button>
                   </div>
                 </div>
 
-                {/* Right Column: Name & Description with 0/250 */}
-                <div className="space-y-4">
+                {/* Right Column: Project Metadata */}
+                <div className="space-y-3.5">
                   <div>
-                    <label className="text-xs font-bold text-slate-300 block mb-1.5">
-                      Name
+                    <label className="text-xs font-bold text-slate-300 block mb-1">
+                      Project Name
                     </label>
                     <input
                       type="text"
                       required
-                      placeholder="Project name"
+                      placeholder="e.g. Neon Horizon EP"
                       value={newProject.name}
                       onChange={(e) => setNewProject({ ...newProject, name: e.target.value })}
-                      className="w-full bg-[#222533] border border-white/10 rounded-xl px-3.5 py-2.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-teal-500 transition-colors"
+                      className="w-full bg-[#222533] border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-teal-500 transition-colors"
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-1">
+                      Description
+                    </label>
+                    <div className="relative">
+                      <textarea
+                        rows={2}
+                        maxLength={250}
+                        placeholder="Add a description for your project..."
+                        value={newProject.description}
+                        onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
+                        className="w-full bg-[#222533] border border-white/10 rounded-xl p-2.5 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-teal-500 transition-colors resize-none pb-5"
+                      />
+                      <span className="absolute bottom-1.5 right-2.5 text-[9px] font-mono text-slate-500 pointer-events-none">
+                        {(newProject.description || '').length}/250
+                      </span>
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-3">
+                    <div>
+                      <label className="text-xs font-bold text-slate-300 block mb-1">
+                        Tempo (BPM)
+                      </label>
+                      <input
+                        type="number"
+                        min={40}
+                        max={240}
+                        value={newProject.bpm || 120}
+                        onChange={(e) => setNewProject({ ...newProject, bpm: parseInt(e.target.value) || 120 })}
+                        className="w-full bg-[#222533] border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-teal-500 transition-colors"
+                      />
+                    </div>
+
+                    <div>
+                      <label className="text-xs font-bold text-slate-300 block mb-1">
+                        Musical Key
+                      </label>
+                      <input
+                        type="text"
+                        placeholder="e.g. C Major, A Minor"
+                        value={newProject.key_signature || 'C Major'}
+                        onChange={(e) => setNewProject({ ...newProject, key_signature: e.target.value })}
+                        className="w-full bg-[#222533] border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-teal-500 transition-colors"
+                      />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-bold text-slate-300 block mb-1">
+                      Default Style / Tags
+                    </label>
+                    <input
+                      type="text"
+                      placeholder="e.g. Pop, Synthwave, Electronic"
+                      value={newProject.tags}
+                      onChange={(e) => setNewProject({ ...newProject, tags: e.target.value })}
+                      className="w-full bg-[#222533] border border-white/10 rounded-xl px-3 py-2 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-teal-500 transition-colors"
                     />
                   </div>
 
                   <div>
                     <label className="text-xs font-bold text-slate-300 block mb-1.5">
-                      Description
+                      Accent Color
                     </label>
-                    <div className="relative">
-                      <textarea
-                        rows={5}
-                        maxLength={250}
-                        placeholder="Add a description for your project..."
-                        value={newProject.description}
-                        onChange={(e) => setNewProject({ ...newProject, description: e.target.value })}
-                        className="w-full bg-[#222533] border border-white/10 rounded-xl p-3 text-xs text-white placeholder:text-slate-500 focus:outline-none focus:border-teal-500 transition-colors resize-none pb-7"
-                      />
-                      <span className="absolute bottom-2 right-3 text-[10px] font-mono text-slate-500 pointer-events-none">
-                        {(newProject.description || '').length}/250
-                      </span>
+                    <div className="flex gap-2.5">
+                      {['teal', 'cyan', 'amber', 'emerald', 'sky'].map((c) => (
+                        <button
+                          key={c}
+                          type="button"
+                          onClick={() => setNewProject({ ...newProject, color: c })}
+                          className={`w-6 h-6 rounded-full border-2 transition-transform ${
+                            c === 'teal'
+                              ? 'bg-teal-500'
+                              : c === 'cyan'
+                              ? 'bg-cyan-500'
+                              : c === 'amber'
+                              ? 'bg-amber-500'
+                              : c === 'emerald'
+                              ? 'bg-emerald-500'
+                              : 'bg-sky-500'
+                          } ${
+                            newProject.color === c
+                              ? 'border-white scale-110 shadow-md ring-2 ring-white/20'
+                              : 'border-transparent opacity-60 hover:opacity-100'
+                          }`}
+                        />
+                      ))}
                     </div>
                   </div>
 
@@ -992,7 +1321,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                       disabled={!newProject.name.trim()}
                       className="px-6 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 disabled:opacity-50 text-slate-950 font-bold text-xs shadow-md transition-all active:scale-95"
                     >
-                      Create
+                      Create Project
                     </button>
                   </div>
                 </div>

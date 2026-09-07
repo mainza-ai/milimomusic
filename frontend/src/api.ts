@@ -824,6 +824,13 @@ export const projectApi = {
     deleteProject: async (id: string): Promise<void> => {
         await axios.delete(`${API_BASE_URL}/projects/${id}`);
     },
+    duplicateProject: async (id: string): Promise<Project> => {
+        const res = await axios.post(`${API_BASE_URL}/projects/${id}/duplicate`);
+        return res.data;
+    },
+    exportProjectPackUrl: (id: string): string => {
+        return `${API_BASE_URL}/projects/${id}/export`;
+    },
     addTrackToProject: async (projectId: string, jobId: string): Promise<void> => {
         await axios.post(`${API_BASE_URL}/projects/${projectId}/tracks`, { job_id: jobId });
     },

@@ -1272,6 +1272,25 @@ Updated deployment documentation and GitHub repository metadata:
      - Host gateway routing (`host.docker.internal`) for connecting host machine LLMs (Ollama, LM Studio).
    - Created `wiki/entities/docker-deployment.md` documenting multi-stage builds, single-process web serving, and container architecture.
    - Updated `wiki/index.md` and `README.md` documentation tables.
-
-
+## [2026-09-07] create | Studio Projects Subsystem & Multi-Track Pack Export
+Completed thorough production audit and upgrade of the Studio Projects subsystem across backend, frontend, export packaging, and automated test suite:
+1. Backend Projects API Enhancements (`backend/app/main.py`):
+   - Added `POST /projects/{project_id}/duplicate`: creates an isolated clone of project configurations (preserving BPM, Key, Style Tags, Accent Color, Description, and Artwork) with a `(Copy)` suffix.
+   - Added `GET /projects/{project_id}/export`: packages and streams a production-grade multi-track **Project Studio Pack** (.zip) containing structured subfolders per track (`tracks/{idx:02d}_{clean_title}/`), master audio, isolated stems (`stems/{vocals,drums,bass,other}.wav`), score MIDI, MusicXML notation, note events (`notes.json`), timed lyrics (`lyrics.txt`), and root `project_metadata.json`.
+   - Updated `get_project` and `list_projects` to dynamically compute `stems_count`, `midi_count`, `track_count`, and `total_duration_s`.
+   - Robust error handling for `add_track_to_project` with safe UUID validation (400 on malformed UUIDs, 404 on non-existent tracks) and timestamp bumping.
+2. Frontend Studio Experience (`ProjectsView.tsx`, `TrackDetailView.tsx`, `SongsView.tsx`, `api.ts`):
+   - Expanded Create Project Modal to accept BPM (40-240), Musical Key Signature, Default Style Tags, and Accent Color palette picker alongside artwork upload/AI prompt.
+   - Added real-time project search bar and tag filter pills to top-level projects folder browser.
+   - Added "Play All" continuous session playback and "Export Studio Pack" (.zip) download buttons to the Project Header Banner.
+   - Integrated quick duplicate and export action triggers directly onto top-level project cards.
+   - Integrated project artwork upload and AI prompt generation in Edit Project Modal.
+   - Added Project Folder affiliation chip and interactive "Assign to Studio Project" modal in `TrackDetailView.tsx`.
+   - Added project indicator pills to table and grid views in `SongsView.tsx`.
+3. Automated Tests & Quality Assurance (`backend/tests/test_production_v2.py`):
+   - Added comprehensive test suite: `test_project_crud_and_validation`, `test_project_tracks_association_and_stats`, `test_project_duplicate_lifecycle`, and `test_project_studio_pack_export_zip`.
+   - Verified 100% pass rate (22/22 production tests, 195/195 all backend tests) and clean TypeScript frontend build.
+4. Technical Wiki Documentation:
+   - Created `wiki/entities/projects.md` detailing architecture, REST API, data models, Studio Pack zip schema, and testing guarantees.
+   - Updated `wiki/index.md` linking to the new entity page.
 

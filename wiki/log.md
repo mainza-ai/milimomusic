@@ -1258,10 +1258,20 @@ Completed comprehensive production audit and overhaul of Voice Studio & Singing 
    - `POST /voice/profiles` accepts both JSON and `multipart/form-data` with dataset upload.
    - Updated `TrackDetailView.tsx` and `frontend/src/api.ts` to transmit `pitch_shift`, `dry_wet`, and `formant_preserve`.
    - Enhanced `VoiceStudioModal.tsx` with audio preview play/pause player, F0 frequency chips, and timbre badges.
-4. Verification:
-   - Added 4 new end-to-end tests in `backend/tests/test_production_v2.py`.
-   - 191/191 total backend tests passing.
-   - Frontend built cleanly with zero TypeScript/Vite errors.
+## [2026-09-07] ingest | Docker Deployment Instructions & GitHub Topics Synchronization
+Updated deployment documentation and GitHub repository metadata:
+1. GitHub Repository Metadata:
+   - Updated GitHub repository description to accurately reflect current production architecture: "Open-source AI music generation, neural transcription, multitrack DAW, stem separation, and music video studio powered by MiniMax Music 3."
+   - Synchronized all 20 GitHub repository topics/tags: `ai`, `music`, `ai-music`, `audio-production`, `daw`, `digital-audio-workstation`, `fastapi`, `midi`, `minimax`, `minimax-music`, `music-generation`, `music-transcription`, `music-video`, `musicxml`, `open-source`, `pytorch`, `react`, `rvc`, `singing-voice-conversion`, `stem-separation`.
+2. Docker Deployment Documentation:
+   - Added complete Docker deployment instructions to `README.md` under Quickstart:
+     - 1-click automated startup via `docker-start.sh` with GPU/CPU auto-detection and health check polling.
+     - Manual compose commands for NVIDIA GPU (`docker compose up -d --build`) and CPU fallback (`docker-compose.cpu.yml`).
+     - Port 8000 single-process serving combining React 19 SPA and FastAPI backend.
+     - Volume persistence mapping for database, audio stems, and Hugging Face model cache.
+     - Host gateway routing (`host.docker.internal`) for connecting host machine LLMs (Ollama, LM Studio).
+   - Created `wiki/entities/docker-deployment.md` documenting multi-stage builds, single-process web serving, and container architecture.
+   - Updated `wiki/index.md` and `README.md` documentation tables.
 
 
 

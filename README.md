@@ -210,12 +210,61 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 
 ## 🚀 Quickstart
 
-### Prerequisites
+### 🐳 Option 1: Turnkey Docker Deployment (Recommended for Production & Cloud)
+
+Milimo Music includes a production multi-stage [`Dockerfile`](Dockerfile) and unified [`docker-compose.yml`](docker-compose.yml) that packages the Python 3.11 backend, DSP audio binaries (`ffmpeg`, `libsndfile1`), and the compiled React 19 SPA into a single unified container running on port `8000`.
+
+#### A. 1-Click Automated Startup (NVIDIA GPU or CPU Auto-Detection)
+```bash
+git clone --recurse-submodules https://github.com/mainza-ai/milimomusic.git
+cd milimomusic
+
+chmod +x docker-start.sh
+./docker-start.sh
+```
+> The launcher script automatically detects NVIDIA Container Toolkit support and selects the GPU profile; otherwise, it seamlessly falls back to the CPU profile, launches the container in the background, and waits for the backend health check to pass.
+
+#### B. Manual Docker Compose
+
+**For NVIDIA GPU Acceleration (Linux / WSL2):**
+```bash
+docker compose up -d --build
+```
+
+**For CPU / Apple Silicon Docker Desktop / Standard Runners:**
+```bash
+docker compose -f docker-compose.cpu.yml up -d --build
+```
+
+#### Access & Container Operations
+- **Studio DAW & Web App**: Open [**http://localhost:8000**](http://localhost:8000) in your browser (serves the complete DAW UI and REST API).
+- **Interactive OpenAPI Docs**: [http://localhost:8000/docs](http://localhost:8000/docs).
+- **Health Check**: `curl -f http://localhost:8000/health`
+- **View Live Container Logs**: `docker compose logs -f` (or `docker compose -f docker-compose.cpu.yml logs -f`)
+- **Stop Application**: `docker compose down`
+
+#### Connecting Host Machine LLMs (Ollama / LM Studio)
+The container includes `host.docker.internal:host-gateway` routing. When configuring LLM providers in the Milimo Music Settings modal:
+- **Ollama**: Use base URL `http://host.docker.internal:11434`
+- **LM Studio**: Use base URL `http://host.docker.internal:1234/v1`
+- **OMLX Server**: Use base URL `http://host.docker.internal:8787/v1`
+
+#### Persistent Volume Mapping
+All generated audio, stems, database records, and downloaded model weights are preserved across container restarts:
+- `milimo-data`: SQLite database (`database.db`), voice profiles, and custom models registry.
+- `milimo-audio`: Rendered master audio, separated stems, converted vocals, and cover images.
+- `milimo-hf-cache`: Hugging Face model weight cache (`~/.cache/huggingface`).
+
+---
+
+### 💻 Option 2: Local Native Setup (Recommended for Apple Silicon M1–M4 Native MLX)
+
+#### Prerequisites
 - **Python 3.10+** (Recommended: Python 3.12 via Conda)
 - **Node.js ≥ 20.19** & npm (Vite 7 requirement)
 - **Hardware**: macOS with Apple Silicon (M1/M2/M3/M4) or Linux/Windows with CUDA GPU
 
-### 1. Clone Repository & Setup Conda
+#### 1. Clone Repository & Setup Conda
 
 ```bash
 git clone --recurse-submodules https://github.com/mainza-ai/milimomusic.git
@@ -225,7 +274,7 @@ conda create -n milimomusic python=3.12 -y
 conda activate milimomusic
 ```
 
-### 2. Backend Initialization
+#### 2. Backend Initialization
 
 ```bash
 cd backend
@@ -242,7 +291,7 @@ pip install mlx "mlx-audio @ git+https://github.com/Blaizzy/mlx-audio.git@784b29
 ./scripts/start-backend.sh
 ```
 
-### 3. Frontend Initialization
+#### 3. Frontend Initialization
 
 In a separate terminal window:
 
@@ -311,6 +360,7 @@ Milimo Music maintains a comprehensive, LLM-curated **Technical Encyclopedia and
 | 🎼 [**MiniMax Music 3 Engine (`wiki/entities/minimax-music3.md`)**](wiki/entities/minimax-music3.md) | Sampling parameters, structured captions, and MLX/DiT hooks |
 | 🎙️ [**Voice Training Studio (`wiki/entities/voice-service.md`)**](wiki/entities/voice-service.md) | Offline singing voice conversion (SVC) and acoustic formant chains |
 | 🤖 [**AI Co-Writer Engine (`wiki/entities/ai-cowriter.md`)**](wiki/entities/ai-cowriter.md) | Multi-agent lyric coordination graph (Lyricist, StructureGuard) |
+| 🐳 [**Docker Deployment (`wiki/entities/docker-deployment.md`)**](wiki/entities/docker-deployment.md) | Turnkey multi-stage container build, GPU/CPU compose profiles, and volume persistence |
 | 📋 [**Operations & Log (`wiki/log.md`)**](wiki/log.md) | Chronological append-only record of every architectural evolution |
 
 ### Additional Media & Specifications

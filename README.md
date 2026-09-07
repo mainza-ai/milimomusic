@@ -208,6 +208,37 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 
 ---
 
+## 🖥️ System Requirements
+
+Milimo Music is a high-performance neural workstation designed to scale from local developer machines and workstations to enterprise GPU cloud instances. Depending on your operational requirements (real-time neural generation, 6-stem separation, video rendering, or pure DAW editing), review the hardware tiers below:
+
+### Hardware Specifications
+
+| Component | Minimum (DAW & Basic AI) | Recommended (Full Neural Production) | Cloud / Studio Ultra |
+|:---|:---|:---|:---|
+| **Operating System** | macOS 13.0+ (Ventura/Sonoma/Sequoia)<br>Ubuntu 22.04+ LTS / Debian 12<br>Windows 11 (WSL2 / Docker Desktop) | macOS 14.0+ (Sonoma/Sequoia)<br>Ubuntu 24.04 LTS (NVIDIA Driver 535+) | Linux Enterprise (Ubuntu / Rocky / RHEL)<br>with NVIDIA Container Toolkit |
+| **Processor (CPU)** | 4 Cores (Apple M1 or x86_64 @ 2.5 GHz+) | 8+ Cores (Apple M2/M3/M4 Pro or Ryzen 7 / i7) | 16+ Cores (AMD EPYC / Intel Xeon) |
+| **System Memory (RAM)** | **16 GB Unified / RAM** *(Required for BS-Roformer)* | **32 GB Unified / RAM** *(MiniMax Music 3 + DAW)* | **64 GB – 128 GB+ Unified / RAM** |
+| **Neural Acceleration** | **Apple Silicon:** M1/M2/M3 (Unified Memory)<br>**NVIDIA GPU:** 8 GB VRAM (RTX 3060/4060, T4) | **Apple Silicon:** M2/M3/M4 Pro/Max (32GB+ Unified)<br>**NVIDIA GPU:** 16 GB+ VRAM (RTX 4080/4090, A4000) | **NVIDIA GPU:** 24 GB – 80 GB VRAM<br>(RTX 3090/4090, A5000, A100, H100, L4) |
+| **Storage (NVMe SSD)** | **20 GB free space** | **60 GB free NVMe SSD** *(Model weights cache)* | **200 GB+ NVMe SSD** *(Full multi-modal library)* |
+| **System Tooling** | Docker 24.0+ & Docker Compose v2<br>*(or Python 3.10–3.12, Node.js 18+, FFmpeg 6.0+)* | Docker 26.0+, NVIDIA Container Toolkit,<br>FFmpeg 6.1+ with libsndfile1 & FluidSynth | Docker 26.0+, Kubernetes / Compose v2,<br>High-speed local NVMe scratch volume |
+
+### Neural Engine & Feature Acceleration Matrix
+
+| Studio Engine / Feature | Apple Silicon (MLX / MPS) | NVIDIA GPU (CUDA) | CPU / Fallback Mode |
+|:---|:---:|:---:|:---:|
+| **MiniMax Music 3 Audio Generation** | ⚡ **Native MLX (Fastest)** | 🔄 **PyTorch / Container** | ⚠️ *Procedural Synthesizer Preview* |
+| **BS-Roformer 6-Stem Source Separation** | ⚡ **Native MPS Accelerated** | ⚡ **Native CUDA Accelerated** | ⏱️ *Functional (CPU processing)* |
+| **MuScriptor Neural MIDI & Sheet Music** | ⚡ **Accelerated** | ⚡ **Accelerated** | ⚡ **Real-time CPU execution** |
+| **TorchAudio MMS_FA Forced Lyric Sync** | ⚡ **Accelerated** | ⚡ **Accelerated** | ⚡ **Real-time CPU execution** |
+| **Cover Art Studio (FLUX.2 / SDXL Turbo)** | ⚡ **Native MPS fp16** | ⚡ **Native CUDA fp16** | ⚠️ *Procedural Vector / Canvas Art* |
+| **AI Music Video Studio & Lip-Sync** | ⚡ **Hardware Video Tooling** | ⚡ **NVENC & CUDA Accelerated** | ⏱️ *Standard FFmpeg Processing* |
+| **6-Mode DAW, Timeline & Matchering DSP** | ⚡ **Real-time (Web Audio)** | ⚡ **Real-time (Web Audio)** | ⚡ **Real-time (Web Audio)** |
+
+> 💡 **Apple Silicon Advantage**: On Apple M-series Macs, Milimo Music leverages unified memory architecture via Apple MLX (`mlx-community/MiniMax-Music3-bf16`), enabling true 44.1kHz stereo full-track neural generation without requiring a discrete server GPU.
+
+---
+
 ## 🚀 Quickstart
 
 ### 🐳 Option 1: Turnkey Docker Deployment (Recommended for Production & Cloud)

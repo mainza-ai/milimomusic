@@ -1294,3 +1294,19 @@ Completed thorough production audit and upgrade of the Studio Projects subsystem
    - Created `wiki/entities/projects.md` detailing architecture, REST API, data models, Studio Pack zip schema, and testing guarantees.
    - Updated `wiki/index.md` linking to the new entity page.
 
+## [2026-09-07] lint | Runtime Environment & Container Requirements Synchronization
+Synchronized runtime environments, Docker builds, persistent volumes, and system requirements:
+1. Python Runtime Dependencies (`backend/requirements.txt`):
+   - Conducted full AST inspection of all imports across `backend/app/`.
+   - Explicitly added all runtime dependencies previously omitted from `requirements.txt`: `scipy>=1.11.0`, `librosa>=0.10.0`, `demucs>=4.0.0`, `pillow>=10.0.0`, `opencv-python-headless>=4.8.0`, `diffusers>=0.30.0`, `transformers>=4.40.0`, and bumped `huggingface_hub>=0.24.0`.
+2. Multi-Stage Docker Container & Volume Architecture:
+   - Updated `Dockerfile` with system dependencies `fluidsynth` (soundfont MIDI synthesis), `libgl1`, and `libglib2.0-0` (OpenCV headless video frame processing).
+   - Added persistent `/app/generated_midi` directory to `Dockerfile`.
+   - Updated `docker-compose.yml` and `docker-compose.cpu.yml` with `milimo-midi:/app/generated_midi` volume mappings.
+   - Updated `wiki/entities/docker-deployment.md` documentation to reflect the 4-volume persistent state architecture.
+3. System Requirements & Hardware Acceleration Matrix:
+   - Added comprehensive `## 🖥️ System Requirements` section to `README.md` right before Quickstart.
+   - Defined hardware specification tiers (Minimum 16GB RAM for BS-Roformer, Recommended 32GB RAM for MiniMax Music 3 MLX, Cloud/Studio Ultra 64-128GB RAM).
+   - Included feature acceleration matrix detailing Apple Silicon MLX/MPS vs NVIDIA CUDA vs CPU Fallback behavior across all studio engines.
+
+

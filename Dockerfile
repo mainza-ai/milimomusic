@@ -20,6 +20,9 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y --no-install-recommends \
     ffmpeg \
     libsndfile1 \
+    fluidsynth \
+    libgl1 \
+    libglib2.0-0 \
     git \
     curl \
     build-essential \
@@ -39,7 +42,7 @@ COPY heartlib /app/heartlib
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
 # Persistent data directories
-RUN mkdir -p /app/data /app/data/covers /app/generated_audio /app/models
+RUN mkdir -p /app/data /app/data/covers /app/generated_audio /app/generated_midi /app/models
 
 EXPOSE 8000
 

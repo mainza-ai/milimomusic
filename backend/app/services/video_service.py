@@ -64,9 +64,10 @@ STYLE_PALETTES = {
 }
 
 MODEL_MAX_DURATIONS: Dict[str, float] = {
+    "hailuo_h3": 15.0,
+    "hunyuan": 15.0,
+    "cogvideox": 10.0,
     "wan2.1": 5.0,
-    "cogvideox": 6.0,
-    "hailuo_h3": 8.0,
     "audioreactive": 120.0,
 }
 
@@ -83,14 +84,16 @@ class VideoService:
 
     @classmethod
     def get_model_max_duration(cls, model_name: Optional[str] = None) -> float:
-        """Resolve maximum architectural clip duration for a video model (e.g. Wan2.1 5s, CogVideoX 6s, H3 8s)."""
+        """Resolve maximum architectural clip duration for a video model (e.g. H3 15s, Hunyuan 15s, CogVideoX 10s, Wan2.1 5s)."""
         if not model_name:
             return 5.0
         m = model_name.lower().strip()
-        if "hailuo" in m or "h3" in m:
-            return 8.0
+        if "hailuo" in m or "h3" in m or "minimax" in m:
+            return 15.0
+        if "hunyuan" in m:
+            return 15.0
         if "cog" in m:
-            return 6.0
+            return 10.0
         if "audioreactive" in m or "reactive" in m:
             return 120.0
         if "wan" in m:

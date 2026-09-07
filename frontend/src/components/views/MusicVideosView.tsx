@@ -31,11 +31,14 @@ interface MusicVideosViewProps {
     initialSelectedSongId?: string | null;
 }
 
-export const MODEL_CONSTRAINTS: Record<string, { label: string; minSec: number; maxSec: number; defaultSec: number; desc: string }> = {
-    'wan2.1': { label: 'Wan 2.1 Engine', minSec: 2.0, maxSec: 5.0, defaultSec: 5.0, desc: 'Alibaba Wan 2.1 — 5.0s max limit with bar-aligned musical cuts' },
-    'cogvideox': { label: 'CogVideoX Engine', minSec: 2.0, maxSec: 6.0, defaultSec: 6.0, desc: 'THUDM CogVideoX — 6.0s max duration limit' },
-    'hailuo_h3': { label: 'MiniMax Hailuo H3', minSec: 2.0, maxSec: 8.0, defaultSec: 8.0, desc: 'MiniMax Hailuo open visual model — 8.0s clip constraint' },
-    'audioreactive': { label: 'Audio-Reactive Full', minSec: 5.0, maxSec: 60.0, defaultSec: 60.0, desc: 'Continuous full-timeline audio reactive visualizer' },
+export type VideoModelKey = 'hailuo_h3' | 'hunyuan' | 'cogvideox' | 'wan2.1' | 'audioreactive';
+
+export const MODEL_CONSTRAINTS: Record<VideoModelKey, { label: string; minSec: number; maxSec: number; defaultSec: number; desc: string }> = {
+    'hailuo_h3': { label: 'MiniMax Hailuo H3', minSec: 5.0, maxSec: 15.0, defaultSec: 15.0, desc: 'MiniMax Hailuo H3 flagship DiT — up to 15.0s maximum duration per generation' },
+    'hunyuan': { label: 'Tencent HunyuanVideo', minSec: 4.0, maxSec: 15.0, defaultSec: 15.0, desc: 'Tencent HunyuanVideo 13B DiT — up to 15.0s extended visual takes' },
+    'cogvideox': { label: 'CogVideoX 1.5 Engine', minSec: 3.0, maxSec: 10.0, defaultSec: 10.0, desc: 'THUDM CogVideoX 1.5 — up to 10.0s clip generation (161 frames at 16fps)' },
+    'wan2.1': { label: 'Wan 2.1 Engine', minSec: 2.0, maxSec: 5.0, defaultSec: 5.0, desc: 'Alibaba Wan 2.1 — 5.0s standard limit (81 frames at 16fps) with musical cuts' },
+    'audioreactive': { label: 'Audio-Reactive Full', minSec: 5.0, maxSec: 120.0, defaultSec: 120.0, desc: 'Continuous full-timeline audio reactive spectrum & waveform visualizer' },
 };
 
 export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay, initialSelectedSongId }) => {
@@ -43,16 +46,16 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay,
     const [selectedSongId, setSelectedSongId] = useState<string | null>(initialSelectedSongId || completedSongs[0]?.id || null);
 
     // Style & Model Engine settings
-    const [videoModel, setVideoModel] = useState<'wan2.1' | 'cogvideox' | 'hailuo_h3' | 'audioreactive'>('wan2.1');
+    const [videoModel, setVideoModel] = useState<VideoModelKey>('hailuo_h3');
     const [clipDuration, setClipDuration] = useState<number>(() => {
-        const saved = localStorage.getItem('milimo_video_clip_len_wan2.1');
-        return saved ? Math.min(5.0, Math.max(2.0, parseFloat(saved))) : 5.0;
+        const saved = localStorage.getItem('milimo_video_clip_len_hailuo_h3');
+        return saved ? Math.min(15.0, Math.max(5.0, parseFloat(saved))) : 15.0;
     });
 
     const [videoStyle, setVideoStyle] = useState<'neon-cyberpunk' | 'anime-cinematic' | 'retro-vhs' | 'minimal-lyrics'>('neon-cyberpunk');
     const [resolution, setResolution] = useState<'720p' | '1080p'>('720p');
 
-    const handleSelectModel = (model: 'wan2.1' | 'cogvideox' | 'hailuo_h3' | 'audioreactive') => {
+    const handleSelectModel = (model: VideoModelKey) => {
         setVideoModel(model);
         const conf = MODEL_CONSTRAINTS[model];
         const saved = localStorage.getItem(`milimo_video_clip_len_${model}`);
@@ -235,7 +238,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay,
                             </span>
                         </h1>
                         <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-                            Model duration constraint handling (Wan 5s, CogVideoX 6s, H3 8s), isolated vocal stem lip-syncing & burned subtitles
+                            Model duration constraint handling (H3 15s, Hunyuan 15s, CogVideoX 10s, Wan 5s), isolated vocal stem lip-syncing & burned subtitles
                         </p>
                     </div>
 

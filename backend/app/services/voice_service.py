@@ -27,6 +27,33 @@ PREVIEWS_DIR = "generated_audio/voice_previews"
 CONVERTED_DIR = "generated_audio/converted_vocals"
 
 
+def _load_audio_tensor(file_path: str):
+    """Load audio as a PyTorch Tensor of shape (channels, samples) and sample rate via soundfile."""
+    import soundfile as sf
+    import torch
+    data, sr = sf.read(file_path, dtype="float32")
+    tensor = torch.from_numpy(data)
+    if tensor.ndim == 1:
+        tensor = tensor.unsqueeze(0)  # (1, samples)
+    else:
+        tensor = tensor.t()  # (channels, samples)
+    return tensor, sr
+
+
+def _save_audio_tensor(file_path: str, tensor: Any, sr: int):
+    """Save PyTorch Tensor of shape (channels, samples) via soundfile."""
+    import soundfile as sf
+    import torch
+    if isinstance(tensor, torch.Tensor):
+        data = tensor.detach().cpu().numpy()
+    else:
+        data = np.asarray(tensor)
+    if data.ndim == 2:
+        data = data.T  # soundfile expects (samples, channels)
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    sf.write(file_path, data, sr)
+
+
 @dataclass
 class VoiceProfile:
     id: str
@@ -209,8 +236,7 @@ class VoiceService:
     def generate_sample_preview(self, input_audio_path: str, profile_id: str) -> Optional[str]:
         """Generate a short 6-second normalized preview snippet for the voice profile."""
         try:
-            import torchaudio
-            waveform, sr = torchaudio.load(input_audio_path)
+            waveform, sr = _load_audio_tensor(input_audio_path)
             max_samples = int(sr * 6.0)
             if waveform.shape[1] > max_samples:
                 waveform = waveform[:, :max_samples]
@@ -222,7 +248,7 @@ class VoiceService:
 
             preview_filename = f"{profile_id}_preview.wav"
             preview_dest = os.path.join(PREVIEWS_DIR, preview_filename)
-            torchaudio.save(preview_dest, waveform, sr)
+            _save_audio_tensor(preview_dest, waveform, sr)
             return f"/audio/voice_previews/{preview_filename}"
         except Exception as e:
             logger.warning(f"Failed to generate preview for profile {profile_id}: {e}")
@@ -354,7 +380,7 @@ class VoiceService:
 
                 ckpt = torch.load(model_ckpt, map_location=device)
                 if "weight" in ckpt or "model" in ckpt or "net_g" in ckpt:
-                    waveform, sr = torchaudio.load(resolved_vocal)
+                    waveform, sr = _load_audio_tensor(resolved_vocal)
                     dry_waveform = waveform.clone()
                     waveform = waveform.to(device)
 
@@ -367,7 +393,7 @@ class VoiceService:
                         min_len = min(dry_waveform.shape[1], waveform.shape[1])
                         waveform = dry_waveform[:, :min_len] * (1.0 - dry_wet) + waveform[:, :min_len] * dry_wet
 
-                    torchaudio.save(output_path, waveform, sr)
+                    _save_audio_tensor(output_path, waveform, sr)
                     converted_successfully = True
                     logger.info(f"Neural voice conversion successfully processed with checkpoint {model_ckpt}")
             except Exception as e:
@@ -380,7 +406,7 @@ class VoiceService:
                 import torchaudio
                 import torchaudio.functional as F
 
-                waveform, sr = torchaudio.load(resolved_vocal)
+                waveform, sr = _load_audio_tensor(resolved_vocal)
                 dry_waveform = waveform.clone()
 
                 # Step A: Pitch shift if requested
@@ -430,7 +456,7 @@ class VoiceService:
                 if max_val > 0:
                     waveform = waveform / max_val * 0.92
 
-                torchaudio.save(output_path, waveform, sr)
+                _save_audio_tensor(output_path, waveform, sr)
                 logger.info(f"Vocal profile {effective_profile_id} processed with acoustic timbre shaping (dry_wet={dry_wet}, pitch_shift={pitch_shift}).")
             except Exception as e:
                 logger.warning(f"Acoustic DSP chain failed: {e}. Falling back to clean copy.")
@@ -463,7 +489,7 @@ class VoiceService:
             raise FileNotFoundError(f"Converted vocal audio not found: {converted_vocal_path}")
 
         # Load converted vocal
-        vocal_wave, vocal_sr = torchaudio.load(resolved_converted)
+        vocal_wave, vocal_sr = _load_audio_tensor(resolved_converted)
         if vocal_wave.shape[0] == 1:
             vocal_wave = vocal_wave.repeat(2, 1)  # Expand mono to stereo
 
@@ -481,7 +507,7 @@ class VoiceService:
                     resolved_stem = self.resolve_audio_file(stem_path)
                     if resolved_stem:
                         try:
-                            s_wave, s_sr = torchaudio.load(resolved_stem)
+                            s_wave, s_sr = _load_audio_tensor(resolved_stem)
                             if s_sr != target_sr:
                                 s_wave = torchaudio.functional.resample(s_wave, s_sr, target_sr)
                             if s_wave.shape[0] == 1:
@@ -508,7 +534,7 @@ class VoiceService:
             if peak > 0:
                 mixed = mixed / peak * 0.95
 
-            torchaudio.save(out_dest, mixed, target_sr)
+            _save_audio_tensor(out_dest, mixed, target_sr)
             logger.info(f"Remixed converted vocals with {len(stem_waves)} stems into {out_dest}.")
             return f"/audio/{output_filename}"
 
@@ -516,7 +542,7 @@ class VoiceService:
         resolved_master = self.resolve_audio_file(original_audio_path)
         if resolved_master:
             try:
-                master_wave, master_sr = torchaudio.load(resolved_master)
+                master_wave, master_sr = _load_audio_tensor(resolved_master)
                 if master_sr != target_sr:
                     master_wave = torchaudio.functional.resample(master_wave, master_sr, target_sr)
                 if master_wave.shape[0] == 1:
@@ -534,7 +560,7 @@ class VoiceService:
                 if peak > 0:
                     mixed = mixed / peak * 0.95
 
-                torchaudio.save(out_dest, mixed, target_sr)
+                _save_audio_tensor(out_dest, mixed, target_sr)
                 logger.info(f"Remixed converted vocals with master audio into {out_dest}.")
                 return f"/audio/{output_filename}"
             except Exception as e:

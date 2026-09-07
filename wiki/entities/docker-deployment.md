@@ -23,8 +23,8 @@ The build process is codified in [`Dockerfile`](../../Dockerfile):
 - Emits optimized static production assets (`index.html`, JavaScript chunks, CSS) into `/app/frontend/dist`.
 
 ### Stage 2: Production Python & DSP Audio Runtime (`python:3.11-slim`)
-- **System Audio Dependencies**: Installs `ffmpeg`, `libsndfile1`, `git`, `curl`, and `build-essential`.
-- **Python Dependencies**: Upgrades `pip` and installs the complete backend requirements from `backend/requirements.txt`.
+- **System Audio & Video Dependencies**: Installs `ffmpeg`, `libsndfile1`, `fluidsynth` (for SoundFont MIDI audio synthesis), `libgl1` and `libglib2.0-0` (for OpenCV headless video generation and facial landmark tracking), `git`, `curl`, and `build-essential`.
+- **Python Dependencies**: Upgrades `pip` and installs the complete backend requirements from `backend/requirements.txt` (including `scipy`, `librosa`, `demucs`, `diffusers`, `transformers`, `opencv-python-headless`, and `pillow`).
 - **Code & Asset Injection**: Copies `backend`, `muscriptor`, `heartlib`, and compiled frontend assets from Stage 1 into `/app/frontend/dist`.
 - **Single-Process Web Serving**: The FastAPI application in `backend/app/main.py` detects `/app/frontend/dist` and mounts it at the root with a client-side routing fallback handler:
   - Non-API routes (`/`, `/tracks`, `/arrange`, `/studio`) serve `dist/index.html`.
@@ -53,6 +53,7 @@ services:
     volumes:
       - milimo-data:/app/data
       - milimo-audio:/app/generated_audio
+      - milimo-midi:/app/generated_midi
       - milimo-hf-cache:/root/.cache/huggingface
     environment:
       - MILIMO_IN_DOCKER=1
@@ -78,12 +79,13 @@ Configured for systems without NVIDIA Container Toolkit (e.g. CPU-only servers, 
 
 ## 3. Persistent Volumes & Data Isolation
 
-Containers are stateless; all generated artifacts, training data, and downloaded model weights are isolated in three named Docker volumes:
+Containers are stateless; all generated artifacts, training data, and downloaded model weights are isolated in four named Docker volumes:
 
 | Volume Name | Container Path | Purpose |
 |---|---|---|
 | `milimo-data` | `/app/data` | SQLite database (`database.db`), voice profiles (`profiles.json`), custom presets, artist lore |
 | `milimo-audio` | `/app/generated_audio` | Rendered master tracks, stems (`stems/`), converted vocals, and cover images (`data/covers/`) |
+| `milimo-midi` | `/app/generated_midi` | Note-level multi-track MIDI (`.mid`) and MusicXML 3.1 sheet music (`.musicxml`) files |
 | `milimo-hf-cache` | `/root/.cache/huggingface` | Hugging Face model snapshots (MiniMax Music 3, FLUX, HuBERT, RMVPE weights) |
 
 ---

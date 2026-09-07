@@ -10,6 +10,7 @@ services:
     volumes:
       - milimo-data:/app/data
       - milimo-audio:/app/generated_audio
+      - milimo-midi:/app/generated_midi
       - milimo-hf-cache:/root/.cache/huggingface
     environment:
       - MILIMO_IN_DOCKER=1
@@ -23,6 +24,8 @@ volumes:
   milimo-data:
     driver: local
   milimo-audio:
+    driver: local
+  milimo-midi:
     driver: local
   milimo-hf-cache:
     driver: local

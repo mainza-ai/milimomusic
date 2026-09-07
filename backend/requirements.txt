@@ -13,13 +13,22 @@ google-genai>=0.6.0
 pydantic-ai
 pydantic-graph
 
-# Audio Processing, DSP & Dynamic Stems
+# Audio Processing, DSP, SVC & Dynamic Stems
 numpy>=1.26.0
+scipy>=1.11.0
 soundfile>=0.12.0
 soxr>=1.1.0
 torch>=2.0
 torchaudio>=2.0
+librosa>=0.10.0
 audio-separator>=0.28.0
+demucs>=4.0.0
+
+# Computer Vision, Cover Art Diffusion & Video Generation
+pillow>=10.0.0
+opencv-python-headless>=4.8.0
+diffusers>=0.30.0
+transformers>=4.40.0
 
 # Neural Transcription, Beat Tracking & Notation
 mido>=1.3.3
@@ -27,13 +36,13 @@ beat-this>=1.1.0
 rotary-embedding-torch>=0.6.0
 einops>=0.4
 safetensors>=0.4
-huggingface_hub>=0.13
+huggingface_hub>=0.24.0
 
 # Testing & HTTP Utilities
 httpx>=0.27.0
 pytest>=8.0.0
 pytest-asyncio>=0.23.0
 
-# Local Package Dependencies
+# Local Package Dependencies & Mastering DSP
 matchering>=2.0.6,<3
 pyloudnorm>=0.1.1

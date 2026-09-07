@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { type Job } from '../../api';
-import { Play, Pause, Heart, Sliders, Search, Music, Disc, Sparkles, Trash2, Mic2, Copy, Check, X, Layers, Info } from 'lucide-react';
+import { Play, Pause, Heart, Sliders, Search, Music, Disc, Sparkles, Trash2, Mic2, Copy, Check, X, Layers, Info, Video } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { AppFooter } from '../ui/AppFooter';
 
@@ -13,6 +13,7 @@ interface SongsViewProps {
     onExtend: (job: Job) => void;
     onDelete?: (jobId: string) => void;
     onSelectTrack?: (job: Job) => void;
+    onOpenVideo?: (job: Job) => void;
 }
 
 export const SongsView: React.FC<SongsViewProps> = ({
@@ -23,7 +24,8 @@ export const SongsView: React.FC<SongsViewProps> = ({
     onToggleFavorite,
     onExtend,
     onDelete,
-    onSelectTrack
+    onSelectTrack,
+    onOpenVideo
 }) => {
     const [search, setSearch] = useState('');
     const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
@@ -314,6 +316,16 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                                             <Sliders size={12} />
                                                             <span>DAW</span>
                                                         </button>
+                                                        {onOpenVideo && (
+                                                            <button
+                                                                onClick={() => onOpenVideo(song)}
+                                                                className="px-2.5 py-1 bg-cyan-500/10 hover:bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 font-bold rounded-xl text-[11px] transition-all flex items-center gap-1 border border-cyan-500/20 active:scale-95"
+                                                                title="Create Music Video"
+                                                            >
+                                                                <Video size={12} />
+                                                                <span>Video</span>
+                                                            </button>
+                                                        )}
                                                         <button
                                                             onClick={() => onExtend(song)}
                                                             className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
@@ -401,6 +413,15 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                                 <Sliders size={11} />
                                                 <span>DAW</span>
                                             </button>
+                                            {onOpenVideo && (
+                                                <button
+                                                    onClick={() => onOpenVideo(song)}
+                                                    className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-cyan-600 dark:hover:text-cyan-400 transition-colors"
+                                                    title="Generate Music Video"
+                                                >
+                                                    <Video size={13} />
+                                                </button>
+                                            )}
                                             <button
                                                 onClick={() => onToggleFavorite(song.id)}
                                                 className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-rose-500 transition-colors"

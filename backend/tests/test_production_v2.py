@@ -24,6 +24,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent.parent / "muscriptor"))
 from app.main import app, create_db_and_tables
 from app.services.model_manager import model_manager
 from app.services.llm_service import _normalize_llm_url
+from app.services.video_service import VideoService
 
 
 class SyncClient:
@@ -315,6 +316,65 @@ def test_video_pipeline_planning_and_duration_constraints(client):
     task_status = status_res.json()
     assert "progress" in task_status
     assert "step" in task_status
+
+
+def test_video_model_duration_constraints_and_clamping(client):
+    """Test model max duration resolution and auto-clamping defaults."""
+    from sqlmodel import Session
+    from app.main import engine
+    from app.models import Job
+
+    # 1. Test VideoService static lookup
+    assert VideoService.get_model_max_duration("wan2.1") == 5.0
+    assert VideoService.get_model_max_duration("Wan2.1 T2V (5.0s clips)") == 5.0
+    assert VideoService.get_model_max_duration("cogvideox") == 6.0
+    assert VideoService.get_model_max_duration("hailuo_h3") == 8.0
+    assert VideoService.get_model_max_duration("MiniMax Hailuo H3 (8.0s clips)") == 8.0
+    assert VideoService.get_model_max_duration("audioreactive") == 120.0
+    assert VideoService.get_model_max_duration("unknown_model") == 5.0
+
+    # 2. Test auto-clamping in planning API
+    job_id = uuid4()
+    with Session(engine) as session:
+        job = Job(
+            id=job_id,
+            prompt="High energy electronic dance anthem",
+            tags="edm, festival",
+            duration_ms=40000,
+            audio_path="/audio/edm.mp3",
+            status="completed"
+        )
+        session.add(job)
+        session.commit()
+
+    # Omitted max_clip_duration should default to Wan 2.1 max duration (5.0s)
+    res = client.post(f"/videos/plan/{job_id}", json={
+        "model_name": "Wan2.1 T2V (5.0s clips)"
+    })
+    assert res.status_code == 200
+    plan = res.json()
+    assert plan["model_max_duration"] == 5.0
+    assert plan["max_clip_duration"] == 5.0
+    for clip in plan["clips"]:
+        assert clip["duration"] <= 5.0
+
+    # Omitted max_clip_duration with Hailuo should default to 8.0s
+    res_hailuo = client.post(f"/videos/plan/{job_id}", json={
+        "model_name": "hailuo_h3"
+    })
+    assert res_hailuo.status_code == 200
+    plan_hailuo = res_hailuo.json()
+    assert plan_hailuo["model_max_duration"] == 8.0
+    assert plan_hailuo["max_clip_duration"] == 8.0
+
+    # User requesting 20.0s for Wan 2.1 should be clamped to 5.0s
+    res_clamped = client.post(f"/videos/plan/{job_id}", json={
+        "model_name": "wan2.1",
+        "max_clip_duration": 20.0
+    })
+    assert res_clamped.status_code == 200
+    plan_clamped = res_clamped.json()
+    assert plan_clamped["max_clip_duration"] == 5.0
 
 
 def test_docker_llm_url_normalization(monkeypatch):

@@ -3371,9 +3371,17 @@ async def plan_music_video(job_id: str, req: VideoPlanRequest = Body(default=Vid
         job = get_job_by_id(session, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
+        model_name = req.model_name or "wan2.1"
+        model_max = video_service.get_model_max_duration(model_name)
+        if req.max_clip_duration is not None and float(req.max_clip_duration) > 0:
+            clip_dur = max(1.0, min(float(req.max_clip_duration), model_max))
+        else:
+            clip_dur = model_max
+
         clips = video_service.segment_song_for_video(
             job=job,
-            max_clip_duration=req.max_clip_duration or 5.0,
+            max_clip_duration=clip_dur,
+            model_name=model_name,
             bpm=req.bpm,
             visual_style=req.visual_style or "neon-cyberpunk"
         )
@@ -3385,8 +3393,9 @@ async def plan_music_video(job_id: str, req: VideoPlanRequest = Body(default=Vid
             "total_clips": len(clips),
             "vocal_clips_count": vocal_count,
             "broll_clips_count": broll_count,
-            "max_clip_duration": req.max_clip_duration,
-            "model_name": req.model_name,
+            "max_clip_duration": clip_dur,
+            "model_max_duration": model_max,
+            "model_name": model_name,
             "clips": clips
         }
 

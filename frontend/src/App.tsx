@@ -96,6 +96,7 @@ function App() {
   const [activeWorkspaceJob, setActiveWorkspaceJob] = useState<Job | null>(null);
   // Deep-link payload for the Artists section (?view=artists&id=<profile>)
   const [artistLinkId, setArtistLinkId] = useState<string | null>(null);
+  const [selectedVideoSongId, setSelectedVideoSongId] = useState<string | null>(null);
 
   // Studio Sessions & Multi-Turn Chat State
   const [sessions, setSessions] = useState<StudioSession[]>([]);
@@ -398,6 +399,7 @@ function App() {
     } else if (viewParam && viewParam !== 'explore') {
       setCurrentNav(viewParam);
       if (viewParam === 'artists') setArtistLinkId(params.get('id'));
+      if (viewParam === 'videos' && trackId) setSelectedVideoSongId(trackId);
     }
 
     refreshActiveCheckpoint();
@@ -449,6 +451,17 @@ function App() {
     } catch (e) {}
   };
 
+  const handleOpenVideo = (job: Job) => {
+    setSelectedVideoSongId(job.id);
+    setCurrentNav('videos');
+    try {
+      const url = new URL(window.location.href);
+      url.searchParams.set('view', 'videos');
+      url.searchParams.set('track', job.id);
+      window.history.pushState({ view: 'videos', trackId: job.id }, '', url.toString());
+    } catch (e) {}
+  };
+
   const handleNavigate = (view: NavView) => {
     setCurrentNav(view);
     try {
@@ -484,6 +497,7 @@ function App() {
       } else if (viewParam) {
         setCurrentNav(viewParam);
         if (viewParam === 'artists') setArtistLinkId(params.get('id'));
+        if (viewParam === 'videos' && trackId) setSelectedVideoSongId(trackId);
       }
     };
 
@@ -921,7 +935,7 @@ function App() {
               { id: 'projects', label: 'Projects', icon: FolderKanban },
               { id: 'artists', label: 'Artists', icon: Users },
               { id: 'playlists', label: 'Playlists', icon: ListMusic },
-              { id: 'videos', label: 'Music videos', icon: Video, badge: 'In Dev' },
+              { id: 'videos', label: 'Music videos', icon: Video },
               { id: 'profile', label: 'Profile', icon: User },
               { id: 'workspace', label: 'DAW Workspace', icon: Sliders }
             ].map(item => {
@@ -1372,6 +1386,7 @@ function App() {
             }}
             onDelete={handleDeleteJob}
             onSelectTrack={handleSelectTrack}
+            onOpenVideo={handleOpenVideo}
           />
         ) : currentNav === 'artists' ? (
           <ErrorBoundary sectionName="Artists">
@@ -1403,6 +1418,7 @@ function App() {
           <MusicVideosView
             songs={history}
             onPlay={handlePlaySong}
+            initialSelectedSongId={selectedVideoSongId}
           />
         ) : currentNav === 'profile' ? (
           <ProfileView

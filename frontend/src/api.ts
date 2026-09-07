@@ -1270,6 +1270,7 @@ export interface VideoPlanResult {
     vocal_clips_count: number;
     broll_clips_count: number;
     max_clip_duration: number;
+    model_max_duration?: number;
     model_name: string;
     clips: VideoClipSegment[];
 }
@@ -1294,6 +1295,7 @@ export interface VideoPlanParams {
 }
 
 export interface VideoRenderParams {
+    model_name?: string;
     visual_style?: string;
     resolution?: '720p' | '1080p';
     aspect_ratio?: '16:9' | '9:16';

@@ -28,23 +28,56 @@ import { AppFooter } from '../ui/AppFooter';
 interface MusicVideosViewProps {
     songs: Job[];
     onPlay: (job: Job) => void;
+    initialSelectedSongId?: string | null;
 }
 
-const MODEL_CONSTRAINTS: Record<string, { label: string; maxSec: number; desc: string }> = {
-    'wan2.1': { label: 'Wan 2.1 Engine', maxSec: 5.0, desc: 'Alibaba Wan 2.1 — 5.0s maximum clip constraint with bar-aligned cuts' },
-    'cogvideox': { label: 'CogVideoX Engine', maxSec: 6.0, desc: 'THUDM CogVideoX — 6.0s maximum clip duration constraint' },
-    'hailuo_h3': { label: 'MiniMax Hailuo H3', maxSec: 8.0, desc: 'MiniMax Hailuo open visual model — 8.0s clip constraint' },
-    'audioreactive': { label: 'Audio-Reactive Full', maxSec: 60.0, desc: 'Continuous full-timeline audio reactive visualizer' },
+export const MODEL_CONSTRAINTS: Record<string, { label: string; minSec: number; maxSec: number; defaultSec: number; desc: string }> = {
+    'wan2.1': { label: 'Wan 2.1 Engine', minSec: 2.0, maxSec: 5.0, defaultSec: 5.0, desc: 'Alibaba Wan 2.1 — 5.0s max limit with bar-aligned musical cuts' },
+    'cogvideox': { label: 'CogVideoX Engine', minSec: 2.0, maxSec: 6.0, defaultSec: 6.0, desc: 'THUDM CogVideoX — 6.0s max duration limit' },
+    'hailuo_h3': { label: 'MiniMax Hailuo H3', minSec: 2.0, maxSec: 8.0, defaultSec: 8.0, desc: 'MiniMax Hailuo open visual model — 8.0s clip constraint' },
+    'audioreactive': { label: 'Audio-Reactive Full', minSec: 5.0, maxSec: 60.0, defaultSec: 60.0, desc: 'Continuous full-timeline audio reactive visualizer' },
 };
 
-export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay }) => {
+export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay, initialSelectedSongId }) => {
     const completedSongs = songs.filter(s => s.status === 'completed' && s.audio_path);
-    const [selectedSongId, setSelectedSongId] = useState<string | null>(completedSongs[0]?.id || null);
+    const [selectedSongId, setSelectedSongId] = useState<string | null>(initialSelectedSongId || completedSongs[0]?.id || null);
 
     // Style & Model Engine settings
     const [videoModel, setVideoModel] = useState<'wan2.1' | 'cogvideox' | 'hailuo_h3' | 'audioreactive'>('wan2.1');
+    const [clipDuration, setClipDuration] = useState<number>(() => {
+        const saved = localStorage.getItem('milimo_video_clip_len_wan2.1');
+        return saved ? Math.min(5.0, Math.max(2.0, parseFloat(saved))) : 5.0;
+    });
+
     const [videoStyle, setVideoStyle] = useState<'neon-cyberpunk' | 'anime-cinematic' | 'retro-vhs' | 'minimal-lyrics'>('neon-cyberpunk');
     const [resolution, setResolution] = useState<'720p' | '1080p'>('720p');
+
+    const handleSelectModel = (model: 'wan2.1' | 'cogvideox' | 'hailuo_h3' | 'audioreactive') => {
+        setVideoModel(model);
+        const conf = MODEL_CONSTRAINTS[model];
+        const saved = localStorage.getItem(`milimo_video_clip_len_${model}`);
+        const resolved = saved ? Math.min(conf.maxSec, Math.max(conf.minSec, parseFloat(saved))) : conf.defaultSec;
+        setClipDuration(resolved);
+    };
+
+    const handleClipDurationChange = (val: number) => {
+        const conf = MODEL_CONSTRAINTS[videoModel];
+        const clamped = Math.min(conf.maxSec, Math.max(conf.minSec, val));
+        setClipDuration(clamped);
+        localStorage.setItem(`milimo_video_clip_len_${videoModel}`, clamped.toString());
+    };
+
+    const handleResetDurationToMax = () => {
+        const conf = MODEL_CONSTRAINTS[videoModel];
+        setClipDuration(conf.maxSec);
+        localStorage.setItem(`milimo_video_clip_len_${videoModel}`, conf.maxSec.toString());
+    };
+
+    useEffect(() => {
+        if (initialSelectedSongId) {
+            setSelectedSongId(initialSelectedSongId);
+        }
+    }, [initialSelectedSongId]);
 
     // Advanced Lip Sync & Lyric Options
     const [enableLipSync, setEnableLipSync] = useState(true);
@@ -104,7 +137,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay 
             setIsPlanning(true);
             const params: VideoPlanParams = {
                 model_name: videoModel,
-                max_clip_duration: MODEL_CONSTRAINTS[videoModel].maxSec,
+                max_clip_duration: clipDuration,
                 bpm: 120,
                 visual_style: videoStyle
             };
@@ -123,12 +156,13 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay 
         try {
             setIsRendering(true);
             const params: VideoRenderParams = {
+                model_name: videoModel,
                 visual_style: videoStyle,
                 resolution,
                 enable_lip_sync: enableLipSync,
                 burn_lyrics: burnSubtitles,
                 subtitle_style: subtitleStyle,
-                max_clip_duration: MODEL_CONSTRAINTS[videoModel].maxSec,
+                max_clip_duration: clipDuration,
                 mode: 'production_multiclip'
             };
 
@@ -263,34 +297,92 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay 
                             )}
                         </GlassCard>
 
-                        {/* Model Duration Constraint Selector */}
+                        {/* Model Duration Constraint & Custom Length Setting */}
                         <GlassCard className="p-4 space-y-3">
-                            <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
-                                Generative Video Engine & Duration Limit
-                            </label>
+                            <div className="flex items-center justify-between">
+                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
+                                    Video Engine & Clip Duration
+                                </label>
+                                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400 font-bold">
+                                    Default = Max Length
+                                </span>
+                            </div>
+
                             <div className="space-y-2">
                                 {(Object.keys(MODEL_CONSTRAINTS) as Array<keyof typeof MODEL_CONSTRAINTS>).map(key => {
                                     const conf = MODEL_CONSTRAINTS[key];
                                     return (
                                         <button
                                             key={key}
-                                            onClick={() => setVideoModel(key as any)}
+                                            onClick={() => handleSelectModel(key as any)}
                                             className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all ${
                                                 videoModel === key
-                                                    ? 'bg-teal-500/10 border-teal-500/30 text-teal-700 dark:text-teal-300 font-bold'
+                                                    ? 'bg-teal-500/10 border-teal-500/30 text-teal-700 dark:text-teal-300 font-bold shadow-sm'
                                                     : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-600 dark:text-slate-400 hover:bg-black/[0.04] dark:hover:bg-white/5'
                                             }`}
                                         >
                                             <div className="flex items-center justify-between">
                                                 <span>{conf.label}</span>
                                                 <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-teal-500/10 text-teal-600 dark:text-teal-400">
-                                                    ≤ {conf.maxSec}s/clip
+                                                    Max: {conf.maxSec}s
                                                 </span>
                                             </div>
                                             <div className="text-[10px] text-slate-400 font-normal mt-0.5">{conf.desc}</div>
                                         </button>
                                     );
                                 })}
+                            </div>
+
+                            {/* Clip Length Adjustment Slider & Stepper */}
+                            <div className="pt-2 border-t border-black/[0.06] dark:border-white/5 space-y-2">
+                                <div className="flex items-center justify-between text-xs">
+                                    <span className="font-semibold text-slate-700 dark:text-slate-300">
+                                        Clip Duration Setting
+                                    </span>
+                                    <div className="flex items-center gap-1.5">
+                                        <span className="font-mono font-bold text-teal-600 dark:text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded-md text-xs">
+                                            {clipDuration.toFixed(1)}s
+                                        </span>
+                                        {clipDuration !== MODEL_CONSTRAINTS[videoModel].maxSec && (
+                                            <button
+                                                onClick={handleResetDurationToMax}
+                                                className="text-[10px] text-teal-600 dark:text-teal-400 hover:underline font-mono"
+                                                title="Reset to model max length"
+                                            >
+                                                Reset Max ({MODEL_CONSTRAINTS[videoModel].maxSec}s)
+                                            </button>
+                                        )}
+                                    </div>
+                                </div>
+
+                                <div className="flex items-center gap-3">
+                                    <span className="text-[10px] font-mono text-slate-400">
+                                        {MODEL_CONSTRAINTS[videoModel].minSec}s
+                                    </span>
+                                    <input
+                                        type="range"
+                                        min={MODEL_CONSTRAINTS[videoModel].minSec}
+                                        max={MODEL_CONSTRAINTS[videoModel].maxSec}
+                                        step={0.5}
+                                        value={clipDuration}
+                                        onChange={(e) => handleClipDurationChange(parseFloat(e.target.value))}
+                                        className="flex-1 accent-teal-500 h-1.5 bg-black/[0.06] dark:bg-white/10 rounded-lg cursor-pointer"
+                                    />
+                                    <span className="text-[10px] font-mono text-slate-400">
+                                        {MODEL_CONSTRAINTS[videoModel].maxSec}s
+                                    </span>
+                                </div>
+
+                                <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-0.5">
+                                    <span>
+                                        Pacing: {clipDuration <= 3.5 ? '⚡ Fast cuts' : clipDuration <= 6.0 ? '🎬 Standard cinematic' : '🌊 Extended takes'}
+                                    </span>
+                                    {activeSong?.duration_ms && (
+                                        <span className="font-mono text-teal-600 dark:text-teal-400">
+                                            Est. ~{Math.ceil(Math.round(activeSong.duration_ms / 1000) / clipDuration)} scenes
+                                        </span>
+                                    )}
+                                </div>
                             </div>
                         </GlassCard>
 

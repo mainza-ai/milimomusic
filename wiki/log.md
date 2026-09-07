@@ -1189,4 +1189,20 @@ Investigated and integrated Black Forest Labs FLUX.2 generation suite:
    - Integrated full UI in `MusicVideosView.tsx` with duration constraint picker, interactive scene segment timeline, stem isolation indicators, and live multi-stage rendering HUD.
    - Automated test suite `test_production_v2.py` extended and passing 100% (8/8 production tests, 181/181 full suite).
 
-
+## [2026-09-07] update | Model Max Video Duration Controls & Full Studio Audit
+1. Generative Video Model Duration Constraints & Clamping Engine:
+   - Implemented `MODEL_MAX_DURATIONS` and `VideoService.get_model_max_duration` in `backend/app/services/video_service.py` (`wan2.1`: 5.0s, `cogvideox`: 6.0s, `hailuo_h3`: 8.0s, `audioreactive`: 120.0s).
+   - Enforced automatic resolution to each model's maximum supported duration when omitted, with bounds clamping between 1.0s and model max.
+   - Updated `VideoRenderRequest` in `backend/app/models.py` and `/videos/plan/{job_id}` in `backend/app/main.py` returning `model_max_duration` and clamped `max_clip_duration`.
+   - Built interactive clip duration slider in `MusicVideosView.tsx` defaulting strictly to model max, with per-model `localStorage` memory and 1-click `Reset Max ({maxSec}s)` button.
+2. Navigation & Composer Production Enhancements:
+   - Dynamic Audio Engine Selector in `ComposerSidebar.tsx` populated via `modelsApi.getModelTree()`.
+   - Added `💡 Inspire` prompt button calling `api.getInspiration()`.
+   - Added 1-click duration preset chips (`30s`, `60s`, `90s`, `120s`, `180s`, `240s`) for fast selection.
+   - Surfaced editable Structured Caption components (`globalMetadata`, `vocalDetails`, `arrangement`) in Advanced panel.
+   - Removed `badge: 'In Dev'` on `Music videos` in `App.tsx` left navigation rail.
+   - Added 1-click `🎬 Video` direct creation shortcuts in `SongsView.tsx` (table rows and grid cards) with deep-linking payload support.
+3. Verification:
+   - 9/9 production tests passing in `backend/tests/test_production_v2.py`.
+   - 182/182 complete backend test suite passing in 3.53s.
+   - Frontend compiled cleanly with zero TypeScript/Vite errors in 1.63s.

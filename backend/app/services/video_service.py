@@ -63,6 +63,13 @@ STYLE_PALETTES = {
     }
 }
 
+MODEL_MAX_DURATIONS: Dict[str, float] = {
+    "wan2.1": 5.0,
+    "cogvideox": 6.0,
+    "hailuo_h3": 8.0,
+    "audioreactive": 120.0,
+}
+
 
 class VideoService:
     _instance = None
@@ -73,6 +80,22 @@ class VideoService:
         if cls._instance is None:
             cls._instance = super(VideoService, cls).__new__(cls)
         return cls._instance
+
+    @classmethod
+    def get_model_max_duration(cls, model_name: Optional[str] = None) -> float:
+        """Resolve maximum architectural clip duration for a video model (e.g. Wan2.1 5s, CogVideoX 6s, H3 8s)."""
+        if not model_name:
+            return 5.0
+        m = model_name.lower().strip()
+        if "hailuo" in m or "h3" in m:
+            return 8.0
+        if "cog" in m:
+            return 6.0
+        if "audioreactive" in m or "reactive" in m:
+            return 120.0
+        if "wan" in m:
+            return 5.0
+        return MODEL_MAX_DURATIONS.get(m, 5.0)
 
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
@@ -141,7 +164,8 @@ class VideoService:
     def segment_song_for_video(
         self,
         job: Job,
-        max_clip_duration: float = 5.0,
+        max_clip_duration: Optional[float] = None,
+        model_name: Optional[str] = "wan2.1",
         bpm: Optional[float] = None,
         visual_style: str = "neon-cyberpunk"
     ) -> List[Dict[str, Any]]:
@@ -153,12 +177,18 @@ class VideoService:
         track_bpm = float(bpm or 120.0)
         seconds_per_bar = (60.0 / track_bpm) * 4.0
 
+        model_max = self.get_model_max_duration(model_name)
+        if max_clip_duration is None or max_clip_duration <= 0:
+            effective_max = model_max
+        else:
+            effective_max = max(1.0, min(float(max_clip_duration), model_max))
+
         # Calculate target clip duration clamped to musical bars
-        bars_per_clip = max(1, int(round(max_clip_duration / seconds_per_bar)))
+        bars_per_clip = max(1, int(round(effective_max / seconds_per_bar)))
         target_clip_len = bars_per_clip * seconds_per_bar
-        if target_clip_len > max_clip_duration and bars_per_clip > 1:
+        if target_clip_len > effective_max and bars_per_clip > 1:
             target_clip_len = (bars_per_clip - 1) * seconds_per_bar
-        target_clip_len = max(3.0, min(target_clip_len, max_clip_duration))
+        target_clip_len = max(1.5, min(target_clip_len, effective_max))
 
         # Retrieve timed lyrics via lyric_sync_engine
         vocals_path = self.resolve_vocals_stem(job)
@@ -420,7 +450,13 @@ class VideoService:
             style = config.get("visual_style", "neon-cyberpunk")
             resolution = config.get("resolution", "720p")
             aspect_ratio = config.get("aspect_ratio", "16:9")
-            max_duration = float(config.get("max_clip_duration", 5.0))
+            model_name = config.get("model_name", "wan2.1")
+            model_max = self.get_model_max_duration(model_name)
+            raw_dur = config.get("max_clip_duration")
+            if raw_dur is not None and float(raw_dur) > 0:
+                max_duration = max(1.0, min(float(raw_dur), model_max))
+            else:
+                max_duration = model_max
             enable_lip_sync = config.get("enable_lip_sync", True)
             burn_lyrics = config.get("burn_lyrics", True)
 
@@ -436,6 +472,7 @@ class VideoService:
             clips = self.segment_song_for_video(
                 job=job,
                 max_clip_duration=max_duration,
+                model_name=model_name,
                 bpm=config.get("bpm"),
                 visual_style=style
             )

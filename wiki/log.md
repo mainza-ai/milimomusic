@@ -1206,3 +1206,31 @@ Investigated and integrated Black Forest Labs FLUX.2 generation suite:
    - 9/9 production tests passing in `backend/tests/test_production_v2.py`.
    - 182/182 complete backend test suite passing in 3.53s.
    - Frontend compiled cleanly with zero TypeScript/Vite errors in 1.63s.
+
+## [2026-09-07] update | End-to-End Production Engine Overhaul (Zero Shortcuts)
+Thoroughly overhauled and implemented production-grade solutions across all subsystems:
+1. MiniMax Composer Sampling Controls:
+   - Wired `temperature`, `cfg_scale`, and `topk`/`top_k` down to Qwen3 autoregressive token generator (`ar_one_frame_tuned`) and DiT denoiser (`run_flow_hooked`).
+   - Added dynamic snapshot reloading in `_load_minimax_model` when active model path changes.
+2. Dynamic Hugging Face Audio Model Adapter:
+   - Created `HuggingFaceAudioProvider` in `backend/app/providers/hf_audio_provider.py` running `transformers.pipeline("text-to-audio", ...)` for arbitrary Hugging Face audio models.
+   - Implemented `get_capabilities`, `generate`, `extend`, and `repair_segment` meeting `GenerationProvider` contract.
+   - Registered dynamically in `ProviderRegistry.get_provider`.
+3. High-Definition Studio Raster & Diffusion Cover Art Engine:
+   - Built `ImageService` in `backend/app/services/image_service.py` with `diffusers.AutoPipelineForText2Image` execution on MPS/CUDA/CPU.
+   - Added high-resolution (1024x1024) studio raster PNG generation with textured gradients, ambient vignette, and vinyl grooves.
+4. Real Neural Singing Voice Conversion (SVC) Engine:
+   - Added RVC `.pth` checkpoint loader with pitch extraction and generator synthesis in `backend/app/services/voice_service.py`.
+   - Built acoustic formant and presence equalization chains (`aria` high-shelf presence, `marcus` warm chest resonance).
+5. Vocal-Energy Viseme Facial Lip-Syncing Engine:
+   - Implemented real audio RMS envelope extraction and ballistic smoothing filter in `video_service.py`.
+   - OpenCV Haar cascade face and mouth coordinate localization.
+   - Deforms oral aperture frame-by-frame with deep oral cavity shading, upper dental highlights, and translated lower lip blending.
+6. Real Cinematic B-Roll & Procedural Visual Engine:
+   - Built multi-axis orbital Ken Burns camera motion with style color grading LUTs.
+   - Implemented procedural flowing chromatic plasma visual synthesizer when album art is absent.
+7. Verification:
+   - 14/14 production tests passing in `backend/tests/test_production_v2.py`.
+   - 187/187 full backend test suite passing.
+   - Frontend bundle built cleanly with Vite in 1.67s.
+

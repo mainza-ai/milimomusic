@@ -67,21 +67,34 @@ except Exception as _e:  # pragma: no cover - environment-dependent import
     logger.warning(f"mlx-audio not available: {_e}")
 
 
+_minimax_model_path = None
+
 def _load_minimax_model(snapshot_path: str):
     """Load (and cache) the MiniMax Music 3 MLX model from a local snapshot path.
 
-    Thread-safe: only one thread loads at a time, so a second concurrent generation
-    can never spawn a second full copy of the model in RAM.
+    Thread-safe: only one thread loads at a time. If the requested snapshot path
+    differs from the currently loaded model, the old model is freed first.
     """
-    global _minimax_model
-    if _minimax_model is not None:
+    global _minimax_model, _minimax_model_path
+    if _minimax_model is not None and _minimax_model_path == snapshot_path:
         return _minimax_model
     with _minimax_model_lock:
-        if _minimax_model is not None:
+        if _minimax_model is not None and _minimax_model_path == snapshot_path:
             return _minimax_model
-        logger.info(f"Loading MiniMax Music 3 MLX model from {snapshot_path} (first use)...")
+        if _minimax_model is not None and _minimax_model_path != snapshot_path:
+            logger.info(f"Unloading prior model ({_minimax_model_path}) to switch to {snapshot_path}")
+            _minimax_model = None
+            _minimax_model_path = None
+            try:
+                import gc
+                gc.collect()
+            except Exception:
+                pass
+
+        logger.info(f"Loading MiniMax Music 3 MLX model from {snapshot_path}...")
         _minimax_model = _mx_load_model(snapshot_path)
-        logger.info("MiniMax Music 3 MLX model loaded.")
+        _minimax_model_path = snapshot_path
+        logger.info(f"MiniMax Music 3 MLX model loaded successfully from {snapshot_path}.")
         return _minimax_model
 
 
@@ -91,10 +104,11 @@ def unload_minimax_model():
     Frees the large model so it isn't resident when idle; it is lazily reloaded on
     the next real-inference call (~4s). Useful on memory-constrained machines.
     """
-    global _minimax_model
+    global _minimax_model, _minimax_model_path
     with _minimax_model_lock:
         if _minimax_model is not None:
             _minimax_model = None
+            _minimax_model_path = None
             if _MLX_AUDIO_AVAILABLE:
                 try:
                     import gc
@@ -112,13 +126,13 @@ def run_real_minimax_inference(
     seed: Optional[int],
     output_path: str,
     steps: int = 24,
+    temperature: float = 1.0,
+    cfg_scale: float = 1.5,
+    topk: int = 50,
     cancel_event=None,
     progress_cb=None,
 ) -> str:
-    """Genuine MiniMax Music 3 inference with cancellation + progress hooks.
-
-    Uses our hooked orchestration (app.providers.minimax_local_hooks): the
-    upstream loop is uninterruptible and silent for hour-scale jobs."""
+    """Genuine MiniMax Music 3 inference with cancellation + progress hooks and real sampling parameters."""
     import random
     from app.providers.minimax_local_hooks import generate_music_hooked
     model = _load_minimax_model(snapshot_path)
@@ -132,6 +146,9 @@ def run_real_minimax_inference(
         steps=max(1, min(30, flow_steps)),
         seed=clean_seed,
         output_path=output_path,
+        temperature=temperature,
+        cfg_scale=cfg_scale,
+        top_k=topk,
         cancel_event=cancel_event,
         progress_cb=progress_cb,
     )
@@ -541,11 +558,14 @@ class MiniMaxMusic3Provider(GenerationProvider):
         temperature: float = 1.0,
         cfg_scale: float = 1.5,
         topk: int = 50,
+        top_k: Optional[int] = None,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         cancel_event: Optional[Any] = None,
         structured_caption: Optional[Dict[str, str]] = None,
         **kwargs
     ) -> GeneratedAudioResult:
+        if top_k is not None:
+            topk = top_k
         if kwargs.get("llm_model"):
             self.llm_model = kwargs.get("llm_model")
         if not self._is_loaded:
@@ -600,6 +620,19 @@ class MiniMaxMusic3Provider(GenerationProvider):
 
         used_real_inference = False
         fallback_reason: Optional[str] = None
+
+        # Dynamically resolve active model snapshot if set in ModelManager or environment
+        try:
+            from app.services.model_manager import model_manager
+            active_m = model_manager.get_active_model()
+            if active_m and active_m.get("local_path") and os.path.isdir(active_m["local_path"]):
+                self.snapshot_path = active_m["local_path"]
+        except Exception:
+            pass
+
+        if os.environ.get("MINIMAX_MODEL_PATH") and os.path.isdir(os.environ["MINIMAX_MODEL_PATH"]):
+            self.snapshot_path = os.environ["MINIMAX_MODEL_PATH"]
+
         if _MLX_AUDIO_AVAILABLE and os.path.isdir(self.snapshot_path):
             try:
                 # Steps scale roughly with length: ~2s per step, clamped to the model's
@@ -621,6 +654,9 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     seed,
                     wav_path,
                     steps,
+                    temperature,
+                    cfg_scale,
+                    topk,
                     cancel_event,
                     _hooked_progress,
                 )
@@ -773,3 +809,7 @@ class MiniMaxMusic3Provider(GenerationProvider):
             duration_sec=end_time_sec - start_time_sec,
             metadata={"repaired_range": [start_time_sec, end_time_sec]}
         )
+
+
+MiniMaxProvider = MiniMaxMusic3Provider
+

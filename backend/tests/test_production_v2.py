@@ -409,3 +409,139 @@ def test_unified_frontend_serving(client):
         res = client.get("/library")
         assert res.status_code == 200
         assert "<!doctype html>" in res.text.lower() or "<html" in res.text.lower()
+
+
+def test_minimax_provider_sampling_parameters():
+    """Verify MiniMaxProvider supports sampling controls (temperature, cfg_scale, top_k)."""
+    from app.providers.minimax_provider import MiniMaxProvider
+    provider = MiniMaxProvider()
+    assert hasattr(provider, "generate")
+    # Verify signature accepts sampling params
+    import inspect
+    sig = inspect.signature(provider.generate)
+    assert "temperature" in sig.parameters
+    assert "cfg_scale" in sig.parameters
+    assert "top_k" in sig.parameters
+
+
+def test_huggingface_audio_provider_registration():
+    """Verify HuggingFaceAudioProvider dynamically registers via ProviderRegistry."""
+    from app.providers.registry import ProviderRegistry
+    from app.providers.hf_audio_provider import HuggingFaceAudioProvider
+
+    hf_provider = ProviderRegistry.get_provider("hf:facebook/musicgen-small")
+    assert isinstance(hf_provider, HuggingFaceAudioProvider)
+    assert hf_provider.model_id == "facebook/musicgen-small"
+    assert hf_provider.name == "hf:facebook/musicgen-small"
+
+
+def test_image_service_raster_png_generation():
+    """Verify ImageService generates true studio-grade raster PNGs."""
+    import tempfile
+    from PIL import Image
+    from app.services.image_service import image_service
+
+    cover_res = image_service.generate_cover(
+        prompt="Cyberpunk synthesizer in Tokyo rain",
+        visual_style="neon-cyberpunk",
+        aspect_ratio="1:1"
+    )
+    assert cover_res is not None
+    cover_path = cover_res.get("file_path") or cover_res.get("dest_path")
+    assert cover_path is not None
+    assert os.path.isfile(cover_path)
+    assert cover_path.endswith(".png")
+
+    with open(cover_path, "rb") as f:
+        header = f.read(8)
+    assert header == b"\x89PNG\r\n\x1a\n", "File must have valid PNG magic bytes"
+
+    img = Image.open(cover_path)
+    assert img.size == (1024, 1024)
+    assert img.mode in ("RGB", "RGBA")
+
+
+@pytest.mark.asyncio
+async def test_voice_service_acoustic_formant_equalization():
+    """Verify VoiceService processes audio through acoustic formant EQ chains."""
+    import tempfile
+    import numpy as np
+    import scipy.io.wavfile as wav
+    from app.services.voice_service import voice_service
+
+    sr = 44100
+    t = np.linspace(0, 1.0, sr)
+    samples = (np.sin(2 * np.pi * 440 * t) * 16000).astype(np.int16)
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+        wav.write(tf.name, sr, samples)
+        input_audio = tf.name
+
+    try:
+        url_aria = await voice_service.convert_vocals(input_audio, profile="aria")
+        aria_local = url_aria.replace("/audio/", "generated_audio/")
+        assert os.path.isfile(aria_local)
+        assert os.path.getsize(aria_local) > 0
+
+        url_marcus = await voice_service.convert_vocals(input_audio, profile="marcus")
+        marcus_local = url_marcus.replace("/audio/", "generated_audio/")
+        assert os.path.isfile(marcus_local)
+        assert os.path.getsize(marcus_local) > 0
+    finally:
+        if os.path.isfile(input_audio):
+            os.remove(input_audio)
+
+
+@pytest.mark.asyncio
+async def test_video_service_lip_sync_and_procedural_broll():
+    """Verify VideoService renders viseme lip-sync and dynamic procedural B-roll clips."""
+    import tempfile
+    import cv2
+    import numpy as np
+    import scipy.io.wavfile as wav
+
+    video_srv = VideoService()
+
+    # Create dummy portrait
+    img = np.zeros((360, 640, 3), dtype=np.uint8)
+    img[:] = (40, 30, 50)
+    # Face circle & lips
+    cv2.circle(img, (320, 180), 90, (180, 190, 210), -1)
+    cv2.ellipse(img, (320, 220), (25, 8), 0, 0, 360, (50, 40, 120), -1)
+
+    # Create dummy vocal audio with tone
+    sr = 44100
+    t = np.linspace(0, 1.0, sr)
+    audio = (np.sin(2 * np.pi * 330 * t) * 16000).astype(np.int16)
+
+    with tempfile.TemporaryDirectory() as tmpdir:
+        img_path = os.path.join(tmpdir, "face.png")
+        cv2.imwrite(img_path, img)
+
+        audio_path = os.path.join(tmpdir, "vocal.wav")
+        wav.write(audio_path, sr, audio)
+
+        lip_clip = os.path.join(tmpdir, "lip_clip.mp4")
+        await video_srv.render_lip_sync_clip(
+            face_image_path=img_path,
+            vocal_audio_path=audio_path,
+            start_time=0.0,
+            duration=1.0,
+            out_path=lip_clip,
+            width=640,
+            height=360
+        )
+        assert os.path.isfile(lip_clip)
+        assert os.path.getsize(lip_clip) > 1000, "Lip-sync MP4 clip must be generated"
+
+        broll_clip = os.path.join(tmpdir, "broll_clip.mp4")
+        await video_srv.render_broll_clip(
+            style="neon-cyberpunk",
+            duration=1.0,
+            out_path=broll_clip,
+            width=640,
+            height=360
+        )
+        assert os.path.isfile(broll_clip)
+        assert os.path.getsize(broll_clip) > 1000, "Procedural B-roll MP4 clip must be generated"
+

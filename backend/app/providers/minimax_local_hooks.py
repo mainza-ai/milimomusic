@@ -75,6 +75,105 @@ def _report(cb: Optional[ProgressCB], frac: float, stage: str):
             logger.exception("progress callback failed")
 
 
+try:
+    from mlx_audio.music.models.minimax_music3.ar import (
+        lm_logits,
+        sample_top_k,
+        generate_depth_codes,
+        fuse_frame_hiddens,
+        _embed_audio_frame,
+        ARFrame,
+    )
+except ImportError:
+    lm_logits = None
+    sample_top_k = None
+    generate_depth_codes = None
+    fuse_frame_hiddens = None
+    _embed_audio_frame = None
+    ARFrame = None
+
+
+def ar_one_frame_tuned(
+    language_model,
+    depth,
+    config,
+    last_hidden,
+    cache,
+    rng_key,
+    emit_frame: bool = True,
+    cfg_scale: float = 1.5,
+    temperature: float = 1.0,
+    top_k: int = 50,
+):
+    """Autoregressive step respecting user-specified temperature, CFG scale, and top_k."""
+    if lm_logits is None:
+        return ar_one_frame(language_model, depth, config, last_hidden, cache, rng_key, emit_frame=emit_frame)
+
+    logits = lm_logits(language_model, last_hidden).astype(mx.float32)
+    token_ids = mx.arange(logits.shape[-1])
+    allowed = mx.logical_or(
+        mx.logical_and(
+            token_ids >= config.audio_code_offset,
+            token_ids < config.audio_code_offset + config.semantic_vocab_size,
+        ),
+        token_ids == config.audio_end_token_id,
+    )
+    logits = mx.where(allowed[None, :], logits, -1e9)
+
+    # 1. Temperature scaling on logits
+    temp = max(0.05, float(temperature))
+    scaled_logits = logits / temp
+
+    # 2. CFG Guidance in AR space
+    conditional, unconditional = scaled_logits[:1], scaled_logits[1:2]
+    ar_cfg = max(0.1, min(5.0, float(cfg_scale)))
+    guided = unconditional + (conditional - unconditional) * ar_cfg
+
+    # 3. Top-K cutoff
+    effective_top_k = max(1, min(int(top_k), conditional.shape[-1]))
+    threshold = mx.min(mx.topk(conditional, effective_top_k, axis=-1), axis=-1, keepdims=True)
+    guided = mx.where(conditional < threshold, -1e9, guided)
+    guided = mx.where(allowed[None, :], guided, -1e9)
+    sampled, key = sample_top_k(guided, rng_key, effective_top_k)
+
+    if int(sampled.item()) == config.audio_end_token_id:
+        return ARFrame(
+            semantic_code=sampled,
+            residual_codes=mx.zeros((2, config.residual_codebooks), dtype=mx.int32),
+            frame_hidden=mx.zeros((1, config.num_codebooks * config.hidden_size)),
+            last_hidden=last_hidden,
+            cache=cache,
+            ended=True,
+        )
+
+    semantic_code = (
+        mx.concatenate([sampled, sampled], axis=0) - config.audio_code_offset
+    )
+    frame_codes, depth_hidden, key = generate_depth_codes(
+        language_model,
+        depth,
+        config,
+        last_hidden,
+        semantic_code,
+        key,
+    )
+    frame_hidden = (
+        fuse_frame_hiddens(last_hidden[:1], depth_hidden)
+        if emit_frame
+        else mx.zeros((1, config.num_codebooks * config.hidden_size))
+    )
+    feedback = _embed_audio_frame(language_model, depth, config, frame_codes)
+    hidden, cache = qwen3_hidden(language_model, feedback, cache)
+    return ARFrame(
+        semantic_code=semantic_code,
+        residual_codes=frame_codes[:, 1:],
+        frame_hidden=frame_hidden,
+        last_hidden=hidden[:, -1],
+        cache=cache,
+        ended=False,
+    )
+
+
 def generate_frame_hiddens_hooked(
     language_model,
     depth_decoder,
@@ -82,10 +181,13 @@ def generate_frame_hiddens_hooked(
     text_ids,
     max_frames: int,
     seed: int,
+    temperature: float = 1.0,
+    cfg_scale: float = 1.5,
+    top_k: int = 50,
     cancel_event: Optional[threading.Event] = None,
     progress_cb: Optional[ProgressCB] = None,
 ):
-    """Mirror of library ar.generate_frame_hiddens with hooks injected."""
+    """Mirror of library ar.generate_frame_hiddens with hooks and sampling controls injected."""
     if not HAS_MLX_AUDIO:
         raise RuntimeError("mlx_audio is not available on this platform.")
     mx.random.seed(seed)
@@ -104,9 +206,14 @@ def generate_frame_hiddens_hooked(
                 _report(progress_cb, frame_index / max_frames,
                         f"Composing ({int(rate)} frames/s, ETA {int(eta_s / 60)}m)")
         key, subkey = mx.random.split(key)
-        result = ar_one_frame(language_model, depth_decoder, config,
-                              last_hidden, cache, subkey,
-                              emit_frame=frame_index > 0)
+        result = ar_one_frame_tuned(
+            language_model, depth_decoder, config,
+            last_hidden, cache, subkey,
+            emit_frame=frame_index > 0,
+            cfg_scale=cfg_scale,
+            temperature=temperature,
+            top_k=top_k,
+        )
         last_hidden, cache = result.last_hidden, result.cache
         if result.ended:
             break
@@ -120,14 +227,16 @@ def generate_frame_hiddens_hooked(
 
 
 def run_flow_hooked(model, frame_hiddens, num_inference_steps: int, seed: int,
+                    cfg_scale: float = 1.5,
                     cancel_event=None, progress_cb=None):
-    """Mirror of model._run_flow with per-chunk cancel checks."""
+    """Mirror of model._run_flow with per-chunk cancel checks and dynamic CFG guidance scale."""
     starts = _chunk_starts(frame_hiddens.shape[1])
     waves = []
     previous_latent = None
     previous_condition = None
     mx.random.seed(seed + 7)
     total = len(starts)
+    effective_cfg = float(cfg_scale) if cfg_scale is not None and cfg_scale > 0 else DIT_CFG_SCALE
     for index, start in enumerate(starts):
         _check(cancel_event)
         _report(progress_cb, index / max(total, 1),
@@ -140,7 +249,7 @@ def run_flow_hooked(model, frame_hiddens, num_inference_steps: int, seed: int,
         latents, condition = denoise_chunk(
             model.transformer, noise, condition,
             num_inference_steps=num_inference_steps,
-            guidance_scale=DIT_CFG_SCALE,
+            guidance_scale=effective_cfg,
             previous_latent=previous_latent,
             previous_condition=previous_condition,
         )
@@ -155,10 +264,15 @@ def run_flow_hooked(model, frame_hiddens, num_inference_steps: int, seed: int,
     )
 
 
-def generate_music_hooked(model, caption: str, lyrics: str, duration_sec: float,
-                          steps: int, seed: int, output_path: str,
-                          cancel_event=None, progress_cb=None) -> str:
-    """Full hooked pipeline: identical math to library generate(), plus hooks."""
+def generate_music_hooked(
+    model, caption: str, lyrics: str, duration_sec: float,
+    steps: int, seed: int, output_path: str,
+    temperature: float = 1.0,
+    cfg_scale: float = 1.5,
+    top_k: int = 50,
+    cancel_event=None, progress_cb=None
+) -> str:
+    """Full hooked pipeline with genuine temperature, CFG, and top_k sampling controls."""
     max_frames = max(1, int(duration_sec * model.config.frame_rate))
     text_ids = model._text_ids(caption, lyrics)
 
@@ -168,12 +282,21 @@ def generate_music_hooked(model, caption: str, lyrics: str, duration_sec: float,
 
     frame_hiddens = generate_frame_hiddens_hooked(
         model.language_model, model.rvq_depth_decoder, model.config,
-        text_ids, max_frames, seed, cancel_event, ar_progress,
+        text_ids, max_frames, seed,
+        temperature=temperature,
+        cfg_scale=cfg_scale,
+        top_k=top_k,
+        cancel_event=cancel_event,
+        progress_cb=ar_progress,
     )
     mx.eval(frame_hiddens)
     _check(cancel_event)
-    audio = run_flow_hooked(model, frame_hiddens, steps, seed,
-                            cancel_event, progress_cb)
+    audio = run_flow_hooked(
+        model, frame_hiddens, steps, seed,
+        cfg_scale=cfg_scale,
+        cancel_event=cancel_event,
+        progress_cb=progress_cb
+    )
     mx.eval(audio)
     _check(cancel_event)
     waveform = mx.clip(audio[0].transpose(1, 0).astype(mx.float32), -1.0, 1.0)

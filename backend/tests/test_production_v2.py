@@ -235,6 +235,8 @@ def test_huggingface_search_and_custom_model(client):
     assert "downloads" in first
     assert "likes" in first
     assert "category" in first
+    assert "size_formatted" in first
+    assert "size_gb" in first
 
     # Register custom model
     dummy_repo = "test-community/custom-synth-music"

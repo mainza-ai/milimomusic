@@ -9,6 +9,8 @@ os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import logging
 logger = logging.getLogger("milimo.main")
+import io
+import zipfile
 import json
 import re
 import time
@@ -3253,6 +3255,8 @@ def get_project(project_id: UUID):
         p_dict["jobs"] = [j.model_dump() for j in jobs]
         p_dict["track_count"] = len(jobs)
         p_dict["total_duration_s"] = sum((j.duration_ms or 0) / 1000 for j in jobs if j.status == JobStatus.COMPLETED)
+        p_dict["stems_count"] = sum(1 for j in jobs if j.stems_json is not None)
+        p_dict["midi_count"] = sum(1 for j in jobs if j.midi_path is not None)
         return p_dict
 
 
@@ -3314,12 +3318,17 @@ def add_track_to_project(project_id: UUID, body: dict = Body(...)):
     if not job_id_str:
         raise HTTPException(status_code=400, detail="job_id is required")
         
+    try:
+        job_uuid = UUID(str(job_id_str).strip())
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid job_id format (must be a valid UUID)")
+
     with Session(engine) as session:
         project = session.get(Project, project_id)
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
             
-        job = session.get(Job, UUID(job_id_str))
+        job = session.get(Job, job_uuid)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
             
@@ -3328,19 +3337,138 @@ def add_track_to_project(project_id: UUID, body: dict = Body(...)):
         session.add(job)
         session.add(project)
         session.commit()
-        return {"status": "added", "project_id": project_id, "job_id": job_id_str}
+        return {"status": "added", "project_id": str(project_id), "job_id": str(job_uuid)}
 
 
 @app.delete("/projects/{project_id}/tracks/{job_id}")
 def remove_track_from_project(project_id: UUID, job_id: UUID):
     with Session(engine) as session:
+        project = session.get(Project, project_id)
         job = session.get(Job, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
         job.project_id = None
         session.add(job)
+        if project:
+            project.updated_at = datetime.now(timezone.utc)
+            session.add(project)
         session.commit()
-        return {"status": "removed", "job_id": job_id}
+        return {"status": "removed", "project_id": str(project_id), "job_id": str(job_id)}
+
+
+@app.post("/projects/{project_id}/duplicate", response_model=Project)
+def duplicate_project(project_id: UUID):
+    """Duplicate an existing project folder as a template (preserves BPM, key, tags, color, artwork)."""
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+        dup = Project(
+            name=f"{project.name} (Copy)",
+            description=project.description,
+            cover_image_path=project.cover_image_path,
+            image_prompt=project.image_prompt,
+            tags=project.tags,
+            bpm=project.bpm,
+            key_signature=project.key_signature,
+            color=project.color,
+            icon=project.icon
+        )
+        session.add(dup)
+        session.commit()
+        session.refresh(dup)
+        return dup
+
+
+@app.get("/projects/{project_id}/export")
+def export_project_studio_pack(project_id: UUID):
+    """Export all completed tracks, multitrack stems, MIDI scores, lyrics, and metadata for this project as a ZIP archive."""
+    with Session(engine) as session:
+        project = session.get(Project, project_id)
+        if not project:
+            raise HTTPException(status_code=404, detail="Project not found")
+            
+        p_id_str = str(project_id)
+        jobs = session.exec(select(Job).where(Job.project_id == p_id_str).order_by(Job.created_at.asc())).all()
+        
+        zip_buffer = io.BytesIO()
+        safe_proj_name = re.sub(r'[^a-zA-Z0-9_-]', '_', project.name or "project").strip()
+        
+        with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
+            meta = {
+                "project_id": str(project.id),
+                "name": project.name,
+                "project_name": project.name,
+                "description": project.description,
+                "bpm": project.bpm,
+                "key_signature": project.key_signature,
+                "tags": project.tags,
+                "color": project.color,
+                "track_count": len(jobs),
+                "total_tracks": len(jobs),
+                "created_at": project.created_at.isoformat() if project.created_at else None,
+                "exported_at": datetime.now(timezone.utc).isoformat(),
+                "tracks": []
+            }
+            
+            for idx, job in enumerate(jobs, 1):
+                clean_title = re.sub(r'[^a-zA-Z0-9_-]', '_', job.title or f"track_{idx}").strip()
+                folder_prefix = f"tracks/{idx:02d}_{clean_title}"
+                
+                meta["tracks"].append({
+                    "track_number": idx,
+                    "job_id": str(job.id),
+                    "title": job.title,
+                    "prompt": job.prompt,
+                    "tags": job.tags,
+                    "duration_ms": job.duration_ms,
+                    "status": str(job.status)
+                })
+                
+                # 1. Master Audio
+                if job.audio_path:
+                    local_p = job.audio_path.lstrip("/")
+                    candidates = [local_p, f"generated_audio/{os.path.basename(local_p)}", f"data/{local_p}"]
+                    for cp in candidates:
+                        if os.path.isfile(cp):
+                            ext = os.path.splitext(cp)[1] or ".wav"
+                            zf.write(cp, arcname=f"{folder_prefix}/master_audio{ext}")
+                            break
+                            
+                # 2. Separated Stems
+                if job.stems_json:
+                    try:
+                        stems_data = json.loads(job.stems_json)
+                        for stem_k in ["vocals", "drums", "bass", "other", "guitar", "piano"]:
+                            sp = stems_data.get(stem_k)
+                            if sp:
+                                sp_clean = sp.lstrip("/")
+                                if os.path.isfile(sp_clean):
+                                    zf.write(sp_clean, arcname=f"{folder_prefix}/stems/{stem_k}.wav")
+                    except Exception:
+                        pass
+                        
+                # 3. MIDI & Scores
+                if job.midi_path and os.path.isfile(job.midi_path.lstrip("/")):
+                    zf.write(job.midi_path.lstrip("/"), arcname=f"{folder_prefix}/score.mid")
+                if job.musicxml_path and os.path.isfile(job.musicxml_path.lstrip("/")):
+                    zf.write(job.musicxml_path.lstrip("/"), arcname=f"{folder_prefix}/score.musicxml")
+                if job.notes_json:
+                    zf.writestr(f"{folder_prefix}/notes.json", job.notes_json)
+                    
+                # 4. Lyrics
+                if job.lyrics:
+                    zf.writestr(f"{folder_prefix}/lyrics.txt", job.lyrics)
+                    
+            zf.writestr("project_metadata.json", json.dumps(meta, indent=2))
+            
+        zip_buffer.seek(0)
+        return StreamingResponse(
+            zip_buffer,
+            media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{safe_proj_name}_studio_pack.zip"'}
+        )
 
 
 # ==========================================

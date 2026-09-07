@@ -2,8 +2,10 @@ import React, { useState, useEffect, useRef } from 'react';
 import {
     type Job,
     type VoiceProfile,
+    type Project,
     trackApi,
     voiceApi,
+    projectApi,
     getStemMeta,
     API_BASE_URL
 } from '../../api';
@@ -38,7 +40,9 @@ import {
     Shuffle,
     Repeat,
     Repeat1,
-    Gauge
+    Gauge,
+    FolderKanban,
+    FolderPlus
 } from 'lucide-react';
 
 interface TrackDetailViewProps {
@@ -169,6 +173,45 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
         setTrack(initialTrack);
         setTitleInput(initialTrack.title || initialTrack.prompt);
     }, [initialTrack]);
+
+    const [userProjects, setUserProjects] = useState<Project[]>([]);
+    const [currentProject, setCurrentProject] = useState<Project | null>(null);
+    const [isProjectModalOpen, setIsProjectModalOpen] = useState(false);
+
+    useEffect(() => {
+        projectApi.listProjects().then(projs => {
+            setUserProjects(projs);
+            if (track.project_id) {
+                const found = projs.find(p => p.id === track.project_id);
+                if (found) setCurrentProject(found);
+                else setCurrentProject(null);
+            } else {
+                setCurrentProject(null);
+            }
+        }).catch(console.error);
+    }, [track.project_id]);
+
+    const handleAssignProject = async (projectId: string | null) => {
+        try {
+            if (projectId) {
+                await projectApi.addTrackToProject(projectId, track.id);
+                const found = userProjects.find(p => p.id === projectId);
+                setCurrentProject(found || null);
+                const updated = { ...track, project_id: projectId };
+                setTrack(updated);
+                onTrackUpdated?.(updated);
+            } else if (track.project_id) {
+                await projectApi.removeTrackFromProject(track.project_id, track.id);
+                setCurrentProject(null);
+                const updated = { ...track, project_id: undefined };
+                setTrack(updated);
+                onTrackUpdated?.(updated);
+            }
+            setIsProjectModalOpen(false);
+        } catch (e) {
+            console.error('Failed to assign project:', e);
+        }
+    };
 
     useEffect(() => {
         voiceApi.listProfiles().then(setVoiceProfiles).catch(console.error);
@@ -593,14 +636,28 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-400 border border-black/[0.06] dark:border-white/5">
                                 🎛️ {track.model_provider || 'MiniMax Music 3'}
                             </span>
-                            {track.used_fallback_synth && (
-                                <span
-                                    className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-rose-500/15 text-rose-700 dark:text-rose-300 font-bold border border-rose-500/30"
-                                    title={track.fallback_reason || 'Real inference was skipped'}
-                                >
-                                    ⚠️ Fallback synthesis (not MiniMax Music 3)
-                                </span>
-                            )}
+                            {/* Project Folder Chip */}
+                            <button
+                                onClick={() => setIsProjectModalOpen(true)}
+                                className={`text-[10px] font-mono px-2.5 py-0.5 rounded-full font-bold border transition-all flex items-center gap-1.5 ${
+                                    currentProject
+                                        ? 'bg-teal-500/15 text-teal-700 dark:text-teal-300 border-teal-500/30 hover:bg-teal-500/25'
+                                        : 'bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-400 border-black/[0.06] dark:border-white/10 hover:border-teal-500/40'
+                                }`}
+                                title={currentProject ? `Assigned to: ${currentProject.name} (Click to change)` : 'Assign track to a Project Folder'}
+                            >
+                                {currentProject ? (
+                                    <>
+                                        <FolderKanban size={11} className="text-teal-500" />
+                                        <span>📁 {currentProject.name}</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <FolderPlus size={11} />
+                                        <span>+ Add to Project</span>
+                                    </>
+                                )}
+                            </button>
                         </div>
 
                         {/* Primary Action Buttons */}
@@ -1542,6 +1599,95 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                     </div>
                 )}
             </div>
+
+            {/* Project Assignment Modal */}
+            {isProjectModalOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+                    <div className="bg-white dark:bg-[#181a24] rounded-3xl border border-black/[0.08] dark:border-white/10 p-6 max-w-md w-full shadow-apple-lg space-y-4">
+                        <div className="flex items-center justify-between">
+                            <h3 className="text-base font-bold text-slate-900 dark:text-white flex items-center gap-2">
+                                <FolderKanban size={18} className="text-teal-500" />
+                                <span>Assign to Studio Project</span>
+                            </h3>
+                            <button
+                                onClick={() => setIsProjectModalOpen(false)}
+                                className="p-1 rounded-lg text-slate-400 hover:text-slate-600 dark:hover:text-white text-xs"
+                            >
+                                ✕
+                            </button>
+                        </div>
+                        <p className="text-xs text-slate-500 dark:text-slate-400">
+                            Select a project folder to group this generation with multi-session stems, arrangements, and shared tempo/key settings.
+                        </p>
+
+                        <div className="max-h-64 overflow-y-auto space-y-2 pr-1">
+                            {/* Option: Unassigned / None */}
+                            <div
+                                onClick={() => handleAssignProject(null)}
+                                className={`p-3 rounded-2xl border cursor-pointer transition-all flex items-center justify-between ${
+                                    !track.project_id
+                                        ? 'bg-teal-500/10 border-teal-500 text-teal-700 dark:text-teal-300 font-bold'
+                                        : 'bg-black/[0.02] dark:bg-white/[0.03] border-black/[0.06] dark:border-white/5 hover:border-teal-500/40'
+                                }`}
+                            >
+                                <div className="text-xs">
+                                    <span className="block font-bold">None (Unassigned)</span>
+                                    <span className="text-[10px] text-slate-400">Keep in general library only</span>
+                                </div>
+                                {!track.project_id && <Check size={16} className="text-teal-500" />}
+                            </div>
+
+                            {/* Existing Projects */}
+                            {userProjects.map((p) => {
+                                const isSelected = track.project_id === p.id;
+                                return (
+                                    <div
+                                        key={p.id}
+                                        onClick={() => handleAssignProject(p.id)}
+                                        className={`p-3 rounded-2xl border cursor-pointer transition-all flex items-center justify-between ${
+                                            isSelected
+                                                ? 'bg-teal-500/10 border-teal-500 text-teal-700 dark:text-teal-300 font-bold'
+                                                : 'bg-black/[0.02] dark:bg-white/[0.03] border-black/[0.06] dark:border-white/5 hover:border-teal-500/40'
+                                        }`}
+                                    >
+                                        <div className="flex items-center space-x-3 min-w-0 flex-1">
+                                            <div className="w-9 h-9 rounded-xl bg-slate-900 border border-black/10 dark:border-white/10 overflow-hidden flex items-center justify-center flex-shrink-0">
+                                                {p.cover_image_path ? (
+                                                    <img
+                                                        src={p.cover_image_path.startsWith('http') ? p.cover_image_path : `${API_BASE_URL}${p.cover_image_path}`}
+                                                        alt={p.name}
+                                                        className="w-full h-full object-cover"
+                                                    />
+                                                ) : (
+                                                    <FolderKanban size={16} className="text-teal-400" />
+                                                )}
+                                            </div>
+                                            <div className="min-w-0 flex-1">
+                                                <div className="text-xs font-bold text-slate-900 dark:text-white truncate">
+                                                    {p.name}
+                                                </div>
+                                                <div className="text-[10px] font-mono text-slate-400">
+                                                    {p.bpm || 120} BPM • {p.key_signature || 'C Major'}
+                                                </div>
+                                            </div>
+                                        </div>
+                                        {isSelected && <Check size={16} className="text-teal-500 flex-shrink-0 ml-2" />}
+                                    </div>
+                                );
+                            })}
+                        </div>
+
+                        <div className="flex justify-end pt-2">
+                            <button
+                                onClick={() => setIsProjectModalOpen(false)}
+                                className="px-4 py-2 rounded-xl bg-black/5 dark:bg-white/5 text-slate-700 dark:text-slate-300 font-bold text-xs"
+                            >
+                                Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

@@ -773,3 +773,267 @@ async def test_voice_profile_endpoints_json_and_multipart():
         await client.delete(f"/voice/profiles/{p_id}")
 
 
+def test_project_crud_and_validation(client):
+    """Test full Project CRUD lifecycle, custom metadata, and deletion."""
+    # 1. Create project
+    create_payload = {
+        "name": "Neon Horizons LP",
+        "description": "Retro synthwave album production workspace",
+        "bpm": 128,
+        "key_signature": "F# Minor",
+        "tags": "Synthwave, Cyberpunk, Retrowave",
+        "color": "amber",
+        "cover_image_path": "/covers/neon.jpg"
+    }
+    res = client.post("/projects", json=create_payload)
+    assert res.status_code == 200
+    project = res.json()
+    p_id = project["id"]
+    assert project["name"] == "Neon Horizons LP"
+    assert project["bpm"] == 128
+    assert project["key_signature"] == "F# Minor"
+    assert project["color"] == "amber"
+    assert project["tags"] == "Synthwave, Cyberpunk, Retrowave"
+
+    # 2. Get project by ID
+    get_res = client.get(f"/projects/{p_id}")
+    assert get_res.status_code == 200
+    assert get_res.json()["id"] == p_id
+    assert get_res.json()["track_count"] == 0
+
+    # 3. List projects
+    list_res = client.get("/projects")
+    assert list_res.status_code == 200
+    ids = [p["id"] for p in list_res.json()]
+    assert p_id in ids
+
+    # 4. Update project
+    update_payload = {
+        "name": "Neon Horizons (Deluxe Edition)",
+        "bpm": 132,
+        "color": "teal"
+    }
+    update_res = client.put(f"/projects/{p_id}", json=update_payload)
+    assert update_res.status_code == 200
+    updated = update_res.json()
+    assert updated["name"] == "Neon Horizons (Deluxe Edition)"
+    assert updated["bpm"] == 132
+    assert updated["color"] == "teal"
+    assert updated["key_signature"] == "F# Minor"
+
+    # 5. Delete project
+    del_res = client.delete(f"/projects/{p_id}")
+    assert del_res.status_code == 200
+    assert del_res.json()["status"] == "deleted"
+
+    # Verify 404 after deletion
+    assert client.get(f"/projects/{p_id}").status_code == 404
+
+
+def test_project_tracks_association_and_stats(client):
+    """Test adding/removing tracks, error handling for invalid IDs, and dynamic stats computation."""
+    from sqlmodel import Session
+    from app.main import engine
+    from app.models import Job
+    import json
+
+    # 1. Create project
+    res = client.post("/projects", json={"name": "EP Test Project", "bpm": 120})
+    assert res.status_code == 200
+    p_id = res.json()["id"]
+
+    # 2. Create 2 dummy completed jobs in DB
+    job1_id = uuid4()
+    job2_id = uuid4()
+    with Session(engine) as session:
+        j1 = Job(
+            id=job1_id,
+            prompt="Track 1 synth",
+            title="Opening Pulse",
+            duration_ms=45000,
+            midi_path="/midi/track1.mid",
+            stems_json=json.dumps({"vocals": "/audio/v.wav", "drums": "/audio/d.wav"}),
+            status="completed"
+        )
+        j2 = Job(
+            id=job2_id,
+            prompt="Track 2 bass",
+            title="Deep Resonance",
+            duration_ms=75000,
+            midi_path=None,
+            status="completed"
+        )
+        session.add(j1)
+        session.add(j2)
+        session.commit()
+
+    try:
+        # 3. Add track 1
+        add_res1 = client.post(f"/projects/{p_id}/tracks", json={"job_id": str(job1_id)})
+        assert add_res1.status_code == 200
+        assert add_res1.json()["status"] == "added"
+
+        # Check stats
+        p_data = client.get(f"/projects/{p_id}").json()
+        assert p_data["track_count"] == 1
+        assert p_data["total_duration_s"] == 45.0
+        assert p_data["midi_count"] == 1
+        assert p_data["stems_count"] == 1
+
+        # 4. Add track 2
+        add_res2 = client.post(f"/projects/{p_id}/tracks", json={"job_id": str(job2_id)})
+        assert add_res2.status_code == 200
+
+        # Check updated aggregate stats
+        p_data2 = client.get(f"/projects/{p_id}").json()
+        assert p_data2["track_count"] == 2
+        assert p_data2["total_duration_s"] == 120.0
+        assert p_data2["midi_count"] == 1
+
+        # 5. Test invalid UUID error handling (400 Bad Request)
+        bad_res = client.post(f"/projects/{p_id}/tracks", json={"job_id": "not-a-valid-uuid"})
+        assert bad_res.status_code == 400
+        assert "Invalid job_id" in bad_res.json()["detail"]
+
+        # 6. Test non-existent track (404)
+        non_res = client.post(f"/projects/{p_id}/tracks", json={"job_id": str(uuid4())})
+        assert non_res.status_code == 404
+
+        # 7. Remove track 1
+        del_track_res = client.delete(f"/projects/{p_id}/tracks/{job1_id}")
+        assert del_track_res.status_code == 200
+        assert del_track_res.json()["status"] == "removed"
+
+        # Check stats after removal
+        p_data3 = client.get(f"/projects/{p_id}").json()
+        assert p_data3["track_count"] == 1
+        assert p_data3["total_duration_s"] == 75.0
+        assert p_data3["midi_count"] == 0
+
+    finally:
+        client.delete(f"/projects/{p_id}")
+
+
+def test_project_duplicate_lifecycle(client):
+    """Test project duplication copying BPM, Key, Tags, Color, and Name."""
+    orig_res = client.post("/projects", json={
+        "name": "Original Cyber Session",
+        "description": "Source production session",
+        "bpm": 140,
+        "key_signature": "D Minor",
+        "tags": "Cyber, Darkwave",
+        "color": "sky",
+        "cover_image_path": "/covers/cyber.png"
+    })
+    assert orig_res.status_code == 200
+    orig = orig_res.json()
+    orig_id = orig["id"]
+
+    try:
+        dup_res = client.post(f"/projects/{orig_id}/duplicate")
+        assert dup_res.status_code == 200
+        dup = dup_res.json()
+
+        assert dup["id"] != orig_id
+        assert dup["name"] == "Original Cyber Session (Copy)"
+        assert dup["description"] == "Source production session"
+        assert dup["bpm"] == 140
+        assert dup["key_signature"] == "D Minor"
+        assert dup["tags"] == "Cyber, Darkwave"
+        assert dup["color"] == "sky"
+        assert dup["cover_image_path"] == "/covers/cyber.png"
+        assert client.get(f"/projects/{dup['id']}").json()["track_count"] == 0
+
+        # Clean up duplicated project
+        client.delete(f"/projects/{dup['id']}")
+    finally:
+        client.delete(f"/projects/{orig_id}")
+
+
+def test_project_studio_pack_export_zip(client):
+    """Test exporting a full project studio pack as a multi-track .zip archive."""
+    import zipfile
+    import io
+    import json
+    from sqlmodel import Session
+    from app.main import engine
+    from app.models import Job
+
+    # 1. Create project
+    p_res = client.post("/projects", json={
+        "name": "Export Test LP",
+        "bpm": 124,
+        "key_signature": "G Major",
+        "tags": "Acoustic, Indie"
+    })
+    p_id = p_res.json()["id"]
+
+    # 2. Create sample files on disk to include in export
+    os.makedirs("generated_audio", exist_ok=True)
+    os.makedirs("generated_midi", exist_ok=True)
+    test_audio = "generated_audio/test_export_master.wav"
+    test_stem = "generated_audio/test_export_vocals.wav"
+    test_midi = "generated_midi/test_export_score.mid"
+    with open(test_audio, "wb") as f:
+        f.write(b"RIFFdummywavdataformaster")
+    with open(test_stem, "wb") as f:
+        f.write(b"RIFFdummywavdataforvocals")
+    with open(test_midi, "wb") as f:
+        f.write(b"MThddummymididata")
+
+    job_id = uuid4()
+    try:
+        with Session(engine) as session:
+            job = Job(
+                id=job_id,
+                project_id=p_id,
+                title="Sunny Reverie",
+                prompt="Acoustic guitar morning sun",
+                lyrics="[Verse 1]\nWaking up to the morning rays\nGolden light through the haze",
+                notes_json='[{"pitch": 60, "start": 0.0, "duration": 1.0}]',
+                duration_ms=30000,
+                audio_path=f"/{test_audio}",
+                midi_path=f"/{test_midi}",
+                stems_json=f'{{"vocals": "/{test_stem}"}}',
+                status="completed"
+            )
+            session.add(job)
+            session.commit()
+
+        # 3. Call Export Endpoint
+        exp_res = client.get(f"/projects/{p_id}/export")
+        assert exp_res.status_code == 200
+        assert "application/zip" in exp_res.headers.get("content-type", "")
+        assert 'attachment; filename="Export_Test_LP_studio_pack.zip"' in exp_res.headers.get("content-disposition", "")
+
+        # 4. Validate Zip Structure
+        zip_bytes = exp_res.content
+        assert len(zip_bytes) > 0
+        with zipfile.ZipFile(io.BytesIO(zip_bytes), "r") as zf:
+            file_names = zf.namelist()
+            # Root metadata
+            assert "project_metadata.json" in file_names
+            metadata = json.loads(zf.read("project_metadata.json"))
+            assert metadata["project_name"] == "Export Test LP"
+            assert metadata["bpm"] == 124
+            assert metadata["key_signature"] == "G Major"
+            assert metadata["total_tracks"] == 1
+            assert metadata["tracks"][0]["title"] == "Sunny Reverie"
+
+            # Track files in subfolder
+            track_folder = "tracks/01_Sunny_Reverie/"
+            assert f"{track_folder}master_audio.wav" in file_names
+            assert f"{track_folder}score.mid" in file_names
+            assert f"{track_folder}notes.json" in file_names
+            assert f"{track_folder}lyrics.txt" in file_names
+            assert f"{track_folder}stems/vocals.wav" in file_names
+            assert zf.read(f"{track_folder}lyrics.txt").decode("utf-8").startswith("[Verse 1]")
+
+    finally:
+        client.delete(f"/projects/{p_id}")
+        for p in [test_audio, test_stem, test_midi]:
+            if os.path.isfile(p):
+                os.remove(p)
+
+
+

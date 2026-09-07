@@ -37,6 +37,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Voice Studio (SVC)](entities/voice-service.md) — offline voice conversion + consent-gated profiles.
 - [AI Music Video Studio](entities/video-studio.md) — multi-scene generation, isolated vocal stem viseme lip-syncing, duration constraint clamping, and karaoke ASS subtitles.
 - [Session Workspace (DAW)](entities/session-workspace.md) — Listen/Arrange/Piano Roll/Notation/Mix/Lyrics.
+- [Studio Projects](entities/projects.md) — multi-session production workspaces, BPM/Key conditioning, multi-track stems aggregation, and Studio Pack (.zip) export.
 
 ## Entities — in-app services & agents
 

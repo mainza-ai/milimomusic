@@ -1,6 +1,6 @@
-import React, { useState } from 'react';
-import { type Job } from '../../api';
-import { Play, Pause, Heart, Sliders, Search, Music, Disc, Sparkles, Trash2, Mic2, Copy, Check, X, Layers, Info, Video } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { type Job, type Project, projectApi } from '../../api';
+import { Play, Pause, Heart, Sliders, Search, Music, Disc, Sparkles, Trash2, Mic2, Copy, Check, X, Layers, Info, Video, FolderKanban } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { AppFooter } from '../ui/AppFooter';
 
@@ -32,6 +32,17 @@ export const SongsView: React.FC<SongsViewProps> = ({
     const [selectedTag, setSelectedTag] = useState<string>('all');
     const [selectedLyricsSong, setSelectedLyricsSong] = useState<Job | null>(null);
     const [copied, setCopied] = useState(false);
+    const [projects, setProjects] = useState<Project[]>([]);
+
+    useEffect(() => {
+        projectApi.listProjects().then(setProjects).catch(console.error);
+    }, []);
+
+    const projectMap = useMemo(() => {
+        const map = new Map<string, Project>();
+        projects.forEach(p => map.set(p.id, p));
+        return map;
+    }, [projects]);
 
     const completedSongs = songs.filter(s => s.status === 'completed' && s.audio_path);
 
@@ -217,6 +228,15 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                                                 {song.is_favorite && (
                                                                     <Heart size={12} className="fill-rose-500 text-rose-500 flex-shrink-0" />
                                                                 )}
+                                                                {song.project_id && projectMap.get(song.project_id) && (
+                                                                    <span
+                                                                        className="px-1.5 py-0.5 rounded-md bg-teal-500/10 text-[9px] font-mono text-teal-700 dark:text-teal-300 font-bold border border-teal-500/20 inline-flex items-center gap-1 flex-shrink-0"
+                                                                        title={`Project: ${projectMap.get(song.project_id)!.name}`}
+                                                                    >
+                                                                        <FolderKanban size={9} />
+                                                                        <span className="truncate max-w-[75px]">{projectMap.get(song.project_id)!.name}</span>
+                                                                    </span>
+                                                                )}
                                                             </div>
                                                             <p
                                                                 onClick={() => onSelectTrack?.(song)}
@@ -374,9 +394,20 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                         onClick={() => onSelectTrack?.(song)}
                                         className="cursor-pointer group/title"
                                     >
-                                        <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 group-hover/title:text-teal-600 dark:group-hover/title:text-teal-400 transition-colors truncate">
-                                            {song.title || song.prompt.slice(0, 35)}
-                                        </h4>
+                                        <div className="flex items-center gap-1.5">
+                                            <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 group-hover/title:text-teal-600 dark:group-hover/title:text-teal-400 transition-colors truncate flex-1">
+                                                {song.title || song.prompt.slice(0, 35)}
+                                            </h4>
+                                            {song.project_id && projectMap.get(song.project_id) && (
+                                                <span
+                                                    className="px-1.5 py-0.5 rounded-md bg-teal-500/10 text-[9px] font-mono text-teal-700 dark:text-teal-300 font-bold border border-teal-500/20 inline-flex items-center gap-1 flex-shrink-0"
+                                                    title={`Project: ${projectMap.get(song.project_id)!.name}`}
+                                                >
+                                                    <FolderKanban size={9} />
+                                                    <span className="truncate max-w-[65px]">{projectMap.get(song.project_id)!.name}</span>
+                                                </span>
+                                            )}
+                                        </div>
                                         <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 mt-0.5 leading-relaxed">
                                             {song.prompt}
                                         </p>

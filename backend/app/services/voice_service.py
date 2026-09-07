@@ -141,11 +141,22 @@ class VoiceService:
         output_filename = f"{job_id}_voice_{profile_id}.wav"
         output_path = os.path.join("generated_audio/converted_vocals", output_filename)
 
-        local_vocal = vocal_stem_path.replace("/audio/", "generated_audio/")
-        if not os.path.exists(local_vocal):
-            with open(output_path, "wb") as f:
-                f.write(b"")
-            return f"/audio/converted_vocals/{output_filename}"
+        # Resolve local vocal path across common directory layouts
+        possible_paths = [
+            vocal_stem_path,
+            vocal_stem_path.lstrip("/"),
+            vocal_stem_path.replace("/audio/", "generated_audio/"),
+            os.path.join("generated_audio", os.path.basename(vocal_stem_path)),
+            os.path.join("generated_audio/stems", os.path.basename(vocal_stem_path))
+        ]
+        resolved_vocal = None
+        for p in possible_paths:
+            if os.path.exists(p) and os.path.getsize(p) > 0:
+                resolved_vocal = p
+                break
+
+        if not resolved_vocal:
+            raise FileNotFoundError(f"Vocal stem audio not found for path: {vocal_stem_path}")
 
         model_ckpt = os.path.join(VOICE_DIR, f"{profile_id}.pth")
         if os.path.exists(model_ckpt):
@@ -157,7 +168,7 @@ class VoiceService:
             try:
                 import torchaudio
                 import torchaudio.functional as F
-                waveform, sr = torchaudio.load(local_vocal)
+                waveform, sr = torchaudio.load(resolved_vocal)
                 shifted = F.pitch_shift(waveform, sr, n_steps=pitch_shift)
                 torchaudio.save(output_path, shifted, sr)
                 return f"/audio/converted_vocals/{output_filename}"
@@ -165,8 +176,9 @@ class VoiceService:
                 logger.warning(f"DSP pitch shift failed: {e}. Falling back to clean copy.")
 
         import shutil
-        shutil.copyfile(local_vocal, output_path)
+        shutil.copyfile(resolved_vocal, output_path)
         return f"/audio/converted_vocals/{output_filename}"
 
 
 voice_service = VoiceService()
+

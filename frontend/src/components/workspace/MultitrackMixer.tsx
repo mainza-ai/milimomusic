@@ -17,6 +17,11 @@ interface MultitrackMixerProps {
     stemAnalysersRef: React.MutableRefObject<Record<string, AnalyserNode>>;
     /** AnalyserNode tapped off the master bus. */
     masterAnalyserRef: React.MutableRefObject<AnalyserNode | null>;
+    /** A/B Audition mode: 'original' unmastered mix or 'mastered' output. */
+    masterAuditionMode?: 'original' | 'mastered';
+    onMasterAuditionModeChange?: (mode: 'original' | 'mastered') => void;
+    hasMasteredTrack?: boolean;
+    onMasteringComplete?: (masteredPath: string, lufs: number) => void;
 }
 
 export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
@@ -30,7 +35,11 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
     onMasterVolumeChange,
     isPlaying,
     stemAnalysersRef,
-    masterAnalyserRef
+    masterAnalyserRef,
+    masterAuditionMode = 'mastered',
+    onMasterAuditionModeChange,
+    hasMasteredTrack = false,
+    onMasteringComplete
 }) => {
     const [isMastering, setIsMastering] = useState(false);
     const [masteringStatus, setMasteringStatus] = useState<{ ok: boolean; text: string } | null>(null);
@@ -95,6 +104,9 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
         try {
             const res = await workspaceApi.applyMastering(job.id);
             setMasteredLufs(typeof res.lufs === 'number' ? res.lufs : null);
+            if (onMasteringComplete && res.audio_path) {
+                onMasteringComplete(res.audio_path, typeof res.lufs === 'number' ? res.lufs : -14.0);
+            }
             setMasteringStatus({
                 ok: true,
                 text: `Reference Mastering Complete · Measured ${typeof res.lufs === 'number' ? res.lufs.toFixed(1) : '—'} LUFS`
@@ -278,13 +290,41 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
                         </span>
                     </div>
 
-                    <div className="w-full text-center">
+                    <div className="w-full text-center space-y-1.5">
                         <span
-                            className="text-[10px] font-mono font-bold text-teal-600 dark:text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded-md border border-teal-500/20"
+                            className="text-[10px] font-mono font-bold text-teal-600 dark:text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded-md border border-teal-500/20 inline-block"
                             title={masteredLufs !== null ? `Measured integrated loudness after reference mastering` : 'Run Matchering Reference Master to measure loudness'}
                         >
                             {masteredLufs !== null ? `${masteredLufs.toFixed(1)} LUFS` : 'LUFS —'}
                         </span>
+
+                        {/* A/B Audition Switcher */}
+                        {hasMasteredTrack && (
+                            <div className="flex items-center justify-center p-0.5 bg-black/5 dark:bg-white/5 rounded-xl border border-black/10 dark:border-white/10 text-[10px] font-mono font-bold">
+                                <button
+                                    onClick={() => onMasterAuditionModeChange?.('original')}
+                                    title="Audition A: Original Mix"
+                                    className={`px-2 py-1 rounded-lg transition-all ${
+                                        masterAuditionMode === 'original'
+                                            ? 'bg-amber-500 text-slate-950 shadow-sm font-black'
+                                            : 'text-slate-400 hover:text-slate-200'
+                                    }`}
+                                >
+                                    A: Mix
+                                </button>
+                                <button
+                                    onClick={() => onMasterAuditionModeChange?.('mastered')}
+                                    title="Audition B: Reference Master"
+                                    className={`px-2 py-1 rounded-lg transition-all ${
+                                        masterAuditionMode === 'mastered'
+                                            ? 'bg-teal-500 text-slate-950 shadow-sm font-black'
+                                            : 'text-slate-400 hover:text-slate-200'
+                                    }`}
+                                >
+                                    B: Master
+                                </button>
+                            </div>
+                        )}
                     </div>
 
                     {/* Master Fader & Meter */}

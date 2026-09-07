@@ -8,7 +8,9 @@ axios.interceptors.request.use((config) => {
 });
 
 // API base is configurable via Vite env; defaults to local backend for development.
-const API_BASE_URL: string = (import.meta as any).env?.VITE_API_URL || 'http://localhost:8000';
+const API_BASE_URL: string = (import.meta as any).env?.VITE_API_URL ?? (
+    (import.meta as any).env?.DEV ? 'http://localhost:8000' : ''
+);
 
 export { API_BASE_URL };
 
@@ -117,6 +119,7 @@ export interface Job {
     // Visual Artwork Assets
     cover_image_path?: string;
     image_prompt?: string;
+    video_path?: string;
 
     // v2 Generation & Provider
     model_provider?: string;
@@ -139,6 +142,7 @@ export interface Job {
     voice_profile_id?: string;
     project_id?: string;
     session_id?: string;
+    mastered_path?: string;
 }
 
 export interface Project {
@@ -253,7 +257,10 @@ export interface ModelVariant {
     local_path?: string;
     license: string;
     recommended_hardware: string;
+    category?: 'audio' | 'image' | 'video';
+    repo_id?: string;
     is_default: boolean;
+    is_active?: boolean;
 }
 
 export interface HardwareProfile {
@@ -525,6 +532,18 @@ export const modelsApi = {
     },
     setActiveProvider: async (providerId: string) => {
         const res = await axios.post(`${API_BASE_URL}/models/active/${encodeURIComponent(providerId)}`);
+        return res.data;
+    },
+    getActiveModel: async (): Promise<{ active_provider: string; active_model: ModelVariant }> => {
+        const res = await axios.get(`${API_BASE_URL}/models/active`);
+        return res.data;
+    },
+    selectActiveModel: async (modelId: string): Promise<{ status: string; active_model: ModelVariant }> => {
+        const res = await axios.post(`${API_BASE_URL}/models/select`, { model_id: modelId });
+        return res.data;
+    },
+    checkAutoInstall: async (): Promise<{ needs_download: boolean; recommended_repo_id: string | null }> => {
+        const res = await axios.get(`${API_BASE_URL}/models/auto-install-check`);
         return res.data;
     }
 };
@@ -1114,3 +1133,112 @@ export const releaseApi = {
         return res.data;
     },
 };
+
+export interface DbPlaylist {
+    id: string;
+    name: string;
+    description: string;
+    cover_color: string;
+    created_at: string;
+    updated_at: string;
+    track_count: number;
+    song_ids: string[];
+    tracks?: Job[];
+}
+
+export interface PlaylistCreateInput {
+    name: string;
+    description?: string;
+    cover_color?: string;
+    song_ids?: string[];
+}
+
+export interface PlaylistUpdateInput {
+    name?: string;
+    description?: string;
+    cover_color?: string;
+}
+
+export interface StudioProfile {
+    id: string;
+    artist_name: string;
+    bio: string;
+    email?: string;
+    avatar_url?: string;
+    social_links?: Record<string, string>;
+    preferences?: Record<string, any>;
+    created_at?: string;
+    updated_at?: string;
+}
+
+export interface StudioProfileUpdateInput {
+    artist_name?: string;
+    bio?: string;
+    email?: string;
+    avatar_url?: string;
+    social_links?: Record<string, string>;
+    preferences?: Record<string, any>;
+}
+
+export const playlistApi = {
+    list: async (): Promise<DbPlaylist[]> => {
+        const res = await axios.get(`${API_BASE_URL}/playlists`);
+        return res.data;
+    },
+    get: async (id: string): Promise<DbPlaylist> => {
+        const res = await axios.get(`${API_BASE_URL}/playlists/${id}`);
+        return res.data;
+    },
+    create: async (data: PlaylistCreateInput): Promise<DbPlaylist> => {
+        const res = await axios.post(`${API_BASE_URL}/playlists`, data);
+        return res.data;
+    },
+    update: async (id: string, data: PlaylistUpdateInput): Promise<DbPlaylist> => {
+        const res = await axios.put(`${API_BASE_URL}/playlists/${id}`, data);
+        return res.data;
+    },
+    delete: async (id: string): Promise<void> => {
+        await axios.delete(`${API_BASE_URL}/playlists/${id}`);
+    },
+    addTrack: async (playlistId: string, jobId: string): Promise<void> => {
+        await axios.post(`${API_BASE_URL}/playlists/${playlistId}/tracks`, { job_id: jobId });
+    },
+    removeTrack: async (playlistId: string, jobId: string): Promise<void> => {
+        await axios.delete(`${API_BASE_URL}/playlists/${playlistId}/tracks/${jobId}`);
+    }
+};
+
+export const studioProfileApi = {
+    get: async (): Promise<StudioProfile> => {
+        const res = await axios.get(`${API_BASE_URL}/profile/studio`);
+        return res.data;
+    },
+    update: async (data: StudioProfileUpdateInput): Promise<StudioProfile> => {
+        const res = await axios.put(`${API_BASE_URL}/profile/studio`, data);
+        return res.data;
+    }
+};
+
+export interface StoryboardScene {
+    time: string;
+    prompt: string;
+    camera: string;
+    lighting?: string;
+}
+
+export const videoApi = {
+    generateStoryboard: async (jobId: string, visualStyle: string = 'neon-cyberpunk'): Promise<StoryboardScene[]> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/storyboard/${jobId}`, { visual_style: visualStyle });
+        return res.data.scenes;
+    },
+    renderVideo: async (jobId: string, visualStyle: string = 'neon-cyberpunk', resolution: string = '720p'): Promise<{ status: string; video_url: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/render/${jobId}`, { visual_style: visualStyle, resolution });
+        return res.data;
+    },
+    getVideo: async (jobId: string): Promise<{ video_path: string | null; has_video: boolean }> => {
+        const res = await axios.get(`${API_BASE_URL}/videos/${jobId}`);
+        return res.data;
+    }
+};
+
+

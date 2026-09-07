@@ -1,0 +1,290 @@
+#!/usr/bin/env bash
+# ==============================================================================
+# Milimo Music — Unified CLI Management Tool
+# Author: Mainza Kangombe
+# ==============================================================================
+set -e
+
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PID_DIR="$DIR/.milimo/pids"
+LOG_DIR="$DIR/.milimo/logs"
+mkdir -p "$PID_DIR" "$LOG_DIR"
+
+BACKEND_PID_FILE="$PID_DIR/backend.pid"
+FRONTEND_PID_FILE="$PID_DIR/frontend.pid"
+
+# Resolve Python environment
+resolve_python() {
+    if [ -n "$VIRTUAL_ENV" ] && [ -x "$VIRTUAL_ENV/bin/python" ]; then
+        echo "$VIRTUAL_ENV/bin/python"
+    elif [ -x "/opt/miniconda3/envs/milimomusic/bin/python" ]; then
+        echo "/opt/miniconda3/envs/milimomusic/bin/python"
+    elif command -v conda &>/dev/null && conda info --envs 2>/dev/null | grep -q "milimomusic"; then
+        CONDA_PREFIX=$(conda info --envs 2>/dev/null | grep "milimomusic" | awk '{print $NF}')
+        if [ -x "$CONDA_PREFIX/bin/python" ]; then
+            echo "$CONDA_PREFIX/bin/python"
+            return
+        fi
+        echo "python3"
+    elif command -v python3 &>/dev/null; then
+        echo "python3"
+    else
+        echo "python"
+    fi
+}
+
+cmd_help() {
+    cat << EOF
+Milimo Music Control CLI (Production Suite)
+
+Usage: ./milimo <command> [arguments]
+
+Commands:
+  start            Start Milimo Music services (backend & frontend)
+  stop             Stop running Milimo Music services
+  restart          Restart all services
+  status           Display status of services, health, and active model
+  build            Compile frontend assets for production
+  install          Install system and application dependencies
+  models           Inspect active audio/image/video models and cache
+  docker <action>  Manage containerized deployment (up, down, logs)
+  help             Show this help message
+
+Examples:
+  ./milimo start
+  ./milimo status
+  ./milimo docker up
+  ./milimo docker logs
+EOF
+}
+
+cmd_build() {
+    echo "🔨 Building frontend production distribution..."
+    cd "$DIR/frontend"
+    npm run build
+    echo "✅ Frontend build complete at $DIR/frontend/dist"
+}
+
+cmd_status() {
+    echo "========================================================"
+    echo "           MILIMO MUSIC SERVICE STATUS                  "
+    echo "========================================================"
+
+    # Backend
+    if [ -f "$BACKEND_PID_FILE" ] && kill -0 "$(cat "$BACKEND_PID_FILE")" 2>/dev/null; then
+        echo "🟢 Backend:  RUNNING (PID: $(cat "$BACKEND_PID_FILE"))"
+    else
+        # Check port 8000
+        if lsof -i :8000 >/dev/null 2>&1; then
+            P8000_PID=$(lsof -ti :8000 | head -1)
+            echo "🟢 Backend:  RUNNING on port 8000 (PID: $P8000_PID)"
+        else
+            echo "🔴 Backend:  STOPPED"
+        fi
+    fi
+
+    # Frontend
+    if [ -f "$FRONTEND_PID_FILE" ] && kill -0 "$(cat "$FRONTEND_PID_FILE")" 2>/dev/null; then
+        echo "🟢 Frontend: RUNNING (PID: $(cat "$FRONTEND_PID_FILE"))"
+    else
+        if lsof -i :5173 >/dev/null 2>&1; then
+            P5173_PID=$(lsof -ti :5173 | head -1)
+            echo "🟢 Frontend: RUNNING on port 5173 (PID: $P5173_PID)"
+        else
+            echo "⚪ Frontend: NOT RUNNING on port 5173 (Using unified port 8000 if built)"
+        fi
+    fi
+
+    # Health & Active Model probe
+    echo "--------------------------------------------------------"
+    if curl -s -f http://localhost:8000/health >/dev/null 2>&1; then
+        HEALTH_JSON=$(curl -s http://localhost:8000/health)
+        echo "⚡ API Health: OK"
+        echo "   Provider: $(echo "$HEALTH_JSON" | grep -o '"display_name":"[^"]*' | cut -d'"' -f4)"
+    else
+        echo "⚠️ API Health: Offline (http://localhost:8000/health unreachable)"
+    fi
+
+    if curl -s -f http://localhost:8000/models/active >/dev/null 2>&1; then
+        ACTIVE_JSON=$(curl -s http://localhost:8000/models/active)
+        MODEL_NAME=$(echo "$ACTIVE_JSON" | grep -o '"name":"[^"]*' | head -1 | cut -d'"' -f4)
+        echo "🎵 Active Audio Engine: ${MODEL_NAME:-MiniMax Music 3}"
+    fi
+    echo "========================================================"
+}
+
+cmd_stop() {
+    echo "🛑 Stopping Milimo Music services..."
+
+    if [ -f "$BACKEND_PID_FILE" ]; then
+        PID=$(cat "$BACKEND_PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            kill "$PID" 2>/dev/null || true
+            echo "   Stopped Backend (PID $PID)"
+        fi
+        rm -f "$BACKEND_PID_FILE"
+    fi
+
+    if [ -f "$FRONTEND_PID_FILE" ]; then
+        PID=$(cat "$FRONTEND_PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            kill "$PID" 2>/dev/null || true
+            echo "   Stopped Frontend (PID $PID)"
+        fi
+        rm -f "$FRONTEND_PID_FILE"
+    fi
+
+    # Gracefully kill any stray uvicorn on port 8000 if owned by user
+    if lsof -ti :8000 >/dev/null 2>&1; then
+        kill $(lsof -ti :8000) 2>/dev/null || true
+    fi
+
+    echo "✅ All services stopped."
+}
+
+cmd_start() {
+    PY_BIN=$(resolve_python)
+    echo "🚀 Starting Milimo Music using $PY_BIN..."
+
+    # Ensure frontend is built if dist does not exist
+    if [ ! -d "$DIR/frontend/dist" ]; then
+        echo "📦 No frontend build detected. Building frontend first..."
+        cmd_build
+    fi
+
+    export PYTHONPATH="$DIR/backend:$DIR/muscriptor:${PYTHONPATH:-}"
+
+    # Start Backend
+    nohup "$PY_BIN" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 > "$LOG_DIR/backend.log" 2>&1 &
+    echo $! > "$BACKEND_PID_FILE"
+    echo "   Backend started (PID $(cat "$BACKEND_PID_FILE")), logging to $LOG_DIR/backend.log"
+
+    # Start Frontend dev server if requested with --dev
+    if [[ "$*" == *"--dev"* ]]; then
+        cd "$DIR/frontend"
+        nohup npm run dev -- --host 0.0.0.0 > "$LOG_DIR/frontend.log" 2>&1 &
+        echo $! > "$FRONTEND_PID_FILE"
+        echo "   Frontend dev server started (PID $(cat "$FRONTEND_PID_FILE")), logging to $LOG_DIR/frontend.log"
+    fi
+
+    echo "⏳ Waiting for service startup..."
+    sleep 2
+    cmd_status
+}
+
+cmd_restart() {
+    cmd_stop
+    sleep 1
+    cmd_start "$@"
+}
+
+cmd_install() {
+    echo "📦 Installing Milimo Music dependencies..."
+    PY_BIN=$(resolve_python)
+    echo "Python interpreter: $PY_BIN"
+
+    echo "1. Installing backend Python requirements..."
+    "$PY_BIN" -m pip install --upgrade pip
+    "$PY_BIN" -m pip install -r "$DIR/backend/requirements.txt"
+
+    echo "2. Installing frontend npm dependencies..."
+    cd "$DIR/frontend"
+    npm install
+
+    echo "3. Building production frontend..."
+    npm run build
+
+    echo "✅ Installation complete! Start with: ./milimo start"
+}
+
+cmd_models() {
+    PY_BIN=$(resolve_python)
+    "$PY_BIN" -c '
+import sys
+sys.path.insert(0, "backend")
+sys.path.insert(0, "muscriptor")
+from app.services.model_manager import model_manager
+active = model_manager.get_active_model()
+act_name = active.get("name") if active else "None"
+act_id = active.get("id") if active else "none"
+print(f"🎵 Active Audio Engine: {act_name} ({act_id})")
+tree = model_manager.get_model_tree()
+for cat in ["audio", "image", "video"]:
+    items = [m for m in tree if m.get("category") == cat]
+    print(f"\n[{cat.upper()}] ({len(items)} models)")
+    for m in items:
+        name = m.get("name")
+        size = m.get("size_gb")
+        status = "INSTALLED" if m.get("is_installed") else "AVAILABLE"
+        active_mark = " ★ (ACTIVE)" if m.get("is_active") else ""
+        print(f"  • {name} ({size} GB) - {status}{active_mark}")
+'
+}
+
+cmd_docker() {
+    ACTION="${1:-up}"
+    shift || true
+    case "$ACTION" in
+        up)
+            "$DIR/docker-start.sh" "$@"
+            ;;
+        down)
+            if [ -f "$DIR/docker-compose.cpu.yml" ]; then
+                docker compose -f "$DIR/docker-compose.yml" -f "$DIR/docker-compose.cpu.yml" down "$@"
+            else
+                docker compose down "$@"
+            fi
+            echo "✅ Milimo Music container stopped."
+            ;;
+        logs)
+            if docker ps --format '{{.Names}}' | grep -q "milimo-music"; then
+                docker logs -f milimo-music "$@"
+            else
+                docker compose logs -f "$@"
+            fi
+            ;;
+        *)
+            echo "Unknown docker action: $ACTION. Available: up, down, logs"
+            exit 1
+            ;;
+    esac
+}
+
+# Main Dispatcher
+COMMAND="${1:-help}"
+shift || true
+
+case "$COMMAND" in
+    start)
+        cmd_start "$@"
+        ;;
+    stop)
+        cmd_stop
+        ;;
+    restart)
+        cmd_restart "$@"
+        ;;
+    status)
+        cmd_status
+        ;;
+    build)
+        cmd_build
+        ;;
+    install)
+        cmd_install
+        ;;
+    models)
+        cmd_models
+        ;;
+    docker)
+        cmd_docker "$@"
+        ;;
+    help|--help|-h)
+        cmd_help
+        ;;
+    *)
+        echo "Unknown command: $COMMAND"
+        cmd_help
+        exit 1
+        ;;
+esac

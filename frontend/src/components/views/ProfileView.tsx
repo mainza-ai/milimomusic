@@ -1,5 +1,5 @@
-import React, { useState } from 'react';
-import { type Job } from '../../api';
+import React, { useState, useEffect } from 'react';
+import { type Job, studioProfileApi } from '../../api';
 import { Award, Mic, Layers, ShieldCheck, Heart } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { AppFooter } from '../ui/AppFooter';
@@ -12,18 +12,56 @@ interface ProfileViewProps {
 }
 
 export const ProfileView: React.FC<ProfileViewProps> = ({ songs, onPlaySong, onOpenWorkspace, onSelectTrack }) => {
-    const [artistName, setArtistName] = useState(() => localStorage.getItem('milimo_artist_name') || 'Mainza Kangombe');
-    const [bio, setBio] = useState(() => localStorage.getItem('milimo_artist_bio') || 'Founder & Audio Architect. Exploring generative AI soundscapes, neural synthesis, and offline DAW workflows.');
+    const [artistName, setArtistName] = useState('Mainza Kangombe');
+    const [bio, setBio] = useState('Founder & Audio Architect. Exploring generative AI soundscapes, neural synthesis, and offline DAW workflows.');
     const [isEditing, setIsEditing] = useState(false);
+    const [isSaving, setIsSaving] = useState(false);
+
+    useEffect(() => {
+        const fetchProfile = async () => {
+            try {
+                // Check if we need to migrate from localStorage
+                const localName = localStorage.getItem('milimo_artist_name');
+                const localBio = localStorage.getItem('milimo_artist_bio');
+
+                const profile = await studioProfileApi.get();
+                if (localName || localBio) {
+                    const updated = await studioProfileApi.update({
+                        artist_name: localName || profile.artist_name,
+                        bio: localBio || profile.bio
+                    });
+                    setArtistName(updated.artist_name);
+                    setBio(updated.bio);
+                    localStorage.removeItem('milimo_artist_name');
+                    localStorage.removeItem('milimo_artist_bio');
+                } else {
+                    setArtistName(profile.artist_name);
+                    setBio(profile.bio);
+                }
+            } catch (err) {
+                console.error('Error fetching studio profile:', err);
+            }
+        };
+        fetchProfile();
+    }, []);
 
     const completedSongs = songs.filter(s => s.status === 'completed');
     const favoriteCount = completedSongs.filter(s => s.is_favorite).length;
 
-    const handleSave = (e: React.FormEvent) => {
+    const handleSave = async (e: React.FormEvent) => {
         e.preventDefault();
-        localStorage.setItem('milimo_artist_name', artistName);
-        localStorage.setItem('milimo_artist_bio', bio);
-        setIsEditing(false);
+        try {
+            setIsSaving(true);
+            await studioProfileApi.update({
+                artist_name: artistName,
+                bio: bio
+            });
+            setIsEditing(false);
+        } catch (err) {
+            console.error('Failed to save studio profile:', err);
+        } finally {
+            setIsSaving(false);
+        }
     };
 
     return (
@@ -94,9 +132,10 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ songs, onPlaySong, onO
                         <div className="flex justify-end">
                             <button
                                 type="submit"
-                                className="px-4 py-1.5 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs rounded-xl shadow-sm"
+                                disabled={isSaving}
+                                className="px-4 py-1.5 bg-teal-500 hover:bg-teal-400 disabled:opacity-50 text-slate-950 font-bold text-xs rounded-xl shadow-sm transition-all"
                             >
-                                Save Changes
+                                {isSaving ? 'Saving...' : 'Save Changes'}
                             </button>
                         </div>
                     </form>

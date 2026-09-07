@@ -1,0 +1,41 @@
+# Git
+.git
+.gitignore
+
+# Python & virtual environments
+__pycache__
+*.py[cod]
+*$py.class
+*.so
+.env
+.venv
+env/
+venv/
+ENV/
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg-info/
+dist/
+build/
+
+# Node
+node_modules/
+frontend/node_modules/
+frontend/.vite/
+
+# Documentation & drafts
+devs/
+docs/
+wiki/
+.gemini/
+.idea/
+.vscode/
+
+# Audio outputs (mounted via Docker volume)
+generated_audio/
+data/*.db
+data/covers/
+*.mp4
+*.wav
+*.mp3

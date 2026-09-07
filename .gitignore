@@ -40,9 +40,10 @@ heartlib/assets/*.mp3
 heartlib/assets/*.wav
 backend/generated_audio/
 backend/generated_tokens/
-backend/data/
+backend/data/*
+!backend/data/caption-library/
 generated_audio/
-data/
+/data/
 dataset_samples/
 
 # Temporary/Debug

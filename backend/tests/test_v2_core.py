@@ -140,7 +140,10 @@ def test_model_tree_and_hardware():
 
     hw = model_manager.detect_hardware()
     assert hw.hardware_tier is not None
-    assert hw.can_run_minimax_full is True
+    assert isinstance(hw.can_run_minimax_full, bool)
+    assert hw.can_run_heartmula is True
+    if hw.has_mps or hw.has_cuda:
+        assert hw.can_run_minimax_full is True
 
 
 def test_lyric_sync_and_lrc():

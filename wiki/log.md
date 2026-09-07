@@ -1320,5 +1320,18 @@ Resolved pip resolution-too-deep error in GitHub Actions Backend Test Suite:
    - Updated `Dockerfile` to leverage `uv pip install --system --no-cache` for instantaneous container dependency builds.
    - Updated `wiki/entities/docker-deployment.md` documentation.
 
+## [2026-09-07] lint | CI Test Suite Robustness & Linux Environment Normalization
+Fixed 4 environment differences causing test failures on fresh Linux CI runners:
+1. SQLite Database Schema Bootstrap (`backend/tests/conftest.py`):
+   - Added root pytest `setup_test_database` session fixture invoking `create_db_and_tables()`, ensuring `agentrun`, `project`, `artistprofile`, and all other tables are created before test execution without relying on FastAPI lifespan startup.
+2. Track Vendored MiniMax Caption Library (`.gitignore`):
+   - Whitelisted `backend/data/caption-library/` in `.gitignore` so the 1,022 caption templates and genre router files are tracked in git and present on CI checkouts.
+3. Decouple VoiceService from TorchCodec (`backend/app/services/voice_service.py`):
+   - Replaced direct `torchaudio.load()` and `torchaudio.save()` with `_load_audio_tensor` and `_save_audio_tensor` powered by `soundfile`.
+   - Completely resolved `ImportError: TorchCodec is required for load_with_torchcodec` on Linux.
+4. CPU CI Hardware Assertion Normalization (`backend/tests/test_v2_core.py`):
+   - Updated `test_model_tree_and_hardware` to dynamically assert `can_run_minimax_full` matching detected hardware (True on Apple Silicon/CUDA >=12GB, False on headless CPU CI runners).
+
+
 
 

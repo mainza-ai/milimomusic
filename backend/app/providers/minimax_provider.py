@@ -273,6 +273,108 @@ def synthesize_dynamic_audio_waveform(duration_sec: float, seed: Optional[int], 
             pass
 
 
+def _read_wav_float(file_path: str):
+    import numpy as np
+    try:
+        import soundfile as sf
+        data, sr = sf.read(file_path, dtype="float32")
+        return sr, data
+    except Exception:
+        pass
+    try:
+        from scipy.io import wavfile
+        sr, data = wavfile.read(file_path)
+        if data.dtype == np.int16:
+            data = data.astype(np.float32) / 32768.0
+        elif data.dtype == np.int32:
+            data = data.astype(np.float32) / 2147483648.0
+        elif data.dtype == np.uint8:
+            data = (data.astype(np.float32) - 128.0) / 128.0
+        return sr, data
+    except Exception:
+        pass
+    import wave
+    with wave.open(file_path, "rb") as wf:
+        sr = wf.getframerate()
+        n_ch = wf.getnchannels()
+        sampwidth = wf.getsampwidth()
+        frames = wf.readframes(wf.getnframes())
+        if sampwidth == 2:
+            data = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+        elif sampwidth == 4:
+            data = np.frombuffer(frames, dtype=np.int32).astype(np.float32) / 2147483648.0
+        else:
+            data = (np.frombuffer(frames, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+        if n_ch > 1:
+            data = data.reshape(-1, n_ch)
+        return sr, data
+
+
+def _write_wav_float(file_path: str, sr: int, data: Any):
+    import numpy as np
+    os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
+    try:
+        import soundfile as sf
+        sf.write(file_path, data, sr, subtype="PCM_16")
+        return
+    except Exception:
+        pass
+    try:
+        from scipy.io import wavfile
+        int16_data = np.clip(data * 32767.0, -32768.0, 32767.0).astype(np.int16)
+        wavfile.write(file_path, sr, int16_data)
+        return
+    except Exception:
+        pass
+    import wave
+    int16_data = np.clip(data * 32767.0, -32768.0, 32767.0).astype(np.int16)
+    n_ch = int16_data.shape[1] if int16_data.ndim > 1 else 1
+    with wave.open(file_path, "wb") as wf:
+        wf.setnchannels(n_ch)
+        wf.setsampwidth(2)
+        wf.setframerate(sr)
+        wf.writeframes(int16_data.tobytes())
+
+
+def concatenate_and_crossfade_audio(
+    parent_wav_path: str,
+    extension_wav_path: str,
+    output_wav_path: str,
+    crossfade_sec: float = 1.0
+) -> float:
+    """Concatenate parent audio with extension audio using an equal-power sine/cosine crossfade."""
+    import numpy as np
+    sr_p, data_p = _read_wav_float(parent_wav_path)
+    sr_e, data_e = _read_wav_float(extension_wav_path)
+
+    if data_p.ndim == 1:
+        data_p = data_p[:, np.newaxis]
+    if data_e.ndim == 1:
+        data_e = data_e[:, np.newaxis]
+
+    channels = max(data_p.shape[1], data_e.shape[1])
+    if data_p.shape[1] < channels:
+        data_p = np.repeat(data_p, channels, axis=1)
+    if data_e.shape[1] < channels:
+        data_e = np.repeat(data_e, channels, axis=1)
+
+    crossfade_samples = int(min(len(data_p), len(data_e), crossfade_sec * sr_p))
+    if crossfade_samples <= 0:
+        combined = np.vstack([data_p, data_e])
+    else:
+        t = np.linspace(0, np.pi / 2, crossfade_samples, endpoint=False)[:, np.newaxis]
+        fade_out = np.cos(t)
+        fade_in = np.sin(t)
+
+        pre = data_p[:-crossfade_samples]
+        cross = data_p[-crossfade_samples:] * fade_out + data_e[:crossfade_samples] * fade_in
+        post = data_e[crossfade_samples:]
+        combined = np.vstack([pre, cross, post])
+
+    _write_wav_float(output_wav_path, sr_p, combined)
+    return float(len(combined) / sr_p)
+
+
 class MiniMaxMusic3Provider(GenerationProvider):
     def __init__(self, snapshot_path: Optional[str] = None):
         self.snapshot_path = (
@@ -596,14 +698,64 @@ class MiniMaxMusic3Provider(GenerationProvider):
         cancel_event: Optional[Any] = None,
         **kwargs
     ) -> GeneratedAudioResult:
-        return await self.generate(
-            job_id=job_id,
+        """
+        Extend parent audio with continuation segment and equal-power crossfade.
+        """
+        # 1. Resolve parent audio path on disk
+        candidates = [
+            parent_audio_path,
+            parent_audio_path.lstrip("/"),
+            parent_audio_path.replace("/audio/", "generated_audio/"),
+            os.path.join("generated_audio", os.path.basename(parent_audio_path))
+        ]
+        resolved_parent = None
+        for c in candidates:
+            if os.path.isfile(c) and os.path.getsize(c) > 0:
+                resolved_parent = c
+                break
+
+        # 2. Generate continuation segment
+        temp_ext_job_id = f"{job_id}_ext_segment"
+        ext_result = await self.generate(
+            job_id=temp_ext_job_id,
             prompt=prompt or "",
             lyrics=lyrics,
             duration_ms=extend_ms,
             progress_callback=progress_callback,
             cancel_event=cancel_event,
             **kwargs
+        )
+
+        if not resolved_parent:
+            return ext_result
+
+        # 3. Concatenate and crossfade
+        ext_local_path = ext_result.audio_path.replace("/audio/", "generated_audio/")
+        out_wav_path = os.path.join("generated_audio", f"{job_id}.wav")
+
+        loop = asyncio.get_event_loop()
+        total_duration = await loop.run_in_executor(
+            None,
+            concatenate_and_crossfade_audio,
+            resolved_parent,
+            ext_local_path,
+            out_wav_path,
+            1.0
+        )
+
+        return GeneratedAudioResult(
+            audio_path=f"/audio/{job_id}.wav",
+            duration_sec=total_duration,
+            sample_rate=44100,
+            structured_caption=ext_result.structured_caption,
+            used_fallback_synth=ext_result.used_fallback_synth,
+            fallback_reason=ext_result.fallback_reason,
+            metadata={
+                **ext_result.metadata,
+                "extended_from": parent_audio_path,
+                "extended_duration_sec": extend_ms / 1000.0,
+                "total_duration_sec": total_duration
+            }
         )
 
     async def repair_segment(

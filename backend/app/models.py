@@ -35,6 +35,7 @@ class Job(SQLModel, table=True):
     # Visual Artwork Assets
     cover_image_path: Optional[str] = Field(default=None)
     image_prompt: Optional[str] = Field(default=None)
+    video_path: Optional[str] = Field(default=None)
 
     # v2 Multitrack & MuScriptor Transcription Assets
     midi_path: Optional[str] = Field(default=None)
@@ -412,3 +413,55 @@ class ReleaseUpdate(SQLModel):
     description: Optional[str] = None
     status: Optional[str] = None
     cover_image_path: Optional[str] = None
+
+
+class Playlist(SQLModel, table=True):
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    name: str
+    description: Optional[str] = ""
+    cover_color: Optional[str] = "from-teal-500 to-cyan-500"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class PlaylistTrack(SQLModel, table=True):
+    id: str = Field(default_factory=lambda: str(uuid4()), primary_key=True)
+    playlist_id: str = Field(index=True)
+    job_id: str = Field(index=True)
+    position: int = Field(default=0)
+    added_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class PlaylistCreate(SQLModel):
+    name: str
+    description: Optional[str] = ""
+    cover_color: Optional[str] = None
+    song_ids: Optional[List[str]] = None
+
+
+class PlaylistUpdate(SQLModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    cover_color: Optional[str] = None
+
+
+class StudioUserProfile(SQLModel, table=True):
+    id: str = Field(default="default", primary_key=True)
+    artist_name: str = "Mainza Kangombe"
+    bio: str = "Founder & Audio Architect. Exploring generative AI soundscapes, neural synthesis, and offline DAW workflows."
+    email: Optional[str] = ""
+    avatar_url: Optional[str] = None
+    social_links_json: str = "{}"
+    preferences_json: str = "{}"
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class StudioUserProfileUpdate(SQLModel):
+    artist_name: Optional[str] = None
+    bio: Optional[str] = None
+    email: Optional[str] = None
+    avatar_url: Optional[str] = None
+    social_links: Optional[Dict[str, str]] = None
+    preferences: Optional[Dict[str, Any]] = None
+

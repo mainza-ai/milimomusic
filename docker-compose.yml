@@ -1,0 +1,35 @@
+services:
+  milimo:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: milimomusic:latest
+    container_name: milimo-music
+    ports:
+      - "8000:8000"
+    volumes:
+      - milimo-data:/app/data
+      - milimo-audio:/app/generated_audio
+      - milimo-hf-cache:/root/.cache/huggingface
+    environment:
+      - MILIMO_IN_DOCKER=1
+      - HOST=0.0.0.0
+      - PORT=8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+
+volumes:
+  milimo-data:
+    driver: local
+  milimo-audio:
+    driver: local
+  milimo-hf-cache:
+    driver: local

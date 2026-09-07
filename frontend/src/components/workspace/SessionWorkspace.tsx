@@ -270,9 +270,15 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     // sample-accurate and can NEVER drift — there is no seek-correction loop at
     // all. Mixing is done on the audio thread via gain/panner nodes (no DOM
     // writes → no clicks). Reading `currentTime` of the decode/scheduler is O(1).
+    const [masteredPath, setMasteredPath] = useState<string | undefined>(job.mastered_path);
+    const [masterAuditionMode, setMasterAuditionMode] = useState<'original' | 'mastered'>(
+        job.mastered_path ? 'mastered' : 'original'
+    );
     const audioCtxRef = useRef<AudioContext | null>(null);
     const masterGainRef = useRef<GainNode | null>(null);        // global fader (master volume + mute)
-    const masterMixGainRef = useRef<GainNode | null>(null);     // master-mix channel (0 when stems active)
+    const masterMixGainRef = useRef<GainNode | null>(null);     // master-mix channel
+    const masterOrigGainRef = useRef<GainNode | null>(null);     // unmastered original mix bus
+    const masterPostGainRef = useRef<GainNode | null>(null);     // Matchering reference mastered bus
     const stemGainRefs = useRef<Record<string, GainNode>>({});
     const stemPanRefs = useRef<Record<string, StereoPannerNode>>({});
     // Post-gain AnalyserNode taps feeding the mixer's REAL peak meters.
@@ -405,31 +411,68 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             g.connect(masterGainRef.current);
             masterMixGainRef.current = g;
         }
+        if (!masterOrigGainRef.current) {
+            const g = ctx.createGain();
+            g.gain.value = 1;
+            g.connect(masterMixGainRef.current);
+            masterOrigGainRef.current = g;
+        }
+        if (!masterPostGainRef.current) {
+            const g = ctx.createGain();
+            g.gain.value = 0;
+            g.connect(masterGainRef.current);
+            masterPostGainRef.current = g;
+        }
     };
 
     // Compute + apply the full mix state to all nodes (smooth ramps → no zipper).
     const applyMixParams = () => {
         const ctx = audioCtxRef.current;
         if (!ctx || !masterGainRef.current) return;
+
+        const hasMastered = Boolean(masteredPath || job.mastered_path);
+        const isMasteredAudition = hasMastered && masterAuditionMode === 'mastered';
+
         const hasSolo = stemChannels.some(s => s.isSolo);
         stemChannels.forEach(stem => {
             const gain = stemGainRefs.current[stem.id];
             const pan = stemPanRefs.current[stem.id];
             if (!gain) return;
             let perStem = 0;
-            if (hasSolo) perStem = stem.isSolo && !stem.isMuted ? stem.volume / 100 : 0;
-            else perStem = !stem.isMuted ? stem.volume / 100 : 0;
+            if (isMasteredAudition) {
+                // When auditioning reference master (B), multitrack stems are silenced
+                perStem = 0;
+            } else if (hasSolo) {
+                perStem = stem.isSolo && !stem.isMuted ? stem.volume / 100 : 0;
+            } else {
+                perStem = !stem.isMuted ? stem.volume / 100 : 0;
+            }
             gain.gain.setTargetAtTime(Math.max(0, Math.min(1, perStem)), ctx.currentTime, 0.015);
             if (pan) pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, stem.pan / 50)), ctx.currentTime, 0.015);
         });
+
         // Global fader + master-mix fallback.
         masterGainRef.current.gain.setTargetAtTime(
             isMasterMuted ? 0 : Math.max(0, Math.min(1, masterVolume)), ctx.currentTime, 0.015
         );
         if (masterMixGainRef.current) {
-            masterMixGainRef.current.gain.setTargetAtTime(hasLoadedStems ? 0 : 1, ctx.currentTime, 0.015);
+            masterMixGainRef.current.gain.setTargetAtTime(hasLoadedStems && !isMasteredAudition ? 0 : 1, ctx.currentTime, 0.015);
+        }
+        if (masterOrigGainRef.current) {
+            // Original master plays if no stems are loaded AND we are in original audition mode
+            const origLevel = (!isMasteredAudition && !hasLoadedStems) ? 1 : 0;
+            masterOrigGainRef.current.gain.setTargetAtTime(origLevel, ctx.currentTime, 0.015);
+        }
+        if (masterPostGainRef.current) {
+            // Mastered track plays when in 'mastered' audition mode
+            const postLevel = isMasteredAudition ? 1 : 0;
+            masterPostGainRef.current.gain.setTargetAtTime(postLevel, ctx.currentTime, 0.015);
         }
     };
+
+    useEffect(() => {
+        applyMixParams();
+    }, [masterAuditionMode]);
 
     // Ensure a per-stem routing (gain + panner) exists for the given channel.
     const ensureStemNodes = (id: string): GainNode | null => {
@@ -456,9 +499,13 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     };
 
     // ── Decoding ────────────────────────────────────────────────────────────
-    const getMasterUrl = (): string | null => job.audio_path
-        ? (job.audio_path.startsWith('http') ? job.audio_path : `${API_BASE_URL}${job.audio_path}`)
-        : null;
+    const getMasterUrl = (): string | null => {
+        const effPath = (masterAuditionMode === 'mastered' && (masteredPath || job.mastered_path))
+            ? (masteredPath || job.mastered_path)
+            : job.audio_path;
+        if (!effPath) return null;
+        return effPath.startsWith('http') ? effPath : `${API_BASE_URL}${effPath}`;
+    };
 
     const fetchAudio = (url: string): Promise<ArrayBuffer> =>
         fetch(url).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); });
@@ -488,6 +535,12 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         if (job.audio_path) {
             const url = job.audio_path.startsWith('http') ? job.audio_path : `${API_BASE_URL}${job.audio_path}`;
             jobs.push({ id: '__master__', url });
+            jobs.push({ id: '__master_orig__', url });
+        }
+        const effMastered = masteredPath || job.mastered_path;
+        if (effMastered) {
+            const url = effMastered.startsWith('http') ? effMastered : `${API_BASE_URL}${effMastered}`;
+            jobs.push({ id: '__master_post__', url });
         }
         stemChannels.forEach(stem => {
             if (stem.audioUrl) {
@@ -543,15 +596,26 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         const startAt = ctx.currentTime;
         const pos = Math.max(0, Math.min(durationRef.current, currentTimeRef.current));
 
-        const masterBuf = bufCacheRef.current['__master__'];
-        if (masterBuf && pos < masterBuf.duration) {
+        const masterOrigBuf = bufCacheRef.current['__master_orig__'] || bufCacheRef.current['__master__'];
+        if (masterOrigBuf && pos < masterOrigBuf.duration) {
             const src = ctx.createBufferSource();
-            src.buffer = masterBuf;
-            src.connect(masterMixGainRef.current!);
-            const offset = Math.min(Math.max(pos, 0), Math.max(0, masterBuf.duration - 0.02));
-            src.start(startAt, offset, Math.max(0, masterBuf.duration - offset));
+            src.buffer = masterOrigBuf;
+            src.connect(masterOrigGainRef.current || masterMixGainRef.current!);
+            const offset = Math.min(Math.max(pos, 0), Math.max(0, masterOrigBuf.duration - 0.02));
+            src.start(startAt, offset, Math.max(0, masterOrigBuf.duration - offset));
             activeSourcesRef.current.add(src);
         }
+
+        const masterPostBuf = bufCacheRef.current['__master_post__'];
+        if (masterPostBuf && pos < masterPostBuf.duration) {
+            const src = ctx.createBufferSource();
+            src.buffer = masterPostBuf;
+            src.connect(masterPostGainRef.current || masterGainRef.current!);
+            const offset = Math.min(Math.max(pos, 0), Math.max(0, masterPostBuf.duration - 0.02));
+            src.start(startAt, offset, Math.max(0, masterPostBuf.duration - offset));
+            activeSourcesRef.current.add(src);
+        }
+
         stemChannels.forEach(stem => {
             const buf = bufCacheRef.current[stem.id];
             if (!buf || pos >= buf.duration) return;
@@ -1148,6 +1212,20 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                         isPlaying={isPlaying}
                         stemAnalysersRef={stemAnalyserRefs}
                         masterAnalyserRef={masterAnalyserRef}
+                        masterAuditionMode={masterAuditionMode}
+                        onMasterAuditionModeChange={setMasterAuditionMode}
+                        hasMasteredTrack={Boolean(masteredPath || job.mastered_path)}
+                        onMasteringComplete={async (newPath: string) => {
+                            setMasteredPath(newPath);
+                            setMasterAuditionMode('mastered');
+                            const url = newPath.startsWith('http') ? newPath : `${API_BASE_URL}${newPath}`;
+                            await decodeToBuffer('__master_post__', url);
+                            if (isPlayingRef.current) {
+                                scheduleAll();
+                            } else {
+                                applyMixParams();
+                            }
+                        }}
                     />
                 )}
 

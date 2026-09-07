@@ -608,6 +608,21 @@ def _build_caption_rewrite_prompt(concept: str, lyrics: Optional[str], tags: Opt
     return "\n\n".join(parts)
 
 
+def _normalize_llm_url(url: str) -> str:
+    """If running inside a Docker container, rewrite localhost/127.0.0.1 to host.docker.internal
+
+    so local inference runtimes (Ollama, LM Studio, OMLX, LocalAI) running on the host
+    machine are immediately reachable without manual IP configuration.
+    """
+    if not url:
+        return url
+    in_docker = os.path.exists("/.dockerenv") or os.environ.get("MILIMO_IN_DOCKER") == "1"
+    if in_docker:
+        url = re.sub(r"://(localhost|127\.0\.0\.1)(:\d+)", r"://host.docker.internal\2", url)
+        url = re.sub(r"://(localhost|127\.0\.0\.1)(/|$)", r"://host.docker.internal\2", url)
+    return url
+
+
 class LLMService:
     @staticmethod
     def _get_provider(override_config: Optional[Dict] = None) -> LLMProvider:
@@ -625,14 +640,14 @@ class LLMService:
         
         if provider_name == "nvidia":
             api_key = config.get("nvidia", {}).get("api_key", "") or os.environ.get("NVIDIA_API_KEY", "")
-            base_url = config.get("nvidia", {}).get("base_url", "https://integrate.api.nvidia.com/v1") or "https://integrate.api.nvidia.com/v1"
+            base_url = _normalize_llm_url(config.get("nvidia", {}).get("base_url", "https://integrate.api.nvidia.com/v1") or "https://integrate.api.nvidia.com/v1")
             return OpenAIProvider(
                 api_key=api_key,
                 base_url=base_url,
                 timeout=45.0
             )
         elif provider_name == "ollama":
-            base_url = config.get("ollama", {}).get("base_url", "http://localhost:11434")
+            base_url = _normalize_llm_url(config.get("ollama", {}).get("base_url", "http://localhost:11434"))
             return OllamaProvider(base_url=base_url)
         elif provider_name == "openai":
             api_key = config.get("openai", {}).get("api_key", "")
@@ -650,7 +665,7 @@ class LLMService:
                 base_url="https://openrouter.ai/api/v1"
             )
         elif provider_name == "lmstudio":
-            base_url = config.get("lmstudio", {}).get("base_url", "http://localhost:1234/v1")
+            base_url = _normalize_llm_url(config.get("lmstudio", {}).get("base_url", "http://localhost:1234/v1"))
             return OpenAIProvider(
                 api_key="lm-studio", 
                 base_url=base_url
@@ -660,27 +675,27 @@ class LLMService:
             return GeminiProvider(api_key=api_key)
         elif provider_name == "opencode":
             api_key = config.get("opencode", {}).get("api_key", "") or os.environ.get("OPENCODE_API_KEY", "")
-            base_url = config.get("opencode", {}).get("base_url", "https://opencode.ai/zen/go/v1")
+            base_url = _normalize_llm_url(config.get("opencode", {}).get("base_url", "https://opencode.ai/zen/go/v1"))
             return OpenAIProvider(
                 api_key=api_key,
                 base_url=base_url
             )
         elif provider_name == "omlx":
-            base_url = config.get("omlx", {}).get("base_url", "http://localhost:8787/v1")
+            base_url = _normalize_llm_url(config.get("omlx", {}).get("base_url", "http://localhost:8787/v1"))
             api_key = config.get("omlx", {}).get("api_key", "omlx")
             return OpenAIProvider(
                 api_key=api_key or "omlx",
                 base_url=base_url
             )
         else:
-            return OllamaProvider(base_url="http://localhost:11434")
+            return OllamaProvider(base_url=_normalize_llm_url("http://localhost:11434"))
 
     @staticmethod
     def fetch_available_models(provider_name: str, api_key: Optional[str] = None, base_url: Optional[str] = None) -> List[str]:
         try:
             runtime_prov = ConfigManager().get_provider_config(provider_name)
             eff_key = str(api_key).strip() if api_key and str(api_key).strip() else runtime_prov.get("api_key", "")
-            eff_url = str(base_url).strip() if base_url and str(base_url).strip() else runtime_prov.get("base_url", "")
+            eff_url = _normalize_llm_url(str(base_url).strip() if base_url and str(base_url).strip() else runtime_prov.get("base_url", ""))
 
             temp_config = {"provider": provider_name}
             if provider_name == "nvidia":
@@ -689,7 +704,7 @@ class LLMService:
                     "base_url": eff_url or "https://integrate.api.nvidia.com/v1"
                 }
             elif provider_name == "ollama":
-                temp_config["ollama"] = {"base_url": eff_url or "http://localhost:11434"}
+                temp_config["ollama"] = {"base_url": eff_url or _normalize_llm_url("http://localhost:11434")}
             elif provider_name == "openai":
                 temp_config["openai"] = {"api_key": eff_key}
             elif provider_name == "deepseek":
@@ -697,7 +712,7 @@ class LLMService:
             elif provider_name == "openrouter":
                 temp_config["openrouter"] = {"api_key": eff_key, "base_url": eff_url or "https://openrouter.ai/api/v1"}
             elif provider_name == "lmstudio":
-                temp_config["lmstudio"] = {"base_url": eff_url or "http://localhost:1234/v1"}
+                temp_config["lmstudio"] = {"base_url": eff_url or _normalize_llm_url("http://localhost:1234/v1")}
             elif provider_name == "gemini":
                 temp_config["gemini"] = {"api_key": eff_key}
             elif provider_name == "opencode":
@@ -707,7 +722,7 @@ class LLMService:
                 }
             elif provider_name == "omlx":
                 temp_config["omlx"] = {
-                    "base_url": eff_url or "http://localhost:8787/v1",
+                    "base_url": eff_url or _normalize_llm_url("http://localhost:8787/v1"),
                     "api_key": eff_key or "omlx"
                 }
                 

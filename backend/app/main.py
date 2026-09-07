@@ -81,7 +81,13 @@ from app.models import (
     ReleaseCreate,
     ReleaseUpdate,
     AgentRun,
-    AgentRunRequest
+    AgentRunRequest,
+    Playlist,
+    PlaylistTrack,
+    PlaylistCreate,
+    PlaylistUpdate,
+    StudioUserProfile,
+    StudioUserProfileUpdate
 )
 from app.agents.registry import AGENTS, get_agent, list_agents
 from app.agents.runtime.context import RunContext
@@ -159,7 +165,8 @@ def create_db_and_tables():
             "session_id": "VARCHAR",
             "artist_profile_id": "VARCHAR",
             "release_id": "VARCHAR",
-            "mastered_path": "TEXT"
+            "mastered_path": "TEXT",
+            "video_path": "VARCHAR"
         }
         for col, col_type in new_columns.items():
             if col not in existing_cols:
@@ -425,6 +432,35 @@ def check_model_dependencies(model_id: str):
     return model_manager.check_missing_dependencies(model_id)
 
 
+@app.get("/models/active")
+def get_active_model_variant():
+    """Get active model variant and provider."""
+    return {
+        "active_provider": provider_registry.get_active_provider_id(),
+        "active_model": model_manager.get_active_model()
+    }
+
+
+@app.post("/models/select")
+def set_active_model_variant(body: dict = Body(...)):
+    """Set the active model variant (e.g., minimax_music3_bf16 vs mxfp4)."""
+    model_id = body.get("model_id")
+    if not model_id:
+        raise HTTPException(status_code=400, detail="model_id is required")
+    try:
+        updated = model_manager.set_active_model(model_id)
+        return {"status": "ok", "active_model": updated}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.get("/models/auto-install-check")
+def check_auto_install():
+    """Check if the platform needs auto-download of smallest audio model."""
+    needed_repo = model_manager.check_auto_download_needed()
+    return {"needs_download": needed_repo is not None, "recommended_repo_id": needed_repo}
+
+
 @app.post("/models/active/{provider_id}")
 def set_active_generation_provider(provider_id: str):
     """Switch active default generation model."""
@@ -432,6 +468,7 @@ def set_active_generation_provider(provider_id: str):
     if not success:
         raise HTTPException(status_code=400, detail=f"Unknown provider: {provider_id}")
     return {"active_provider": provider_id, "capabilities": provider_registry.get_active_capabilities().model_dump()}
+
 
 
 # --- Voice Training Studio & Profiles API ---
@@ -1048,27 +1085,35 @@ def _models_root() -> str:
 
 
 class ModelDownloadRequest(SQLModel):
-    repo_id: str
+    repo_id: Optional[str] = None
+    model_id: Optional[str] = None
 
 
 @app.post("/models/download")
 async def start_model_download(payload: ModelDownloadRequest, background_tasks: BackgroundTasks):
     from huggingface_hub import HfApi
 
-    if not _REPO_ID_RE.match(payload.repo_id or ""):
+    target_repo = payload.repo_id
+    if not target_repo and payload.model_id:
+        tree = model_manager.get_model_tree()
+        matched = next((m for m in tree if m["id"] == payload.model_id), None)
+        if matched and matched.get("repo_id"):
+            target_repo = matched["repo_id"]
+
+    if not target_repo or not _REPO_ID_RE.match(target_repo):
         raise HTTPException(status_code=400, detail={"error": {"code": "bad_repo_id", "message": "repo_id must look like 'org/model'."}})
 
     try:
         info = await asyncio.to_thread(
-            lambda: HfApi().model_info(repo_id=payload.repo_id, files_metadata=True)
+            lambda: HfApi().model_info(repo_id=target_repo, files_metadata=True)
         )
     except Exception as e:
-        logger.warning(f"Model metadata fetch failed for {payload.repo_id}: {e}")
-        raise HTTPException(status_code=400, detail={"error": {"code": "repo_not_found", "message": f"Could not resolve '{payload.repo_id}' on Hugging Face: {e}"}})
+        logger.warning(f"Model metadata fetch failed for {target_repo}: {e}")
+        raise HTTPException(status_code=400, detail={"error": {"code": "repo_not_found", "message": f"Could not resolve '{target_repo}' on Hugging Face: {e}"}})
 
     files = [(s.rfilename, int(s.size or 0)) for s in (info.siblings or []) if s.size]
     total_bytes = sum(sz for _, sz in files)
-    local_dir = os.path.join(_models_root(), payload.repo_id.replace("/", "__"))
+    local_dir = os.path.join(_models_root(), target_repo.replace("/", "__"))
 
     disk = shutil.disk_usage(_models_root())
     if total_bytes and disk.free < int(total_bytes * 1.1) + 512 * 1024 * 1024:
@@ -1078,14 +1123,14 @@ async def start_model_download(payload: ModelDownloadRequest, background_tasks: 
 
     download_id = str(uuid.uuid4())
     _model_downloads[download_id] = {
-        "id": download_id, "repo_id": payload.repo_id, "status": "queued",
+        "id": download_id, "repo_id": target_repo, "status": "queued",
         "total_files": len(files), "files_done": 0, "current_file": "",
         "received_bytes": 0, "total_bytes": total_bytes,
         "local_dir": os.path.abspath(local_dir), "error": "",
     }
     cancel_event = threading.Event()
     _download_cancels[download_id] = cancel_event
-    background_tasks.add_task(_model_download_worker, download_id, payload.repo_id, local_dir, files, cancel_event)
+    background_tasks.add_task(_model_download_worker, download_id, target_repo, local_dir, files, cancel_event)
     return _snapshot_download(download_id)
 
 
@@ -2945,6 +2990,7 @@ async def voice_convert_job(job_id: str, body: dict = Body(...)):
     voice_profile_id = body.get("voice_profile_id")
     if not voice_profile_id:
         raise HTTPException(status_code=400, detail="voice_profile_id is required")
+    pitch_shift = int(body.get("pitch_shift", 0))
         
     from app.services.voice_service import voice_service
     with Session(engine) as session:
@@ -2957,17 +3003,28 @@ async def voice_convert_job(job_id: str, body: dict = Body(...)):
         stems = json.loads(job.stems_json) if job.stems_json else {}
         target_vocal = stems.get("vocals", job.audio_path).lstrip("/")
         
-        out_vocal = f"generated_audio/{job.id}_svc_{voice_profile_id}.wav"
-        await voice_service.convert_vocals(target_vocal, voice_profile_id, out_vocal)
+        try:
+            converted_audio_url = await voice_service.convert_vocals(
+                vocal_stem_path=target_vocal,
+                profile_id=voice_profile_id,
+                job_id=str(job.id),
+                pitch_shift=pitch_shift
+            )
+        except Exception as e:
+            raise HTTPException(status_code=500, detail=f"Voice conversion failed: {str(e)}")
         
+        new_stems = dict(stems) if stems else {}
+        if "vocals" in new_stems:
+            new_stems["vocals"] = converted_audio_url
+
         new_job = Job(
             prompt=f"Voice Converted ({voice_profile_id}): {job.prompt}",
             lyrics=job.lyrics,
             tags=job.tags,
             title=f"{job.title or 'Track'} ({voice_profile_id})",
             duration_ms=job.duration_ms,
-            audio_path=f"/{out_vocal}",
-            stems_json=job.stems_json,
+            audio_path=converted_audio_url,
+            stems_json=json.dumps(new_stems) if new_stems else job.stems_json,
             midi_path=job.midi_path,
             musicxml_path=job.musicxml_path,
             notes_json=job.notes_json,
@@ -3237,6 +3294,312 @@ def remove_track_from_project(project_id: UUID, job_id: UUID):
         return {"status": "removed", "job_id": job_id}
 
 
+# ==========================================
+# AI Music Video Studio API
+# ==========================================
+
+@app.post("/videos/storyboard/{job_id}")
+async def generate_video_storyboard(job_id: str, body: dict = Body(default={})):
+    visual_style = body.get("visual_style", "neon-cyberpunk")
+    from app.services.video_service import video_service
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        scenes = await video_service.generate_storyboard(job, visual_style=visual_style)
+        return {
+            "status": "ok",
+            "job_id": job_id,
+            "visual_style": visual_style,
+            "scenes": scenes
+        }
+
+
+@app.post("/videos/render/{job_id}")
+async def render_music_video(job_id: str, body: dict = Body(default={})):
+    visual_style = body.get("visual_style", "neon-cyberpunk")
+    resolution = body.get("resolution", "720p")
+    from app.services.video_service import video_service
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if not job.audio_path:
+            raise HTTPException(status_code=400, detail="Job has no completed audio to render.")
+        
+        try:
+            video_url = await video_service.render_audio_reactive_video(
+                job=job,
+                visual_style=visual_style,
+                resolution=resolution
+            )
+            job.video_path = video_url
+            session.add(job)
+            session.commit()
+            session.refresh(job)
+            return {
+                "status": "completed",
+                "job_id": job_id,
+                "video_url": video_url,
+                "visual_style": visual_style
+            }
+        except Exception as e:
+            logger.error(f"Video rendering failed for {job_id}: {e}", exc_info=True)
+            raise HTTPException(status_code=500, detail=f"Video rendering failed: {str(e)}")
+
+
+@app.get("/videos/{job_id}")
+def get_music_video(job_id: str):
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        return {
+            "job_id": job_id,
+            "video_path": job.video_path,
+            "has_video": bool(job.video_path)
+        }
+
+
+# ==========================================
+# Playlists API
+# ==========================================
+
+@app.get("/playlists")
+def list_playlists():
+    with Session(engine) as session:
+        playlists = session.exec(select(Playlist).order_by(Playlist.updated_at.desc())).all()
+        result = []
+        for pl in playlists:
+            tracks = session.exec(
+                select(PlaylistTrack)
+                .where(PlaylistTrack.playlist_id == pl.id)
+                .order_by(PlaylistTrack.position.asc(), PlaylistTrack.added_at.asc())
+            ).all()
+            pl_dict = pl.model_dump()
+            pl_dict["track_count"] = len(tracks)
+            pl_dict["song_ids"] = [t.job_id for t in tracks]
+            result.append(pl_dict)
+        return result
+
+
+@app.post("/playlists")
+def create_playlist(data: PlaylistCreate):
+    with Session(engine) as session:
+        playlist = Playlist(
+            name=data.name,
+            description=data.description or "",
+            cover_color=data.cover_color or "from-teal-500 to-cyan-500"
+        )
+        session.add(playlist)
+        session.commit()
+        session.refresh(playlist)
+
+        song_ids = []
+        if data.song_ids:
+            for idx, j_id in enumerate(data.song_ids):
+                track = PlaylistTrack(
+                    playlist_id=playlist.id,
+                    job_id=str(j_id),
+                    position=idx
+                )
+                session.add(track)
+                song_ids.append(str(j_id))
+            playlist.updated_at = datetime.now(timezone.utc)
+            session.add(playlist)
+            session.commit()
+            session.refresh(playlist)
+
+        pl_dict = playlist.model_dump()
+        pl_dict["track_count"] = len(song_ids)
+        pl_dict["song_ids"] = song_ids
+        return pl_dict
+
+
+@app.get("/playlists/{playlist_id}")
+def get_playlist(playlist_id: str):
+    with Session(engine) as session:
+        playlist = session.get(Playlist, playlist_id)
+        if not playlist:
+            raise HTTPException(status_code=404, detail="Playlist not found")
+        tracks = session.exec(
+            select(PlaylistTrack)
+            .where(PlaylistTrack.playlist_id == playlist.id)
+            .order_by(PlaylistTrack.position.asc(), PlaylistTrack.added_at.asc())
+        ).all()
+        job_ids = [t.job_id for t in tracks]
+        jobs_map = {}
+        if job_ids:
+            for j_id in job_ids:
+                try:
+                    job = session.get(Job, UUID(j_id))
+                    if job:
+                        jobs_map[j_id] = job.model_dump()
+                except Exception:
+                    pass
+
+        pl_dict = playlist.model_dump()
+        pl_dict["track_count"] = len(tracks)
+        pl_dict["song_ids"] = job_ids
+        pl_dict["tracks"] = [jobs_map[jid] for jid in job_ids if jid in jobs_map]
+        return pl_dict
+
+
+@app.put("/playlists/{playlist_id}")
+def update_playlist(playlist_id: str, data: PlaylistUpdate):
+    with Session(engine) as session:
+        playlist = session.get(Playlist, playlist_id)
+        if not playlist:
+            raise HTTPException(status_code=404, detail="Playlist not found")
+        if data.name is not None:
+            playlist.name = data.name
+        if data.description is not None:
+            playlist.description = data.description
+        if data.cover_color is not None:
+            playlist.cover_color = data.cover_color
+        playlist.updated_at = datetime.now(timezone.utc)
+        session.add(playlist)
+        session.commit()
+        session.refresh(playlist)
+
+        tracks = session.exec(
+            select(PlaylistTrack).where(PlaylistTrack.playlist_id == playlist.id)
+        ).all()
+        pl_dict = playlist.model_dump()
+        pl_dict["track_count"] = len(tracks)
+        pl_dict["song_ids"] = [t.job_id for t in tracks]
+        return pl_dict
+
+
+@app.delete("/playlists/{playlist_id}")
+def delete_playlist(playlist_id: str):
+    with Session(engine) as session:
+        playlist = session.get(Playlist, playlist_id)
+        if not playlist:
+            raise HTTPException(status_code=404, detail="Playlist not found")
+        tracks = session.exec(select(PlaylistTrack).where(PlaylistTrack.playlist_id == playlist.id)).all()
+        for t in tracks:
+            session.delete(t)
+        session.delete(playlist)
+        session.commit()
+        return {"status": "deleted", "id": playlist_id}
+
+
+@app.post("/playlists/{playlist_id}/tracks")
+def add_track_to_playlist(playlist_id: str, body: dict = Body(...)):
+    job_id = body.get("job_id")
+    if not job_id:
+        raise HTTPException(status_code=400, detail="job_id is required")
+    job_id_str = str(job_id)
+
+    with Session(engine) as session:
+        playlist = session.get(Playlist, playlist_id)
+        if not playlist:
+            raise HTTPException(status_code=404, detail="Playlist not found")
+        
+        existing = session.exec(
+            select(PlaylistTrack)
+            .where(PlaylistTrack.playlist_id == playlist_id, PlaylistTrack.job_id == job_id_str)
+        ).first()
+        if not existing:
+            current_count = len(session.exec(select(PlaylistTrack).where(PlaylistTrack.playlist_id == playlist_id)).all())
+            track = PlaylistTrack(
+                playlist_id=playlist_id,
+                job_id=job_id_str,
+                position=current_count
+            )
+            session.add(track)
+            playlist.updated_at = datetime.now(timezone.utc)
+            session.add(playlist)
+            session.commit()
+        return {"status": "added", "playlist_id": playlist_id, "job_id": job_id_str}
+
+
+@app.delete("/playlists/{playlist_id}/tracks/{job_id}")
+def remove_track_from_playlist(playlist_id: str, job_id: str):
+    job_id_str = str(job_id)
+    with Session(engine) as session:
+        playlist = session.get(Playlist, playlist_id)
+        if not playlist:
+            raise HTTPException(status_code=404, detail="Playlist not found")
+        tracks = session.exec(
+            select(PlaylistTrack)
+            .where(PlaylistTrack.playlist_id == playlist_id, PlaylistTrack.job_id == job_id_str)
+        ).all()
+        for t in tracks:
+            session.delete(t)
+        playlist.updated_at = datetime.now(timezone.utc)
+        session.add(playlist)
+        session.commit()
+        return {"status": "removed", "playlist_id": playlist_id, "job_id": job_id_str}
+
+
+# ==========================================
+# Studio User Profile API
+# ==========================================
+
+@app.get("/profile/studio")
+def get_studio_profile():
+    with Session(engine) as session:
+        profile = session.get(StudioUserProfile, "default")
+        if not profile:
+            profile = StudioUserProfile(
+                id="default",
+                artist_name="Mainza Kangombe",
+                bio="Founder & Audio Architect. Exploring generative AI soundscapes, neural synthesis, and offline DAW workflows."
+            )
+            session.add(profile)
+            session.commit()
+            session.refresh(profile)
+        p_dict = profile.model_dump()
+        try:
+            p_dict["social_links"] = json.loads(profile.social_links_json or "{}")
+        except Exception:
+            p_dict["social_links"] = {}
+        try:
+            p_dict["preferences"] = json.loads(profile.preferences_json or "{}")
+        except Exception:
+            p_dict["preferences"] = {}
+        return p_dict
+
+
+@app.put("/profile/studio")
+def update_studio_profile(data: StudioUserProfileUpdate):
+    with Session(engine) as session:
+        profile = session.get(StudioUserProfile, "default")
+        if not profile:
+            profile = StudioUserProfile(id="default")
+            session.add(profile)
+
+        if data.artist_name is not None:
+            profile.artist_name = data.artist_name
+        if data.bio is not None:
+            profile.bio = data.bio
+        if data.email is not None:
+            profile.email = data.email
+        if data.avatar_url is not None:
+            profile.avatar_url = data.avatar_url
+        if data.social_links is not None:
+            profile.social_links_json = json.dumps(data.social_links)
+        if data.preferences is not None:
+            profile.preferences_json = json.dumps(data.preferences)
+        profile.updated_at = datetime.now(timezone.utc)
+        session.add(profile)
+        session.commit()
+        session.refresh(profile)
+
+        p_dict = profile.model_dump()
+        try:
+            p_dict["social_links"] = json.loads(profile.social_links_json or "{}")
+        except Exception:
+            p_dict["social_links"] = {}
+        try:
+            p_dict["preferences"] = json.loads(profile.preferences_json or "{}")
+        except Exception:
+            p_dict["preferences"] = {}
+        return p_dict
+
+
 @app.get("/events")
 async def events():
     async def event_generator():
@@ -3257,7 +3620,31 @@ async def events():
         finally:
             event_manager.unsubscribe(q)
 
-    return StreamingResponse(event_generator(), media_type="text/event-stream")
+# --- Frontend Static Files & SPA Fallback (Unified Single-Process Mode) ---
+
+frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../frontend/dist"))
+if os.path.exists(frontend_dist):
+    assets_dir = os.path.join(frontend_dist, "assets")
+    if os.path.exists(assets_dir):
+        app.mount("/assets", StaticFiles(directory=assets_dir), name="frontend_assets")
+
+    @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])
+    async def serve_frontend(full_path: str):
+        # Specific API prefixes should return 404 JSON if not matched by earlier routes
+        api_prefixes = ("models/", "audio/", "covers/", "videos/", "mastering/", "stem-separation/", "events")
+        if any(full_path.startswith(p) for p in api_prefixes):
+            raise HTTPException(status_code=404, detail="Endpoint not found")
+
+        # Static file lookup
+        file_path = os.path.join(frontend_dist, full_path)
+        if full_path and os.path.exists(file_path) and os.path.isfile(file_path):
+            return FileResponse(file_path)
+
+        # SPA history fallback
+        index_file = os.path.join(frontend_dist, "index.html")
+        if os.path.exists(index_file):
+            return FileResponse(index_file)
+        raise HTTPException(status_code=404, detail="Frontend build index.html not found")
 
 
 if __name__ == "__main__":

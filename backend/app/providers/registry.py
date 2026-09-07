@@ -44,6 +44,9 @@ class ProviderRegistry:
             return True
         return False
 
+    def get_active_provider_id(self) -> str:
+        return self.active_provider_id
+
     def list_capabilities(self) -> List[GenerationCapabilities]:
         return [p.get_capabilities() for p in self.providers.values()]
 

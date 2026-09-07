@@ -133,7 +133,7 @@ def test_voice_profile_management():
 def test_model_tree_and_hardware():
     tree = model_manager.get_model_tree()
     assert len(tree) >= 2
-    minimax_entry = next((m for m in tree if "minimax" in m["id"]), None)
+    minimax_entry = next((m for m in tree if "minimax" in m["id"] and m.get("is_default")), None)
     assert minimax_entry is not None
     assert minimax_entry["is_default"] is True
     assert minimax_entry["size_gb"] > 0

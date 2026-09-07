@@ -145,6 +145,12 @@ def test_model_tree_and_hardware():
     if hw.has_mps or hw.has_cuda:
         assert hw.can_run_minimax_full is True
 
+    installed_custom = next((m for m in tree if m.get("is_custom") and m.get("is_installed")), None)
+    if installed_custom:
+        assert installed_custom["is_installed"] is True
+        assert installed_custom["local_path"] is not None
+        assert "models/image" in installed_custom["local_path"] or "models" in installed_custom["local_path"]
+
 
 def test_lyric_sync_and_lrc():
     lyrics = "[Intro]\nHello night\n[Verse 1]\nStars in the sky\n[Chorus]\nWe are alive"

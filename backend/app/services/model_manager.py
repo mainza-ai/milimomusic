@@ -58,18 +58,40 @@ class HardwareProfile:
     can_run_heartmula: bool
 
 
+from app.core.paths import (
+    get_repo_root,
+    get_models_dir,
+    get_data_dir,
+    get_heartmula_ckpt_dir,
+)
+
 CUSTOM_MODELS_PATH = os.path.join("data", "models", "custom_models.json")
 
 
-def resolve_hf_snapshot(repo_id: str) -> Optional[str]:
+def _get_custom_models_path() -> str:
+    """Return the resolved path to custom_models.json."""
+    candidates = [
+        os.path.join(str(get_data_dir()), "models", "custom_models.json"),
+        os.path.abspath(os.path.join("backend", "data", "models", "custom_models.json")),
+        os.path.abspath(os.path.join("data", "models", "custom_models.json")),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return candidates[0]
+
+
+def resolve_hf_snapshot(repo_id: str, category: Optional[str] = None) -> Optional[str]:
     """Find local snapshot directory for a huggingface repo ID.
-    Supports local ./data/models, MODEL_DIRECTORY, heartlib/ckpt, HF hub cache, or custom registry.
+    Supports canonical models/{category}/<org>__<repo>, models/<org>__<repo>,
+    local ./data/models, HF hub cache, custom registry, and legacy heartlib/ckpt fallback.
     """
     try:
         # 0. Check custom_models.json for explicit existing local_path
-        if os.path.exists(CUSTOM_MODELS_PATH):
+        cm_path = _get_custom_models_path()
+        if os.path.exists(cm_path):
             try:
-                with open(CUSTOM_MODELS_PATH, "r", encoding="utf-8") as f:
+                with open(cm_path, "r", encoding="utf-8") as f:
                     c_list = json.load(f)
                     for c in c_list:
                         if c.get("repo_id") == repo_id and c.get("local_path"):
@@ -80,18 +102,27 @@ def resolve_hf_snapshot(repo_id: str) -> Optional[str]:
 
         # 1. Search candidate directories where models are stored
         escaped_repo = repo_id.replace("/", "__")
-        search_roots = [
-            os.environ.get("MODEL_DIRECTORY"),
-            os.path.join("data", "models"),
-            os.path.join("backend", "data", "models"),
-            os.path.join("..", "data", "models"),
-            os.path.join("heartlib", "ckpt"),
-            os.path.join("..", "heartlib", "ckpt"),
-            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "..", "heartlib", "ckpt")),
-            os.path.abspath(os.path.join(os.path.dirname(__file__), "..", "..", "data", "models")),
-        ]
+        repo_root = get_repo_root()
+        models_root = get_models_dir()
+
+        search_roots = []
+        if category:
+            search_roots.append(str(get_models_dir(category)))
+        # Search all modality subfolders
+        search_roots.extend([
+            str(models_root / "audio"),
+            str(models_root / "image"),
+            str(models_root / "video"),
+            str(models_root / "audio_separator"),
+            str(models_root),
+            str(get_data_dir() / "models"),
+            # Legacy fallback
+            str(get_heartmula_ckpt_dir()),
+            str(repo_root / "heartlib" / "ckpt"),
+        ])
+
         for root in search_roots:
-            if not root:
+            if not root or not os.path.isdir(root):
                 continue
             data_path = os.path.join(root, escaped_repo)
             if os.path.isdir(data_path):
@@ -481,7 +512,7 @@ class ModelManager:
 
         # Scan install status
         results = []
-        heartlib_ckpt_dir = os.path.expanduser("../heartlib/ckpt")
+        heartlib_ckpt_dir = str(get_heartmula_ckpt_dir())
         heartmula_installed = os.path.isdir(heartlib_ckpt_dir) and os.path.isdir(os.path.join(heartlib_ckpt_dir, "HeartMuLa-oss-3B"))
 
         for item in catalog:
@@ -510,7 +541,7 @@ class ModelManager:
 
                 # Next check huggingface cache / data directory / candidate directories
                 if not is_installed and item.get("repo_id"):
-                    resolved = resolve_hf_snapshot(item["repo_id"])
+                    resolved = resolve_hf_snapshot(item["repo_id"], category=item.get("category"))
                     if resolved:
                         is_installed = True
                         local_path = resolved
@@ -629,10 +660,11 @@ class ModelManager:
 
     def _load_custom_models(self) -> List[Dict[str, Any]]:
         """Load user-registered custom models from disk."""
-        if not os.path.isfile(CUSTOM_MODELS_PATH):
+        cm_path = _get_custom_models_path()
+        if not os.path.isfile(cm_path):
             return []
         try:
-            with open(CUSTOM_MODELS_PATH, "r", encoding="utf-8") as f:
+            with open(cm_path, "r", encoding="utf-8") as f:
                 return json.load(f)
         except Exception as e:
             logger.warning(f"Could not read custom_models.json: {e}")
@@ -640,9 +672,10 @@ class ModelManager:
 
     def _save_custom_models(self, models: List[Dict[str, Any]]) -> None:
         """Persist user-registered custom models to disk."""
-        os.makedirs(os.path.dirname(CUSTOM_MODELS_PATH), exist_ok=True)
+        cm_path = _get_custom_models_path()
+        os.makedirs(os.path.dirname(cm_path), exist_ok=True)
         try:
-            with open(CUSTOM_MODELS_PATH, "w", encoding="utf-8") as f:
+            with open(cm_path, "w", encoding="utf-8") as f:
                 json.dump(models, f, indent=2)
         except Exception as e:
             logger.error(f"Could not save custom_models.json: {e}")

@@ -1365,9 +1365,21 @@ Resolved downloaded Hugging Face models not appearing in the right panel or bein
    - Replaced static custom cards with interactive cards featuring a modality dropdown (`Audio`, `Image / Covers`, `Video`), `Ready` badge, `Select / Activate` button, and delete trigger.
    - Added `Installed` + `Activate` button directly inside Hugging Face search result cards.
 
-
-
-
-
-
-
+## [2026-09-07] refactor | Standardized Model Directory & Path Management Framework
+Standardized model storage architecture, removing multi-modal model pollution from legacy `heartlib/ckpt/`:
+1. Canonical Path Resolution (`backend/app/core/paths.py`):
+   - Created centralized paths module defining `get_repo_root()`, `get_models_dir(category)`, `get_data_dir()`, `get_checkpoints_dir()`, `get_datasets_dir()`, and `get_heartmula_ckpt_dir()`.
+   - Guaranteed absolute resolution regardless of CWD changes (`backend/`, repo root, or Docker `/app`).
+2. Directory Migration & Consolidation (`scripts/migrate_model_dirs.py`):
+   - Cleanly relocated non-HeartMuLa models out of `heartlib/ckpt/`: moved 8.89 GB `AITRADER__FLUX2-klein-9B-mlx-4bit` to `models/image/` and test checkpoints to `models/`.
+   - Updated `custom_models.json` registry with verified canonical path in `models/image/`.
+   - Left `heartlib/ckpt/` containing strictly HeartMuLa-specific legacy files (`HeartMuLa-oss-3B`, `HeartCodec-oss`, `tokenizer.json`, `gen_config.json`).
+   - Consolidated stem separation weights into `models/audio_separator/`.
+3. Configuration & API Disentanglement (`backend/app/services/config_manager.py`, `backend/app/main.py`):
+   - Separated general `models_directory` (`./models`) from HeartMuLa checkpoint path `heartmula_model_path` (`../heartlib/ckpt`).
+   - Added `POST /config/paths/validate` returning path validity checks.
+   - Maintained full backward compatibility for legacy `model_directory` key in endpoints and configs.
+4. UI & Docker Alignment:
+   - Updated `PathsSettingsModal.tsx` and `api.ts` with clean field labels (`Models Storage Directory`, `LoRA Checkpoints`, `Datasets`, `Legacy HeartMuLa Weights`).
+   - Added `milimo-models:/app/models` volume mount to `docker-compose.yml` and `docker-compose.cpu.yml`.
+   - All 196 backend tests passing, 0 failures. Clean frontend build.

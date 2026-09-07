@@ -8,6 +8,7 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      - milimo-models:/app/models
       - milimo-data:/app/data
       - milimo-audio:/app/generated_audio
       - milimo-midi:/app/generated_midi
@@ -21,6 +22,8 @@ services:
     restart: unless-stopped
 
 volumes:
+  milimo-models:
+    driver: local
   milimo-data:
     driver: local
   milimo-audio:

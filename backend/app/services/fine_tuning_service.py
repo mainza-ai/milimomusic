@@ -358,9 +358,9 @@ class FineTuningService:
             from .config_manager import ConfigManager
             from .training.data_prep import DataPreparator
             import torch
-            
+            from app.core.paths import get_heartmula_ckpt_dir
             config = ConfigManager().get_config()
-            model_path = config.get("paths", {}).get("model_directory", "../heartlib/ckpt")
+            model_path = config.get("paths", {}).get("heartmula_model_path") or str(get_heartmula_ckpt_dir())
             
             # Determine device
             if torch.cuda.is_available():
@@ -436,8 +436,9 @@ class FineTuningService:
     def _start_training(self, job: TrainingJob):
         """Launch training subprocess."""
         from .config_manager import ConfigManager
+        from app.core.paths import get_heartmula_ckpt_dir
         config = ConfigManager().get_config()
-        model_path = config.get("paths", {}).get("model_directory", "../heartlib/ckpt")
+        model_path = config.get("paths", {}).get("heartmula_model_path") or str(get_heartmula_ckpt_dir())
         
         # Get device
         import torch

@@ -655,9 +655,11 @@ export interface Style {
 }
 
 export interface PathsConfig {
+    models_directory?: string;
     model_directory?: string;
     checkpoints_directory?: string;
     datasets_directory?: string;
+    heartmula_model_path?: string;
 }
 
 export interface Dataset {

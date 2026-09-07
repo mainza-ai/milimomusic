@@ -54,11 +54,14 @@ class HeartMuLaProvider(GenerationProvider):
         try:
             import torch
             from app.services.config_manager import ConfigManager
+            from app.core.paths import get_heartmula_ckpt_dir
             config = ConfigManager().get_config()
             if model_path is None:
-                model_path = os.path.expanduser(
-                    config.get("paths", {}).get("model_directory", "../heartlib/ckpt")
-                )
+                hm_cfg = config.get("paths", {}).get("heartmula_model_path")
+                if hm_cfg and os.path.isdir(os.path.expanduser(hm_cfg)):
+                    model_path = os.path.expanduser(hm_cfg)
+                else:
+                    model_path = str(get_heartmula_ckpt_dir())
             self.model_path = model_path
 
             device_str = "cpu"

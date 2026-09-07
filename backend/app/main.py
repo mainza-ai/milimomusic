@@ -1114,10 +1114,9 @@ _download_cancels: Dict[str, threading.Event] = {}
 _REPO_ID_RE = re.compile(r"^[\w.-]+/[\w.\-]+$")
 
 
-def _models_root() -> str:
-    root = os.environ.get("MODEL_DIRECTORY", os.path.join("data", "models"))
-    os.makedirs(root, exist_ok=True)
-    return root
+def _models_root(category: Optional[str] = None) -> str:
+    from app.core.paths import get_models_dir
+    return str(get_models_dir(category))
 
 
 class ModelDownloadRequest(SQLModel):
@@ -1130,11 +1129,14 @@ async def start_model_download(payload: ModelDownloadRequest, background_tasks: 
     from huggingface_hub import HfApi
 
     target_repo = payload.repo_id
-    if not target_repo and payload.model_id:
+    category = None
+    if payload.model_id:
         tree = model_manager.get_model_tree()
         matched = next((m for m in tree if m["id"] == payload.model_id), None)
-        if matched and matched.get("repo_id"):
-            target_repo = matched["repo_id"]
+        if matched:
+            if not target_repo and matched.get("repo_id"):
+                target_repo = matched["repo_id"]
+            category = matched.get("category")
 
     if not target_repo or not _REPO_ID_RE.match(target_repo):
         raise HTTPException(status_code=400, detail={"error": {"code": "bad_repo_id", "message": "repo_id must look like 'org/model'."}})
@@ -1149,9 +1151,13 @@ async def start_model_download(payload: ModelDownloadRequest, background_tasks: 
 
     files = [(s.rfilename, int(s.size or 0)) for s in (info.siblings or []) if s.size]
     total_bytes = sum(sz for _, sz in files)
-    local_dir = os.path.join(_models_root(), target_repo.replace("/", "__"))
+    if not category:
+        category = model_manager._infer_category(target_repo, [s.rfilename for s in (info.siblings or [])])
 
-    disk = shutil.disk_usage(_models_root())
+    models_dir = _models_root(category)
+    local_dir = os.path.join(models_dir, target_repo.replace("/", "__"))
+
+    disk = shutil.disk_usage(models_dir)
     if total_bytes and disk.free < int(total_bytes * 1.1) + 512 * 1024 * 1024:
         raise HTTPException(status_code=507, detail={
             "error": {"code": "insufficient_disk",
@@ -1162,11 +1168,11 @@ async def start_model_download(payload: ModelDownloadRequest, background_tasks: 
         "id": download_id, "repo_id": target_repo, "status": "queued",
         "total_files": len(files), "files_done": 0, "current_file": "",
         "received_bytes": 0, "total_bytes": total_bytes,
-        "local_dir": os.path.abspath(local_dir), "error": "",
+        "local_dir": os.path.abspath(local_dir), "category": category, "error": "",
     }
     cancel_event = threading.Event()
     _download_cancels[download_id] = cancel_event
-    background_tasks.add_task(_model_download_worker, download_id, target_repo, local_dir, files, cancel_event)
+    background_tasks.add_task(_model_download_worker, download_id, target_repo, local_dir, files, cancel_event, category)
     return _snapshot_download(download_id)
 
 
@@ -1236,7 +1242,7 @@ def _snapshot_download(download_id: str) -> Optional[Dict[str, Any]]:
     return {**rec, "progress_percent": pct}
 
 
-def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files: List[Any], cancel_event: threading.Event):
+def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files: List[Any], cancel_event: threading.Event, category: Optional[str] = None):
     from huggingface_hub import hf_hub_download
 
     rec = _model_downloads[download_id]
@@ -1253,7 +1259,10 @@ def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files
         rec["status"] = "completed"
         rec["current_file"] = ""
         try:
-            model_manager.register_custom_model(repo_id, metadata={"local_path": os.path.abspath(local_dir)})
+            meta = {"local_path": os.path.abspath(local_dir)}
+            if category:
+                meta["category"] = category
+            model_manager.register_custom_model(repo_id, metadata=meta)
         except Exception as reg_err:
             logger.warning(f"Could not auto-register custom model {repo_id}: {reg_err}")
     except Exception as e:
@@ -2476,10 +2485,12 @@ class StyleCreate(BaseModel):
 
 
 class PathsConfig(BaseModel):
-    model_config = {"protected_namespaces": ()}
-    model_directory: Optional[str] = None
+    model_config = {"protected_namespaces": (), "extra": "allow"}
+    models_directory: Optional[str] = None
+    model_directory: Optional[str] = None  # backward compat alias
     checkpoints_directory: Optional[str] = None
     datasets_directory: Optional[str] = None
+    heartmula_model_path: Optional[str] = None
 
 
 @app.get("/styles")
@@ -2520,9 +2531,32 @@ def get_paths_config():
 @app.post("/config/paths")
 def update_paths_config(paths: PathsConfig):
     updates = paths.model_dump(exclude_unset=True)
+    if "model_directory" in updates and "models_directory" not in updates:
+        updates["models_directory"] = updates["model_directory"]
+    elif "models_directory" in updates and "model_directory" not in updates:
+        updates["model_directory"] = updates["models_directory"]
     if updates:
         ConfigManager().update_config({"paths": updates})
     return ConfigManager().get_config().get("paths", {})
+
+
+@app.post("/config/paths/validate")
+def validate_paths_config(paths: PathsConfig):
+    from app.core.paths import get_repo_root
+    repo_root = get_repo_root()
+    data = paths.model_dump(exclude_unset=True)
+    results = {}
+    for key, val in data.items():
+        if not val or not isinstance(val, str):
+            continue
+        expanded = os.path.expanduser(val.strip())
+        if not os.path.isabs(expanded):
+            candidate = (repo_root / expanded).resolve()
+        else:
+            candidate = Path(expanded).resolve()
+        is_valid = candidate.is_dir()
+        results[key] = {"valid": is_valid, "path": str(candidate)}
+    return results
 
 
 # --- Fine-Tuning & Training Studio API ---

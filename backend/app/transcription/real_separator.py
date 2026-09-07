@@ -105,11 +105,12 @@ def separate_sources(
     # Strategy 1: audio-separator library if installed
     try:
         from audio_separator.separator import Separator
+        from app.core.paths import get_models_dir
         t0 = time.time()
         sep = Separator(
             output_dir=out_dir,
             output_format="WAV",
-            model_file_dir="models/audio_separator"
+            model_file_dir=str(get_models_dir("audio_separator"))
         )
         sep.load_model(model_filename=model_name)
         output_files = sep.separate(master_wav_path)

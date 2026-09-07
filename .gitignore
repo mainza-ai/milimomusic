@@ -43,7 +43,6 @@ backend/generated_tokens/
 backend/data/*
 !backend/data/caption-library/
 generated_audio/
-/data/
 dataset_samples/
 
 # Temporary/Debug
@@ -56,7 +55,22 @@ backend/database.db
 *.db-journal
 *.db-wal
 *.db-shm
-/models/
+
+# Data storage (ignore files, keep directory structure)
+data/*
+!data/*/
+!data/.gitkeep
+data/**
+!data/**/
+!data/**/.gitkeep
+
+# Models storage (ignore files, keep directory structure)
+models/*
+!models/*/
+!models/.gitkeep
+models/**
+!models/**/
+!models/**/.gitkeep
 backend/models/
 backend/llm_config.json
 backend/llm_config.backup.json

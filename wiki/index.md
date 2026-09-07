@@ -48,6 +48,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Repair Segment / Inpainting Service](entities/inpainting.md) — regenerate a time-range or glitch region.
 - [LLM Service & Providers](entities/llm-service.md) — OpenCode, OMLX, Ollama, OpenAI, Gemini, OpenRouter, DeepSeek, LM Studio.
 - [Backend & API](entities/backend-api.md) — FastAPI/SQLModel backend, Job/Project models, endpoints, SSE.
+- [Docker Deployment](entities/docker-deployment.md) — multi-stage container build, GPU/CPU compose profiles, volume persistence, and single-process web serving.
 - [Frontend](entities/frontend.md) — React 19 + Vite + Tailwind; Suno-class IA + DAW workspace.
 
 ## Entities — external dependencies & tools

@@ -801,6 +801,35 @@ class ModelManager:
                     logger.warning(f"Could not remove {p}: {e}")
         return True
 
+    def infer_category(self, repo_id: str, filenames: Optional[List[str]] = None, pipeline_tag: Optional[str] = None) -> str:
+        """Infer modality category (audio, image, video) from repo ID, filenames, or pipeline tag."""
+        if pipeline_tag:
+            if pipeline_tag in ["text-to-audio", "audio-to-audio", "automatic-speech-recognition", "voice-conversion"]:
+                return "audio"
+            elif pipeline_tag in ["text-to-image", "image-to-image"]:
+                return "image"
+            elif pipeline_tag in ["text-to-video", "image-to-video", "video-to-video"]:
+                return "video"
+
+        low = repo_id.lower()
+        if any(k in low for k in ["flux", "sdxl", "diffusion", "paint", "image", "lora-art"]):
+            return "image"
+        if any(k in low for k in ["video", "wan", "cogvideo", "hailuo", "hunyuan"]):
+            return "video"
+        if any(k in low for k in ["music", "audio", "sound", "voice", "speech", "tts", "minimax"]):
+            return "audio"
+
+        if filenames:
+            file_str = " ".join(filenames).lower()
+            if any(k in file_str for k in ["transformer_blocks", "text_encoder_2", "vae"]):
+                return "image"
+            if any(k in file_str for k in ["codec", "mel", "audio", "vocoder"]):
+                return "audio"
+
+        return "audio"
+
+    _infer_category = infer_category
+
     def search_huggingface(self, query: str, pipeline_tag: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
         """Search Hugging Face Hub for models and calculate repository file sizes."""
         from concurrent.futures import ThreadPoolExecutor
@@ -854,21 +883,7 @@ class ModelManager:
         results = []
         for m in models:
             pipe = getattr(m, "pipeline_tag", "") or ""
-            category = "custom"
-            if pipe in ["text-to-audio", "audio-to-audio", "automatic-speech-recognition", "voice-conversion"]:
-                category = "audio"
-            elif pipe in ["text-to-image", "image-to-image"]:
-                category = "image"
-            elif pipe in ["text-to-video", "image-to-video", "video-to-video"]:
-                category = "video"
-            else:
-                low = m.id.lower()
-                if any(k in low for k in ["music", "audio", "sound", "voice"]):
-                    category = "audio"
-                elif any(k in low for k in ["flux", "sdxl", "image", "diffusion", "paint"]):
-                    category = "image"
-                elif any(k in low for k in ["video", "wan", "cogvideo", "hailuo", "hunyuan"]):
-                    category = "video"
+            category = self.infer_category(m.id, pipeline_tag=pipe)
 
             is_installed = resolve_hf_snapshot(m.id) is not None
             sz_bytes, sz_gb, sz_fmt = size_map.get(m.id, (0, 0.0, "Unknown"))

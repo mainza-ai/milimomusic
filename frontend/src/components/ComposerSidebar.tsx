@@ -9,10 +9,11 @@ import {
     ArrowRightCircle,
     Settings,
     Upload,
-    Image as ImageIcon
+    Image as ImageIcon,
+    Lightbulb
 } from 'lucide-react';
 
-import { api, voiceApi, coverApi, API_BASE_URL, type Job, type LLMConfig, type VoiceProfile, type Project } from '../api';
+import { api, voiceApi, coverApi, modelsApi, API_BASE_URL, type Job, type LLMConfig, type VoiceProfile, type Project, type ModelVariant } from '../api';
 import { Toggle } from './ui/primitives';
 import { LLMSettingsModal } from './LLMSettingsModal';
 import { VoiceStudioModal } from './voice/VoiceStudioModal';
@@ -96,8 +97,10 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     const [modelProvider, setModelProvider] = useState<string>('minimax_music3');
     const [voiceProfiles, setVoiceProfiles] = useState<VoiceProfile[]>([]);
     const [selectedVoiceProfile, setSelectedVoiceProfile] = useState<string>('');
+    const [audioModelVariants, setAudioModelVariants] = useState<ModelVariant[]>([]);
     const [isVoiceStudioOpen, setIsVoiceStudioOpen] = useState(false);
     const [isModelsManagerOpen, setIsModelsManagerOpen] = useState(false);
+    const [isInspiring, setIsInspiring] = useState(false);
 
     // Structured Caption fields (MiniMax Music 3)
     const [globalMetadata, setGlobalMetadata] = useState('Genre: Contemporary Pop\nMood: Energetic & Upbeat');
@@ -114,6 +117,30 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
             setVoiceProfiles(list);
         } catch (e) {
             console.error('Failed to load voice profiles', e);
+        }
+    };
+
+    const loadAudioModels = async () => {
+        try {
+            const tree = await modelsApi.getModelTree();
+            const audioVariants = tree.filter(m => (m.category || 'audio') === 'audio');
+            setAudioModelVariants(audioVariants);
+        } catch (e) {
+            console.error('Failed to load audio models in ComposerSidebar', e);
+        }
+    };
+
+    const handleInspiration = async () => {
+        try {
+            setIsInspiring(true);
+            const insp = await api.getInspiration(lyricsModel);
+            if (insp.topic) setTopic(insp.topic);
+            if (insp.tags) setStyle(insp.tags);
+            if (!title && insp.topic) setTitle(insp.topic.slice(0, 30));
+        } catch (e) {
+            console.error('Inspiration failed', e);
+        } finally {
+            setIsInspiring(false);
         }
     };
 
@@ -135,6 +162,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
 
     useEffect(() => {
         loadVoiceProfiles();
+        loadAudioModels();
         loadLlmConfig();
     }, []);
 
@@ -434,18 +462,41 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                 <div className="space-y-1.5">
                                     <div className="flex items-center justify-between">
                                         <label className="text-[11px] font-bold uppercase text-slate-400">Description & Mood</label>
-                                        <button type="button" onClick={handleEnhancePrompt} disabled={isEnhancing || !topic} className="text-[10px] font-bold text-teal-600 flex items-center gap-1 disabled:opacity-50">
-                                            <Wand2 size={11} /> <span>Enhance</span>
-                                        </button>
+                                        <div className="flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={handleInspiration}
+                                                disabled={isInspiring}
+                                                className="text-[10px] font-bold text-cyan-600 dark:text-cyan-400 flex items-center gap-1 disabled:opacity-50 hover:underline"
+                                                title="Get AI creative prompt inspiration"
+                                            >
+                                                <Lightbulb size={11} /> <span>{isInspiring ? 'Inspiring…' : 'Inspire'}</span>
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={handleEnhancePrompt}
+                                                disabled={isEnhancing || !topic}
+                                                className="text-[10px] font-bold text-teal-600 dark:text-teal-400 flex items-center gap-1 disabled:opacity-50 hover:underline"
+                                                title="Rewrite into rich structured MiniMax prompt"
+                                            >
+                                                <Wand2 size={11} /> <span>{isEnhancing ? 'Rewriting…' : 'Enhance'}</span>
+                                            </button>
+                                        </div>
                                     </div>
-                                    <input type="text" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Describe mood..." className="apple-input text-xs py-2 px-3" />
+                                    <input type="text" value={topic} onChange={(e) => setTopic(e.target.value)} placeholder="Describe mood or musical concept..." className="apple-input text-xs py-2 px-3" />
                                 </div>
-                                <input type="text" value={style} onChange={(e) => setStyle(e.target.value)} placeholder="Tags..." className="apple-input text-xs py-2 px-3 font-mono" />
+                                <input type="text" value={style} onChange={(e) => setStyle(e.target.value)} placeholder="Tags (e.g. pop, synthwave, 120bpm, energetic)..." className="apple-input text-xs py-2 px-3 font-mono" />
                                 {showAdvanced && (
-                                    <div className="pt-2 border-t border-black/[0.06] space-y-3">
+                                    <div className="pt-2 border-t border-black/[0.06] dark:border-white/5 space-y-3">
                                         <div className="grid grid-cols-2 gap-2">
                                             <select value={modelProvider} onChange={(e) => setModelProvider(e.target.value)} className="apple-input py-1.5 text-[11px] font-mono">
-                                                <option value="minimax_music3">MiniMax Music 3</option>
+                                                <option value="minimax_music3">MiniMax Music 3 (Flagship)</option>
+                                                <option value="heartmula">HeartMuLa v1 (Open Weights)</option>
+                                                {audioModelVariants
+                                                    .filter(m => m.id !== 'minimax_music3' && m.id !== 'heartmula')
+                                                    .map(m => (
+                                                        <option key={m.id} value={m.id}>{m.name}</option>
+                                                    ))}
                                             </select>
                                             <select value={selectedVoiceProfile} onChange={(e) => { if (e.target.value === '__add_new__') setIsVoiceStudioOpen(true); else setSelectedVoiceProfile(e.target.value); }} className="apple-input py-1.5 text-[11px] font-mono">
                                                 <option value="">Default AI Voice</option>
@@ -453,8 +504,76 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                                 <option value="__add_new__">+ Train Voice...</option>
                                             </select>
                                         </div>
-                                        <div className="space-y-1">
-                                            <div className="flex justify-between text-xs"><span className="text-[11px]">Duration</span><span className="font-bold text-teal-500">{duration}s</span></div>
+
+                                        {/* Structured Caption Breakdown (MiniMax) */}
+                                        <div className="p-2.5 rounded-xl bg-black/[0.02] dark:bg-white/[0.02] border border-black/[0.05] dark:border-white/5 space-y-2">
+                                            <div className="flex items-center justify-between">
+                                                <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1">
+                                                    <Sparkles size={11} className="text-teal-500" />
+                                                    <span>Structured Prompt Parts</span>
+                                                </span>
+                                                <span className="text-[9px] text-teal-600 dark:text-teal-400 font-mono">MiniMax Architecture</span>
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 block">
+                                                    Genre & Mood
+                                                </label>
+                                                <textarea
+                                                    value={globalMetadata}
+                                                    onChange={(e) => setGlobalMetadata(e.target.value)}
+                                                    rows={2}
+                                                    placeholder="Genre: ...&#10;Mood: ..."
+                                                    className="w-full apple-input text-[11px] font-mono p-1.5 resize-none leading-tight"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 block">
+                                                    Vocal Style & Character
+                                                </label>
+                                                <input
+                                                    type="text"
+                                                    value={vocalDetails}
+                                                    onChange={(e) => setVocalDetails(e.target.value)}
+                                                    placeholder="Lead Vocals: ..."
+                                                    className="w-full apple-input text-[11px] font-mono py-1 px-2"
+                                                />
+                                            </div>
+                                            <div className="space-y-1">
+                                                <label className="text-[10px] font-semibold text-slate-500 dark:text-slate-400 block">
+                                                    Instrumentation & Arrangement
+                                                </label>
+                                                <textarea
+                                                    value={arrangement}
+                                                    onChange={(e) => setArrangement(e.target.value)}
+                                                    rows={2}
+                                                    placeholder="Instrumentation: ..."
+                                                    className="w-full apple-input text-[11px] font-mono p-1.5 resize-none leading-tight"
+                                                />
+                                            </div>
+                                        </div>
+
+                                        <div className="space-y-1.5">
+                                            <div className="flex justify-between items-center text-xs">
+                                                <span className="text-[11px] font-semibold text-slate-700 dark:text-slate-300">Duration</span>
+                                                <span className="font-bold text-teal-600 dark:text-teal-400 font-mono">{duration}s</span>
+                                            </div>
+                                            {/* Quick duration chips */}
+                                            <div className="flex items-center gap-1 flex-wrap">
+                                                {[30, 60, 90, 120, 180, 240].map(sec => (
+                                                    <button
+                                                        key={sec}
+                                                        type="button"
+                                                        onClick={() => setDuration(sec)}
+                                                        className={`px-2 py-0.5 text-[10px] font-mono rounded-md border transition-all ${
+                                                            duration === sec
+                                                                ? 'bg-teal-500/20 border-teal-500/40 text-teal-700 dark:text-teal-300 font-bold'
+                                                                : 'bg-black/[0.02] dark:bg-white/[0.02] border-black/[0.06] dark:border-white/10 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
+                                                        }`}
+                                                    >
+                                                        {sec}s
+                                                    </button>
+                                                ))}
+                                            </div>
                                             <input type="range" min={5} max={300} step={5} value={duration} onChange={(e) => setDuration(parseInt(e.target.value))} className="w-full accent-teal-500" />
                                         </div>
 

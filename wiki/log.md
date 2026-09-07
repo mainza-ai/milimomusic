@@ -1160,3 +1160,11 @@ Completed full productionization and deployment architecture for Milimo Music:
 9. Executable `./milimo` CLI with install, start, stop, status, build, models, and docker management.
 10. Automated tests: 25/25 integration and unit tests passing in 1.61s.
 
+## [2026-09-07] update | Latest SOTA Hugging Face Model Catalog (Audio, Image, Video)
+Updated the unified Model Download Manager with the latest official and SOTA open-weights releases on Hugging Face:
+1. Audio: verified official PyTorch weights (`MiniMaxAI/MiniMax-Music3`, 28.5 GB), complete Apple Silicon MLX suite (`mlx-community/MiniMax-Music3-mxfp4` 8.28 GB, `4bit`, `6bit`, `8bit`, `bf16` 26.55 GB), ComfyUI/CUDA INT8 (`Comfy-Org/MiniMax-Music-3` 11.3 GB), and universal GGUF Q4 (`molbal/Minimax-Music3-GGUF` 7.7 GB) for Windows/Linux/CPU.
+2. Image: expanded with official FLUX.1 [dev] 12B reference model (`black-forest-labs/FLUX.1-dev`), FLUX.1 [schnell] (`black-forest-labs/FLUX.1-schnell`), FLUX.1 [schnell] MLX 4-bit (`mlx-community/FLUX.1-schnell-4bit`), and SDXL Turbo (`stabilityai/sdxl-turbo`).
+3. Video: expanded with official MiniMax Hailuo 3 33B Omni-Modal DiT (`MiniMaxAI/MiniMax-H3`, 24.0 GB), consumer GPU GGUF Q4 (`unsloth/MiniMax-H3-GGUF`, 14.2 GB), Wan2.1 T2V 1.3B Lightweight (`Wan-AI/Wan2.1-T2V-1.3B`), Wan2.1 T2V 14B Flagship (`Wan-AI/Wan2.1-T2V-14B`), Tencent HunyuanVideo 13B DiT (`tencent/HunyuanVideo`), and CogVideoX 1.5 5B (`THUDM/CogVideoX1.5-5B`).
+4. Strict Auto-Download Policy: on fresh installations with zero audio models installed, only the single smallest audio model is auto-downloaded (`mlx-community/MiniMax-Music3-mxfp4` on Mac, `molbal/Minimax-Music3-GGUF` on Windows/Linux). Image and Video models remain 100% on-demand.
+5. All 19 model configurations verified via `/models/tree` API and `./milimo models` CLI; changes committed and pushed to `origin/develop` and `origin/main`.
+

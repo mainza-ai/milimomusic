@@ -221,6 +221,102 @@ def test_cover_image_generation_with_flux(client):
     assert "FLUX.2" in data.get("model_name", "")
 
 
+def test_huggingface_search_and_custom_model(client):
+    """Test dynamic Hugging Face Hub search and custom model registration."""
+    # Search HF models
+    res = client.get("/models/search?q=flux&limit=3")
+    assert res.status_code == 200
+    search_data = res.json()
+    assert "models" in search_data
+    assert len(search_data["models"]) > 0
+    first = search_data["models"][0]
+    assert "repo_id" in first
+    assert "downloads" in first
+    assert "likes" in first
+    assert "category" in first
+
+    # Register custom model
+    dummy_repo = "test-community/custom-synth-music"
+    entry = model_manager.register_custom_model(dummy_repo, {
+        "name": "Custom Synth Music Engine",
+        "category": "audio",
+        "size_gb": 4.2,
+        "architecture": "Music Transformer",
+        "license": "MIT"
+    })
+    assert entry["repo_id"] == dummy_repo
+
+    # Check that it appears in model tree
+    tree = client.get("/models/tree").json()["models"]
+    matched = next((m for m in tree if m.get("repo_id") == dummy_repo), None)
+    assert matched is not None
+    assert matched["name"] == "Custom Synth Music Engine"
+
+    # Clean up custom model
+    del_res = client.delete(f"/models/custom/{entry['id']}")
+    assert del_res.status_code == 200
+    assert del_res.json()["status"] == "deleted"
+
+
+def test_video_pipeline_planning_and_duration_constraints(client):
+    """Test video scene segmentation respecting duration constraints and vocal detection."""
+    from sqlmodel import Session
+    from app.main import engine
+    from app.models import Job
+
+    # Create dummy completed job in DB
+    job_id = uuid4()
+    with Session(engine) as session:
+        job = Job(
+            id=job_id,
+            prompt="Neon city night pulse",
+            tags="synthwave, cyberpunk",
+            lyrics="[Verse 1]\nNeon shadows on the street\nElectric pulse beneath my feet\n[Chorus]\nCan you feel the signal glow",
+            duration_ms=60000,
+            audio_path="/audio/sample.mp3",
+            status="completed"
+        )
+        session.add(job)
+        session.commit()
+
+    # Plan video with Wan2.1 5.0s clip constraint
+    plan_res = client.post(f"/videos/plan/{job_id}", json={
+        "max_clip_duration": 5.0,
+        "bpm": 120.0,
+        "visual_style": "neon-cyberpunk",
+        "model_name": "Wan2.1 T2V (5.0s clips)"
+    })
+    assert plan_res.status_code == 200
+    plan = plan_res.json()
+    assert plan["status"] == "ok"
+    assert plan["total_clips"] == 15
+    assert len(plan["clips"]) == 15
+    first_clip = plan["clips"][0]
+    assert first_clip["duration"] <= 5.0
+    assert first_clip["scene_type"] in ["VOCAL_PERFORMANCE", "CINEMATIC_BROLL"]
+    assert "prompt" in first_clip
+    assert "camera" in first_clip
+
+    # Trigger advanced render
+    render_res = client.post(f"/videos/render-advanced/{job_id}", json={
+        "visual_style": "neon-cyberpunk",
+        "max_clip_duration": 5.0,
+        "enable_lip_sync": True,
+        "burn_lyrics": True
+    })
+    assert render_res.status_code == 200
+    task_data = render_res.json()
+    assert "task_id" in task_data
+    task_id = task_data["task_id"]
+
+    # Check task status endpoint
+    status_res = client.get(f"/videos/tasks/{task_id}")
+    assert status_res.status_code == 200
+    task_status = status_res.json()
+    assert "progress" in task_status
+    assert "step" in task_status
+
+
 def test_docker_llm_url_normalization(monkeypatch):
     """Test Docker container host gateway rewriting for local LLMs."""
     raw_ollama = "http://localhost:11434"

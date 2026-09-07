@@ -1175,3 +1175,18 @@ Investigated and integrated Black Forest Labs FLUX.2 generation suite:
 3. Updated `/generate/cover-image` endpoint and `CoverImageRequest` model in `backend/app/models.py` with `model_id` support.
 4. Added automated tests in `backend/tests/test_production_v2.py` verifying FLUX.2 presence and generation endpoint.
 
+## [2026-09-07] update | Hugging Face Hub Live Search & Production Music Video Pipeline
+1. Dynamic Hugging Face Hub Search & Custom Registry:
+   - Added `search_huggingface` in `backend/app/services/model_manager.py` using `huggingface_hub.HfApi().list_models()` with pipeline tagging (`text-to-audio`, `text-to-image`, `text-to-video`) and sorting by downloads/likes.
+   - Built custom model registry (`custom_models.json`) enabling users to download any Hugging Face model on demand, seamlessly merged into `/models/tree`.
+   - Added REST endpoints `GET /models/search` and `DELETE /models/custom/{model_id}`.
+   - Built frontend `🔍 Hugging Face Hub` explorer tab in `ModelsManagerModal.tsx` with live query search, pipeline filter chips, direct repository downloader, and custom model deletion.
+2. Production Multi-Scene Music Video Pipeline:
+   - Built `backend/app/services/video_service.py` featuring bar-aligned song segmentation respecting generative video model duration constraints (Wan2.1 5.0s, CogVideoX 6.0s, Hailuo H3 8.0s, Audio-Reactive Full).
+   - Character/artist vocal lip-syncing driven exclusively by isolated vocal stems (`vocals.wav`/`vocals.mp3` from Demucs stem separation) to avoid drum and bass mouth distortion.
+   - Synchronized ASS and karaoke subtitle generator with glowing stylized overlays.
+   - Production multi-stage background rendering with live step tracking (`planning` → `lip_sync_and_scenes` → `assembling_scenes` → `burning_subtitles` → `audio_remux`).
+   - Integrated full UI in `MusicVideosView.tsx` with duration constraint picker, interactive scene segment timeline, stem isolation indicators, and live multi-stage rendering HUD.
+   - Automated test suite `test_production_v2.py` extended and passing 100% (8/8 production tests, 181/181 full suite).
+
+

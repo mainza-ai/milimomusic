@@ -5,6 +5,7 @@ FLUX.1 image models, and MiniMax H3 / Wan2.1 open video models.
 """
 
 import os
+import json
 import shutil
 import platform
 import asyncio
@@ -55,6 +56,9 @@ class HardwareProfile:
     tier_description: str
     can_run_minimax_full: bool
     can_run_heartmula: bool
+
+
+CUSTOM_MODELS_PATH = os.path.join("data", "models", "custom_models.json")
 
 
 def resolve_hf_snapshot(repo_id: str) -> Optional[str]:
@@ -446,6 +450,9 @@ class ModelManager:
             }
         ]
 
+        # Extend with user-downloaded custom models
+        catalog.extend(self._load_custom_models())
+
         # Scan install status
         results = []
         heartlib_ckpt_dir = os.path.expanduser("../heartlib/ckpt")
@@ -559,6 +566,152 @@ class ModelManager:
 
         logger.info(f"Fresh installation detected with zero installed audio models. Smallest model recommended: {smallest}")
         return smallest
+
+    def _load_custom_models(self) -> List[Dict[str, Any]]:
+        """Load user-registered custom models from disk."""
+        if not os.path.isfile(CUSTOM_MODELS_PATH):
+            return []
+        try:
+            with open(CUSTOM_MODELS_PATH, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except Exception as e:
+            logger.warning(f"Could not read custom_models.json: {e}")
+            return []
+
+    def _save_custom_models(self, models: List[Dict[str, Any]]) -> None:
+        """Persist user-registered custom models to disk."""
+        os.makedirs(os.path.dirname(CUSTOM_MODELS_PATH), exist_ok=True)
+        try:
+            with open(CUSTOM_MODELS_PATH, "w", encoding="utf-8") as f:
+                json.dump(models, f, indent=2)
+        except Exception as e:
+            logger.error(f"Could not save custom_models.json: {e}")
+
+    def register_custom_model(self, repo_id: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        """Register a custom downloaded model from Hugging Face."""
+        custom_models = self._load_custom_models()
+        existing = next((m for m in custom_models if m.get("repo_id") == repo_id), None)
+        if existing:
+            return existing
+
+        name = repo_id.split("/")[-1]
+        category = "custom"
+        size_gb = 0.0
+        architecture = "Hugging Face Model"
+        license_type = "Open Weights"
+
+        try:
+            from huggingface_hub import HfApi
+            info = HfApi().model_info(repo_id=repo_id, files_metadata=True)
+            pipe = getattr(info, "pipeline_tag", "") or ""
+            if pipe in ["text-to-audio", "audio-to-audio", "automatic-speech-recognition", "voice-conversion"]:
+                category = "audio"
+            elif pipe in ["text-to-image", "image-to-image"]:
+                category = "image"
+            elif pipe in ["text-to-video", "image-to-video", "video-to-video"]:
+                category = "video"
+            else:
+                low = repo_id.lower()
+                if any(k in low for k in ["music", "audio", "sound", "voice"]):
+                    category = "audio"
+                elif any(k in low for k in ["flux", "sdxl", "image", "diffusion", "paint"]):
+                    category = "image"
+                elif any(k in low for k in ["video", "wan", "cogvideo", "hailuo", "hunyuan"]):
+                    category = "video"
+
+            total_bytes = sum(getattr(s, "size", 0) or 0 for s in (info.siblings or []))
+            if total_bytes > 0:
+                size_gb = round(total_bytes / (1024 ** 3), 2)
+            architecture = pipe or "Custom HF Architecture"
+        except Exception as e:
+            logger.warning(f"Could not query HF metadata for {repo_id}: {e}")
+
+        if metadata:
+            if "name" in metadata: name = metadata["name"]
+            if "category" in metadata: category = metadata["category"]
+            if "size_gb" in metadata: size_gb = metadata["size_gb"]
+            if "architecture" in metadata: architecture = metadata["architecture"]
+            if "license" in metadata: license_type = metadata["license"]
+
+        model_entry = {
+            "id": "custom_" + repo_id.replace("/", "_").replace("-", "_").lower(),
+            "name": name,
+            "architecture": architecture,
+            "quantization": "Custom / FP16 / BF16",
+            "size_gb": size_gb,
+            "license": license_type,
+            "recommended_hardware": "System Compatible",
+            "category": category,
+            "repo_id": repo_id,
+            "is_default": False,
+            "is_custom": True
+        }
+        custom_models.append(model_entry)
+        self._save_custom_models(custom_models)
+        logger.info(f"Registered custom model {repo_id} ({category})")
+        return model_entry
+
+    def delete_custom_model(self, model_id_or_repo: str) -> bool:
+        """Delete custom model from registry and disk."""
+        custom_models = self._load_custom_models()
+        target = next((m for m in custom_models if m["id"] == model_id_or_repo or m.get("repo_id") == model_id_or_repo), None)
+        if not target:
+            return False
+
+        custom_models = [m for m in custom_models if m["id"] != target["id"]]
+        self._save_custom_models(custom_models)
+
+        repo_id = target.get("repo_id")
+        if repo_id:
+            import shutil
+            local_dir = os.path.join("data", "models", repo_id.replace("/", "__"))
+            if os.path.isdir(local_dir):
+                shutil.rmtree(local_dir, ignore_errors=True)
+                logger.info(f"Removed custom model directory: {local_dir}")
+        return True
+
+    def search_huggingface(self, query: str, pipeline_tag: Optional[str] = None, limit: int = 20) -> List[Dict[str, Any]]:
+        """Search Hugging Face Hub for models."""
+        from huggingface_hub import HfApi
+        api = HfApi()
+        limit = min(max(1, limit), 50)
+        kwargs: Dict[str, Any] = {"search": query, "limit": limit, "sort": "downloads"}
+        if pipeline_tag:
+            kwargs["pipeline_tag"] = pipeline_tag
+
+        models = list(api.list_models(**kwargs))
+        results = []
+        for m in models:
+            pipe = getattr(m, "pipeline_tag", "") or ""
+            category = "custom"
+            if pipe in ["text-to-audio", "audio-to-audio", "automatic-speech-recognition", "voice-conversion"]:
+                category = "audio"
+            elif pipe in ["text-to-image", "image-to-image"]:
+                category = "image"
+            elif pipe in ["text-to-video", "image-to-video", "video-to-video"]:
+                category = "video"
+            else:
+                low = m.id.lower()
+                if any(k in low for k in ["music", "audio", "sound", "voice"]):
+                    category = "audio"
+                elif any(k in low for k in ["flux", "sdxl", "image", "diffusion", "paint"]):
+                    category = "image"
+                elif any(k in low for k in ["video", "wan", "cogvideo", "hailuo", "hunyuan"]):
+                    category = "video"
+
+            is_installed = resolve_hf_snapshot(m.id) is not None
+            results.append({
+                "repo_id": m.id,
+                "name": m.id.split("/")[-1],
+                "author": m.id.split("/")[0] if "/" in m.id else "community",
+                "downloads": getattr(m, "downloads", 0) or 0,
+                "likes": getattr(m, "likes", 0) or 0,
+                "pipeline_tag": pipe,
+                "category": category,
+                "is_installed": is_installed,
+                "last_modified": str(getattr(m, "last_modified", "") or "")
+            })
+        return results
 
 
 model_manager = ModelManager()

@@ -164,6 +164,9 @@ class TestConfigEndpoints:
 
     def test_validate_paths(self, client):
         """POST /config/paths/validate should return validity of directories."""
+        from app.core.paths import get_models_dir, get_data_dir
+        get_models_dir()
+        get_data_dir()
         response = client.post(
             "/config/paths/validate",
             json={

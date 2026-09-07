@@ -385,7 +385,18 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
     return await request_validation_exception_handler(request, exc)
 
 
-# Static Files (Audio & Covers Serving)
+# Static Files (Audio & Covers Serving) & Canonical Storage Initialization
+from app.core.paths import get_models_dir, get_data_dir, get_generated_audio_dir
+get_models_dir()
+get_models_dir("audio")
+get_models_dir("image")
+get_models_dir("video")
+get_models_dir("audio_separator")
+get_data_dir()
+(get_data_dir() / "checkpoints").mkdir(parents=True, exist_ok=True)
+(get_data_dir() / "datasets").mkdir(parents=True, exist_ok=True)
+(get_data_dir() / "covers").mkdir(parents=True, exist_ok=True)
+
 os.makedirs("generated_audio", exist_ok=True)
 os.makedirs("generated_audio/stems", exist_ok=True)
 os.makedirs("generated_audio/mastered", exist_ok=True)

@@ -270,8 +270,56 @@ class ModelManager:
             },
 
             # -------------------------------------------------------------
-            # IMAGE MODELS: FLUX.1 & SDXL Turbo (On-Demand Visual Studio)
+            # IMAGE MODELS: FLUX.2, FLUX.1 & SDXL Turbo (Visual Studio)
             # -------------------------------------------------------------
+            {
+                "id": "flux_2_klein_4b_mlx",
+                "name": "FLUX.2 [klein] 4B (MLX 4-bit Apple Silicon)",
+                "architecture": "Flow Transformer (4B Distilled Rectified Flow)",
+                "quantization": "4-bit Quantized (Apple Silicon)",
+                "size_gb": 2.8,
+                "license": "Apache-2.0",
+                "recommended_hardware": "Apple Silicon (8GB+ unified memory)",
+                "category": "image",
+                "repo_id": "mlx-community/FLUX.2-Klein-4B-4bit",
+                "is_default": is_apple_silicon
+            },
+            {
+                "id": "flux_2_klein_4b",
+                "name": "FLUX.2 [klein] 4B (Sub-Second Fast Generator)",
+                "architecture": "Flow Transformer (4B Distilled Rectified Flow)",
+                "quantization": "BF16 Full",
+                "size_gb": 7.8,
+                "license": "Apache-2.0",
+                "recommended_hardware": "CUDA (8GB-12GB VRAM) / Consumer GPU",
+                "category": "image",
+                "repo_id": "black-forest-labs/FLUX.2-klein-4B",
+                "is_default": not is_apple_silicon and not hw.has_cuda
+            },
+            {
+                "id": "flux_2_klein_9b",
+                "name": "FLUX.2 [klein] 9B (Distilled High-Fidelity)",
+                "architecture": "Flow Transformer (9B Distilled, Qwen3 Embedder)",
+                "quantization": "BF16 / FP8",
+                "size_gb": 18.0,
+                "license": "FLUX.2 Non-Commercial License",
+                "recommended_hardware": "CUDA (16GB-24GB VRAM) / High RAM",
+                "category": "image",
+                "repo_id": "black-forest-labs/FLUX.2-klein-9B",
+                "is_default": hw.has_cuda
+            },
+            {
+                "id": "flux_2_dev",
+                "name": "FLUX.2 [dev] (32B Flagship Next-Gen)",
+                "architecture": "Flow Transformer (32B Rectified Flow + Multi-Ref Editing)",
+                "quantization": "BF16",
+                "size_gb": 64.0,
+                "license": "FLUX.2-dev Non-Commercial License",
+                "recommended_hardware": "High-End GPU (24GB+ VRAM with offload / 90GB+ VRAM)",
+                "category": "image",
+                "repo_id": "black-forest-labs/FLUX.2-dev",
+                "is_default": False
+            },
             {
                 "id": "flux_1_schnell",
                 "name": "FLUX.1 [schnell] (Official 12B)",
@@ -306,7 +354,7 @@ class ModelManager:
                 "recommended_hardware": "Apple Silicon (16GB+ RAM)",
                 "category": "image",
                 "repo_id": "mlx-community/FLUX.1-schnell-4bit",
-                "is_default": is_apple_silicon
+                "is_default": False
             },
             {
                 "id": "sdxl_turbo",
@@ -318,7 +366,7 @@ class ModelManager:
                 "recommended_hardware": "Any GPU / Apple Silicon (8GB+ RAM)",
                 "category": "image",
                 "repo_id": "stabilityai/sdxl-turbo",
-                "is_default": not is_apple_silicon
+                "is_default": False
             },
 
             # -------------------------------------------------------------

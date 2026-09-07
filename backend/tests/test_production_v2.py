@@ -545,3 +545,231 @@ async def test_video_service_lip_sync_and_procedural_broll():
         assert os.path.isfile(broll_clip)
         assert os.path.getsize(broll_clip) > 1000, "Procedural B-roll MP4 clip must be generated"
 
+
+@pytest.mark.asyncio
+async def test_voice_service_dataset_ingestion_and_f0_analysis():
+    """Verify voice profile dataset ingestion extracts acoustic properties (F0, spectral centroid) and generates audio preview."""
+    import tempfile
+    import numpy as np
+    import scipy.io.wavfile as wav
+    from app.services.voice_service import voice_service
+
+    sr = 22050
+    duration = 2.0
+    t = np.linspace(0, duration, int(sr * duration))
+    # 261.63 Hz (Middle C)
+    samples = (np.sin(2 * np.pi * 261.63 * t) * 16000).astype(np.int16)
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+        wav.write(tf.name, sr, samples)
+        wav_path = tf.name
+
+    try:
+        with open(wav_path, "rb") as f:
+            dataset_bytes = f.read()
+
+        profile = voice_service.create_profile(
+            name="Test Acoustic Ingestion",
+            description="Profile with synthetic C4 vocal tone",
+            consent_confirmed=True,
+            f0_method="rmvpe",
+            dataset_bytes=dataset_bytes,
+            dataset_filename="c4_tone.wav"
+        )
+
+        assert profile["name"] == "Test Acoustic Ingestion"
+        assert profile["acoustic_features"] is not None
+        assert "median_f0_hz" in profile["acoustic_features"]
+        assert "spectral_centroid_hz" in profile["acoustic_features"]
+        assert profile["sample_audio_path"] is not None
+
+        # Verify preview was generated on disk
+        preview_local = profile["sample_audio_path"].replace("/audio/", "generated_audio/")
+        assert os.path.isfile(preview_local)
+        assert os.path.getsize(preview_local) > 0
+
+        # Verify profile can be fetched
+        fetched = voice_service.get_profile(profile["id"])
+        assert fetched is not None
+        assert fetched["id"] == profile["id"]
+
+        # Clean up
+        voice_service.delete_profile(profile["id"])
+        assert voice_service.get_profile(profile["id"]) is None
+    finally:
+        if os.path.isfile(wav_path):
+            os.remove(wav_path)
+
+
+@pytest.mark.asyncio
+async def test_voice_service_dry_wet_and_pitch_shifting():
+    """Verify VoiceService processes pitch shifting, formant preservation, and dry/wet blending."""
+    import tempfile
+    import numpy as np
+    import scipy.io.wavfile as wav
+    from app.services.voice_service import voice_service
+
+    sr = 44100
+    t = np.linspace(0, 1.0, sr)
+    samples = (np.sin(2 * np.pi * 330.0 * t) * 16000).astype(np.int16)
+
+    with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+        wav.write(tf.name, sr, samples)
+        input_audio = tf.name
+
+    try:
+        # Convert with pitch shift + 50% dry/wet
+        out_url = await voice_service.convert_vocals(
+            vocal_stem_path=input_audio,
+            profile_id="default_aria",
+            pitch_shift=2,
+            dry_wet=0.5,
+            formant_preserve=True
+        )
+        local_path = out_url.replace("/audio/", "generated_audio/")
+        assert os.path.isfile(local_path)
+        assert os.path.getsize(local_path) > 1000
+    finally:
+        if os.path.isfile(input_audio):
+            os.remove(input_audio)
+
+
+def test_voice_service_remix_master_with_stems():
+    """Verify remix_master_with_vocal sums non-vocal stems with converted vocals into full stereo master."""
+    import tempfile
+    import numpy as np
+    import scipy.io.wavfile as wav
+    from app.services.voice_service import voice_service
+
+    sr = 44100
+    t = np.linspace(0, 1.0, sr)
+    vocal_samples = (np.sin(2 * np.pi * 440.0 * t) * 12000).astype(np.int16)
+    drums_samples = (np.sin(2 * np.pi * 100.0 * t) * 14000).astype(np.int16)
+    bass_samples = (np.sin(2 * np.pi * 60.0 * t) * 14000).astype(np.int16)
+
+    temp_files = []
+    try:
+        def make_temp_wav(data):
+            tf = tempfile.NamedTemporaryFile(suffix=".wav", delete=False)
+            wav.write(tf.name, sr, data)
+            temp_files.append(tf.name)
+            return tf.name
+
+        vocal_file = make_temp_wav(vocal_samples)
+        drums_file = make_temp_wav(drums_samples)
+        bass_file = make_temp_wav(bass_samples)
+
+        stems = {
+            "vocals": vocal_file,
+            "drums": drums_file,
+            "bass": bass_file
+        }
+
+        remix_url = voice_service.remix_master_with_vocal(
+            original_audio_path=vocal_file,
+            converted_vocal_path=vocal_file,
+            stems_dict=stems,
+            output_filename="test_remix_run.wav"
+        )
+        local_remix = remix_url.replace("/audio/", "generated_audio/")
+        assert os.path.isfile(local_remix)
+        assert os.path.getsize(local_remix) > 1000
+    finally:
+        for f in temp_files:
+            if os.path.isfile(f):
+                os.remove(f)
+
+
+@pytest.mark.asyncio
+async def test_voice_profile_endpoints_json_and_multipart():
+    """Verify /voice/profiles handles both JSON and multipart form data, and voice-convert remixes master track."""
+    import json
+    import httpx
+    from app.main import app, engine
+    from app.models import Job
+    from sqlmodel import Session
+    import tempfile
+    import numpy as np
+    import scipy.io.wavfile as wav
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
+        # 1. Test JSON creation
+        res_json = await client.post("/voice/profiles", json={
+            "name": "Endpoint JSON Profile",
+            "description": "Created via JSON API",
+            "consent_confirmed": True,
+            "f0_method": "rmvpe"
+        })
+        assert res_json.status_code == 200
+        profile_data = res_json.json()["profile"]
+        p_id = profile_data["id"]
+
+        # 2. Test Multipart creation with file upload
+        sr = 22050
+        t = np.linspace(0, 1.0, sr)
+        samples = (np.sin(2 * np.pi * 300 * t) * 16000).astype(np.int16)
+        with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
+            wav.write(tf.name, sr, samples)
+            temp_wav = tf.name
+
+        try:
+            with open(temp_wav, "rb") as f:
+                res_form = await client.post(
+                    "/voice/profiles",
+                    data={
+                        "name": "Endpoint Multipart Profile",
+                        "description": "Created via Multipart Form",
+                        "consent_confirmed": "true",
+                        "f0_method": "crepe"
+                    },
+                    files={"audio_file": ("vocal_sample.wav", f, "audio/wav")}
+                )
+            assert res_form.status_code == 200
+            form_profile = res_form.json()["profile"]
+            assert form_profile["name"] == "Endpoint Multipart Profile"
+            assert form_profile["acoustic_features"] is not None
+
+            # Clean up form profile
+            await client.delete(f"/voice/profiles/{form_profile['id']}")
+        finally:
+            if os.path.isfile(temp_wav):
+                os.remove(temp_wav)
+
+        # 3. Test Voice Conversion route on a Job
+        # Create a dummy completed job with audio
+        dummy_wav_dest = "generated_audio/test_vc_source.wav"
+        wav.write(dummy_wav_dest, sr, samples)
+
+        with Session(engine) as session:
+            job = Job(
+                prompt="Original prompt",
+                title="Original Track",
+                audio_path="/audio/test_vc_source.wav",
+                stems_json=json.dumps({"vocals": "/audio/test_vc_source.wav"}),
+                status="completed"
+            )
+            session.add(job)
+            session.commit()
+            session.refresh(job)
+            test_job_id = str(job.id)
+
+        vc_res = await client.post(f"/jobs/{test_job_id}/voice-convert", json={
+            "voice_profile_id": p_id,
+            "pitch_shift": 1,
+            "dry_wet": 0.8,
+            "formant_preserve": True
+        })
+        assert vc_res.status_code == 200
+        converted_job = vc_res.json()
+        assert converted_job["parent_job_id"] == test_job_id
+        assert converted_job["voice_profile_id"] == p_id
+        assert converted_job["audio_path"] is not None
+        # Verify remixed audio file exists
+        remixed_local = converted_job["audio_path"].replace("/audio/", "generated_audio/")
+        assert os.path.isfile(remixed_local)
+
+        # Clean up json profile
+        await client.delete(f"/voice/profiles/{p_id}")
+
+

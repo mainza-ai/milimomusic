@@ -293,12 +293,25 @@ class GenerateAndTranscribePipeline:
 
             _abort_if_terminal(engine, job_id, cancel_event, stage="finalize")
 
+            # If voice conversion occurred, remix final master track audio with converted vocals
+            final_master_path = gen_result.audio_path
+            if final_vocal_path:
+                try:
+                    final_master_path = voice_service.remix_master_with_vocal(
+                        original_audio_path=gen_result.audio_path,
+                        converted_vocal_path=final_vocal_path,
+                        stems_dict=real_stems,
+                        output_filename=f"{job_id_str}_remixed_master.wav"
+                    )
+                except Exception as e:
+                    logger.warning(f"Master track remix with converted vocal failed: {e}. Keeping gen_result.audio_path.")
+
             # Finalize DB Record
             with Session(engine) as session:
                 job = session.get(Job, job_id)
                 if job:
                     job.status = JobStatus.COMPLETED
-                    job.audio_path = gen_result.audio_path
+                    job.audio_path = final_master_path
                     job.midi_path = transcription_result.midi_path
                     job.musicxml_path = transcription_result.musicxml_path
                     job.notes_json = json.dumps(transcription_result.notes)

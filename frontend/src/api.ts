@@ -316,6 +316,15 @@ export interface VoiceProfile {
     f0_method: string;
     sample_rate: number;
     is_default?: boolean;
+    acoustic_features?: {
+        median_f0_hz?: number;
+        spectral_centroid_hz?: number;
+        spectral_rolloff_hz?: number;
+        mean_rms?: number;
+        duration_sec?: number;
+        timbre_profile?: string;
+    };
+    dataset_files?: string[];
 }
 
 export const api = {
@@ -888,9 +897,16 @@ export const trackApi = {
     getStudioPackUrl: (jobId: string): string => {
         return `${API_BASE_URL}/jobs/${jobId}/studio-pack`;
     },
-    voiceConvertTrack: async (jobId: string, voiceProfileId: string): Promise<Job> => {
+    voiceConvertTrack: async (
+        jobId: string,
+        voiceProfileId: string,
+        options?: { pitch_shift?: number; dry_wet?: number; formant_preserve?: boolean }
+    ): Promise<Job> => {
         const res = await axios.post(`${API_BASE_URL}/jobs/${jobId}/voice-convert`, {
-            voice_profile_id: voiceProfileId
+            voice_profile_id: voiceProfileId,
+            pitch_shift: options?.pitch_shift ?? 0,
+            dry_wet: options?.dry_wet !== undefined ? options.dry_wet / 100 : 1.0,
+            formant_preserve: options?.formant_preserve ?? true
         });
         return res.data;
     },

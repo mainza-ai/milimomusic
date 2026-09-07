@@ -30,7 +30,7 @@ logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Body, Query
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Body, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -482,14 +482,46 @@ def list_voice_profiles():
 
 
 @app.post("/voice/profiles")
-def create_voice_profile(req: VoiceProfileCreate):
-    """Create a new Voice Identity profile with mandatory consent confirmation."""
+async def create_voice_profile(request: Request):
+    """Create a new Voice Identity profile with mandatory consent confirmation, supporting both JSON and multipart dataset uploads."""
+    content_type = request.headers.get("content-type", "")
+    dataset_bytes = None
+    dataset_filename = None
+
+    if "multipart/form-data" in content_type:
+        form = await request.form()
+        name = form.get("name")
+        description = form.get("description", "")
+        consent_confirmed_val = form.get("consent_confirmed")
+        consent_confirmed = str(consent_confirmed_val).lower() in ("true", "1", "yes")
+        f0_method = form.get("f0_method", "rmvpe")
+        file_obj = form.get("audio_file")
+        if file_obj and hasattr(file_obj, "read"):
+            dataset_bytes = await file_obj.read()
+            dataset_filename = getattr(file_obj, "filename", "dataset.wav")
+    else:
+        try:
+            body = await request.json()
+        except Exception:
+            raise HTTPException(status_code=400, detail={"error": {"code": "bad_json", "message": "Invalid JSON body."}})
+        name = body.get("name")
+        description = body.get("description", "")
+        consent_confirmed = bool(body.get("consent_confirmed", False))
+        f0_method = body.get("f0_method", "rmvpe")
+
+    if not name or not str(name).strip():
+        raise HTTPException(status_code=400, detail={"error": {"code": "invalid_request", "message": "Voice name is required."}})
+    if not consent_confirmed:
+        raise HTTPException(status_code=400, detail={"error": {"code": "invalid_request", "message": "You must confirm you have the legal right or consent to train this vocal identity."}})
+
     try:
         profile = voice_service.create_profile(
-            name=req.name,
-            description=req.description,
-            consent_confirmed=req.consent_confirmed,
-            f0_method=req.f0_method
+            name=str(name).strip(),
+            description=str(description or "").strip(),
+            consent_confirmed=consent_confirmed,
+            f0_method=str(f0_method or "rmvpe").strip(),
+            dataset_bytes=dataset_bytes,
+            dataset_filename=dataset_filename
         )
         return {"profile": profile}
     except ValueError as e:
@@ -2993,6 +3025,8 @@ async def voice_convert_job(job_id: str, body: dict = Body(...)):
     if not voice_profile_id:
         raise HTTPException(status_code=400, detail="voice_profile_id is required")
     pitch_shift = int(body.get("pitch_shift", 0))
+    dry_wet = float(body.get("dry_wet", 1.0))
+    formant_preserve = bool(body.get("formant_preserve", True))
         
     from app.services.voice_service import voice_service
     with Session(engine) as session:
@@ -3009,15 +3043,28 @@ async def voice_convert_job(job_id: str, body: dict = Body(...)):
             converted_audio_url = await voice_service.convert_vocals(
                 vocal_stem_path=target_vocal,
                 profile_id=voice_profile_id,
-                job_id=str(job.id),
-                pitch_shift=pitch_shift
+                job_id=f"{job.id}_{uuid.uuid4().hex[:4]}",
+                pitch_shift=pitch_shift,
+                dry_wet=dry_wet,
+                formant_preserve=formant_preserve
             )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Voice conversion failed: {str(e)}")
         
         new_stems = dict(stems) if stems else {}
-        if "vocals" in new_stems:
-            new_stems["vocals"] = converted_audio_url
+        new_stems["vocals"] = converted_audio_url
+
+        # Remix converted vocal with backing tracks into a full stereo master mix
+        try:
+            remixed_master_url = voice_service.remix_master_with_vocal(
+                original_audio_path=job.audio_path,
+                converted_vocal_path=converted_audio_url,
+                stems_dict=new_stems,
+                output_filename=f"converted_{job.id}_{voice_profile_id}.wav"
+            )
+        except Exception as e:
+            logger.warning(f"Remixing master failed: {e}. Falling back to converted vocal stem.")
+            remixed_master_url = converted_audio_url
 
         new_job = Job(
             prompt=f"Voice Converted ({voice_profile_id}): {job.prompt}",
@@ -3025,8 +3072,8 @@ async def voice_convert_job(job_id: str, body: dict = Body(...)):
             tags=job.tags,
             title=f"{job.title or 'Track'} ({voice_profile_id})",
             duration_ms=job.duration_ms,
-            audio_path=converted_audio_url,
-            stems_json=json.dumps(new_stems) if new_stems else job.stems_json,
+            audio_path=remixed_master_url,
+            stems_json=json.dumps(new_stems),
             midi_path=job.midi_path,
             musicxml_path=job.musicxml_path,
             notes_json=job.notes_json,

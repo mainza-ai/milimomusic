@@ -2199,42 +2199,14 @@ async def upload_cover_image(file: UploadFile = File(...)):
 
 @app.post("/generate/cover-image")
 def generate_cover_image(req: CoverImageRequest):
-    """Generate or synthesize visual artwork for project/song cover."""
-    import uuid
-    import hashlib
-    
-    filename = f"ai_cover_{uuid.uuid4().hex[:10]}.svg"
-    dest_path = os.path.join("data", "covers", filename)
-    
-    # Generate an elegant, procedurally generated ambient dark gradient art
-    h = int(hashlib.md5(req.prompt.encode()).hexdigest(), 16)
-    hue1 = (h % 360)
-    hue2 = ((h >> 4) % 360)
-    hue3 = ((h >> 8) % 360)
-    
-    svg_content = f'''<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 800 800" width="100%" height="100%">
-  <defs>
-    <linearGradient id="grad" x1="0%" y1="0%" x2="100%" y2="100%">
-      <stop offset="0%" style="stop-color:hsl({hue1}, 75%, 20%);stop-opacity:1" />
-      <stop offset="50%" style="stop-color:hsl({hue2}, 85%, 40%);stop-opacity:1" />
-      <stop offset="100%" style="stop-color:hsl({hue3}, 80%, 15%);stop-opacity:1" />
-    </linearGradient>
-    <filter id="blur">
-      <feGaussianBlur stdDeviation="70" />
-    </filter>
-  </defs>
-  <rect width="800" height="800" fill="#090b10" />
-  <circle cx="400" cy="400" r="320" fill="url(#grad)" filter="url(#blur)" opacity="0.85" />
-  <circle cx="{200 + (h % 400)}" cy="{200 + ((h >> 3) % 400)}" r="200" fill="hsl({hue2}, 90%, 55%)" filter="url(#blur)" opacity="0.65" />
-</svg>'''
-    with open(dest_path, "w") as f:
-        f.write(svg_content)
-        
-    return {
-        "url": f"/covers/{filename}",
-        "prompt": req.prompt,
-        "style": req.style
-    }
+    """Generate or synthesize visual artwork for project/song cover using FLUX.2/FLUX.1/SDXL image studio."""
+    from app.services.image_service import image_service
+    return image_service.generate_cover(
+        prompt=req.prompt,
+        style=req.style or "cinematic album cover",
+        aspect_ratio=req.aspect_ratio or "1:1",
+        model_id=req.model_id
+    )
 
 
 # --- Studio Sessions & Multi-Turn Producer Endpoints ---

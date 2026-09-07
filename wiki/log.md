@@ -1168,3 +1168,10 @@ Updated the unified Model Download Manager with the latest official and SOTA ope
 4. Strict Auto-Download Policy: on fresh installations with zero audio models installed, only the single smallest audio model is auto-downloaded (`mlx-community/MiniMax-Music3-mxfp4` on Mac, `molbal/Minimax-Music3-GGUF` on Windows/Linux). Image and Video models remain 100% on-demand.
 5. All 19 model configurations verified via `/models/tree` API and `./milimo models` CLI; changes committed and pushed to `origin/develop` and `origin/main`.
 
+## [2026-09-07] update | Black Forest Labs FLUX.2 Integration & Image Service
+Investigated and integrated Black Forest Labs FLUX.2 generation suite:
+1. Catalog expansion to 23 models: added `black-forest-labs/FLUX.2-klein-4B` (Apache 2.0 sub-second 4B distilled generator), `mlx-community/FLUX.2-Klein-4B-4bit` (2.8 GB quantized for Apple Silicon), `black-forest-labs/FLUX.2-klein-9B` (18.0 GB 4-step distilled Qwen3 embedder), and `black-forest-labs/FLUX.2-dev` (64.0 GB 32B flagship rectified flow transformer with multi-reference editing).
+2. Created `backend/app/services/image_service.py` to manage multi-modal image generation and cover art rendering with local model detection and fallback.
+3. Updated `/generate/cover-image` endpoint and `CoverImageRequest` model in `backend/app/models.py` with `model_id` support.
+4. Added automated tests in `backend/tests/test_production_v2.py` verifying FLUX.2 presence and generation endpoint.
+

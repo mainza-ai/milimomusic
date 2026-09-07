@@ -154,6 +154,7 @@ class CoverImageRequest(SQLModel):
     prompt: str
     aspect_ratio: Optional[str] = "1:1"
     style: Optional[str] = "cinematic album cover"
+    model_id: Optional[str] = None
 
 
 class GenerationRequest(SQLModel):

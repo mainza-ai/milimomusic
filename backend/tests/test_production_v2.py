@@ -163,12 +163,20 @@ def test_model_manager_multi_modal_catalog(client):
     res = client.get("/models/tree")
     assert res.status_code == 200
     models = res.json()["models"]
-    assert len(models) >= 14
+    assert len(models) >= 19
 
     categories = {m["category"] for m in models}
     assert "audio" in categories
     assert "image" in categories
     assert "video" in categories
+
+    # Verify Black Forest Labs FLUX.2 and FLUX.1 models in image category
+    image_model_ids = {m["id"] for m in models if m["category"] == "image"}
+    assert "flux_2_klein_4b" in image_model_ids
+    assert "flux_2_klein_9b" in image_model_ids
+    assert "flux_2_dev" in image_model_ids
+    assert "flux_2_klein_4b_mlx" in image_model_ids
+    assert "flux_1_schnell" in image_model_ids
 
     # Active model endpoint
     res = client.get("/models/active")
@@ -193,7 +201,24 @@ def test_model_manager_multi_modal_catalog(client):
     assert "needs_download" in check
     # Audio models policy: never download image or video on boot
     if check["needs_download"]:
-        assert "MiniMax-Music3" in check.get("recommended_repo_id", "")
+        assert "minimax-music3" in check.get("recommended_repo_id", "").lower()
+
+
+def test_cover_image_generation_with_flux(client):
+    """Test cover image generation endpoint with FLUX.2 multi-modal model selection."""
+    payload = {
+        "prompt": "Neon synthwave skyline with glowing cyan towers",
+        "style": "cinematic neon",
+        "aspect_ratio": "1:1",
+        "model_id": "flux_2_klein_4b"
+    }
+    res = client.post("/generate/cover-image", json=payload)
+    assert res.status_code == 200
+    data = res.json()
+    assert "url" in data
+    assert data["url"].startswith("/covers/")
+    assert data["model_id"] == "flux_2_klein_4b"
+    assert "FLUX.2" in data.get("model_name", "")
 
 
 def test_docker_llm_url_normalization(monkeypatch):

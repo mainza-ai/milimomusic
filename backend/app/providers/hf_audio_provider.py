@@ -51,11 +51,41 @@ class HuggingFaceAudioProvider(GenerationProvider):
     def is_ready(self) -> bool:
         return self._is_loaded or os.path.exists(self.local_path)
 
+    def _looks_like_video_weights(self) -> bool:
+        """Detect video-diffusion weight dirs so they fail fast with a clear message."""
+        try:
+            import json as _json
+            cfg_path = os.path.join(self.local_path, "config.json")
+            if os.path.isfile(cfg_path):
+                with open(cfg_path, "r", encoding="utf-8") as f:
+                    cfg = _json.load(f)
+                cls = str(cfg.get("_class_name", ""))
+                if any(k in cls for k in ("MiniMaxH3", "HunyuanVideo", "CogVideo", "Wan", "LTXVideo", "Mochi")):
+                    return True
+                if "audio_latents_dim" in cfg and "patch_size" in cfg:
+                    return True  # joint video+audio DiT layout (H3 family)
+            try:
+                names = os.listdir(self.local_path)
+            except OSError:
+                return False
+            blob = " ".join(names).lower()
+            if any(k in blob for k in ("minimax-h3", "hailuo", "cogvideo", "hunyuanvideo", "wan2")):
+                return True
+            return False
+        except Exception:
+            return False
+
     async def initialize(self) -> bool:
         if self._is_loaded or self._is_loading:
             return True
         self._is_loading = True
         try:
+            if self._looks_like_video_weights():
+                logger.error(
+                    f"Refusing to load '{self.repo_id}' as audio: directory looks like "
+                    f"video-diffusion weights (use the video pipeline, not text-to-audio)."
+                )
+                return False
             from transformers import pipeline
             import torch
 

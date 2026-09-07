@@ -532,8 +532,8 @@ export const modelsApi = {
         const res = await axios.get(`${API_BASE_URL}/models/tree`);
         return res.data.models;
     },
-    startModelDownload: async (repoId: string): Promise<ModelDownloadStatus> => {
-        const res = await axios.post(`${API_BASE_URL}/models/download`, { repo_id: repoId });
+    startModelDownload: async (repoId: string, category?: 'audio' | 'image' | 'video'): Promise<ModelDownloadStatus> => {
+        const res = await axios.post(`${API_BASE_URL}/models/download`, { repo_id: repoId, category: category || undefined });
         return res.data;
     },
     getModelDownload: async (downloadId: string): Promise<ModelDownloadStatus> => {

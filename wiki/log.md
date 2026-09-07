@@ -1383,3 +1383,22 @@ Standardized model storage architecture, removing multi-modal model pollution fr
    - Updated `PathsSettingsModal.tsx` and `api.ts` with clean field labels (`Models Storage Directory`, `LoRA Checkpoints`, `Datasets`, `Legacy HeartMuLa Weights`).
    - Added `milimo-models:/app/models` volume mount to `docker-compose.yml` and `docker-compose.cpu.yml`.
    - All 196 backend tests passing, 0 failures. Clean frontend build.
+
+## [2026-09-07] fix | Modality taxonomy: H3 video misrouted to models/audio
+Root cause (three compounding defects): `POST /models/download` discarded HF
+`pipeline_tag` (filenames-only inference); tag allowlists lacked H3's real tag
+`image-text-to-video`; keyword fallback mapped bare org `minimax` to audio with
+no h3/hailuo disambiguator. UI modality dropdown was dead (never sent).
+Changes: new canonical `backend/app/services/modality.py` (pipeline_tag >
+HF tags > video-first repo keywords with org disambiguation > filenames >
+audio+needs_review; never "custom"); download honors explicit `category`
+(`category_source`), 409 on duplicate in-flight target, resume-aware worker
+with per-file retry; recategorize relocates bytes; delete frees bytes across
+modality roots; catalog adds `minimax_h3_mlx_8bit` (35.3 GB, Community
+License) and corrects H3 license labels; audio provider refuses video weights.
+Data repaired: `pipenetwork/MiniMax-H3-MLX-8bit` moved to `models/video/`
+(7/7 shards verified), registry converged to canonical
+`data/models/custom_models.json`. Open gap: no DiT video-inference backend
+(`VIDEO_MODEL_PATH` unwired). Tests: 46 pass (10 new
+`backend/tests/test_modality_routing.py`). Wiki: new
+`concepts/modality-taxonomy.md`, updated `entities/model-manager.md` + index.

@@ -1402,3 +1402,48 @@ Data repaired: `pipenetwork/MiniMax-H3-MLX-8bit` moved to `models/video/`
 (`VIDEO_MODEL_PATH` unwired). Tests: 46 pass (10 new
 `backend/tests/test_modality_routing.py`). Wiki: new
 `concepts/modality-taxonomy.md`, updated `entities/model-manager.md` + index.
+
+## [2026-09-08] fix | Training Studio parity: six missing routes + log viewer
+UI buttons called API routes that never existed (preprocess, dataset rename,
+caption edit, job delete, checkpoint delete, job logs → runtime 404s). Service
+methods already existed in `FineTuningService` — added six thin routes with
+404/422 semantics (checkpoint delete unloads LoRA if active) + Jobs-tab log
+viewer + `backend/tests/test_training_routes.py` (8). Wiki: training-studio
+API list updated, backlog E2E item checked.
+
+## [2026-09-08] fix | Playback failure visibility + serving correctness
+Audio engine: `onError`/`onStalled`/`onWaiting` handlers, `playbackError` +
+`isBuffering` state, surfaced `play()` rejections, honest no-audio branch,
+player error banner with Retry, buffering spinner. Artist rows: Play gated on
+`artifacts.audio` (⚠ no-audio state), tombstone badge for missing slots.
+Serving: `RangedStaticFiles` (206/416/Accept-Ranges) on /audio + /covers,
+127.0.0.1 CORS defaults, `download_track` type sniff + existence 404,
+completion event emits finalized master path. Tests: `test_audio_serving.py`.
+
+## [2026-09-08] feat | Session rename end-to-end + naming contract
+Shared `DEFAULT_SESSION_TITLE` (backend + `api.ts`); auto-rename guard is
+default-only case-insensitive (fixes frontend-cased miss, preserves "EP");
+server validation (strip/1–120/422) on session/project/job renames; typed
+`JobUpdate` schema; `Job.updated_at` column + migration (+ backfill); rail
+pencil + double-click rename with optimistic update/rollback/toast; ghost
+temp-session rollback on chat-create failure. Tombstones for cursor slots
+whose job is gone (`resolve_track_rows` → `(None, slot)`, "missing" rows,
+excluded from reorder payloads). Optimistic artist playback from
+`artifacts.audio` + in-place hydration (`swapCurrentTrack`); row waveforms
+(`StaticWaveform`, click-to-seek); release live-run badge via
+`releaseApi.get`. Parity gate: `scripts/check_api_parity.py` (137 routes /
+140 calls) + `test_api_parity.py`; `DELETE /agents/runs` documented exempt
+(ops prune). Wiki: new `concepts/naming-contract.md`, index + log.
+
+## [2026-09-08] deprecate | Training Studio retired: MiniMax Music 3 production alignment
+Conducted deep-dive architectural investigation into local music model training.
+Findings: MiniMax Music 3 is an open-weights 27GB foundation model released as a
+decoder-only pipeline; MiniMax never open-sourced the proprietary neural RVQ audio
+encoder required to tokenize raw user audio into latents. Furthermore, backprop through
+a 14B multi-stage model requires 50-64GB+ VRAM, causing immediate fatal OOM on consumer
+and Apple Silicon hardware. HeartMuLa legacy training scripts were broken (omitted text
+conditioning) and incompatible with MiniMax. Cleanly decommissioned Training Studio:
+removed frontend component, modal mounts, and navigation buttons; retired /training/*
+API routes and fine_tuning_service; removed dead test suites. API parity gate remains
+100% green (116 routes / 119 calls). Wiki: updated entities/training-studio.md.
+

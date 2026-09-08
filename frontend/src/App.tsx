@@ -2,10 +2,10 @@ import { useState, useEffect, useRef } from 'react';
 import axios from 'axios';
 import {
   api,
-  trainingApi,
   workspaceApi,
   sessionApi,
   coverApi,
+  DEFAULT_SESSION_TITLE,
   type Job,
   type Project,
   type StudioSession,
@@ -13,7 +13,6 @@ import {
 } from './api';
 import { ComposerSidebar, type CompositionData } from './components/ComposerSidebar';
 import { HistoryFeed } from './components/HistoryFeed';
-import { TrainingStudio } from './components/TrainingStudio';
 import { VoiceStudioModal } from './components/voice/VoiceStudioModal';
 import { ModelsManagerModal } from './components/models/ModelsManagerModal';
 import { LLMSettingsModal } from './components/LLMSettingsModal';
@@ -22,6 +21,7 @@ import { FloatingStatusWidget } from './components/ui/FloatingStatusWidget';
 import { MilimoLogo } from './components/ui/MilimoLogo';
 import { useTheme } from './context/ThemeContext';
 import { useAudioEngine } from './context/AudioEngineContext';
+import { toast } from './utils/toast';
 
 // Dedicated Reference IA Views
 import { SongsView } from './components/views/SongsView';
@@ -46,7 +46,6 @@ import {
   User,
   Users,
   Mic,
-  GraduationCap,
   Cpu,
   Settings,
   Sparkles,
@@ -63,6 +62,7 @@ import {
   ArrowUp,
   Paperclip,
   Trash2,
+  Pencil,
   FileAudio,
   Square,
   Play,
@@ -129,11 +129,9 @@ function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState<boolean>(false);
 
   // Modals
-  const [isTrainingOpen, setIsTrainingOpen] = useState(false);
   const [isVoiceStudioOpen, setIsVoiceStudioOpen] = useState(false);
   const [isModelsManagerOpen, setIsModelsManagerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-  const [activeCheckpoint, setActiveCheckpoint] = useState<{ name: string; id: string } | null>(null);
 
   // Chat-first Producer landing input
   const [producerInput, setProducerInput] = useState('');
@@ -167,16 +165,6 @@ function App() {
     window.addEventListener('resize', handleResize);
     return () => window.removeEventListener('resize', handleResize);
   }, []);
-
-  const refreshActiveCheckpoint = async () => {
-    try {
-      const checkpoints = await trainingApi.listCheckpoints();
-      const active = checkpoints.find((c: { is_active: boolean }) => c.is_active);
-      setActiveCheckpoint(active ? { name: active.name, id: active.id } : null);
-    } catch (e) {
-      console.error("Failed to load active checkpoint", e);
-    }
-  };
 
   const loadHistory = async (offset: number, filter: string, search: string, replace: boolean = false) => {
     if (isLoadingHistory && offset !== 0) return;
@@ -216,7 +204,7 @@ function App() {
   const handleCreateNewSession = async () => {
     try {
       const newSession = await sessionApi.createSession({
-        title: 'New Session'
+        title: DEFAULT_SESSION_TITLE
       });
       setSessions(prev => [newSession, ...prev]);
       setActiveSession(newSession);
@@ -247,6 +235,44 @@ function App() {
       }
     } catch (err) {
       console.error("Failed to delete session", err);
+    }
+  };
+
+  const [renamingSessionId, setRenamingSessionId] = useState<string | null>(null);
+  const [renameDraft, setRenameDraft] = useState('');
+
+  const startRenameSession = (session: StudioSession, e?: React.MouseEvent) => {
+    if (e) e.stopPropagation();
+    setRenamingSessionId(session.id);
+    setRenameDraft(session.title || '');
+  };
+
+  const commitRenameSession = async (sessionId: string) => {
+    const title = renameDraft.trim();
+    setRenamingSessionId(null);
+    if (!title) {
+      toast('Session name cannot be blank.', 'error');
+      return;
+    }
+    const prev = sessions;
+    const apply = (list: StudioSession[]) => list.map(s => (s.id === sessionId ? { ...s, title } : s));
+    setSessions(apply);
+    if (activeSession?.id === sessionId) {
+      setActiveSession({ ...activeSession, title });
+    }
+    try {
+      const updated = await sessionApi.updateSession(sessionId, { title });
+      setSessions(list => list.map(s => (s.id === sessionId ? updated : s)));
+      if (activeSession?.id === sessionId) {
+        setActiveSession(updated);
+      }
+    } catch (err: any) {
+      setSessions(prev); // rollback on failure
+      if (activeSession?.id === sessionId) {
+        const original = prev.find(s => s.id === sessionId);
+        if (original) setActiveSession(original);
+      }
+      toast('Rename failed: ' + (err?.response?.data?.detail?.error?.message || err?.response?.data?.detail || err?.message || 'request failed'), 'error');
     }
   };
 
@@ -294,7 +320,7 @@ function App() {
     if (!targetSession) {
       targetSession = {
         id: 'temp-session-' + Date.now(),
-        title: trimmed.slice(0, 30) || 'New Session',
+        title: trimmed.slice(0, 30) || DEFAULT_SESSION_TITLE,
         created_at: new Date().toISOString(),
         updated_at: new Date().toISOString(),
         messages: [optimisticUserMsg]
@@ -332,7 +358,7 @@ function App() {
       let realSessionId = targetSession.id;
       if (targetSession.id.startsWith('temp-session-')) {
         const created = await sessionApi.createSession({
-          title: trimmed.slice(0, 30) || 'New Session'
+          title: trimmed.slice(0, 30) || DEFAULT_SESSION_TITLE
         });
         realSessionId = created.id;
       }
@@ -371,6 +397,11 @@ function App() {
             message: 'Producer request failed.'
           }
         }));
+        // Roll back the optimistic temp session so a failed create leaves no ghost row.
+        if (targetSession.id.startsWith('temp-session-')) {
+          setSessions(prev => prev.filter(s => s.id !== targetSession!.id));
+          setActiveSession(prev => (prev?.id === targetSession!.id ? null : prev));
+        }
         alert("Producer chat error: " + (e.response?.data?.detail || e.message));
       }
     } finally {
@@ -402,7 +433,6 @@ function App() {
       if (viewParam === 'videos' && trackId) setSelectedVideoSongId(trackId);
     }
 
-    refreshActiveCheckpoint();
     api.getLyricsModels().then(setLyricsModels).catch(console.error);
     loadHistory(0, 'all', '', true);
     loadSessions();
@@ -1011,8 +1041,36 @@ function App() {
                     >
                       <div className="flex items-center gap-2 min-w-0 flex-1">
                         <MessageSquare size={13} className="text-teal-500 flex-shrink-0" />
-                        <span className="truncate">{s.title || 'Studio Session'}</span>
+                        {renamingSessionId === s.id ? (
+                          <input
+                            autoFocus
+                            value={renameDraft}
+                            onChange={(e) => setRenameDraft(e.target.value)}
+                            onClick={(e) => e.stopPropagation()}
+                            onKeyDown={(e) => {
+                              if (e.key === 'Enter') commitRenameSession(s.id);
+                              else if (e.key === 'Escape') setRenamingSessionId(null);
+                            }}
+                            onBlur={() => commitRenameSession(s.id)}
+                            maxLength={120}
+                            className="w-full text-[11px] font-semibold bg-white dark:bg-black/40 border border-teal-500/50 rounded-lg px-1.5 py-0.5 text-slate-900 dark:text-slate-100 focus:outline-none"
+                            aria-label={`Rename session ${s.title || 'Studio Session'}`}
+                          />
+                        ) : (
+                          <span
+                            className="truncate"
+                            onDoubleClick={(e) => startRenameSession(s, e)}
+                            title="Double-click to rename"
+                          >{s.title || 'Studio Session'}</span>
+                        )}
                       </div>
+                      <button
+                        onClick={(e) => startRenameSession(s, e)}
+                        className="opacity-0 group-hover:opacity-100 p-1 hover:text-teal-500 transition-opacity ml-1 flex-shrink-0"
+                        title="Rename session"
+                      >
+                        <Pencil size={12} />
+                      </button>
                       <button
                         onClick={(e) => handleDeleteSession(s.id, e)}
                         className="opacity-0 group-hover:opacity-100 p-1 hover:text-rose-500 transition-opacity ml-1 flex-shrink-0"
@@ -1037,7 +1095,6 @@ function App() {
 
             {[
               { label: 'Voice Studio', icon: Mic, color: 'text-teal-500 dark:text-teal-400', onClick: () => setIsVoiceStudioOpen(true) },
-              { label: 'LoRA Studio', icon: GraduationCap, color: 'text-amber-500 dark:text-amber-400', badge: 'In Dev', onClick: () => setIsTrainingOpen(true) },
               { label: 'Models & HW', icon: Cpu, color: 'text-cyan-500 dark:text-cyan-400', onClick: () => setIsModelsManagerOpen(true) }
             ].map((engine, idx) => {
               const Icon = engine.icon;
@@ -1816,8 +1873,6 @@ function App() {
             onCancel={handleCancelJob}
             parentJob={parentJob}
             onClearParentJob={() => setParentJob(undefined)}
-            onOpenTraining={() => setIsTrainingOpen(true)}
-            activeCheckpoint={activeCheckpoint}
             activeProject={activeProject}
             onClearActiveProject={() => setActiveProject(null)}
             producerPreset={producerPreset}
@@ -1826,12 +1881,6 @@ function App() {
       </aside>
 
       {/* Global Modals & Monitor */}
-      <TrainingStudio
-        isOpen={isTrainingOpen}
-        onClose={() => setIsTrainingOpen(false)}
-        onCheckpointsChange={refreshActiveCheckpoint}
-      />
-
       <VoiceStudioModal
         isOpen={isVoiceStudioOpen}
         onClose={() => setIsVoiceStudioOpen(false)}

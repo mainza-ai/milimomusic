@@ -29,7 +29,7 @@ updated: 2026-08-25
 ## D. Platform gaps (never started)
 - [ ] Voice cloning (RVC) real weights + consent flow — Phase 2 B-item still open
 - [ ] HeartMuLa keep/drop decision execution (21GB)
-- [ ] Training Studio E2E verification
+- [x] Training Studio E2E verification (2026-09-08: six missing routes wired to existing `FineTuningService` methods + Jobs-tab log viewer + `test_training_routes.py`; parity gate prevents recurrence — full generation-training loop still untested on GPU)
 - [ ] Multi-user/auth productization (single-token auth today)
 - [ ] Alembic migrations replacing ad-hoc ALTERs
 - [ ] CI (GitHub Actions: pytest+tsc+build on push)

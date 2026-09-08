@@ -3,6 +3,7 @@ import type { Job } from '../api';
 import { API_BASE_URL } from '../api';
 import { getAudioContext } from '../utils/audioContext';
 import { consumeHotkey, isTextEntryTarget, hasModifier } from '../utils/hotkeyScope';
+import { toast } from '../utils/toast';
 
 export interface AudioEngineContextValue {
     currentTrack: Job | null;
@@ -36,6 +37,12 @@ export interface AudioEngineContextValue {
     removeFromQueue: (trackId: string) => void;
     clearQueue: () => void;
     reorderQueue: (fromIndex: number, toIndex: number) => void;
+    playbackError: string | null;
+    clearPlaybackError: () => void;
+    isBuffering: boolean;
+    /** Replace current track + queue metadata without touching the element
+     *  (used to hydrate an optimistically started track in place). */
+    swapCurrentTrack: (track: Job, queue?: Job[]) => void;
 }
 
 const AudioEngineContext = createContext<AudioEngineContextValue | null>(null);
@@ -56,9 +63,15 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     const [isShuffle, setIsShuffle] = useState(false);
     const [playlist, setPlaylist] = useState<Job[]>([]);
     const [analyserNode, setAnalyserNode] = useState<AnalyserNode | null>(null);
+    // Last user-facing playback failure (media error, CORS, decode, play() rejection).
+    const [playbackError, setPlaybackError] = useState<string | null>(null);
+    // True while the element is stalled waiting for data (slow connection / seek).
+    const [isBuffering, setIsBuffering] = useState(false);
 
     // Audio node connectivity tracker
     const isSourceConnected = useRef(false);
+    // Latest track for stable media-event callbacks.
+    const currentTrackRef = useRef<Job | null>(null);
     // Queued seek for a track whose metadata hasn't loaded yet.
     const pendingSeekRef = useRef<{ trackId: string; time: number } | null>(null);
 
@@ -138,7 +151,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     // the new element's metadata loads — lets list rows start playback at a
     // clicked waveform position without racing load events.
     const playTrack = useCallback(async (track: Job, customPlaylist?: Job[], startAtSeconds?: number) => {
-        if (!track?.audio_path) return;
+        if (!track?.audio_path) {
+            const msg = `“${track?.title || 'Untitled track'}” has no audio file yet — it may still be rendering or its file is missing.`;
+            setPlaybackError(msg);
+            toast(msg, 'error');
+            return;
+        }
+        setPlaybackError(null);
 
         if (customPlaylist && customPlaylist.length > 0) {
             setPlaylist(customPlaylist);
@@ -152,6 +171,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
 
         setCurrentTrack(track);
+        currentTrackRef.current = track;
         setCurrentTime(0);
         pendingSeekRef.current = startAtSeconds && startAtSeconds > 0
             ? { trackId: track.id, time: startAtSeconds }
@@ -178,7 +198,14 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 }
             } catch (err: any) {
                 if (err.name !== 'AbortError') {
-                    console.warn('Playback start postponed/blocked:', err);
+                    const reason = err?.name === 'NotSupportedError'
+                        ? 'This audio format could not be decoded by your browser.'
+                        : err?.name === 'NotAllowedError'
+                            ? 'Playback was blocked by the browser — press play again.'
+                            : `Playback failed (${err?.name || 'media error'}). Check connection or file.`;
+                    const msg = `“${track.title || 'Untitled track'}”: ${reason}`;
+                    setPlaybackError(msg);
+                    toast(msg, 'error');
                 }
                 setIsPlaying(false);
             }
@@ -190,6 +217,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         if (audioRef.current) {
             audioRef.current.pause();
             setIsPlaying(false);
+            setIsBuffering(false);
         }
     }, []);
 
@@ -200,13 +228,66 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             try {
                 await audioRef.current.play();
                 setIsPlaying(true);
+                setPlaybackError(null);
             } catch (err: any) {
                 if (err.name !== 'AbortError') {
-                    console.warn('Resume error:', err);
+                    const msg = `Resume failed (${err?.name || 'media error'}).`;
+                    setPlaybackError(msg);
+                    toast(msg, 'error');
                 }
             }
         }
     }, [ensureAudioGraph]);
+
+    const clearPlaybackError = useCallback(() => setPlaybackError(null), []);
+
+    const swapCurrentTrack = useCallback((track: Job, queue?: Job[]) => {
+        currentTrackRef.current = track;
+        setCurrentTrack(track);
+        if (queue && queue.length > 0) {
+            setPlaylist(queue);
+        }
+    }, []);
+
+    // Media-element failures (404, CORS, decode, network stall) are otherwise silent.
+    const handleMediaError = useCallback(() => {
+        const el = audioRef.current;
+        const code = el?.error?.code;
+        const reason = code === 4
+            ? 'The audio file could not be loaded (unsupported format or corrupt file).'
+            : code === 3
+                ? 'Audio decoding failed in your browser.'
+                : code === 2
+                    ? 'A network error interrupted audio loading — check the server connection.'
+                    : 'The audio file could not be found on the server (it may have been moved or deleted).';
+        const track = currentTrackRef.current;
+        const msg = track ? `“${track.title || 'Untitled track'}”: ${reason}` : reason;
+        setPlaybackError(msg);
+        setIsPlaying(false);
+        setIsBuffering(false);
+        toast(msg, 'error');
+    }, []);
+
+    const handleStalled = useCallback(() => {
+        // Only surface stalls when we expected to be playing.
+        if (audioRef.current && !audioRef.current.paused) {
+            const msg = 'Audio is stalling — the connection may be slow. It will resume automatically.';
+            toast(msg, 'info');
+        }
+    }, []);
+
+    const handleWaiting = useCallback(() => {
+        if (currentTrackRef.current) setIsBuffering(true);
+    }, []);
+
+    const handlePlaying = useCallback(() => {
+        setIsBuffering(false);
+        setPlaybackError(null);
+    }, []);
+
+    const handleCanPlay = useCallback(() => {
+        setIsBuffering(false);
+    }, []);
 
     // Toggle Play
     const togglePlay = useCallback((trackToPlay?: Job) => {
@@ -299,6 +380,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     // Track ended handler
     const handleEnded = useCallback(() => {
+        setIsBuffering(false);
         if (repeatMode === 'one') {
             if (audioRef.current) {
                 audioRef.current.currentTime = 0;
@@ -497,7 +579,11 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 addToQueue,
                 removeFromQueue,
                 clearQueue,
-                reorderQueue
+                reorderQueue,
+                playbackError,
+                clearPlaybackError,
+                swapCurrentTrack,
+                isBuffering
             }}
         >
             {/* Single Root Master <audio> element */}
@@ -507,6 +593,11 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 onTimeUpdate={handleTimeUpdate}
                 onLoadedMetadata={handleLoadedMetadata}
                 onEnded={handleEnded}
+                onError={handleMediaError}
+                onStalled={handleStalled}
+                onWaiting={handleWaiting}
+                onPlaying={handlePlaying}
+                onCanPlay={handleCanPlay}
                 preload="auto"
             />
             {children}

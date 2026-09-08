@@ -24,7 +24,8 @@ import {
   Check,
   ListMusic,
   Trash2,
-  FileText
+  FileText,
+  Loader2
 } from 'lucide-react';
 
 interface GlobalAudioPlayerProps {
@@ -59,7 +60,10 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
     toggleShuffle,
     removeFromQueue,
     clearQueue,
-    stop
+    stop,
+    playbackError,
+    clearPlaybackError,
+    isBuffering
   } = useAudioEngine();
 
   const [timeMode, setTimeMode] = useState<'elapsed' | 'remaining'>('elapsed');
@@ -183,6 +187,29 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
 
   return (
     <div className="fixed bottom-6 left-0 right-0 z-50 flex flex-col items-center pointer-events-none px-3 sm:px-6 animate-slide-up">
+      {/* Playback error banner with retry */}
+      {playbackError && (
+        <div className="w-full max-w-5xl mb-2 px-4 py-2.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 backdrop-blur-2xl pointer-events-auto flex items-center justify-between gap-3 animate-fade-in" role="alert">
+          <p className="text-[11px] font-semibold text-rose-700 dark:text-rose-300 truncate">{playbackError}</p>
+          <div className="flex items-center gap-2 shrink-0">
+            {currentSong && (
+              <button
+                onClick={() => { clearPlaybackError(); playTrack(currentSong, playlist); }}
+                className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-rose-500/20 text-rose-700 dark:text-rose-200 hover:bg-rose-500/30 transition-colors"
+              >
+                Retry
+              </button>
+            )}
+            <button
+              onClick={clearPlaybackError}
+              className="px-2 py-1 rounded-xl text-[11px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+              aria-label="Dismiss playback error"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+      )}
       {/* Up Next Queue Drawer */}
       {isQueueOpen && (
         <div className="w-full max-w-5xl bg-white/95 dark:bg-[#12141c]/95 border border-black/[0.08] dark:border-white/10 shadow-apple-2xl backdrop-blur-2xl rounded-3xl p-5 mb-3 pointer-events-auto flex flex-col max-h-[380px] animate-fade-in">
@@ -541,10 +568,10 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
             <button
               onClick={() => togglePlay()}
               className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-gradient-to-tr from-teal-500 via-cyan-400 to-sky-500 hover:from-teal-400 hover:to-cyan-300 text-slate-950 font-bold flex items-center justify-center shadow-lg shadow-teal-500/30 hover:scale-105 active:scale-95 transition-transform shrink-0"
-              title={isPlaying ? 'Pause (K / Space)' : 'Play (K / Space)'}
-              aria-label={isPlaying ? 'Pause Audio' : 'Play Audio'}
+              title={isBuffering ? 'Buffering…' : isPlaying ? 'Pause (K / Space)' : 'Play (K / Space)'}
+              aria-label={isBuffering ? 'Buffering audio' : isPlaying ? 'Pause Audio' : 'Play Audio'}
             >
-              {isPlaying ? <Pause size={18} /> : <Play size={18} className="ml-0.5" />}
+              {isBuffering ? <Loader2 size={18} className="animate-spin" /> : isPlaying ? <Pause size={18} /> : <Play size={18} className="ml-0.5" />}
             </button>
 
             {/* Advance 10s */}

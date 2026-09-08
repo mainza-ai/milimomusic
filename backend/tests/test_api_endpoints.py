@@ -182,52 +182,6 @@ class TestConfigEndpoints:
         assert data["nonexistent"]["valid"] is False
 
 
-class TestTrainingEndpoints:
-    """Test suite for training API endpoints."""
-
-    def test_list_datasets(self, client):
-        """GET /training/datasets should return list."""
-        response = client.get("/training/datasets")
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert "datasets" in data
-        assert isinstance(data["datasets"], list)
-
-    def test_create_dataset(self, client):
-        """POST /training/datasets should create new dataset."""
-        unique_name = f"TestDataset_{os.urandom(4).hex()}"
-        
-        response = client.post(
-            "/training/datasets",
-            json={"name": unique_name, "styles": ["Pop", "Rock"]}
-        )
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert "dataset" in data
-        assert data["dataset"]["name"] == unique_name
-        assert "id" in data["dataset"]
-
-    def test_list_jobs(self, client):
-        """GET /training/jobs should return list."""
-        response = client.get("/training/jobs")
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert "jobs" in data
-        assert isinstance(data["jobs"], list)
-
-    def test_list_checkpoints(self, client):
-        """GET /training/checkpoints should return list."""
-        response = client.get("/training/checkpoints")
-        
-        assert response.status_code == 200
-        data = response.json()
-        assert "checkpoints" in data
-        assert isinstance(data["checkpoints"], list)
-
-
 class TestHealthCheck:
     """Test basic app health."""
 

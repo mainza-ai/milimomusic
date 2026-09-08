@@ -32,7 +32,8 @@ def migrate():
             "cfg_scale": "FLOAT",
             "topk": "INTEGER",
             "used_fallback_synth": "BOOLEAN DEFAULT 0",
-            "fallback_reason": "TEXT"
+            "fallback_reason": "TEXT",
+            "updated_at": "TIMESTAMP"
         }
 
         for col_name, col_type in new_columns.items():
@@ -43,6 +44,10 @@ def migrate():
                 cursor.execute(f"ALTER TABLE job ADD COLUMN {col_name} {col_type}")
                 conn.commit()
                 print(f"Added '{col_name}'.")
+
+        # Backfill updated_at for rows predating the column.
+        cursor.execute("UPDATE job SET updated_at = created_at WHERE updated_at IS NULL")
+        conn.commit()
             
         print("Migration successful.")
             

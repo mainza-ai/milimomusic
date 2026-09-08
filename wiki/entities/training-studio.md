@@ -1,57 +1,51 @@
 ---
-title: Training Studio
+title: Training Studio (Deprecated)
 type: entity
 created: 2026-08-19
-updated: 2026-08-19
+updated: 2026-09-08
 sources: [sources/training-studio-guide.md, sources/readme.md]
-tags: [training, lora, finetune, studio, heartmula]
+tags: [training, lora, finetune, studio, deprecated, minimax, heartmula]
 aliases: [LoRA Training Studio]
 ---
 
-# Training Studio
+# Training Studio (Deprecated & Retired)
 
-The **Training Studio** (Beta) fine-tunes the [HeartMuLa](heartmula.md) model on custom
-audio datasets directly within the app, enabling **custom styles** (e.g. 'Afrobeat',
-'MyVoice'). It has a **Glassmorphism** UI (semi-transparent panels, cyan/purple gradients).
+> [!WARNING]
+> **Status: Deprecated & Retired (2026-09-08)**  
+> The Training Studio has been formally decommissioned and removed from the active codebase. Milimo Music v2 has standardized on **MiniMax Music 3** as its primary production music generation engine and **RVC v2** for vocal cloning. Local LoRA training for MiniMax Music 3 is technically infeasible for consumer workstations.
 
-## How it works (quick start)
-1. Open Training Studio (🎓 button in the Style Manager).
-2. Create a **Dataset** (name + target styles).
-3. Upload **≥5 audio files** (MP3/WAV/FLAC); matching `.txt` files add lyrics/captions.
-4. Configure training: **LoRA** (fast, ~100MB) or **Full Fine-Tune** (best quality, ~6GB).
-5. Monitor progress/loss in the **Jobs** tab; **Activate** the checkpoint in the **Models** tab.
+## Architectural Decision Record (Why Training Studio Was Retired)
 
-## Tabs
-- **Dataset**: create/edit/delete datasets; selected cards glow with a cyan ring.
-- **Training**: params — Method, Epochs (default 3), Learning Rate (default 0.0001),
-  LoRA Rank (8–32, default 8). See [LoRA fine-tuning](../concepts/lora-finetuning.md).
-- **Jobs**: real-time metrics; status badges Queued/Running/Completed/Failed; Loss metric
-  (lower is better; if flat/rising, lower the learning rate).
-- **Models**: activate/delete checkpoints. Once active, all generation uses the custom style.
+A comprehensive architectural and empirical investigation across the model architecture, Hugging Face discussions, and hardware constraints concluded that local fine-tuning / LoRA training cannot be delivered in production for the following reasons:
 
-## API endpoints
-- `GET/POST /training/datasets`
-- `POST /training/datasets/{id}/audio` (multipart with file + caption)
-- `POST /training/jobs` `{dataset_id, method, epochs, learning_rate}`
-- `GET /training/checkpoints`, `POST /training/checkpoints/{id}/activate`
+### 1. Missing Neural Audio Encoder (Architectural Impossibility)
+MiniMax Music 3 is a hybrid Diffusion Transformer (DiT) and Autoregressive (AR) pipeline. To train or fine-tune on user audio files (e.g. 5 uploaded MP3/WAV stems), raw audio must be converted into the model's semantic latent space using an encoder.
+- MiniMax open-sourced **only the decoder / generation pipeline** (`dit.py`, `ar.py`, `fusion.py`, `depth.py`, `vocoder.py`).
+- **MiniMax never open-sourced the neural audio encoder / RVQ tokenizer**.
+- Without this proprietary encoder, arbitrary user audio cannot be converted into the latent representations required to compute flow-matching loss or cross-entropy. Any attempt to train without it produces meaningless noise.
 
-## Storage layout
-```
-backend/data/
-├── datasets/{id}/   manifest.json, audio/*.mp3, processed/*.pt
-├── jobs/{id}/       manifest.json, logs.txt
-└── checkpoints/{id}/ meta.json, adapter_model.safetensors
-```
+### 2. VRAM & Hardware Memory Physics (Hardware Impossibility)
+- MiniMax Music 3 base model weights in `bfloat16` occupy **27 Gigabytes** of memory.
+- Backpropagation through a 14B multi-stage diffusion pipeline across 20–30 second stereo audio requires holding activation graphs and optimizer states (AdamW), demanding **50 GB to 64 GB+ of dedicated GPU memory**.
+- Consumer hardware (Apple Silicon Macs with 16GB–36GB Unified Memory, or NVIDIA RTX GPUs with 8GB–24GB VRAM) immediately encounters fatal Out-Of-Memory (OOM) crashes during backprop.
 
-## Notes
-- Training is **local** and runs through the backend (`training/*`: `data_prep.py`,
-  `lora_trainer.py`, `run_training.py`).
-- **Global monitoring**: a floating status widget tracks training anywhere in the app
-  (`useTrainingMonitor.ts` on the frontend).
-- In v2, this UI is extended into a **Voice Training Studio** for vocal-identity cloning
-  via RVC v2 (§3.6, see [roadmap](../roadmap.md)).
+### 3. HeartMuLa Legacy Separation
+The earlier prototype scripts in `backend/app/services/training/` targeted the legacy [HeartMuLa](heartmula.md) 3B model. Because HeartMuLa was superseded by MiniMax Music 3 in Milimo Music v2 due to fidelity and musicality advantages, maintaining training stubs for an obsolete model created confusion and technical debt.
+
+### 4. "LoRAs" in the Ecosystem
+Files labeled "MiniMax Music 3 LoRA" circulating in the open-source community (e.g., ComfyUI) are **step-distillation LoRAs** (trained on supercomputer clusters to reduce sampling steps from 24 to 8 for faster inference), **not** user-trained style adapters.
+
+---
+
+## Active Alternatives in Milimo Music
+
+Instead of maintaining a non-functional training studio, Milimo Music provides genuine production capabilities:
+1. **Prompt & Tag Conditioning**: Steering MiniMax Music 3 via rich structural prompts, genre tags, BPM, and mood descriptors.
+2. **Reference Audio Inpainting & Continuity**: Providing reference audio frames for stylistic priming.
+3. **Voice Studio (RVC v2)**: Real, local vocal cloning using Retrieval-based Voice Conversion (~100MB VRAM, trains in minutes on Apple Silicon or consumer GPUs).
+
+---
 
 ## Related pages
-- [HeartMuLa](heartmula.md) | [LoRA fine-tuning](../concepts/lora-finetuning.md)
-- [Backend & API](backend-api.md) | [Roadmap (v2)](../roadmap.md)
-- [Training Studio Guide source](../sources/training-studio-guide.md)
+- [MiniMax Music 3](../overview.md) | [System Architecture](../architecture.md)
+- [HeartMuLa](heartmula.md) | [Roadmap (v2)](../roadmap.md)

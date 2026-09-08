@@ -128,7 +128,7 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 ## ✨ Key Features
 
 ### 🎧 Generative Audio Engine & Pluggable Providers
-- **MiniMax Music 3 Default Engine**: Conditioned on structured multi-section captions (`[Intro]`, `[Verse]`, `[Chorus]`, `[Solo]`, `[Outro]`) and acoustic style descriptors. Runs native **Apple Silicon MLX weight inference** (`mlx-community/MiniMax-Music3-bf16`).
+- **MiniMax Music 3 Default Engine**: Conditioned on structured multi-section captions (`[Intro]`, `[Verse]`, `[Chorus]`, `[Solo]`, `[Outro]`) and acoustic style descriptors. Runs native **Apple Silicon MLX weight inference** (`mlx-community/MiniMax-Music3-bf16`). Serves as the primary production engine, with HeartMuLa maintained as an isolated legacy fallback.
 - **Strict Production Inference**: Configured with `MILIMO_STRICT_INFERENCE=1` to guarantee authentic neural generation on local hardware, eliminating silent procedural fallbacks.
   > **Platform note:** Real neural generation runs natively on Apple Silicon (MLX). On Windows/Linux the studio (DAW, transcription, mastering, agents) operates fully — with generation utilizing clearly-labeled placeholder synthesis when MLX is absent.
 
@@ -178,7 +178,7 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 - **Procedural B-Roll Visual Synthesizer**: Dynamic multi-axis Ken Burns motion with orbital sweep, style-matched color grading LUTs, and generative chromatic plasma.
 
 ### 📦 Multi-Modal Model Hub & Hugging Face Search
-- **23-Model Multi-Modal Catalog**: Comprehensive support across Audio (MiniMax Music 3 MLX/CUDA/GGUF, HeartMuLa), Image (Black Forest Labs FLUX.2 klein/dev, FLUX.1 schnell, SDXL Turbo), and Video (MiniMax Hailuo H3, Wan 2.1, CogVideoX 1.5, HunyuanVideo).
+- **23-Model Multi-Modal Catalog**: Comprehensive support across Audio (MiniMax Music 3 MLX/CUDA/GGUF as primary, HeartMuLa as legacy fallback), Image (Black Forest Labs FLUX.2 klein/dev, FLUX.1 schnell, SDXL Turbo), and Video (MiniMax Hailuo H3, Wan 2.1, CogVideoX 1.5, HunyuanVideo).
 - **Live Hugging Face Hub Search**: Integrated search (`GET /models/search`) with pipeline filter chips (`text-to-audio`, `text-to-image`, `text-to-video`) and direct repository downloader.
 - **Custom Model Registry**: Stores user-downloaded models in `~/.milimomusic/models/custom_models.json`, dynamically registered into `ProviderRegistry` via `HuggingFaceAudioProvider`.
 - **Strict Download Policy**: Auto-downloads only the single smallest audio model on empty systems; all image and video models are strictly on-demand.
@@ -200,7 +200,7 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 |---|---|---|
 | **Frontend** | React 19, Vite, Tailwind CSS, Web Audio API | Apple-inspired interface, 6-mode DAW, floating dock player, interactive notation |
 | **Backend** | FastAPI, SQLModel, SQLite, PyTorch, Librosa | REST API, async task execution, SSE progress streaming, audio pipeline |
-| **Generative ML** | MLX (Apple Silicon), PyTorch (CUDA/CPU) | MiniMax Music 3, HeartMuLa-3B, HeartCodec |
+| **Generative ML** | MLX (Apple Silicon), PyTorch (CUDA/CPU) | MiniMax Music 3 (Primary), HeartMuLa-3B (Legacy fallback), HeartCodec |
 | **Separation** | BS-Roformer, MelBand-Roformer, audio-separator | 6-stem neural source separation (Vocals, Drums, Bass, Guitar, Piano, Other) |
 | **Transcription** | MuScriptor, MuseScore 4, Mido, MusicXML 3.1 | Note-level neural transcription, score engraving, MIDI generation |
 | **Lyric Sync** | TorchAudio MMS_FA, Adaptive VAD, LRC/SRT Generator | Acoustic forced alignment, progressive word timing |
@@ -389,7 +389,8 @@ Milimo Music maintains a comprehensive, LLM-curated **Technical Encyclopedia and
 | 🎬 [**AI Music Video Studio (`wiki/entities/video-studio.md`)**](wiki/entities/video-studio.md) | Duration constraints, viseme lip-syncing, ASS karaoke, and B-roll |
 | 📦 [**Model Manager (`wiki/entities/model-manager.md`)**](wiki/entities/model-manager.md) | Multi-modal tree, Hugging Face Hub search, and download policies |
 | 🎼 [**MiniMax Music 3 Engine (`wiki/entities/minimax-music3.md`)**](wiki/entities/minimax-music3.md) | Sampling parameters, structured captions, and MLX/DiT hooks |
-| 🎙️ [**Voice Training Studio (`wiki/entities/voice-service.md`)**](wiki/entities/voice-service.md) | Offline singing voice conversion (SVC) and acoustic formant chains |
+| 🎙️ [**Voice Studio & SVC (`wiki/entities/voice-service.md`)**](wiki/entities/voice-service.md) | Offline singing voice conversion (SVC) and acoustic formant chains |
+| 🏛️ [**ADR: Training Studio Decommission (`wiki/entities/training-studio.md`)**](wiki/entities/training-studio.md) | Technical investigation and architectural record retiring fine-tuning |
 | 🤖 [**AI Co-Writer Engine (`wiki/entities/ai-cowriter.md`)**](wiki/entities/ai-cowriter.md) | Multi-agent lyric coordination graph (Lyricist, StructureGuard) |
 | 🐳 [**Docker Deployment (`wiki/entities/docker-deployment.md`)**](wiki/entities/docker-deployment.md) | Turnkey multi-stage container build, GPU/CPU compose profiles, and volume persistence |
 | 📋 [**Operations & Log (`wiki/log.md`)**](wiki/log.md) | Chronological append-only record of every architectural evolution |

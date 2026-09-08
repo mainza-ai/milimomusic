@@ -14,6 +14,7 @@ import {
 } from '../../api';
 import { useValidatedForm } from '../../hooks/useValidatedForm';
 import { useAudioEngine } from '../../context/AudioEngineContext';
+import { StaticWaveform } from '../ui/StaticWaveform';
 import { Modal } from '../ui/primitives';
 
 const ROLES = ['world_builder', 'experiencer', 'songwriter', 'producer'];
@@ -269,11 +270,35 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
         } catch { /* deep-link best effort */ }
     };
 
-    // B1: in-app playback — route the track through the global audio engine.
-    const { playTrack } = useAudioEngine();
+    // Waveform click: seek inside the current track, or start this row's
+    // track at the clicked position (single fetch, user-initiated).
+    const { playTrack, swapCurrentTrack, currentTrack, currentTime, duration, seek } = useAudioEngine();
+    const handleWaveSeek = async (tr: ReleaseTrackT, fraction: number) => {
+        try {
+            if (currentTrack?.id === tr.id && duration > 0) {
+                seek(fraction * duration);
+                return;
+            }
+            const job = await api.getJobStatus(tr.id);
+            if (job.audio_path) {
+                await playTrack(job, [job], fraction * (tr.duration_ms / 1000));
+            }
+        } catch (e: any) {
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Seek failed'), 'error');
+        }
+    };
     const [playFetchingId, setPlayFetchingId] = useState<string | null>(null);
     const playFromTracklist = async (jobId: string, albumTracks?: ReleaseTrackT[]) => {
+        const anchor = albumTracks?.find(t => t.id === jobId);
+        const anchorAudio = anchor?.artifacts?.audio;
+        if (!anchorAudio) {
+            toast('This track has no audio yet.', 'error');
+            return;
+        }
+        // Minimal playable Job for instant start; hydrated below.
+        const optimistic = { id: jobId, title: anchor?.title || 'Track', audio_path: anchorAudio } as Job;
         setPlayFetchingId(jobId);
+        void playTrack(optimistic, [optimistic]);
         try {
             const job = await api.getJobStatus(jobId);
             if (job.audio_path) {
@@ -282,7 +307,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                     try {
                         const targetIdx = albumTracks.findIndex(t => t.id === jobId);
                         const ordered = targetIdx >= 0 ? [...albumTracks.slice(targetIdx), ...albumTracks.slice(0, targetIdx)] : albumTracks;
-                        const otherTracks = ordered.filter(t => t.id !== jobId && t.status === 'completed');
+                        const otherTracks = ordered.filter(t => t.id !== jobId && t.status === 'completed' && t.artifacts?.audio);
                         const fetched = await Promise.all(otherTracks.map(t => api.getJobStatus(t.id).catch(() => null)));
                         const valid = fetched.filter((j): j is Job => j !== null && !!j.audio_path);
                         playlistQueue = [job, ...valid];
@@ -290,12 +315,15 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                         playlistQueue = [job];
                     }
                 }
-                await playTrack(job, playlistQueue);
+                // Swap the optimistic entry for the hydrated Job in place —
+                // no element restart, no stealing back a user pause.
+                swapCurrentTrack(job, playlistQueue);
             } else {
                 toast('This track has no audio yet.', 'error');
             }
         } catch (e: any) {
-            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Playback failed'), 'error');
+            // Optimistic playback already started; only the hydration failed.
+            toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Track details failed to load (playing preview)'), 'error');
         } finally {
             setPlayFetchingId(null);
         }
@@ -363,13 +391,21 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
 
     const [openTracks, setOpenTracks] = useState<string | null>(null);
     const [tracks, setTracks] = useState<ReleaseTracksT | null>(null);
+    const [openReleaseMeta, setOpenReleaseMeta] = useState<{ track_total: number; active_run: boolean } | null>(null);
     const toggleTracks = async (rid: string) => {
-        if (openTracks === rid) { setOpenTracks(null); setTracks(null); return; }
-        setOpenTracks(rid); setTracks(null);
+        if (openTracks === rid) { setOpenTracks(null); setTracks(null); setOpenReleaseMeta(null); return; }
+        setOpenTracks(rid); setTracks(null); setOpenReleaseMeta(null);
         try { setTracks(await profilesApi.getReleaseTracks(rid)); }
         catch (e: any) { toast(String(e?.response?.data?.detail?.error?.message || 'Failed to load tracks'), 'error'); }
+        // Live release meta (single-fetch): surfaces a running album run.
+        try {
+            const meta = await releaseApi.get(rid);
+            setOpenReleaseMeta({ track_total: meta.track_total, active_run: meta.active_run });
+        } catch { /* header already shows tracks payload; meta is enhancement */ }
     };
-    // B2: curate the tracklist order (optimistic move, honest revert on failure)
+    // B2: curate the tracklist order (optimistic move, honest revert on failure).
+    // Tombstone rows (status 'missing', synthetic ids) are display-only and
+    // never submitted — the server 422s unknown track ids.
     const moveTrack = async (index: number, dir: -1 | 1) => {
         if (!tracks || !openTracks) return;
         const arr = [...tracks.tracks];
@@ -378,7 +414,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
         [arr[index], arr[j]] = [arr[j], arr[index]];
         setTracks({ ...tracks, tracks: arr });
         try {
-            await releaseApi.setTrackOrder(openTracks, arr.map(t => t.id));
+            await releaseApi.setTrackOrder(openTracks, arr.filter(t => t.status !== 'missing').map(t => t.id));
         } catch (e: any) {
             toast(String(e?.response?.data?.detail?.error?.message || e?.message || 'Reorder failed'), 'error');
             try { setTracks(await profilesApi.getReleaseTracks(openTracks)); } catch { /* keep optimistic view */ }
@@ -1780,6 +1816,9 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                             <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-600 dark:text-sky-300">{tracks.status}</span>
                                         )}
                                         <span className={`text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full ${tracks.rollup === 'completed' ? 'bg-emerald-500/15 text-emerald-600' : tracks.rollup === 'partial' ? 'bg-amber-500/15 text-amber-600' : 'bg-black/[0.04] dark:bg-white/5 text-slate-500'}`}>{tracks.rollup}</span>
+                                        {openReleaseMeta?.active_run && (
+                                            <span className="text-[9px] font-mono uppercase px-1.5 py-0.5 rounded-full bg-sky-500/15 text-sky-600 dark:text-sky-300 animate-pulse" title="An album run is currently producing on this release">● run live</span>
+                                        )}
                                     </div>
                                 </div>
                                 {tracks.tracks.map((tr, idx) => (
@@ -1811,6 +1850,17 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                                     </span>
                                                 )}
                                             </div>
+                                            {tr.status === 'completed' && tr.artifacts?.audio && (
+                                                <div className="mt-1 max-w-[240px]" title="Click to play from any position">
+                                                    <StaticWaveform
+                                                        jobId={tr.id}
+                                                        buckets={120}
+                                                        heightClass="h-6"
+                                                        progressFraction={currentTrack?.id === tr.id && duration > 0 ? currentTime / duration : null}
+                                                        onSeekFraction={(f) => handleWaveSeek(tr, f)}
+                                                    />
+                                                </div>
+                                            )}
                                         </div>
                                         <div className="flex items-center gap-1 shrink-0">
                                             {tracks.tracks.length > 1 && (
@@ -1854,12 +1904,26 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                                     className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 hover:bg-amber-500 hover:text-slate-950 transition-colors"
                                                     title="Reproduce this track from its seed">Retry</button>
                                             )}
-                                            {tr.status === 'completed' && (
+                                            {tr.status === 'completed' && tr.artifacts?.audio && (
                                                 <button onClick={() => playFromTracklist(tr.id, tracks.tracks)} disabled={playFetchingId === tr.id}
                                                     className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/15 text-emerald-600 hover:bg-emerald-500 hover:text-slate-950 disabled:opacity-50 transition-colors"
                                                     title="Play through the studio player">
                                                     {playFetchingId === tr.id ? '…' : '▶ Play'}
                                                 </button>
+                                            )}
+                                            {tr.status === 'completed' && !tr.artifacts?.audio && (
+                                                <span
+                                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-slate-500/15 text-slate-500 cursor-help"
+                                                    title="Marked completed but no audio file is attached (render may have failed silently, or the file was moved/deleted). Use Retry to reproduce, or Detach to remove.">
+                                                    ⚠ no audio
+                                                </span>
+                                            )}
+                                            {tr.status === 'missing' && (
+                                                <span
+                                                    className="text-[9px] font-bold px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-600 dark:text-amber-400 cursor-help"
+                                                    title="The winning track for this slot was deleted or detached. The slot is kept visible so nothing vanishes silently.">
+                                                    ⚠ track missing{typeof tr.seed_slot === 'number' ? ` (slot ${tr.seed_slot + 1})` : ''}
+                                                </span>
                                             )}
                                             {tr.status === 'completed' && (
                                                 <button onClick={() => openInStudio(tr.id)}
@@ -1867,7 +1931,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                                     title="Open this track in the studio (full playback, DAW, transcription)">Studio</button>
                                             )}
                                             <span className={`w-1.5 h-1.5 rounded-full ${tr.status === 'completed' ? 'bg-emerald-500' : tr.status === 'failed' ? 'bg-red-500' : 'bg-amber-400'}`} title={tr.status} />
-                                            {openTracks && (
+                                            {openTracks && tr.status !== 'missing' && (
                                                 <button onClick={() => detachTrack(openTracks, tr.id, tr.title || 'Track')}
                                                     className="text-slate-400 hover:text-red-500 transition-colors p-0.5 ml-0.5"
                                                     title="Detach track from this release">

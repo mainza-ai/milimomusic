@@ -53,6 +53,9 @@ from app.providers.registry import provider_registry
 from app.models import (
     Job,
     JobStatus,
+    JobUpdate,
+    DEFAULT_SESSION_TITLE,
+    validate_display_name,
     GenerationRequest,
     LyricsRequest,
     LyricsChatRequest,
@@ -340,7 +343,10 @@ if _cors_env:
     _cors_origins = [o.strip() for o in _cors_env.split(",") if o.strip()]
     _cors_credentials = True
 else:
-    _cors_origins = ["http://localhost:5173", "http://localhost:4173"]
+    _cors_origins = [
+        "http://localhost:5173", "http://localhost:4173",
+        "http://127.0.0.1:5173", "http://127.0.0.1:4173",
+    ]
     _cors_credentials = False
 
 app.add_middleware(
@@ -403,8 +409,9 @@ os.makedirs("generated_audio/mastered", exist_ok=True)
 os.makedirs("generated_audio/converted_vocals", exist_ok=True)
 os.makedirs("data/covers", exist_ok=True)
 
-app.mount("/audio", StaticFiles(directory="generated_audio"), name="audio")
-app.mount("/covers", StaticFiles(directory="data/covers"), name="covers")
+from app.core.ranged_static import RangedStaticFiles
+app.mount("/audio", RangedStaticFiles(directory="generated_audio"), name="audio")
+app.mount("/covers", RangedStaticFiles(directory="data/covers"), name="covers")
 
 
 # --- Core & Health ---
@@ -1824,6 +1831,20 @@ def release_tracks(release_id: UUID):
             except Exception:
                 reviews = {}
         for j, seed_slot in resolve_track_rows(rows, album_runs, str(release_id)):
+            if j is None:
+                # Tombstone: cursor's winning job is gone (deleted/detached).
+                # Synthetic id (never submitted to mutations — the frontend
+                # excludes missing rows from reorder payloads, and track-order
+                # validation would 422 unknown ids).
+                out.append({
+                    "id": f"missing-slot-{seed_slot}",
+                    "title": "(missing track)", "status": "missing",
+                    "duration_ms": 0, "seed": None, "seed_slot": seed_slot,
+                    "artifacts": {"audio": None, "midi": None, "musicxml": None,
+                                  "stems": None, "mastered": None},
+                    "used_real_inference": False, "review": None, "created_at": "",
+                })
+                continue
             review = reviews.get(str(seed_slot)) if seed_slot is not None else None
             out.append({
                 "id": str(j.id), "title": j.title, "status": j.status.value if hasattr(j.status, "value") else str(j.status),
@@ -2411,8 +2432,12 @@ def list_sessions():
 @app.post("/sessions", response_model=StudioSession)
 def create_session(data: SessionCreate):
     with Session(engine) as session:
+        try:
+            title = validate_display_name(data.title, field="title") or DEFAULT_SESSION_TITLE
+        except ValueError as e:
+            raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": str(e)}})
         new_session = StudioSession(
-            title=data.title or "New session",
+            title=title,
             project_id=data.project_id,
             active_job_id=data.active_job_id
         )
@@ -2455,7 +2480,10 @@ def update_session(session_id: UUID, data: SessionUpdate):
             raise HTTPException(status_code=404, detail="Session not found")
             
         if data.title is not None:
-            studio_session.title = data.title
+            try:
+                studio_session.title = validate_display_name(data.title, field="title", allow_none=False) or studio_session.title
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": str(e)}})
         if data.project_id is not None:
             studio_session.project_id = data.project_id
         if data.active_job_id is not None:
@@ -2539,8 +2567,10 @@ async def session_chat(session_id: UUID, message_data: SessionMessageCreate):
         )
         db_session.add(producer_msg)
         
-        # Update session title with song title or prompt
-        if studio_session.title == "New session" or len(studio_session.title) <= 3:
+        # Auto-rename only while the title is still the default (case-insensitive,
+        # so frontend-created variants match too). Deliberate short/custom names
+        # ("EP", "V2") are never clobbered.
+        if (studio_session.title or "").strip().lower() == DEFAULT_SESSION_TITLE.lower():
             studio_session.title = title_val[:32]
             
         studio_session.updated_at = datetime.now(timezone.utc)
@@ -2649,171 +2679,6 @@ def validate_paths_config(paths: PathsConfig):
         is_valid = candidate.is_dir()
         results[key] = {"valid": is_valid, "path": str(candidate)}
     return results
-
-
-# --- Fine-Tuning & Training Studio API ---
-from app.services.fine_tuning_service import (
-    fine_tuning_service, 
-    TrainingConfig, 
-    Dataset as FTDataset,
-    TrainingJob as FTJob
-)
-
-
-class DatasetCreate(BaseModel):
-    name: str
-    styles: List[str]
-
-
-class TrainingConfigRequest(BaseModel):
-    model_config = {"protected_namespaces": ()}
-    dataset_id: str
-    method: str = "lora"
-    epochs: int = 3
-    learning_rate: float = 0.0001
-    batch_size: int = 2
-    lora_rank: int = 8
-
-
-@app.post("/training/datasets")
-def create_dataset(data: DatasetCreate):
-    dataset = fine_tuning_service.create_dataset(data.name, data.styles)
-    return {"dataset": dataset.to_dict()}
-
-
-@app.get("/training/datasets")
-def list_datasets():
-    datasets = fine_tuning_service.list_datasets()
-    return {"datasets": [d.to_dict() for d in datasets]}
-
-
-@app.get("/training/datasets/{dataset_id}")
-def get_dataset(dataset_id: str):
-    dataset = fine_tuning_service.get_dataset(dataset_id)
-    if not dataset:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    return {"dataset": dataset.to_dict()}
-
-
-@app.post("/training/datasets/{dataset_id}/audio")
-async def upload_audio(dataset_id: str, file: UploadFile = File(...), caption: str = Form(...)):
-    # dataset_id must be a UUID (audit A4: it was concatenated into write paths)
-    try:
-        dataset_uuid = UUID(dataset_id)
-    except ValueError:
-        raise HTTPException(status_code=400, detail={"error": {"code": "bad_dataset_id", "message": "dataset_id must be a UUID."}})
-
-    from app.core.uploads import save_upload
-    saved_path, safe_name = await save_upload(file, os.path.join("data", "datasets", dataset_id, "tmp"), kind="audio")
-
-    try:
-        with open(saved_path, "rb") as f:
-            content = f.read()
-        audio_file = fine_tuning_service.add_audio_file(
-            str(dataset_uuid), safe_name, caption, content
-        )
-        return {"audio_file": {"filename": audio_file.filename, "caption": audio_file.caption}}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail={"error": {"code": "invalid_dataset", "message": str(e)}})
-    finally:
-        try:
-            os.remove(saved_path)
-        except OSError:
-            pass
-
-
-@app.get("/training/datasets/{dataset_id}/audio/{filename}")
-def get_dataset_audio(dataset_id: str, filename: str):
-    audio_path = fine_tuning_service.datasets_dir / dataset_id / "audio" / filename
-    if not audio_path.exists():
-        raise HTTPException(status_code=404, detail="Audio file not found")
-    return FileResponse(
-        path=str(audio_path),
-        media_type="audio/mpeg",
-        filename=filename
-    )
-
-
-@app.delete("/training/datasets/{dataset_id}/audio/{filename}")
-def delete_audio(dataset_id: str, filename: str):
-    success = fine_tuning_service.remove_audio_file(dataset_id, filename)
-    if not success:
-        raise HTTPException(status_code=404, detail="Audio file not found")
-    return {"success": True}
-
-
-@app.get("/training/datasets/{dataset_id}/validate")
-def validate_dataset(dataset_id: str):
-    return fine_tuning_service.validate_dataset(dataset_id)
-
-
-@app.delete("/training/datasets/{dataset_id}")
-def delete_dataset(dataset_id: str):
-    success = fine_tuning_service.delete_dataset(dataset_id)
-    if not success:
-        raise HTTPException(status_code=404, detail="Dataset not found")
-    return {"success": True}
-
-
-@app.post("/training/jobs")
-def create_training_job(config: TrainingConfigRequest):
-    try:
-        training_config = TrainingConfig(
-            dataset_id=config.dataset_id,
-            method=config.method,
-            epochs=config.epochs,
-            learning_rate=config.learning_rate,
-            batch_size=config.batch_size,
-            lora_rank=config.lora_rank
-        )
-        job = fine_tuning_service.create_training_job(training_config)
-        return {"job": job.to_dict()}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail={"error": {"code": "invalid_request", "message": str(e)}})
-
-
-@app.get("/training/jobs")
-def list_training_jobs():
-    jobs = fine_tuning_service.list_jobs()
-    return {"jobs": [j.to_dict() for j in jobs]}
-
-
-@app.get("/training/jobs/{job_id}")
-def get_training_job(job_id: str):
-    job = fine_tuning_service.get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Job not found")
-    return {"job": job.to_dict()}
-
-
-@app.post("/training/jobs/{job_id}/cancel")
-def cancel_training_job(job_id: str):
-    if fine_tuning_service.cancel_job(job_id):
-        return {"status": "cancelled", "job_id": job_id}
-    raise HTTPException(status_code=404, detail="Job not found or not running")
-
-
-@app.get("/training/checkpoints")
-def list_checkpoints():
-    checkpoints = fine_tuning_service.list_checkpoints()
-    return {"checkpoints": [c.to_dict() for c in checkpoints]}
-
-
-@app.post("/training/checkpoints/{checkpoint_id}/activate")
-async def activate_checkpoint(checkpoint_id: str):
-    if fine_tuning_service.activate_checkpoint(checkpoint_id):
-        music_service.unload_lora()
-        await music_service.initialize()
-        return {"status": "activated", "checkpoint_id": checkpoint_id}
-    raise HTTPException(status_code=404, detail="Checkpoint not found")
-
-
-@app.post("/training/checkpoints/deactivate")
-async def deactivate_checkpoint():
-    fine_tuning_service.deactivate_all_checkpoints()
-    music_service.unload_lora()
-    await music_service.initialize()
-    return {"status": "deactivated", "message": "Reverted to base model"}
 
 
 # --- Lyrics & Co-Writer Endpoints ---
@@ -3059,17 +2924,24 @@ def toggle_favorite(job_id: str):
 
 
 @app.patch("/jobs/{job_id}", response_model=Job)
-def update_job(job_id: str, updates: dict = Body(...)):
+def update_job(job_id: str, data: JobUpdate):
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        
+
+        updates = data.model_dump(exclude_unset=True)
+        if "title" in updates and updates["title"] is not None:
+            try:
+                updates["title"] = validate_display_name(updates["title"], field="title", allow_none=False)
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": str(e)}})
         allowed_fields = ["title", "tags", "prompt", "is_favorite", "project_id", "cover_image_path", "lyrics"]
         for key in allowed_fields:
             if key in updates:
                 setattr(job, key, updates[key])
-                
+
+        job.updated_at = datetime.now(timezone.utc)
         session.add(job)
         session.commit()
         session.refresh(job)
@@ -3240,14 +3112,25 @@ def download_track(job_id: str):
         job = get_job_by_id(session, job_id)
         if not job or not job.audio_path:
             raise HTTPException(status_code=404, detail="Track not found")
-            
+
         filename = job.audio_path.replace("/audio/", "")
         file_path = f"generated_audio/{filename}"
-        
+        if not os.path.isfile(file_path):
+            raise HTTPException(status_code=404, detail="Audio file not found on disk")
+
+        ext = os.path.splitext(filename)[1].lower()
+        media_type = {
+            ".wav": "audio/wav",
+            ".mp3": "audio/mpeg",
+            ".flac": "audio/flac",
+            ".ogg": "audio/ogg",
+            ".m4a": "audio/mp4",
+        }.get(ext, "application/octet-stream")
+
         safe_title = re.sub(r'[^a-zA-Z0-9_\- ]', '', job.title or "untitled").strip().replace(" ", "_")
-        download_name = f"{safe_title}.mp3"
-        
-        return FileResponse(file_path, media_type="audio/mpeg", filename=download_name)
+        download_name = f"{safe_title}{ext or '.wav'}"
+
+        return FileResponse(file_path, media_type=media_type, filename=download_name)
 
 
 def _delete_job_artifacts(job_id_str: str, audio_public_path: Optional[str] = None) -> int:
@@ -3409,7 +3292,10 @@ def update_project(project_id: UUID, data: ProjectUpdate):
             raise HTTPException(status_code=404, detail="Project not found")
         
         if data.name is not None:
-            project.name = data.name
+            try:
+                project.name = validate_display_name(data.name, field="name", allow_none=False) or project.name
+            except ValueError as e:
+                raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": str(e)}})
         if data.description is not None:
             project.description = data.description
         if data.cover_image_path is not None:

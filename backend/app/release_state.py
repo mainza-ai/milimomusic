@@ -61,7 +61,7 @@ def album_run_release_id(run: Any) -> Optional[str]:
 
 def resolve_track_rows(
     rows: List[Any], album_runs: List[Any], release_id: str
-) -> List[Tuple[Any, Optional[int]]]:
+) -> List[Tuple[Optional[Any], Optional[int]]]:
     """Deduplicate a release's Job rows into (job, seed_slot) pairs.
 
     rows: Job objects for this release, chronological (created_at asc).
@@ -72,6 +72,9 @@ def resolve_track_rows(
     - Orchestrated: the slot cursor is the truth — one row per slot (the
       winner, in slot order) plus failed attempts whose slot has no winner
       yet. Superseded retries are hidden.
+    - A slot whose winning Job id is absent from ``rows`` (deleted or
+      detached job) emits ``(None, slot)`` — a tombstone the API renders as
+      an explicit "missing" track instead of silently dropping the slot.
 
     Legacy cursors (``job_ids`` array, pre-slot) map array position → slot.
     """
@@ -101,10 +104,15 @@ def resolve_track_rows(
     out: List[Tuple[Any, Optional[int]]] = []
     emitted: set = set()
     for slot in sorted(slot_winner):
-        job = by_id.get(slot_winner[slot])
+        winner_id = slot_winner[slot]
+        job = by_id.get(winner_id)
         if job is not None:
             out.append((job, slot))
-            emitted.add(slot_winner[slot])
+            emitted.add(winner_id)
+        else:
+            # Winner row gone (deleted/detached) — tombstone, not silence.
+            out.append((None, slot))
+            emitted.add(winner_id)
     for slot in sorted(slot_failed):
         if slot in slot_winner:
             continue  # superseded — the slot's winner is the truth

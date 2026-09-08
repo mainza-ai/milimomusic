@@ -13,6 +13,29 @@ class JobStatus(str, Enum):
     FAILED = "failed"
 
 
+# Canonical defaults / limits for user-facing names. Single source of truth:
+# the chat auto-rename guard and the frontend creation default must agree.
+DEFAULT_SESSION_TITLE = "New session"
+MAX_NAME_LENGTH = 120
+
+
+def validate_display_name(value: Optional[str], *, field: str = "name", allow_none: bool = True) -> Optional[str]:
+    """Strip + validate a user-facing name. Returns the stripped value.
+
+    Raises ValueError on blank or over-long input so routes can map to 422.
+    """
+    if value is None:
+        if allow_none:
+            return None
+        raise ValueError(f"{field} must not be empty")
+    stripped = str(value).strip()
+    if not stripped:
+        raise ValueError(f"{field} must not be blank")
+    if len(stripped) > MAX_NAME_LENGTH:
+        raise ValueError(f"{field} must be at most {MAX_NAME_LENGTH} characters")
+    return stripped
+
+
 class Job(SQLModel, table=True):
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
     status: JobStatus = Field(default=JobStatus.QUEUED)
@@ -60,8 +83,20 @@ class Job(SQLModel, table=True):
     voice_profile_id: Optional[str] = Field(default=None)  # persisted per track
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     error_msg: Optional[str] = None
     is_favorite: bool = Field(default=False)
+
+
+class JobUpdate(SQLModel):
+    """Typed update schema for PATCH /jobs/{job_id} (replaces the untyped dict)."""
+    title: Optional[str] = None
+    tags: Optional[str] = None
+    prompt: Optional[str] = None
+    is_favorite: Optional[bool] = None
+    project_id: Optional[str] = None
+    cover_image_path: Optional[str] = None
+    lyrics: Optional[str] = None
 
 
 class Project(SQLModel, table=True):
@@ -105,7 +140,7 @@ class ProjectUpdate(SQLModel):
 
 class Session(SQLModel, table=True):
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
-    title: str = Field(default="New session")
+    title: str = Field(default=DEFAULT_SESSION_TITLE)
     project_id: Optional[str] = Field(default=None, index=True)
     active_job_id: Optional[str] = Field(default=None)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
@@ -113,7 +148,7 @@ class Session(SQLModel, table=True):
 
 
 class SessionCreate(SQLModel):
-    title: Optional[str] = "New session"
+    title: Optional[str] = DEFAULT_SESSION_TITLE
     project_id: Optional[str] = None
     active_job_id: Optional[str] = None
 

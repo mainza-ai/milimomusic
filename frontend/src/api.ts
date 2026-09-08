@@ -520,10 +520,6 @@ export const api = {
     fetchModels: async (config: LLMConfig) => {
         const res = await axios.post<{ models: string[] }>(`${API_BASE_URL}/config/fetch-models`, config);
         return res.data.models;
-    },
-
-    getTrainingJobs: async () => {
-        return trainingApi.listJobs();
     }
 };
 
@@ -662,50 +658,6 @@ export interface PathsConfig {
     heartmula_model_path?: string;
 }
 
-export interface Dataset {
-    id: string;
-    name: string;
-    styles: string[];
-    audio_files: { filename: string; caption: string; preprocessed: boolean }[];
-    status: string;
-    created_at: string;
-}
-
-export interface TrainingJob {
-    id: string;
-    dataset_id: string;
-    dataset_name?: string;
-    config: {
-        method: string;
-        epochs: number;
-        learning_rate: number;
-        lora_rank: number;
-    };
-    status: string;
-    progress: number;
-    current_epoch: number;
-    current_loss?: number;
-    initial_loss?: number;
-    final_loss?: number;
-    total_epochs: number;
-    checkpoint_id?: string;
-    error?: string;
-    message?: string;
-    started_at?: string;
-    completed_at?: string;
-    created_at?: string;
-}
-
-export interface Checkpoint {
-    id: string;
-    name: string;
-    styles: string[];
-    method: string;
-    created_at: string;
-    size_bytes: number;
-    is_active: boolean;
-}
-
 export const styleApi = {
     getStyles: async (): Promise<Style[]> => {
         const res = await axios.get(`${API_BASE_URL}/styles`);
@@ -732,84 +684,6 @@ export const pathsApi = {
     validate: async (paths: PathsConfig): Promise<Record<string, { valid: boolean; path: string }>> => {
         const res = await axios.post(`${API_BASE_URL}/config/paths/validate`, paths);
         return res.data;
-    }
-};
-
-export const trainingApi = {
-    createDataset: async (name: string, styles: string[]): Promise<Dataset> => {
-        const res = await axios.post(`${API_BASE_URL}/training/datasets`, { name, styles });
-        return res.data.dataset;
-    },
-    listDatasets: async (): Promise<Dataset[]> => {
-        const res = await axios.get(`${API_BASE_URL}/training/datasets`);
-        return res.data.datasets;
-    },
-    getDataset: async (id: string): Promise<Dataset> => {
-        const res = await axios.get(`${API_BASE_URL}/training/datasets/${id}`);
-        return res.data.dataset;
-    },
-    uploadAudio: async (datasetId: string, file: File, caption: string = ''): Promise<{ filename: string; caption: string }> => {
-        const formData = new FormData();
-        formData.append('file', file);
-        formData.append('caption', caption);
-        const res = await axios.post(`${API_BASE_URL}/training/datasets/${datasetId}/audio`, formData);
-        return res.data.audio_file;
-    },
-    deleteAudio: async (datasetId: string, filename: string): Promise<void> => {
-        await axios.delete(`${API_BASE_URL}/training/datasets/${datasetId}/audio/${encodeURIComponent(filename)}`);
-    },
-    updateAudioCaption: async (datasetId: string, filename: string, caption: string): Promise<void> => {
-        await axios.put(`${API_BASE_URL}/training/datasets/${datasetId}/audio/${encodeURIComponent(filename)}`, { caption });
-    },
-    validateDataset: async (datasetId: string): Promise<{ valid: boolean; file_count: number; minimum_required: number }> => {
-        const res = await axios.get(`${API_BASE_URL}/training/datasets/${datasetId}/validate`);
-        return res.data;
-    },
-    updateDataset: async (datasetId: string, name: string, styles: string[]): Promise<Dataset> => {
-        const res = await axios.put(`${API_BASE_URL}/training/datasets/${datasetId}`, { name, styles });
-        return res.data.dataset;
-    },
-    deleteDataset: async (datasetId: string): Promise<void> => {
-        await axios.delete(`${API_BASE_URL}/training/datasets/${datasetId}`);
-    },
-    preprocessDataset: async (datasetId: string, force: boolean = true): Promise<{ success: boolean; processed_count?: number; message?: string }> => {
-        const res = await axios.post(`${API_BASE_URL}/training/datasets/${datasetId}/preprocess`, { force });
-        return res.data;
-    },
-    startJob: async (config: { dataset_id: string; method: string; epochs: number; learning_rate: number; lora_rank: number }): Promise<TrainingJob> => {
-        const res = await axios.post(`${API_BASE_URL}/training/jobs`, config);
-        return res.data.job;
-    },
-    cancelJob: async (jobId: string): Promise<void> => {
-        await axios.post(`${API_BASE_URL}/training/jobs/${jobId}/cancel`);
-    },
-    listJobs: async (): Promise<TrainingJob[]> => {
-        const res = await axios.get(`${API_BASE_URL}/training/jobs`);
-        return res.data.jobs;
-    },
-    getJob: async (id: string): Promise<TrainingJob> => {
-        const res = await axios.get(`${API_BASE_URL}/training/jobs/${id}`);
-        return res.data.job;
-    },
-    getJobLogs: async (id: string, offset: number = 0): Promise<{ logs: string[]; offset: number }> => {
-        const res = await axios.get(`${API_BASE_URL}/training/jobs/${id}/logs`, { params: { offset } });
-        return res.data;
-    },
-    deleteJob: async (id: string): Promise<void> => {
-        await axios.delete(`${API_BASE_URL}/training/jobs/${id}`);
-    },
-    listCheckpoints: async (): Promise<Checkpoint[]> => {
-        const res = await axios.get(`${API_BASE_URL}/training/checkpoints`);
-        return res.data.checkpoints;
-    },
-    activateCheckpoint: async (id: string): Promise<void> => {
-        await axios.post(`${API_BASE_URL}/training/checkpoints/${id}/activate`);
-    },
-    deactivateCheckpoint: async (): Promise<void> => {
-        await axios.post(`${API_BASE_URL}/training/checkpoints/deactivate`);
-    },
-    deleteCheckpoint: async (id: string): Promise<void> => {
-        await axios.delete(`${API_BASE_URL}/training/checkpoints/${id}`);
     }
 };
 
@@ -848,9 +722,12 @@ export const projectApi = {
     }
 };
 
+/** Canonical default session title — must match backend DEFAULT_SESSION_TITLE
+ *  (backend/app/models.py). The chat auto-rename guard keys off this value. */
+export const DEFAULT_SESSION_TITLE = 'New session';
+
 export const sessionApi = {
-    listSessions: async (): Promise<StudioSession[]> => {
-        const res = await axios.get(`${API_BASE_URL}/sessions`);
+    listSessions: async (): Promise<StudioSession[]> => {        const res = await axios.get(`${API_BASE_URL}/sessions`);
         return res.data;
     },
     createSession: async (data: SessionCreate = {}): Promise<StudioSession> => {
@@ -1162,6 +1039,10 @@ export const profilesApi = {
 export const releaseApi = {
     list: async (profileId: string, limit = 100): Promise<{ releases: ReleaseT[]; total: number }> => {
         const res = await axios.get(`${API_BASE_URL}/profiles/${profileId}/releases`, { params: { limit } });
+        return res.data;
+    },
+    get: async (id: string): Promise<{ release: ReleaseT; track_total: number; active_run: boolean }> => {
+        const res = await axios.get(`${API_BASE_URL}/releases/${id}`);
         return res.data;
     },
     update: async (id: string, body: { title?: string; description?: string; status?: string; cover_image_path?: string }): Promise<ReleaseT> => {

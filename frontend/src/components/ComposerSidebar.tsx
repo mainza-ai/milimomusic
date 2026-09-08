@@ -30,8 +30,6 @@ interface ComposerSidebarProps {
     parentJob?: Job;
     onClearParentJob?: () => void;
     onRefreshModels?: () => void;
-    onOpenTraining?: () => void;
-    activeCheckpoint?: { name: string; id: string } | null;
     activeProject?: Project | null;
     onClearActiveProject?: () => void;
     producerPreset?: Partial<CompositionData> | null;

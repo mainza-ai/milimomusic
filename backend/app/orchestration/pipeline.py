@@ -337,11 +337,12 @@ class GenerateAndTranscribePipeline:
                     session.add(job)
                     session.commit()
 
-            # Emit final completion event
+            # Emit final completion event (DB-persisted master path, not the
+            # pre-voice-remix generator path, so consumers never get a stale URL)
             event_manager.publish("job_update", {
                 "job_id": job_id_str,
                 "status": "completed",
-                "audio_path": gen_result.audio_path,
+                "audio_path": final_master_path,
                 "title": getattr(gen_result, 'title', None) or req.prompt
             })
             event_manager.publish("job_progress", {

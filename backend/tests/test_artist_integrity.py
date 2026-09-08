@@ -114,11 +114,20 @@ def test_resolve_ignores_other_releases_and_bad_json():
     assert [(j.id, slot) for j, slot in out] == [("a", None)]
 
 
-def test_resolve_cursor_job_missing_from_rows_is_skipped():
+def test_resolve_cursor_job_missing_from_rows_is_tombstoned():
     rows = [_Job("a")]
     runs = [_Run("rel-1", {"slot_jobs": {"0": "ghost", "1": "a"}})]
     out = resolve_track_rows(rows, runs, "rel-1")
-    assert [(j.id, slot) for j, slot in out] == [("a", 1)]
+    assert [(j.id if j is not None else None, slot) for j, slot in out] == [(None, 0), ("a", 1)]
+
+
+def test_resolve_tombstone_preserves_slot_order():
+    rows = [_Job("b")]
+    runs = [_Run("rel-1", {"slot_jobs": {"0": "ghost0", "1": "b", "2": "ghost2"}})]
+    out = resolve_track_rows(rows, runs, "rel-1")
+    assert [(j.id if j is not None else None, slot) for j, slot in out] == [
+        (None, 0), ("b", 1), (None, 2)
+    ]
 
 
 # ---------------------------------------------------------------- orchestrator wiring

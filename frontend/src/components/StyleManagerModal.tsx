@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { createPortal } from 'react-dom';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Plus, Trash2, Music, Beaker, Rocket, Loader2, GraduationCap } from 'lucide-react';
+import { X, Plus, Trash2, Music, Beaker, Rocket, Loader2 } from 'lucide-react';
 import { styleApi, type Style } from '../api';
 import { useModalA11y } from './ui/primitives';
 
@@ -10,14 +10,12 @@ interface StyleManagerModalProps {
     isOpen: boolean;
     onClose: () => void;
     onStylesChange?: () => void;
-    onOpenTraining?: () => void;
 }
 
 export const StyleManagerModal: React.FC<StyleManagerModalProps> = ({
     isOpen,
     onClose,
-    onStylesChange,
-    onOpenTraining
+    onStylesChange
 }) => {
     const [activeTab, setActiveTab] = useState<'official' | 'custom'>('official');
     const [styles, setStyles] = useState<Style[]>([]);
@@ -96,13 +94,6 @@ export const StyleManagerModal: React.FC<StyleManagerModalProps> = ({
             </span>
         );
         return null;
-    };
-
-    const handleOpenTraining = () => {
-        if (onOpenTraining) {
-            onClose(); // Close this modal
-            onOpenTraining(); // Open the main one
-        }
     };
 
     return (
@@ -199,9 +190,6 @@ export const StyleManagerModal: React.FC<StyleManagerModalProps> = ({
                                                 {error && (
                                                     <p className="text-red-600 text-xs mt-2">{error}</p>
                                                 )}
-                                                <p className="text-amber-700 text-xs mt-2">
-                                                    ⚠️ Custom styles work best after fine-tuning. Use the Training Studio to train new styles.
-                                                </p>
                                             </div>
 
                                             {/* Custom Styles List */}
@@ -239,15 +227,8 @@ export const StyleManagerModal: React.FC<StyleManagerModalProps> = ({
                                 {/* Footer */}
                                 <div className="p-4 border-t border-slate-100 bg-slate-50/50 flex items-center justify-between">
                                     <p className="text-xs text-slate-500">
-                                        🎵 Official • ⚗️ Custom • 🚀 Trained
+                                        🎵 Official • ⚗️ Custom
                                     </p>
-                                    <button
-                                        onClick={handleOpenTraining}
-                                        className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-blue-500 hover:from-cyan-600 hover:to-blue-600 text-white rounded-md font-bold text-sm transition-all flex items-center gap-2 shadow-md"
-                                    >
-                                        <GraduationCap className="w-4 h-4" />
-                                        Training Studio
-                                    </button>
                                 </div>
                             </motion.div>
                         </div>

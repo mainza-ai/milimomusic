@@ -43,7 +43,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 
 - [AI Co-Writer](entities/ai-cowriter.md) — the multi-agent lyrics engine (Coordinator→Lyricist→StructureGuard).
 - [Producer Service](entities/producer-service.md) — LLM producer that enhances weak prompts + writes real lyrics; captions now come from the [Caption Rewriter](concepts/caption-rewriter.md).
-- [Training Studio](entities/training-studio.md) — fine-tune HeartMuLa on custom audio datasets (LoRA/full).
+- [Training Studio](entities/training-studio.md) — (Deprecated) decommissioned due to MiniMax Music 3 decoder-only architecture and VRAM constraints. `tags: [training, lora, deprecated]`
 - [Artist Crew Agents](entities/artist-crew-agents.md) — the four registered agents (Experiencer, World Builder, Stylist, Critic) and how they hook into the album pipeline.
 - [Durable Task Queue](entities/task-queue.md) — Phase 4 design (locked): SQLite-backed `TaskRecord` queue, GPU/IO lanes, 202 + SSE endpoint conversions, re-enqueue-on-restart.
 - [Repair Segment / Inpainting Service](entities/inpainting.md) — regenerate a time-range or glitch region.
@@ -75,6 +75,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Artist Production Gap Report](concepts/artist-production-gap-report.md) — evidence-based artist-domain audit; its E–H plan is fully shipped (status header inside).
 - [Artist Remaining Roadmap](concepts/artist-remaining-roadmap.md) — waves 1–3 shipped (voice identity, World-Builder, observability…); only LoRA links deferred.
 - [Artist Domain](concepts/artist-domain.md) — current state: data model, album pipeline with crew hooks, endpoints, frontend surface.
+- [Naming Contract](concepts/naming-contract.md) — Session/Job/Project titles are independent; rename validation, auto-rename guard. `tags: [naming, sessions, projects]`
 - [Modality Taxonomy](concepts/modality-taxonomy.md) — canonical audio|image|video decision chain, H3 misrouting case study, relocate/delete/guard rules. `tags: [modality, taxonomy, model-manager]`
 
 ## Reports

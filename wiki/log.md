@@ -1447,3 +1447,10 @@ removed frontend component, modal mounts, and navigation buttons; retired /train
 API routes and fine_tuning_service; removed dead test suites. API parity gate remains
 100% green (116 routes / 119 calls). Wiki: updated entities/training-studio.md.
 
+## [2026-09-08] doc | README updated for MiniMax Music 3 & Training Studio retirement
+Updated root README.md to emphasize MiniMax Music 3 as the primary production engine and
+HeartMuLa as legacy fallback across Key Features, Model Catalog, and Architecture layers.
+Updated Voice Studio links (clarifying RVC v2 SVC) and added direct reference to ADR:
+Training Studio Decommission in the documentation index.
+
+

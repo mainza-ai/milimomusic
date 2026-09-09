@@ -174,6 +174,11 @@ class VoiceService:
             os.path.join("generated_audio/stems", os.path.basename(cleaned)),
             os.path.join("generated_audio/converted_vocals", os.path.basename(cleaned)),
             os.path.join(PREVIEWS_DIR, os.path.basename(cleaned)),
+            # Canonical repo-root storage: services persist there regardless of
+            # CWD, so resolution must consult it too (not only CWD-relative
+            # generated_audio/, which resolves to backend/ after app.main chdir).
+            str(get_generated_audio_dir() / os.path.basename(cleaned)),
+            str(get_generated_audio_dir() / cleaned.lstrip("/")),
         ]
         for p in possible_paths:
             if os.path.isfile(p) and os.path.getsize(p) > 0:

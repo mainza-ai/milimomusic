@@ -117,7 +117,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
     return (
         <div className="h-full flex flex-col bg-transparent text-slate-900 dark:text-slate-100 overflow-hidden select-none">
             {/* Filter and Search Bar */}
-            <div className="p-5 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/40 dark:bg-[#12141c]/50 backdrop-blur-xl space-y-3">
+            <div className="p-5 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/95 dark:bg-[#12141c]/95 space-y-3">
                 <div className="flex items-center justify-between">
                     <div className="flex items-center space-x-2">
                         <span className="text-sm font-bold tracking-tight text-slate-900 dark:text-slate-100">
@@ -359,8 +359,13 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                     )}
 
                                                     <button
-                                                        onClick={() => handleDelete(job.id)}
+                                                        onClick={(e) => {
+                                                            e.stopPropagation();
+                                                            handleDelete(job.id);
+                                                        }}
                                                         className="p-1.5 rounded-lg text-slate-400 hover:text-rose-500 hover:bg-rose-500/10 transition-colors"
+                                                        title="Delete Track"
+                                                        aria-label={`Delete track ${job.title || 'Untitled'}`}
                                                     >
                                                         <Trash2 size={13} />
                                                     </button>

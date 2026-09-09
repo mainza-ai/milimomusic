@@ -539,7 +539,7 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
     return (
         <div className="flex flex-col h-full bg-[#f5f5f7] dark:bg-[#0c0e14] text-slate-900 dark:text-slate-200 select-none overflow-hidden transition-colors duration-200">
             {/* Top Toolbar */}
-            <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-3 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/70 dark:bg-[#12141c]/80 backdrop-blur-xl z-10 shadow-sm">
+            <div className="flex flex-wrap items-center justify-between gap-2 px-6 py-3 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/95 dark:bg-[#12141c]/95 z-10 shadow-sm">
                 <div className="flex items-center space-x-3">
                     <FileText size={16} className="text-teal-600 dark:text-teal-400" />
                     <div>

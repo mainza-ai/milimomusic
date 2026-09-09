@@ -6,10 +6,13 @@ import {
     trackApi,
     voiceApi,
     projectApi,
+    coverApi,
     getStemMeta,
-    API_BASE_URL
+    API_BASE_URL,
+    api
 } from '../../api';
 import { useAudioEngine } from '../../context/AudioEngineContext';
+import { toast } from '../../utils/toast';
 import {
     ArrowLeft,
     Play,
@@ -42,7 +45,10 @@ import {
     Repeat1,
     Gauge,
     FolderKanban,
-    FolderPlus
+    FolderPlus,
+    Maximize2,
+    ExternalLink,
+    X
 } from 'lucide-react';
 
 interface TrackDetailViewProps {
@@ -98,6 +104,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
     const [track, setTrack] = useState<Job>(initialTrack);
     const [activeTab, setActiveTab] = useState<'stems' | 'score' | 'lyrics' | 'provenance' | 'lineage'>('stems');
     const [isEditingTitle, setIsEditingTitle] = useState(false);
+    const [isSavingTitle, setIsSavingTitle] = useState(false);
     const [titleInput, setTitleInput] = useState(track.title || track.prompt);
     const [copiedSeed, setCopiedSeed] = useState(false);
     const [copiedLyrics, setCopiedLyrics] = useState(false);
@@ -108,6 +115,36 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
     const [formantPreserve, setFormantPreserve] = useState<boolean>(true);
     const [dryWet, setDryWet] = useState<number>(100);
     const [stemSourceMode, setStemSourceMode] = useState<'muscriptor' | 'neural'>('muscriptor');
+    const [isGeneratingCover, setIsGeneratingCover] = useState(false);
+    const [isArtworkModalOpen, setIsArtworkModalOpen] = useState(false);
+
+    useEffect(() => {
+        const handleKeyDown = (e: KeyboardEvent) => {
+            if (e.key === 'Escape' && isArtworkModalOpen) {
+                setIsArtworkModalOpen(false);
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [isArtworkModalOpen]);
+
+    const handleGenerateArtwork = async () => {
+        if (isGeneratingCover) return;
+        setIsGeneratingCover(true);
+        try {
+            const res = await coverApi.generateJobCover(track.id);
+            const updatedJob = (res as any)?.job || res;
+            if (updatedJob && updatedJob.id) {
+                setTrack(updatedJob);
+                onTrackUpdated?.(updatedJob);
+                toast(track.cover_image_path ? 'Artwork regenerated successfully!' : 'Artwork generated successfully!', 'success');
+            }
+        } catch (err: any) {
+            toast(err?.message || 'Failed to generate cover artwork', 'error');
+        } finally {
+            setIsGeneratingCover(false);
+        }
+    };
 
     // Dedicated Stem Audition Audio Node
     const stemAudioRef = useRef<HTMLAudioElement | null>(null);
@@ -150,7 +187,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
 
     const handleStemPlay = (stemKey: string, stemPath?: string) => {
         if (!stemPath) return;
-        const fullUrl = stemPath.startsWith('http') ? stemPath : `${API_BASE_URL}${stemPath}`;
+        const fullUrl = api.getAudioUrl(stemPath);
         const stemAudio = stemAudioRef.current;
         if (!stemAudio) return;
 
@@ -272,14 +309,19 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
     };
 
     const handleSaveTitle = async () => {
-        if (!titleInput.trim()) return;
+        if (!titleInput.trim() || isSavingTitle) return;
+        setIsSavingTitle(true);
         try {
             const updated = await trackApi.updateTrackMetadata(track.id, { title: titleInput.trim() });
             setTrack(updated);
             onTrackUpdated?.(updated);
             setIsEditingTitle(false);
+            toast('Track title updated', 'success');
         } catch (e) {
             console.error('Failed to update title', e);
+            toast('Failed to update title', 'error');
+        } finally {
+            setIsSavingTitle(false);
         }
     };
 
@@ -533,7 +575,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
             </div>
 
             {/* Master Track Hero Command Bar */}
-            <div className="bg-white/80 dark:bg-[#141620]/90 rounded-3xl border border-black/[0.08] dark:border-white/10 shadow-apple-lg backdrop-blur-2xl p-5 sm:p-6 md:p-7 space-y-6 relative overflow-hidden">
+            <div className="bg-white/95 dark:bg-[#141620]/95 rounded-3xl border border-black/[0.08] dark:border-white/10 shadow-apple-lg p-5 sm:p-6 md:p-7 space-y-6 relative overflow-hidden">
                 {/* Dedicated Stem Audition Element (Master Audio is managed globally by AudioEngineContext) */}
                 <audio
                     ref={stemAudioRef}
@@ -545,7 +587,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                     <div className="relative w-28 h-28 sm:w-32 sm:h-32 md:w-36 md:h-36 rounded-2xl overflow-hidden bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 shadow-apple-md flex-shrink-0 group">
                         {track.cover_image_path ? (
                             <img
-                                src={track.cover_image_path.startsWith('http') ? track.cover_image_path : `${API_BASE_URL}${track.cover_image_path}`}
+                                src={coverApi.getCoverUrl(track.cover_image_path)}
                                 alt={track.title || 'Cover Artwork'}
                                 className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300"
                             />
@@ -557,9 +599,38 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                         )}
                         <button
                             onClick={handleToggleMasterPlay}
-                            className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white backdrop-blur-[2px] cursor-pointer"
+                            className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white cursor-pointer"
                         >
                             {isCurrentPlaying ? <Pause size={28} /> : <Play size={28} className="ml-1" />}
+                        </button>
+                        {/* Enlarge / View Artwork Button */}
+                        {track.cover_image_path && (
+                            <button
+                                onClick={(e) => {
+                                    e.stopPropagation();
+                                    setIsArtworkModalOpen(true);
+                                }}
+                                className="absolute top-2 left-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all z-10 cursor-pointer shadow-sm hover:scale-105"
+                                title="Enlarge & View Artwork"
+                            >
+                                <Maximize2 size={14} />
+                            </button>
+                        )}
+                        {/* Generate/Regenerate Artwork Button */}
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                handleGenerateArtwork();
+                            }}
+                            disabled={isGeneratingCover}
+                            className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all z-10 disabled:opacity-50 cursor-pointer shadow-sm"
+                            title={track.cover_image_path ? "Regenerate Artwork" : "Generate Cover Artwork"}
+                        >
+                            {isGeneratingCover ? (
+                                <RefreshCw size={14} className="animate-spin text-teal-400" />
+                            ) : (
+                                <Sparkles size={14} className="text-amber-300" />
+                            )}
                         </button>
                     </div>
 
@@ -579,9 +650,10 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                         />
                                         <button
                                             onClick={handleSaveTitle}
-                                            className="px-2.5 py-1 rounded-lg bg-teal-500 text-slate-950 font-bold text-xs"
+                                            disabled={isSavingTitle}
+                                            className="px-2.5 py-1 rounded-lg bg-teal-500 text-slate-950 font-bold text-xs disabled:opacity-50"
                                         >
-                                            Save
+                                            {isSavingTitle ? 'Saving...' : 'Save'}
                                         </button>
                                         <button
                                             onClick={() => setIsEditingTitle(false)}
@@ -692,6 +764,36 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                 <RefreshCw size={13} />
                                 <span>Remix / Re-roll</span>
                             </button>
+
+                            <button
+                                onClick={handleGenerateArtwork}
+                                disabled={isGeneratingCover}
+                                className="px-3.5 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5 transition-colors border border-black/[0.06] dark:border-white/5 disabled:opacity-50 cursor-pointer"
+                                title={track.cover_image_path ? "Regenerate AI Cover Artwork" : "Generate AI Cover Artwork"}
+                            >
+                                {isGeneratingCover ? (
+                                    <>
+                                        <RefreshCw size={13} className="animate-spin text-teal-400" />
+                                        <span>Generating Artwork...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Sparkles size={13} className="text-amber-400" />
+                                        <span>{track.cover_image_path ? 'Regenerate Artwork' : 'Generate Artwork'}</span>
+                                    </>
+                                )}
+                            </button>
+
+                            {track.cover_image_path && (
+                                <button
+                                    onClick={() => setIsArtworkModalOpen(true)}
+                                    className="px-3.5 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5 transition-colors border border-black/[0.06] dark:border-white/5 cursor-pointer"
+                                    title="Enlarge & View Artwork"
+                                >
+                                    <Maximize2 size={13} className="text-teal-500" />
+                                    <span>Enlarge Artwork</span>
+                                </button>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -995,7 +1097,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                 return (
                                     <div
                                         key={stem.key}
-                                        className="p-4 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/10 shadow-apple-sm backdrop-blur-xl flex flex-col justify-between space-y-3"
+                                        className="p-4 rounded-2xl bg-white/95 dark:bg-[#141620]/95 border border-black/[0.06] dark:border-white/10 shadow-apple-sm flex flex-col justify-between space-y-3"
                                     >
                                         <div className="flex items-center justify-between gap-2">
                                             <div className="flex items-center gap-2.5">
@@ -1654,7 +1756,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                             <div className="w-9 h-9 rounded-xl bg-slate-900 border border-black/10 dark:border-white/10 overflow-hidden flex items-center justify-center flex-shrink-0">
                                                 {p.cover_image_path ? (
                                                     <img
-                                                        src={p.cover_image_path.startsWith('http') ? p.cover_image_path : `${API_BASE_URL}${p.cover_image_path}`}
+                                                        src={coverApi.getCoverUrl(p.cover_image_path)}
                                                         alt={p.name}
                                                         className="w-full h-full object-cover"
                                                     />
@@ -1683,6 +1785,97 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                 className="px-4 py-2 rounded-xl bg-black/5 dark:bg-white/5 text-slate-700 dark:text-slate-300 font-bold text-xs"
                             >
                                 Close
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
+
+            {/* High-Resolution Artwork Lightbox Modal */}
+            {isArtworkModalOpen && track.cover_image_path && (
+                <div
+                    className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xl flex items-center justify-center p-4 sm:p-6 md:p-8 animate-in fade-in duration-200"
+                    onClick={() => setIsArtworkModalOpen(false)}
+                >
+                    <div
+                        className="relative max-w-xl sm:max-w-2xl w-full bg-white/95 dark:bg-[#151720]/95 border border-black/10 dark:border-white/10 rounded-3xl p-6 sm:p-7 shadow-2xl space-y-5 overflow-hidden flex flex-col items-center"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        {/* Close button */}
+                        <button
+                            onClick={() => setIsArtworkModalOpen(false)}
+                            className="absolute top-4 right-4 p-2 rounded-full bg-black/5 dark:bg-white/10 text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors cursor-pointer"
+                            title="Close (Esc)"
+                        >
+                            <X size={18} />
+                        </button>
+
+                        {/* Header Info */}
+                        <div className="w-full text-left pr-10">
+                            <h3 className="text-base sm:text-lg font-bold text-slate-900 dark:text-slate-100 truncate">
+                                {track.title || track.prompt || 'Cover Artwork'}
+                            </h3>
+                            <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                <span className="text-[11px] font-mono px-2.5 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-400 border border-teal-500/20 font-semibold">
+                                    FLUX.2 Neural Diffusion · 1024×1024
+                                </span>
+                                {track.tags && (
+                                    <span className="text-[11px] text-slate-500 font-mono truncate max-w-xs">
+                                        {track.tags}
+                                    </span>
+                                )}
+                            </div>
+                        </div>
+
+                        {/* Full Size Image Display */}
+                        <div className="relative w-full aspect-square max-w-[460px] sm:max-w-[500px] rounded-2xl overflow-hidden shadow-2xl border border-black/10 dark:border-white/10 bg-black/10 flex items-center justify-center">
+                            <img
+                                src={coverApi.getCoverUrl(track.cover_image_path)}
+                                alt={track.title || 'Full Cover Artwork'}
+                                className="w-full h-full object-cover select-none"
+                            />
+                        </div>
+
+                        {/* Actions Toolbar */}
+                        <div className="w-full flex items-center justify-between gap-3 pt-1 flex-wrap">
+                            <div className="flex items-center gap-2">
+                                <a
+                                    href={coverApi.getCoverUrl(track.cover_image_path)}
+                                    target="_blank"
+                                    rel="noreferrer"
+                                    className="px-3.5 py-2 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-semibold text-xs flex items-center gap-1.5 transition-colors border border-black/10 dark:border-white/10 cursor-pointer"
+                                >
+                                    <ExternalLink size={13} />
+                                    <span>Open in New Tab</span>
+                                </a>
+                                <a
+                                    href={coverApi.getCoverUrl(track.cover_image_path)}
+                                    download={`${(track.title || 'album_artwork').replace(/\s+/g, '_')}.png`}
+                                    className="px-3.5 py-2 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-semibold text-xs flex items-center gap-1.5 transition-colors border border-black/10 dark:border-white/10 cursor-pointer"
+                                >
+                                    <Download size={13} />
+                                    <span>Download PNG</span>
+                                </a>
+                            </div>
+
+                            <button
+                                onClick={() => {
+                                    handleGenerateArtwork();
+                                }}
+                                disabled={isGeneratingCover}
+                                className="px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-50 cursor-pointer"
+                            >
+                                {isGeneratingCover ? (
+                                    <>
+                                        <RefreshCw size={13} className="animate-spin" />
+                                        <span>Regenerating...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Sparkles size={13} />
+                                        <span>Regenerate</span>
+                                    </>
+                                )}
                             </button>
                         </div>
                     </div>

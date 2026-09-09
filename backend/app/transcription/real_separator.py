@@ -11,6 +11,7 @@ across CUDA, Apple Silicon MPS, and CPU.
 """
 
 import os
+import shutil
 import time
 import logging
 import threading
@@ -19,8 +20,10 @@ from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
 
+from app.core.paths import get_generated_audio_dir
+
 SAMPLE_RATE = 44100
-STEM_DIR = "generated_audio/stems"
+STEM_DIR = str(get_generated_audio_dir() / "stems")
 
 
 @dataclass
@@ -130,6 +133,13 @@ def separate_sources(
             dest_path = os.path.join(out_dir, dest_name)
             if out_file != dest_path and os.path.exists(out_file):
                 os.replace(out_file, dest_path)
+            backend_dest = os.path.abspath(os.path.join("generated_audio", "stems", dest_name))
+            if os.path.abspath(dest_path) != backend_dest and os.path.exists(dest_path):
+                try:
+                    os.makedirs(os.path.dirname(backend_dest), exist_ok=True)
+                    shutil.copy2(dest_path, backend_dest)
+                except Exception:
+                    pass
             stems[stem_key] = f"/audio/stems/{dest_name}"
 
         return SeparationResult(
@@ -171,6 +181,13 @@ def separate_sources(
         for i, name in enumerate(names):
             stem_file_path = f"{out_dir}/{job_id}_{name}.wav"
             torchaudio.save(stem_file_path, tensor_stems[i].cpu(), model.samplerate)
+            backend_dest = os.path.abspath(os.path.join("generated_audio", "stems", f"{job_id}_{name}.wav"))
+            if os.path.abspath(stem_file_path) != backend_dest and os.path.exists(stem_file_path):
+                try:
+                    os.makedirs(os.path.dirname(backend_dest), exist_ok=True)
+                    shutil.copy2(stem_file_path, backend_dest)
+                except Exception:
+                    pass
             stems_dict[name] = f"/audio/stems/{job_id}_{name}.wav"
 
         logger.info(f"Neural separation completed in {time.time() - t0:.1f}s for {len(stems_dict)} sources.")

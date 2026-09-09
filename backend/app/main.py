@@ -17,6 +17,7 @@ import time
 import shutil
 import threading
 import uuid
+from pathlib import Path
 from datetime import datetime, timedelta, timezone
 from contextlib import asynccontextmanager
 
@@ -76,6 +77,7 @@ from app.models import (
     SessionMessageCreate,
     CoverPromptRequest,
     CoverImageRequest,
+    JobCoverGenerateRequest,
     ArtistProfile,
     ArtistProfileCreate,
     ArtistProfileUpdate,
@@ -119,8 +121,8 @@ from app.release_state import (
 )
 
 # Database
-sqlite_file_name = "jobs.db"
-sqlite_url = f"sqlite:///{sqlite_file_name}"
+sqlite_file_name = os.environ.get("MILIMO_DB_NAME", "jobs.db")
+sqlite_url = os.environ.get("MILIMO_DATABASE_URL", f"sqlite:///{sqlite_file_name}")
 engine = create_engine(
     sqlite_url,
     connect_args={"check_same_thread": False, "timeout": 15},
@@ -173,7 +175,8 @@ def create_db_and_tables():
             "artist_profile_id": "VARCHAR",
             "release_id": "VARCHAR",
             "mastered_path": "TEXT",
-            "video_path": "VARCHAR"
+            "video_path": "VARCHAR",
+            "video_config_json": "TEXT"
         }
         for col, col_type in new_columns.items():
             if col not in existing_cols:
@@ -248,6 +251,46 @@ def create_db_and_tables():
                     print(f"Migration notice for artistprofile.{col}: {e}")
 
         session.commit()
+
+        # Automatic Normalization for job IDs (SQLite stores UUID as TEXT, SQLAlchemy GUID expects canonical 32-hex)
+        try:
+            hyphen_jobs = session.exec(text("SELECT id FROM job WHERE length(id) = 36 AND id LIKE '%-%';")).all()
+            for row in hyphen_jobs:
+                old_id = row[0]
+                new_id = old_id.replace("-", "")
+                session.exec(text("UPDATE job SET id = :new WHERE id = :old;").params(new=new_id, old=old_id))
+                session.exec(text("UPDATE session SET active_job_id = :new WHERE active_job_id = :old;").params(new=new_id, old=old_id))
+                session.exec(text("UPDATE sessionmessage SET generated_job_id = :new WHERE generated_job_id = :old;").params(new=new_id, old=old_id))
+                session.exec(text("UPDATE playlisttrack SET job_id = :new WHERE job_id = :old;").params(new=new_id, old=old_id))
+                session.exec(text("UPDATE job SET parent_job_id = :new WHERE parent_job_id = :old;").params(new=new_id, old=old_id))
+            if hyphen_jobs:
+                session.commit()
+                logger.info(f"Normalized {len(hyphen_jobs)} hyphenated job ID(s) in SQLite to canonical 32-hex.")
+        except Exception as e:
+            logger.warning(f"Job ID normalization check skipped: {e}")
+
+        # Synchronize static storage artifacts between backend/ and canonical root directories
+        try:
+            if backend_covers_dir.exists() and covers_dir != backend_covers_dir:
+                for item in backend_covers_dir.iterdir():
+                    if item.is_file() and not item.name.startswith("."):
+                        target = covers_dir / item.name
+                        if not target.exists():
+                            try:
+                                shutil.copy2(item, target)
+                            except Exception:
+                                pass
+            if backend_audio_dir.exists() and gen_audio_dir != backend_audio_dir:
+                for item in backend_audio_dir.iterdir():
+                    if item.is_file() and not item.name.startswith("."):
+                        target = gen_audio_dir / item.name
+                        if not target.exists():
+                            try:
+                                shutil.copy2(item, target)
+                            except Exception:
+                                pass
+        except Exception as e:
+            logger.warning(f"Storage synchronization notice: {e}")
 
 
 def reconcile_orphan_agent_runs() -> int:
@@ -403,15 +446,27 @@ get_data_dir()
 (get_data_dir() / "datasets").mkdir(parents=True, exist_ok=True)
 (get_data_dir() / "covers").mkdir(parents=True, exist_ok=True)
 
-os.makedirs("generated_audio", exist_ok=True)
-os.makedirs("generated_audio/stems", exist_ok=True)
-os.makedirs("generated_audio/mastered", exist_ok=True)
-os.makedirs("generated_audio/converted_vocals", exist_ok=True)
-os.makedirs("data/covers", exist_ok=True)
+gen_audio_dir = get_generated_audio_dir()
+backend_audio_dir = Path("generated_audio").resolve()
+(gen_audio_dir / "stems").mkdir(parents=True, exist_ok=True)
+(gen_audio_dir / "mastered").mkdir(parents=True, exist_ok=True)
+(gen_audio_dir / "converted_vocals").mkdir(parents=True, exist_ok=True)
+(gen_audio_dir / "videos").mkdir(parents=True, exist_ok=True)
+
+covers_dir = get_data_dir() / "covers"
+backend_covers_dir = Path("data/covers").resolve()
+covers_dir.mkdir(parents=True, exist_ok=True)
+backend_covers_dir.mkdir(parents=True, exist_ok=True)
+
+audio_dirs = [gen_audio_dir, backend_audio_dir]
+stems_dirs = [gen_audio_dir / "stems", backend_audio_dir / "stems"]
+covers_dirs = [covers_dir, backend_covers_dir]
 
 from app.core.ranged_static import RangedStaticFiles
-app.mount("/audio", RangedStaticFiles(directory="generated_audio"), name="audio")
-app.mount("/covers", RangedStaticFiles(directory="data/covers"), name="covers")
+app.mount("/audio", RangedStaticFiles(directories=audio_dirs), name="audio")
+app.mount("/generated_audio", RangedStaticFiles(directories=audio_dirs), name="generated_audio")
+app.mount("/stems", RangedStaticFiles(directories=stems_dirs), name="stems")
+app.mount("/covers", RangedStaticFiles(directories=covers_dirs), name="covers")
 
 
 # --- Core & Health ---
@@ -596,7 +651,7 @@ async def transcribe_uploaded_audio(file: UploadFile = File(...)):
         "instrumental_parts": instrument_parts,
         "instrument_programs": instrument_programs,
         "sources_available": [stems_source_id, "muscriptor"],
-        "default_source": "muscriptor",
+        "default_source": stems_source_id if real_stems else "muscriptor",
     }
     for stem_k, stem_v in real_stems.items():
         dynamic_stems_payload[stem_k] = stem_v
@@ -635,8 +690,21 @@ def get_job_by_id(session: Session, job_id_input: Any) -> Optional[Job]:
     
     clean_str = str(job_id_input).strip()
     hex_str = clean_str.replace("-", "")
+    try:
+        hyphen_str = str(UUID(hex_str)) if len(hex_str) == 32 else clean_str
+    except Exception:
+        hyphen_str = clean_str
 
-    # 1. Try UUID object
+    # 1. Direct text condition on id column (bypasses SQLAlchemy SQLite GUID hex stripping for hyphenated IDs)
+    try:
+        stmt = select(Job).where(text("id = :c OR id = :h OR id = :hyp")).params(c=clean_str, h=hex_str, hyp=hyphen_str)
+        job = session.exec(stmt).first()
+        if job:
+            return job
+    except Exception:
+        pass
+
+    # 2. Try UUID object
     try:
         u = UUID(hex_str)
         job = session.get(Job, u)
@@ -645,15 +713,18 @@ def get_job_by_id(session: Session, job_id_input: Any) -> Optional[Job]:
     except Exception:
         pass
 
-    # 2. Try session.get with string forms
-    job = session.get(Job, hex_str)
-    if job:
-        return job
-    job = session.get(Job, clean_str)
-    if job:
-        return job
+    # 3. Try session.get with string forms
+    try:
+        job = session.get(Job, hex_str)
+        if job:
+            return job
+        job = session.get(Job, clean_str)
+        if job:
+            return job
+    except Exception:
+        pass
 
-    # 3. Try select with hex_str and clean_str
+    # 4. Try select with hex_str and clean_str
     try:
         job = session.exec(select(Job).where(Job.id == hex_str)).one_or_none()
         if job:
@@ -746,8 +817,61 @@ def export_track_asset(job_id: str, export_format: str):
                 "Content-Disposition": f"attachment; filename={job.title or 'milimo_ableton'}.json"
             })
 
+        elif export_format in ("stems", "zip"):
+            import io
+            import zipfile
+            stems = json.loads(job.stems_json) if job.stems_json else {}
+            parts = stems.get("instrumental_parts", {})
+            reserved_keys = {"stems_source", "instrumental_parts", "instrument_programs", "sources_available", "default_source"}
+
+            stem_files_to_zip: dict[str, str] = {}
+            # 1. Neural stems (Vocals, Drums, Bass, Other)
+            for stem_key, stem_url in stems.items():
+                if stem_key not in reserved_keys and stem_url and isinstance(stem_url, str):
+                    rel_path = stem_url.replace("/audio/", "generated_audio/").lstrip("/")
+                    if os.path.exists(rel_path):
+                        stem_files_to_zip[f"{stem_key.capitalize()}.wav"] = rel_path
+
+            # 2. MuScriptor Instrumental parts
+            for part_name, part_url in parts.items():
+                if part_url and isinstance(part_url, str):
+                    rel_path = part_url.replace("/audio/", "generated_audio/").lstrip("/")
+                    if os.path.exists(rel_path):
+                        clean_name = part_name.replace("/", "_").replace("\\", "_")
+                        stem_files_to_zip[f"Part - {clean_name}.wav"] = rel_path
+
+            # 3. Fallback to master audio if no stems on disk
+            if not stem_files_to_zip and job.audio_path:
+                m_path = job.audio_path.replace("/audio/", "generated_audio/").lstrip("/")
+                if os.path.exists(m_path):
+                    stem_files_to_zip["Master.wav"] = m_path
+
+            if not stem_files_to_zip:
+                raise HTTPException(status_code=404, detail="No stem audio files found for this track")
+
+            mem_zip = io.BytesIO()
+            with zipfile.ZipFile(mem_zip, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+                for arcname, fpath in stem_files_to_zip.items():
+                    zf.write(fpath, arcname=arcname)
+            mem_zip.seek(0)
+
+            clean_title = (job.title or "milimo_stems").replace(" ", "_")
+            return Response(
+                content=mem_zip.getvalue(),
+                media_type="application/zip",
+                headers={
+                    "Content-Disposition": f'attachment; filename="{clean_title}_stems.zip"'
+                }
+            )
+
         else:
             raise HTTPException(status_code=400, detail=f"Unsupported format: {export_format}")
+
+
+@app.get("/workspace/{job_id}/stems/export")
+def export_workspace_stems(job_id: str):
+    """Alias for DAW multitrack stems ZIP export."""
+    return export_track_asset(job_id=job_id, export_format="stems")
 
 
 @app.post("/mastering/match/{job_id}")
@@ -820,6 +944,20 @@ def get_track_sheets(job_id: str):
         return {"job_id": str(job.id), "sheets": sheets}
 
 
+def _generate_synthetic_peaks(seed_str: str, buckets: int = 240) -> List[float]:
+    import hashlib
+    import math
+    h = int(hashlib.md5(str(seed_str).encode('utf-8')).hexdigest()[:8], 16)
+    peaks = []
+    for i in range(buckets):
+        t = i / max(1, buckets - 1)
+        base = 0.35 + 0.25 * math.sin(t * 8.0 + (h % 10)) + 0.15 * math.cos(t * 19.0 + (h % 7))
+        mod = ((h ^ (i * 2654435761)) % 1000) / 3000.0
+        val = max(0.08, min(1.0, base + mod))
+        peaks.append(round(val, 3))
+    return peaks
+
+
 @app.get("/tracks/{job_id}/peaks")
 def get_track_peaks(job_id: str, buckets: int = 240):
     """Normalized waveform peaks for lightweight library waveforms.
@@ -838,16 +976,27 @@ def get_track_peaks(job_id: str, buckets: int = 240):
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)
         if not job or not job.audio_path:
-            raise HTTPException(status_code=404, detail="Track not found")
+            return {
+                "job_id": str(job_id),
+                "buckets": buckets,
+                "duration": 30.0,
+                "peaks": _generate_synthetic_peaks(job_id, buckets),
+                "synthetic": True
+            }
         audio_name = os.path.basename(job.audio_path)
+        duration = getattr(job, "duration", None) or 30.0
 
     media_dir = os.path.abspath("generated_audio")
     audio_path = os.path.abspath(os.path.join(media_dir, audio_name))
     # Containment: never compute/serve anything outside the media directory.
-    if not audio_path.startswith(media_dir + os.sep):
-        raise HTTPException(status_code=400, detail="Invalid audio path")
-    if not os.path.exists(audio_path):
-        raise HTTPException(status_code=404, detail="Audio file missing")
+    if not audio_path.startswith(media_dir + os.sep) or not os.path.exists(audio_path):
+        return {
+            "job_id": str(job_id),
+            "buckets": buckets,
+            "duration": duration,
+            "peaks": _generate_synthetic_peaks(job_id, buckets),
+            "synthetic": True
+        }
 
     cache_dir = os.path.join(media_dir, ".peaks")
     os.makedirs(cache_dir, exist_ok=True)
@@ -865,7 +1014,13 @@ def get_track_peaks(job_id: str, buckets: int = 240):
         with sf.SoundFile(audio_path) as f:
             total = len(f)
             if total == 0:
-                raise HTTPException(status_code=409, detail="Empty audio file")
+                return {
+                    "job_id": str(job_id),
+                    "buckets": buckets,
+                    "duration": duration,
+                    "peaks": _generate_synthetic_peaks(job_id, buckets),
+                    "synthetic": True
+                }
             duration = round(total / f.samplerate, 3)
             edges = np.linspace(0, total, buckets + 1, dtype=int)
             peaks: List[float] = []
@@ -878,11 +1033,15 @@ def get_track_peaks(job_id: str, buckets: int = 240):
                 seg = f.read(n, dtype="float32", always_2d=True)
                 mono = seg.mean(axis=1)
                 peaks.append(float(np.abs(mono).max()) if len(mono) else 0.0)
-    except HTTPException:
-        raise
     except Exception as e:
-        logger.error(f"Peaks computation failed for {audio_name}: {e}")
-        raise HTTPException(status_code=500, detail="Peaks computation failed")
+        logger.warning(f"Peaks computation fallback for {audio_name}: {e}")
+        return {
+            "job_id": str(job_id),
+            "buckets": buckets,
+            "duration": duration,
+            "peaks": _generate_synthetic_peaks(job_id, buckets),
+            "synthetic": True
+        }
 
     max_p = max(peaks) or 1.0
     if max_p > 0:
@@ -1625,7 +1784,7 @@ def set_artist_assignments(profile_id: UUID, payload: AgentAssignmentSet):
     # Providers an override may pin to — mirrors LLMService._get_provider's
     # dispatch table. Unknown names would waste a failover attempt per run.
     ALLOWED_PROVIDERS = {"nvidia", "deepseek", "openai", "gemini", "openrouter",
-                         "opencode", "omlx", "ollama", "lmstudio"}
+                         "opencode", "omlx", "ollama", "lmstudio", "anthropic"}
     for a in (payload.assignments if hasattr(payload, "assignments") else []):
         if getattr(a, "role", "") not in ALLOWED_ROLES:
             raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": f"Unknown crew role '{a.role}'. Allowed: {sorted(ALLOWED_ROLES)}"}})
@@ -2230,6 +2389,45 @@ def realign_track_lyrics(job_id: str, lyrics: Optional[str] = Body(None, embed=T
         return {"status": "realigned", "timed_lyrics": timed, "job": job}
 
 
+@app.post("/tracks/{job_id}/separate")
+async def separate_track_stems(job_id: str):
+    """Separate on-demand the master audio of a track into real neural stems (vocals, drums, bass, other)."""
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+        if not job.audio_path:
+            raise HTTPException(status_code=400, detail="Track has no audio")
+
+        resolved_master = _resolve_audio_file(job.audio_path)
+        if not resolved_master or not os.path.exists(resolved_master):
+            raise HTTPException(status_code=404, detail="Audio file not found on disk")
+
+        clean_id = str(job.id).replace("-", "")
+        loop = asyncio.get_running_loop()
+        separation_res = await loop.run_in_executor(
+            None, separate_sources, resolved_master, "generated_audio/stems", clean_id, 1
+        )
+        real_stems = dict(separation_res.stems) if hasattr(separation_res, "stems") else dict(separation_res)
+        stems_source_id = getattr(separation_res, "source_id", "bs_roformer_6stem")
+
+        existing_stems = json.loads(job.stems_json) if job.stems_json else {}
+        for k, v in real_stems.items():
+            existing_stems[k] = v
+        existing_stems["stems_source"] = stems_source_id
+        if "sources_available" not in existing_stems:
+            existing_stems["sources_available"] = [stems_source_id]
+        elif stems_source_id not in existing_stems["sources_available"]:
+            existing_stems["sources_available"].append(stems_source_id)
+
+        job.stems_json = json.dumps(existing_stems)
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+        return {"status": "success", "job": job}
+
+
 @app.post("/workspace/{job_id}/notes")
 def save_workspace_notes(job_id: UUID, notes: List[Dict[str, Any]] = Body(...)):
     """Save edited note events from the Piano Roll editor."""
@@ -2279,6 +2477,8 @@ def update_llm_config(config: LLMConfigUpdate):
             LLMService.update_config("opencode", config.opencode.model_dump(exclude_unset=True))
         if config.omlx:
             LLMService.update_config("omlx", config.omlx.model_dump(exclude_unset=True))
+        if config.anthropic:
+            LLMService.update_config("anthropic", config.anthropic.model_dump(exclude_unset=True))
         return LLMService.get_config()
     except Exception as e:
         logger.error(f"Route failed: {e}", exc_info=True)
@@ -2314,6 +2514,9 @@ def fetch_models(request: LLMConfigUpdate):
         elif provider == "omlx" and request.omlx:
             api_key = request.omlx.api_key
             base_url = request.omlx.base_url
+        elif provider == "anthropic" and request.anthropic:
+            api_key = request.anthropic.api_key
+            base_url = request.anthropic.base_url
 
         models = LLMService.fetch_available_models(provider, api_key, base_url)
         return {"models": models}
@@ -2374,12 +2577,20 @@ def generate_styles(req: InspirationRequest):
 
 @app.post("/generate/cover-prompt")
 def generate_cover_prompt(req: CoverPromptRequest):
-    """Generate an evocative visual prompt for album artwork from song/project metadata."""
-    title = req.title or "Untitled Master"
-    desc = req.description or ""
-    genre = req.genre or req.tags or "Modern Music Production"
-    prompt = f"High-end artistic album cover art for '{title}', {genre}, {desc}, minimalist, cinematic lighting, 8k resolution, modern abstract aesthetics, award-winning graphic design"
-    return {"prompt": prompt}
+    """Generate an evocative visual prompt for album artwork from song/project metadata.
+
+    Returns {prompt, llm_used, provider} — llm_used is False exactly when the
+    deterministic (lyrics-blind) fallback fired, so the UI can badge generic
+    prompts instead of shipping them silently.
+    """
+    from app.services.llm_service import LLMService
+    return LLMService.generate_cover_prompt(
+        title=req.title,
+        description=req.description,
+        tags=req.tags,
+        genre=req.genre,
+        lyrics=req.lyrics,
+    )
 
 
 @app.post("/upload/image")
@@ -2406,8 +2617,35 @@ def generate_cover_image(req: CoverImageRequest):
         prompt=req.prompt,
         style=req.style or "cinematic album cover",
         aspect_ratio=req.aspect_ratio or "1:1",
-        model_id=req.model_id
+        model_id=req.model_id,
+        title=req.title,
+        artist=req.artist,
     )
+
+
+def _resolve_job_artist_name(session: Session, job: Job) -> Optional[str]:
+    """Resolve the owning artist name for a track's cover byline.
+
+    Prefers the direct Job.artist_profile_id link, falls back through
+    Job.release_id → Release.profile_id. Returns None for standalone tracks
+    (title-only cover) — never fabricates a name.
+    """
+    profile_id = (getattr(job, "artist_profile_id", None) or "").strip() if getattr(job, "artist_profile_id", None) else ""
+    if not profile_id and getattr(job, "release_id", None):
+        try:
+            release = session.get(Release, UUID(str(job.release_id)))
+            if release is not None and getattr(release, "profile_id", None):
+                profile_id = str(release.profile_id)
+        except Exception:
+            profile_id = ""
+    if not profile_id:
+        return None
+    try:
+        profile = session.get(ArtistProfile, UUID(profile_id))
+    except Exception:
+        return None
+    name = (getattr(profile, "name", "") or "").strip() if profile is not None else ""
+    return name or None
 
 
 # --- Studio Sessions & Multi-Turn Producer Endpoints ---
@@ -2897,7 +3135,11 @@ def get_history(limit: int = 50, offset: int = 0, status: Optional[str] = None, 
             if status == 'favorites':
                 query = query.where(Job.is_favorite == True)
             else:
-                query = query.where(Job.status == status)
+                query = query.where(or_(
+                    Job.status == status,
+                    Job.status == status.upper(),
+                    Job.status == status.lower()
+                ))
             
         if search:
             query = query.where(or_(
@@ -2945,6 +3187,63 @@ def update_job(job_id: str, data: JobUpdate):
         session.add(job)
         session.commit()
         session.refresh(job)
+        return job
+
+
+@app.post("/jobs/{job_id}/generate-cover", response_model=Job)
+def generate_job_cover(job_id: str, req: Optional[JobCoverGenerateRequest] = None):
+    """Generate or regenerate album cover artwork for an existing track at any time."""
+    from app.services.image_service import image_service
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        prompt = (req.prompt if req and req.prompt else None)
+        if not prompt:
+            # Lyrics-aware visual prompt (pure imagery — never the raw title fed
+            # to diffusion, which invites garbled AI-rendered lettering).
+            # generate_cover_prompt never raises: worst case is a flagged fallback.
+            from app.services.llm_service import LLMService
+            cover_prompt_res = LLMService.generate_cover_prompt(
+                title=job.title,
+                tags=job.tags,
+                lyrics=job.lyrics,
+            )
+            prompt = cover_prompt_res["prompt"]
+            if not cover_prompt_res["llm_used"]:
+                logger.warning(f"Job {job_id} cover uses generic prompt (LLM unavailable).")
+        style = (req.style if req and req.style else None) or job.tags or "cinematic album cover"
+        aspect_ratio = (req.aspect_ratio if req and req.aspect_ratio else "1:1")
+        model_id = (req.model_id if req and req.model_id else None) or image_service.get_default_image_model()
+
+        # Title-only when no human title exists — never stamp prompt excerpts.
+        # Artist byline resolves from the owning profile; explicit req wins.
+        overlay_title = (job.title or "").strip() or None
+        overlay_artist = ((req.artist or "").strip() if req and req.artist else "") or _resolve_job_artist_name(session, job)
+
+        cover_res = image_service.generate_cover(
+            prompt=prompt,
+            style=style,
+            aspect_ratio=aspect_ratio,
+            model_id=model_id,
+            title=overlay_title,
+            artist=overlay_artist,
+        )
+        cover_url = cover_res.get("url")
+        job.cover_image_path = cover_url
+        job.image_prompt = prompt
+        job.updated_at = datetime.now(timezone.utc)
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+        event_manager.publish("job_update", {
+            "job_id": str(job.id),
+            "status": job.status,
+            "cover_image_path": job.cover_image_path,
+            "title": job.title or job.prompt,
+        })
         return job
 
 
@@ -3145,10 +3444,22 @@ def _delete_job_artifacts(job_id_str: str, audio_public_path: Optional[str] = No
     # Different pipeline stages persist under different id forms:
     # masters/stems/instruments use str(uuid) (hyphenated); MuScriptor outputs
     # (tokens/sheets/MIDI/XML) use clean 32-hex. Sweep BOTH.
-    id_forms = {job_id_str, job_id_str.replace("-", "")}
+    raw_hex = job_id_str.replace("-", "")
+    id_forms = {job_id_str, raw_hex}
+    try:
+        if len(raw_hex) == 32:
+            id_forms.add(str(UUID(raw_hex)))
+    except Exception:
+        pass
+
     patterns: List[str] = []
     for form in id_forms:
         patterns += [
+            f"generated_audio/{form}.mp3",
+            f"generated_audio/{form}.wav",
+            f"generated_audio/{form}.ogg",
+            f"generated_audio/{form}.flac",
+            f"generated_audio/{form}.m4a",
             f"generated_audio/stems/{form}_*.wav",
             f"generated_audio/mastered/{form}*",
             f"generated_audio/converted_vocals/{form}_*.wav",
@@ -3156,6 +3467,11 @@ def _delete_job_artifacts(job_id_str: str, audio_public_path: Optional[str] = No
             f"generated_audio/{form}.mid",
             f"generated_audio/{form}.musicxml",
             f"data/covers/{form}*",
+            os.path.join("generated_audio", ".peaks", f"{form}.*.json"),
+            f"generated_audio/videos/{form}_reactive.mp4",
+            f"generated_audio/videos/{form}_master_mv.mp4",
+            os.path.join("backend", "generated_audio", "videos", f"{form}_reactive.mp4"),
+            os.path.join("backend", "generated_audio", "videos", f"{form}_master_mv.mp4"),
         ]
     if audio_public_path:
         master_name = os.path.basename(audio_public_path)
@@ -3188,6 +3504,13 @@ def _delete_job_artifacts(job_id_str: str, audio_public_path: Optional[str] = No
 def delete_job(job_id: str):
     music_service.cancel_job(str(job_id))
 
+    clean_str = str(job_id).strip()
+    hex_str = clean_str.replace("-", "")
+    try:
+        hyphen_str = str(UUID(hex_str)) if len(hex_str) == 32 else clean_str
+    except Exception:
+        hyphen_str = clean_str
+
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)
         if not job:
@@ -3195,13 +3518,41 @@ def delete_job(job_id: str):
 
         job_id_str = str(job.id)
         audio_public = job.audio_path
+        all_ids = list({clean_str, hex_str, hyphen_str, job_id_str, job_id_str.replace("-", "")})
 
-        # Remove from database first (fast), then sweep artifacts.
-        session.delete(job)
+        # Relational cascades: nullify / clean up references
+        try:
+            for tid in all_ids:
+                session.exec(text("UPDATE session SET active_job_id = NULL WHERE active_job_id = :tid;").params(tid=tid))
+                session.exec(text("UPDATE sessionmessage SET generated_job_id = NULL WHERE generated_job_id = :tid;").params(tid=tid))
+                session.exec(text("DELETE FROM playlisttrack WHERE job_id = :tid;").params(tid=tid))
+                session.exec(text("UPDATE job SET parent_job_id = NULL WHERE parent_job_id = :tid;").params(tid=tid))
+        except Exception as e:
+            logger.warning(f"Relational cascade notice on delete for {job_id}: {e}")
+
+        # Clean release track order
+        try:
+            releases = session.exec(select(Release)).all()
+            for r in releases:
+                if r.track_order_json:
+                    order = json.loads(r.track_order_json)
+                    if isinstance(order, list):
+                        new_order = [t for t in order if t not in all_ids]
+                        if len(new_order) != len(order):
+                            r.track_order_json = json.dumps(new_order)
+                            session.add(r)
+        except Exception as e:
+            logger.warning(f"Release track order cleanup notice on delete for {job_id}: {e}")
+
+        # Delete job row via direct SQL across all UUID representations, expunging from ORM tracking
+        session.expunge(job)
+        for tid in all_ids:
+            session.exec(text("DELETE FROM job WHERE id = :tid;").params(tid=tid))
+
         session.commit()
 
-    _delete_job_artifacts(job_id_str, audio_public)
-    return {"status": "deleted", "id": job_id_str}
+    removed_files = _delete_job_artifacts(job_id_str, audio_public)
+    return {"status": "deleted", "id": job_id_str, "removed_files": removed_files}
 
 
 @app.post("/jobs/{job_id}/cancel")
@@ -3538,6 +3889,12 @@ async def render_music_video(job_id: str, body: dict = Body(default={})):
                 resolution=resolution
             )
             job.video_path = video_url
+            job.video_config_json = json.dumps({
+                "model_name": "audioreactive",
+                "visual_style": visual_style,
+                "resolution": resolution,
+                "mode": "audioreactive",
+            })
             session.add(job)
             session.commit()
             session.refresh(job)
@@ -3550,6 +3907,79 @@ async def render_music_video(job_id: str, body: dict = Body(default={})):
         except Exception as e:
             logger.error(f"Video rendering failed for {job_id}: {e}", exc_info=True)
             raise HTTPException(status_code=500, detail=f"Video rendering failed: {str(e)}")
+
+
+@app.get("/videos/models")
+def get_video_models():
+    """Return catalog of available video models, physical duration limits, and local weights readiness."""
+    from app.services.video_service import video_service
+    return video_service.get_available_video_models()
+
+
+@app.delete("/videos/{job_id}")
+def delete_music_video(job_id: str):
+    """Delete a track's rendered video (file + DB reference) without touching the track.
+
+    Containment-safe: only removes files inside the video output directories
+    (canonical + backend mirror) referenced by the job's video_path.
+    """
+    from app.services.video_service import VIDEO_DIR  # canonical videos dir
+
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if not job.video_path:
+            raise HTTPException(status_code=404, detail="No video to delete")
+
+        video_public = job.video_path
+        removed = 0
+        if video_public:
+            name = os.path.basename(video_public)
+            video_dirs = [
+                VIDEO_DIR,
+                os.path.abspath(os.path.join("backend", "generated_audio", "videos")),
+                os.path.abspath(os.path.join("generated_audio", "videos")),
+            ]
+            for d in set(video_dirs):
+                candidate = os.path.join(d, name)
+                # Containment: only the basename inside a known video dir.
+                if os.path.isdir(d) and os.path.abspath(candidate).startswith(os.path.abspath(d) + os.sep):
+                    try:
+                        if os.path.isfile(candidate):
+                            os.remove(candidate)
+                            removed += 1
+                            logger.info(f"Deleted video file {candidate}")
+                    except OSError as e:
+                        logger.warning(f"Video delete skipped {candidate}: {e}")
+
+        job.video_path = None
+        job.video_config_json = None
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+
+    event_manager.publish("job_update", {
+        "job_id": str(job.id),
+        "status": job.status,
+        "video_path": None,
+        "title": job.title or job.prompt,
+    })
+    return {"status": "deleted", "job_id": str(job.id), "removed_files": removed}
+
+
+@app.get("/videos/active-engine")
+def get_active_video_engine():
+    """Resolve the video engine the Music Videos page should use.
+
+    Single source of truth = the video model marked active in Models & HW
+    (model_manager -> active_models.json). Maps that model to the page's engine
+    key so the page follows the user's Models & HW selection instead of a
+    hardcoded default. NOTE: registered before /videos/{job_id} so the path
+    param route cannot shadow it.
+    """
+    from app.services.video_service import video_service
+    return video_service.get_active_video_engine()
 
 
 @app.get("/videos/{job_id}")
@@ -3623,6 +4053,7 @@ async def render_advanced_music_video_endpoint(job_id: str, req: VideoRenderRequ
                     j = s.get(Job, job.id)
                     if j:
                         j.video_path = url
+                        j.video_config_json = json.dumps(config, default=str)
                         s.add(j)
                         s.commit()
             except Exception as e:
@@ -3891,20 +4322,32 @@ async def events():
     async def event_generator():
         q = event_manager.subscribe()
         try:
+            # Yield initial keep-alive comment so EventSource connects cleanly
+            yield ": ping\n\n"
             while True:
                 try:
-                    data = await asyncio.wait_for(q.get(), timeout=1.0)
+                    data = await asyncio.wait_for(q.get(), timeout=15.0)
                     if "event: shutdown" in data:
                         break
                     yield data
                 except asyncio.TimeoutError:
-                    continue
+                    yield ": ping\n\n"
         except asyncio.CancelledError:
             pass
         except Exception:
             pass
         finally:
             event_manager.unsubscribe(q)
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "Connection": "keep-alive",
+            "X-Accel-Buffering": "no"
+        }
+    )
 
 # --- Frontend Static Files & SPA Fallback (Unified Single-Process Mode) ---
 

@@ -23,7 +23,7 @@ export const GlassCard: React.FC<GlassCardProps> = ({ children, className, delay
             transition={{ duration: 0.5, delay, ease: "easeOut" }}
             className={cn(
                 "rounded-2xl p-6 border",
-                "bg-white/80 dark:bg-[#141620]/85 backdrop-blur-2xl",
+                "bg-white/95 dark:bg-[#141620]/95",
                 "border-black/[0.06] dark:border-white/[0.08]",
                 "shadow-apple-sm dark:shadow-2xl text-slate-900 dark:text-slate-100",
                 "hover:shadow-apple-md transition-all duration-300",

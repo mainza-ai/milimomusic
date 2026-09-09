@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Cpu, Download, CheckCircle2, X, Activity, AlertTriangle, Loader2, Search, Trash2, ExternalLink, Globe, Sparkles } from 'lucide-react';
 import { modelsApi, type ModelVariant, type HardwareProfile, type ModelDownloadStatus, type HuggingFaceSearchResult } from '../../api';
+import { toast } from '../../utils/toast';
 
 interface ModelsManagerModalProps {
     isOpen: boolean;
@@ -17,6 +18,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
 
     const [selectedTab, setSelectedTab] = useState<'audio' | 'image' | 'video' | 'search'>('audio');
     const [activatingId, setActivatingId] = useState<string | null>(null);
+    const [deletingCustomId, setDeletingCustomId] = useState<string | null>(null);
 
     // Hugging Face Search & Custom Model state
     const [searchQuery, setSearchQuery] = useState('music');
@@ -78,6 +80,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
             setActivatingId(modelId);
             await modelsApi.selectActiveModel(modelId);
             await loadData();
+            window.dispatchEvent(new CustomEvent('milimo:model-activated'));
             onModelActivated?.();
         } catch (e: any) {
             console.error('Failed to activate model:', e);
@@ -90,6 +93,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
         try {
             await modelsApi.updateCustomModel(modelId, { category: newCategory });
             await loadData();
+            window.dispatchEvent(new CustomEvent('milimo:model-activated'));
             onModelActivated?.();
         } catch (e) {
             console.error('Failed to update custom model category:', e);
@@ -111,11 +115,17 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
     };
 
     const handleDeleteCustom = async (modelId: string) => {
+        if (!window.confirm('Are you sure you want to delete this custom model?')) return;
+        setDeletingCustomId(modelId);
         try {
             await modelsApi.deleteCustomModel(modelId);
+            toast('Custom model removed', 'info');
             await loadData();
         } catch (err) {
             console.error('Failed to delete custom model:', err);
+            toast('Failed to delete custom model', 'error');
+        } finally {
+            setDeletingCustomId(null);
         }
     };
 
@@ -128,7 +138,13 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
     const busy = !!download && ['queued', 'downloading'].includes(download.status);
     const pct = download?.progress_percent;
 
-    const filteredModels = models.filter(m => (m.category || 'audio') === selectedTab);
+    const filteredModels = models
+        .filter(m => (m.category || 'audio') === selectedTab)
+        .sort((a, b) => {
+            if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
+            if (a.is_installed !== b.is_installed) return a.is_installed ? -1 : 1;
+            return 0;
+        });
     const audioCount = models.filter(m => (m.category || 'audio') === 'audio').length;
     const imageCount = models.filter(m => m.category === 'image').length;
     const videoCount = models.filter(m => m.category === 'video').length;
@@ -155,6 +171,8 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                     </div>
                     <button
                         onClick={onClose}
+                        aria-label="Close modal"
+                        title="Close"
                         className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
                     >
                         <X size={18} />
@@ -498,8 +516,8 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                             {m.name}
                                                         </span>
                                                         {m.is_active && (
-                                                            <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-500 text-slate-950 shadow-sm">
-                                                                Active {m.category}
+                                                            <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-teal-500 text-slate-950 shadow-sm flex items-center gap-1">
+                                                                ★ Active {m.category}
                                                             </span>
                                                         )}
                                                         {m.is_installed && (
@@ -548,10 +566,12 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
 
                                                     <button
                                                         onClick={() => handleDeleteCustom(m.id)}
-                                                        className="p-1.5 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors"
+                                                        disabled={deletingCustomId === m.id}
+                                                        className="p-1.5 text-rose-500 hover:bg-rose-500/10 rounded-xl transition-colors disabled:opacity-50"
                                                         title="Delete Custom Model"
+                                                        aria-label={`Delete custom model ${m.name}`}
                                                     >
-                                                        <Trash2 size={15} />
+                                                        {deletingCustomId === m.id ? <Loader2 size={15} className="animate-spin" /> : <Trash2 size={15} />}
                                                     </button>
                                                 </div>
                                             </div>
@@ -591,8 +611,8 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                 <div className="flex items-center space-x-2 flex-wrap gap-y-1">
                                                     <h4 className="text-sm font-bold text-slate-900 dark:text-slate-100">{m.name}</h4>
                                                     {m.is_active && (
-                                                        <span className="text-[10px] font-bold px-2 py-0.5 rounded-full bg-teal-500 text-slate-950 shadow-sm">
-                                                            Active Engine
+                                                        <span className="text-[10px] font-bold px-2.5 py-0.5 rounded-full bg-teal-500 text-slate-950 shadow-sm flex items-center gap-1">
+                                                            ★ Active Engine
                                                         </span>
                                                     )}
                                                     {m.is_default && !m.is_active && (

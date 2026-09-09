@@ -13,20 +13,25 @@ import {
     Volume2,
     VolumeX,
     Layers,
-    CheckCircle2,
     Mic2,
     Copy,
     SkipBack,
-    Repeat
+    Repeat,
+    Loader2,
+    Sparkles,
+    Wand2
 } from 'lucide-react';
-import { API_BASE_URL, getStemMeta } from '../../api';
+import { useAudioControls } from '../../context/AudioEngineContext';
+import { API_BASE_URL, api, getStemMeta } from '../../api';
 import type { Job, TimedLine, StemsMap, NoteEvent } from '../../api';
 import { pushHotkeyScope, isTextEntryTarget, hasModifier } from '../../utils/hotkeyScope';
 import { safeJsonParse } from '../../utils/safeJsonParse';
+import { getAudioContext } from '../../utils/audioContext';
 import { ArrangeTimeline } from './ArrangeTimeline';
 import { PianoRoll } from './PianoRoll';
 import { NotationViewer } from './NotationViewer';
 import { MultitrackMixer } from './MultitrackMixer';
+import { MasteringExportModal } from './MasteringExportModal';
 
 export type WorkspaceMode = 'listen' | 'arrange' | 'pianoroll' | 'notation' | 'mix' | 'lyrics';
 
@@ -34,8 +39,8 @@ export interface StemChannel {
     id: string;
     name: string;
     color: string;
-    volume: number; // 0 - 100
-    pan: number; // -50 to +50
+    volume: number; // 0..100
+    pan: number;    // -50..+50
     isMuted: boolean;
     isSolo: boolean;
     audioUrl?: string;
@@ -46,11 +51,20 @@ export interface StemChannel {
 interface SessionWorkspaceProps {
     job: Job;
     onClose?: () => void;
+    isComposerOpen?: boolean;
+    onToggleComposer?: () => void;
 }
 
-export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose }) => {
+export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
+    job,
+    onClose,
+    isComposerOpen,
+    onToggleComposer
+}) => {
+    const { pause: enginePause } = useAudioControls();
     const [mode, setMode] = useState<WorkspaceMode>('listen');
     const [isPlaying, setIsPlaying] = useState(false);
+    const [isBuffering, setIsBuffering] = useState(false);
     const [isLooping, setIsLooping] = useState(false);
     // A-B loop region (seconds). null = unset; loop wraps at loopEnd when both set.
     const [loopStart, setLoopStart] = useState<number | null>(null);
@@ -62,26 +76,6 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     const [masterVolume, setMasterVolume] = useState(0.9);
     const [isMasterMuted, setIsMasterMuted] = useState(false);
     const [isExportOpen, setIsExportOpen] = useState(false);
-    const exportMenuRef = useRef<HTMLDivElement | null>(null);
-
-    // Close the export menu on outside click or Escape.
-    useEffect(() => {
-        if (!isExportOpen) return;
-        const onPointerDown = (e: MouseEvent) => {
-            if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
-                setIsExportOpen(false);
-            }
-        };
-        const onKeyDown = (e: KeyboardEvent) => {
-            if (e.key === 'Escape') setIsExportOpen(false);
-        };
-        document.addEventListener('mousedown', onPointerDown);
-        document.addEventListener('keydown', onKeyDown);
-        return () => {
-            document.removeEventListener('mousedown', onPointerDown);
-            document.removeEventListener('keydown', onKeyDown);
-        };
-    }, [isExportOpen]);
 
     // ── Parsed job payloads — memoized ──────────────────────────────────────
     // These were parsed INLINE on every render; during playback the workspace
@@ -115,6 +109,13 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         'default_source'
     ]);
 
+    const stemVersion = job.updated_at || job.created_at || '';
+    const withVersion = (url: string) => {
+        if (!url) return '';
+        const sep = url.includes('?') ? '&' : '?';
+        return stemVersion ? `${url}${sep}v=${encodeURIComponent(stemVersion)}` : url;
+    };
+
     const realChannels: StemChannel[] = useMemo(() => Object.entries(parsedStems)
         .filter(([k, v]) => !reservedStemKeys.has(k) && typeof v === 'string' && !!v)
         .map(([k, audio]) => {
@@ -127,9 +128,9 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                 pan: 0,
                 isMuted: false,
                 isSolo: false,
-                audioUrl: `${API_BASE_URL}${audio}`
+                audioUrl: withVersion(api.getAudioUrl(audio))
             };
-        }), [parsedStems]);
+        }), [parsedStems, stemVersion]);
 
     const instrumentalParts: Record<string, string> = parsedStems.instrumental_parts || {};
     const instrumentPrograms: Record<string, number> = parsedStems.instrument_programs || {};
@@ -143,28 +144,30 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         'from-rose-500 to-red-500',
         'from-indigo-500 to-blue-600'
     ];
-    const partEntries = Object.entries(instrumentalParts);
     const partChannels: StemChannel[] = useMemo(() => Object.entries(instrumentalParts).map(([name, audio], i) => ({
         id: `part-${name}`,
         name,
         color: PART_COLORS[i % PART_COLORS.length],
-        volume: 85,
+        volume: name.toLowerCase().includes('drum') ? 92 : name.toLowerCase().includes('bass') ? 90 : 88,
         pan: 0,
         isMuted: false,
         isSolo: false,
-        audioUrl: `${API_BASE_URL}${audio}`,
+        audioUrl: withVersion(api.getAudioUrl(audio)),
         midiProgram: instrumentPrograms[name]
-    })), [instrumentalParts, instrumentPrograms]);
+    })), [instrumentalParts, instrumentPrograms, stemVersion]);
 
-    // DEFAULT to dynamic per-instrument parts when present, else neural stems
+    // DEFAULT to real neural stems (vocals, drums, bass, other) when present; fallback to instrument parts
     const defaultSource: 'neural' | 'muscriptor' =
-        partEntries.length > 0 ? 'muscriptor' : 'neural';
+        realChannels.length > 0 ? 'neural' : (partChannels.length > 0 ? 'muscriptor' : 'neural');
 
     const [stemSource, setStemSource] = useState<'neural' | 'muscriptor'>(defaultSource);
     // Active channels are whichever source is currently selected.
     const initialChannels: StemChannel[] =
-        stemSource === 'muscriptor' && partChannels.length > 0 ? partChannels : realChannels;
+        stemSource === 'neural' && realChannels.length > 0
+            ? realChannels
+            : (partChannels.length > 0 ? partChannels : realChannels);
     const [stemChannels, setStemChannels] = useState<StemChannel[]>(initialChannels);
+    const [pianoRollTrackFilter, setPianoRollTrackFilter] = useState<string>('all');
 
     // Mix memory per stem source: toggling between MuScriptor parts and neural
     // stems used to DESTROY the user's fader/mute/solo moves. Now each source
@@ -173,6 +176,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
 
     const switchStemSource = (source: 'neural' | 'muscriptor') => {
         setStemSource(source);
+        setMasterAuditionMode('original');
         // Remember the outgoing source's mix exactly as the user left it.
         mixMemoryRef.current[stemSource] = stemChannels;
         // Stop any in-flight playback and tear down the old source's graph nodes
@@ -192,23 +196,23 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             try { stemAnalyserRefs.current[id].disconnect(); } catch { /* ignore */ }
             delete stemAnalyserRefs.current[id];
         });
-        Object.keys(bufCacheRef.current).forEach(id => {
-            if (id !== '__master__') delete bufCacheRef.current[id];
-        });
         setStemPeaks({});
         setStemDurations({});
         decodeStartedRef.current = null;
         setLoadedStemIds({});
         // Restore the incoming source's remembered mix, or build a fresh one.
         const remembered = mixMemoryRef.current[source];
+        let nextChannels: StemChannel[] = [];
         if (remembered && remembered.length > 0) {
-            setStemChannels(remembered.map(c => ({ ...c })));
+            nextChannels = remembered.map(c => ({ ...c }));
         } else if (source === 'muscriptor' && partChannels.length > 0) {
-            setStemChannels(partChannels.map(c => ({ ...c, isMuted: false, isSolo: false })));
+            nextChannels = partChannels.map(c => ({ ...c, isMuted: false, isSolo: false }));
         } else {
-            setStemChannels(realChannels.map(c => ({ ...c, isMuted: false, isSolo: false })));
+            nextChannels = realChannels.map(c => ({ ...c, isMuted: false, isSolo: false }));
         }
+        setStemChannels(nextChannels);
         setIsPlaying(false);
+        void prepareBuffers(nextChannels);
     };
 
     // ── Per-track session persistence ────────────────────────────────────────
@@ -261,6 +265,22 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
 
     const hasDualSources = partChannels.length > 0 && (parsedStems.vocals || parsedStems.drums || parsedStems.bass || parsedStems.other);
 
+    // Keep stemChannels synchronized when stems finish separating or update on this job
+    useEffect(() => {
+        const freshChannels = stemSource === 'neural' && realChannels.length > 0
+            ? realChannels
+            : (partChannels.length > 0 ? partChannels : realChannels);
+
+        if (freshChannels.length === 0) return;
+
+        setStemChannels(prev => {
+            if (prev.length === freshChannels.length && prev.every((ch, i) => ch.id === freshChannels[i].id)) {
+                return prev;
+            }
+            return freshChannels;
+        });
+    }, [realChannels, partChannels, stemSource]);
+
     // ── Production-grade Web Audio multitrack TRANSPORT ─────────────────────
     // Unlike mixed <audio> elements (each with its own independent clock, which
     // drift and need glitch-prone seeks to resync), every stem and the master are
@@ -271,9 +291,10 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     // all. Mixing is done on the audio thread via gain/panner nodes (no DOM
     // writes → no clicks). Reading `currentTime` of the decode/scheduler is O(1).
     const [masteredPath, setMasteredPath] = useState<string | undefined>(job.mastered_path);
-    const [masterAuditionMode, setMasterAuditionMode] = useState<'original' | 'mastered'>(
-        job.mastered_path ? 'mastered' : 'original'
-    );
+    // Multitrack DAW workspace ALWAYS defaults to 'original' (A: Mix) so stems,
+    // mute, solo and faders are active. 'mastered' (B: Master) is ONLY for explicit A/B reference comparison.
+    const [masterAuditionMode, setMasterAuditionMode] = useState<'original' | 'mastered'>('original');
+    const [isSeparating, setIsSeparating] = useState(false);
     const audioCtxRef = useRef<AudioContext | null>(null);
     const masterGainRef = useRef<GainNode | null>(null);        // global fader (master volume + mute)
     const masterMixGainRef = useRef<GainNode | null>(null);     // master-mix channel
@@ -286,6 +307,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     const masterAnalyserRef = useRef<AnalyserNode | null>(null);
     const bufCacheRef = useRef<Record<string, AudioBuffer>>({}); // decoded buffers by id/url
     const activeSourcesRef = useRef<Set<AudioBufferSourceNode>>(new Set());
+    const htmlAudioRef = useRef<HTMLAudioElement | null>(null);
     const isPlayingRef = useRef(false);
     const isLoopingRef = useRef(false);
     // Keep the scheduler-facing mirror in sync with the toggle state.
@@ -377,33 +399,73 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         return -1;
     })();
 
+    const resetAudioNodes = () => {
+        Object.keys(stemGainRefs.current).forEach(id => {
+            try { stemGainRefs.current[id].disconnect(); } catch { /* ignore */ }
+        });
+        Object.keys(stemPanRefs.current).forEach(id => {
+            try { stemPanRefs.current[id].disconnect(); } catch { /* ignore */ }
+        });
+        Object.keys(stemAnalyserRefs.current).forEach(id => {
+            try { stemAnalyserRefs.current[id].disconnect(); } catch { /* ignore */ }
+        });
+        try { masterGainRef.current?.disconnect(); } catch { /* ignore */ }
+        try { masterMixGainRef.current?.disconnect(); } catch { /* ignore */ }
+        try { masterOrigGainRef.current?.disconnect(); } catch { /* ignore */ }
+        try { masterPostGainRef.current?.disconnect(); } catch { /* ignore */ }
+        try { masterAnalyserRef.current?.disconnect(); } catch { /* ignore */ }
+
+        masterGainRef.current = null;
+        masterMixGainRef.current = null;
+        masterOrigGainRef.current = null;
+        masterPostGainRef.current = null;
+        masterAnalyserRef.current = null;
+        stemGainRefs.current = {};
+        stemPanRefs.current = {};
+        stemAnalyserRefs.current = {};
+    };
+
     const ensureAudioContext = (): AudioContext | null => {
-        if (!audioCtxRef.current) {
-            const Ctor: typeof AudioContext =
-                window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
-            if (!Ctor) return null;
-            audioCtxRef.current = new Ctor();
+        const ctx = getAudioContext();
+        if (!ctx) return null;
+        if (ctx.state === 'suspended') {
+            void ctx.resume().catch(() => {});
+        }
+        if (audioCtxRef.current !== ctx) {
+            resetAudioNodes();
+            audioCtxRef.current = ctx;
         }
         buildGraph();
-        return audioCtxRef.current;
+        return ctx;
     };
 
     // Build (once) the routing graph: per-channel Gain→Panner into a master gain.
     const buildGraph = () => {
         const ctx = audioCtxRef.current;
-        if (!ctx) return;
+        if (!ctx || ctx.state === 'closed') return;
+
+        // Invalidate if any node is from another context
+        if (
+            (masterGainRef.current && masterGainRef.current.context !== ctx) ||
+            (masterMixGainRef.current && masterMixGainRef.current.context !== ctx) ||
+            (masterOrigGainRef.current && masterOrigGainRef.current.context !== ctx) ||
+            (masterPostGainRef.current && masterPostGainRef.current.context !== ctx) ||
+            (masterAnalyserRef.current && masterAnalyserRef.current.context !== ctx)
+        ) {
+            resetAudioNodes();
+        }
+
         if (!masterGainRef.current) {
             const master = ctx.createGain();
             master.gain.value = 1;
             master.connect(ctx.destination);
-            // Parallel tap for the mixer's real master meter (no routing impact).
-            if (!masterAnalyserRef.current) {
-                const analyser = ctx.createAnalyser();
-                analyser.fftSize = 512;
-                master.connect(analyser);
-                masterAnalyserRef.current = analyser;
-            }
             masterGainRef.current = master;
+        }
+        if (!masterAnalyserRef.current) {
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 512;
+            masterGainRef.current.connect(analyser);
+            masterAnalyserRef.current = analyser;
         }
         if (!masterMixGainRef.current) {
             const g = ctx.createGain();
@@ -413,7 +475,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         }
         if (!masterOrigGainRef.current) {
             const g = ctx.createGain();
-            g.gain.value = 1;
+            g.gain.value = stemChannels.length === 0 ? 1 : 0;
             g.connect(masterMixGainRef.current);
             masterOrigGainRef.current = g;
         }
@@ -425,45 +487,106 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         }
     };
 
+    // Ensure a per-stem routing (gain + panner) exists for the given channel.
+    const ensureStemNodes = (id: string, initialGain?: number): GainNode | null => {
+        const ctx = audioCtxRef.current || ensureAudioContext();
+        if (!ctx || ctx.state === 'closed') return null;
+        if (!masterGainRef.current || masterGainRef.current.context !== ctx) {
+            buildGraph();
+        }
+        if (!masterGainRef.current || masterGainRef.current.context !== ctx) return null;
+
+        const existingGain = stemGainRefs.current[id];
+        const existingPan = stemPanRefs.current[id];
+        if (!existingGain || existingGain.context !== ctx || !existingPan || existingPan.context !== ctx) {
+            try { existingGain?.disconnect(); } catch { /* ignore */ }
+            try { existingPan?.disconnect(); } catch { /* ignore */ }
+            const gain = ctx.createGain();
+            if (typeof initialGain === 'number') {
+                gain.gain.value = Math.max(0, Math.min(1, initialGain));
+            }
+            const pan = ctx.createStereoPanner();
+            gain.connect(pan);
+            pan.connect(masterGainRef.current);
+            stemGainRefs.current[id] = gain;
+            stemPanRefs.current[id] = pan;
+        }
+
+        const existingAnalyser = stemAnalyserRefs.current[id];
+        if (!existingAnalyser || existingAnalyser.context !== ctx) {
+            try { existingAnalyser?.disconnect(); } catch { /* ignore */ }
+            const analyser = ctx.createAnalyser();
+            analyser.fftSize = 512;
+            stemGainRefs.current[id].connect(analyser);
+            stemAnalyserRefs.current[id] = analyser;
+        }
+
+        return stemGainRefs.current[id];
+    };
+
     // Compute + apply the full mix state to all nodes (smooth ramps → no zipper).
     const applyMixParams = () => {
         const ctx = audioCtxRef.current;
-        if (!ctx || !masterGainRef.current) return;
+        if (!ctx || ctx.state === 'closed' || !masterGainRef.current) return;
+        if (masterGainRef.current.context !== ctx) {
+            buildGraph();
+        }
+        if (!masterGainRef.current || masterGainRef.current.context !== ctx) return;
 
         const hasMastered = Boolean(masteredPath || job.mastered_path);
         const isMasteredAudition = hasMastered && masterAuditionMode === 'mastered';
 
         const hasSolo = stemChannels.some(s => s.isSolo);
+        const isPianoRollFiltered = mode === 'pianoroll' && pianoRollTrackFilter !== 'all';
+
+        // Standard DAW audio taper fader law: logarithmic response pow(vol / 100, 1.8)
+        // Ensures mid-fader positions (70%-90%) maintain strong audible presence without dropping off
+        const toAudioTaper = (vol: number) => Math.pow(Math.max(0, Math.min(100, vol)) / 100, 1.8);
+
         stemChannels.forEach(stem => {
-            const gain = stemGainRefs.current[stem.id];
-            const pan = stemPanRefs.current[stem.id];
-            if (!gain) return;
             let perStem = 0;
             if (isMasteredAudition) {
                 // When auditioning reference master (B), multitrack stems are silenced
                 perStem = 0;
+            } else if (isPianoRollFiltered) {
+                // In Piano Roll mode, when the user isolates a specific instrument,
+                // solo that stem and silence all other stems so piano never bleeds through!
+                const filterNorm = pianoRollTrackFilter.toLowerCase().replace(/[^a-z0-9]/g, '');
+                const stemNorm = (stem.name || stem.id).toLowerCase().replace(/[^a-z0-9]/g, '');
+                const isMatch = stemNorm.includes(filterNorm) || filterNorm.includes(stemNorm) ||
+                    (filterNorm.includes('vocal') && stemNorm.includes('voice')) ||
+                    (filterNorm.includes('voice') && stemNorm.includes('vocal')) ||
+                    (filterNorm.includes('drum') && stemNorm.includes('drum')) ||
+                    (filterNorm.includes('bass') && stemNorm.includes('bass'));
+                perStem = isMatch && !stem.isMuted ? toAudioTaper(stem.volume) : 0;
             } else if (hasSolo) {
-                perStem = stem.isSolo && !stem.isMuted ? stem.volume / 100 : 0;
+                perStem = stem.isSolo && !stem.isMuted ? toAudioTaper(stem.volume) : 0;
             } else {
-                perStem = !stem.isMuted ? stem.volume / 100 : 0;
+                perStem = !stem.isMuted ? toAudioTaper(stem.volume) : 0;
             }
+
+            const gain = ensureStemNodes(stem.id, perStem);
+            const pan = stemPanRefs.current[stem.id];
+            if (!gain || gain.context !== ctx) return;
+
             gain.gain.setTargetAtTime(Math.max(0, Math.min(1, perStem)), ctx.currentTime, 0.015);
-            if (pan) pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, stem.pan / 50)), ctx.currentTime, 0.015);
+            if (pan && pan.context === ctx) pan.pan.setTargetAtTime(Math.max(-1, Math.min(1, stem.pan / 50)), ctx.currentTime, 0.015);
         });
 
-        // Global fader + master-mix fallback.
+        // Global master fader
         masterGainRef.current.gain.setTargetAtTime(
             isMasterMuted ? 0 : Math.max(0, Math.min(1, masterVolume)), ctx.currentTime, 0.015
         );
-        if (masterMixGainRef.current) {
-            masterMixGainRef.current.gain.setTargetAtTime(hasLoadedStems && !isMasteredAudition ? 0 : 1, ctx.currentTime, 0.015);
+        // Master original audio ONLY plays if this session has NO multitrack stems at all!
+        if (masterMixGainRef.current && masterMixGainRef.current.context === ctx) {
+            const mixLevel = (stemChannels.length === 0 && !isMasteredAudition) ? 1 : 0;
+            masterMixGainRef.current.gain.setTargetAtTime(mixLevel, ctx.currentTime, 0.015);
         }
-        if (masterOrigGainRef.current) {
-            // Original master plays if no stems are loaded AND we are in original audition mode
-            const origLevel = (!isMasteredAudition && !hasLoadedStems) ? 1 : 0;
+        if (masterOrigGainRef.current && masterOrigGainRef.current.context === ctx) {
+            const origLevel = (stemChannels.length === 0 && !isMasteredAudition) ? 1 : 0;
             masterOrigGainRef.current.gain.setTargetAtTime(origLevel, ctx.currentTime, 0.015);
         }
-        if (masterPostGainRef.current) {
+        if (masterPostGainRef.current && masterPostGainRef.current.context === ctx) {
             // Mastered track plays when in 'mastered' audition mode
             const postLevel = isMasteredAudition ? 1 : 0;
             masterPostGainRef.current.gain.setTargetAtTime(postLevel, ctx.currentTime, 0.015);
@@ -474,86 +597,89 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         applyMixParams();
     }, [masterAuditionMode]);
 
-    // Ensure a per-stem routing (gain + panner) exists for the given channel.
-    const ensureStemNodes = (id: string): GainNode | null => {
-        const ctx = audioCtxRef.current;
-        if (!ctx) { ensureAudioContext(); }
-        if (!audioCtxRef.current || !masterGainRef.current) return null;
-        if (!stemGainRefs.current[id]) {
-            const gain = audioCtxRef.current.createGain();
-            const pan = audioCtxRef.current.createStereoPanner();
-            gain.connect(pan);
-            pan.connect(masterGainRef.current);
-            stemGainRefs.current[id] = gain;
-            stemPanRefs.current[id] = pan;
-        }
-        // Parallel post-gain tap so the mixer meter shows the REAL audible
-        // level (mute/solo/volume/pan all included).
-        if (!stemAnalyserRefs.current[id]) {
-            const analyser = audioCtxRef.current.createAnalyser();
-            analyser.fftSize = 512;
-            stemGainRefs.current[id].connect(analyser);
-            stemAnalyserRefs.current[id] = analyser;
-        }
-        return stemGainRefs.current[id];
-    };
-
     // ── Decoding ────────────────────────────────────────────────────────────
     const getMasterUrl = (): string | null => {
         const effPath = (masterAuditionMode === 'mastered' && (masteredPath || job.mastered_path))
             ? (masteredPath || job.mastered_path)
             : job.audio_path;
         if (!effPath) return null;
-        return effPath.startsWith('http') ? effPath : `${API_BASE_URL}${effPath}`;
+        return api.getAudioUrl(effPath);
     };
 
-    const fetchAudio = (url: string): Promise<ArrayBuffer> =>
-        fetch(url).then(r => { if (!r.ok) throw new Error(`HTTP ${r.status}`); return r.arrayBuffer(); });
+    const fetchAudio = async (url: string): Promise<ArrayBuffer> => {
+        const token = localStorage.getItem('milimo_auth_token');
+        const headers: Record<string, string> = {};
+        if (token) headers['Authorization'] = `Bearer ${token}`;
+        // Normalize localhost to 127.0.0.1 to eliminate macOS IPv6 ::1 connection refused
+        const targetUrl = url.replace('http://localhost:8000', 'http://127.0.0.1:8000');
+        const r = await fetch(targetUrl, { headers });
+        if (!r.ok) throw new Error(`HTTP ${r.status}`);
+        return r.arrayBuffer();
+    };
 
     // Decode one track to an AudioBuffer and cache it. Resolves null on failure.
     const decodeToBuffer = async (key: string, url: string): Promise<AudioBuffer | null> => {
         const ctx = audioCtxRef.current || ensureAudioContext();
-        if (!ctx) return null;
+        if (!ctx || ctx.state === 'closed') return null;
         if (bufCacheRef.current[key]) return bufCacheRef.current[key];
         try {
             const data = await fetchAudio(url);
-            const buf = await ctx.decodeAudioData(data);
+            const activeCtx = audioCtxRef.current || ensureAudioContext();
+            if (!activeCtx || activeCtx.state === 'closed') return null;
+            const buf = await new Promise<AudioBuffer>((resolve, reject) => {
+                const res = activeCtx.decodeAudioData(data, resolve, reject);
+                if (res && typeof (res as any).then === 'function') {
+                    (res as any).then(resolve).catch(reject);
+                }
+            });
             bufCacheRef.current[key] = buf;
             return buf;
         } catch (e) {
-            console.warn('Failed to decode audio:', key, e);
+            console.warn('Failed to decode audio buffer:', key, e);
             return null;
         }
     };
 
     // Pre-decode the master + all active stems so first play is instant. Runs once
     // (guarded) and records which ids succeeded / which have URLs to prepare.
-    const prepareBuffers = async () => {
+    const prepareBuffers = async (targetChannels?: StemChannel[]) => {
         const ctx = audioCtxRef.current || ensureAudioContext();
-        if (!ctx) return;
+        if (!ctx || ctx.state === 'closed') return;
+        const channels = targetChannels || stemChannels;
         const jobs: { id: string; url: string }[] = [];
         if (job.audio_path) {
-            const url = job.audio_path.startsWith('http') ? job.audio_path : `${API_BASE_URL}${job.audio_path}`;
+            const url = api.getAudioUrl(job.audio_path);
             jobs.push({ id: '__master__', url });
-            jobs.push({ id: '__master_orig__', url });
         }
         const effMastered = masteredPath || job.mastered_path;
         if (effMastered) {
-            const url = effMastered.startsWith('http') ? effMastered : `${API_BASE_URL}${effMastered}`;
+            const url = api.getAudioUrl(effMastered);
             jobs.push({ id: '__master_post__', url });
         }
-        stemChannels.forEach(stem => {
+        channels.forEach(stem => {
             if (stem.audioUrl) {
                 jobs.push({ id: stem.id, url: stem.audioUrl });
                 preparedIdsRef.current.add(stem.id);
             }
         });
         const results = await Promise.all(jobs.map(j => decodeToBuffer(j.id, j.url).then(b => ({ id: j.id, b }))));
+        // Share master buffer with __master_orig__ without duplicate network request
+        if (bufCacheRef.current['__master__'] && !bufCacheRef.current['__master_orig__']) {
+            bufCacheRef.current['__master_orig__'] = bufCacheRef.current['__master__'];
+        }
         // Track which stems loaded so the UI shows multitrack vs master-fallback.
         const loaded: Record<string, boolean> = {};
         results.forEach(r => { if (r.b) loaded[r.id] = true; });
         const masterLen = bufCacheRef.current['__master__']?.duration;
-        if (masterLen) setDuration(masterLen);
+        const validStemLens = results.map(r => r.b?.duration || 0).filter(d => d > 0);
+        const minStemLen = validStemLens.length > 0 ? Math.min(...validStemLens) : 0;
+        const maxStemLen = validStemLens.length > 0 ? Math.max(...validStemLens) : 0;
+        // Master track length is the canonical song duration; stems never extend past it
+        const finalDur = masterLen && masterLen > 0 ? masterLen : (minStemLen > 0 ? minStemLen : maxStemLen);
+        if (finalDur > 0) {
+            setDuration(finalDur);
+            durationRef.current = finalDur;
+        }
         setLoadedStemIds(() => {
             // Only clear ids that are no longer prepared; keep failure markers.
             const next: Record<string, boolean> = {};
@@ -567,8 +693,11 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     // Stable identity (reads refs only) so the piano roll can poll it per rAF
     // and schedule synth notes ON the audio clock — never chasing UI ticks.
     const getPosition = useCallback((): number => {
+        if (htmlAudioRef.current && !htmlAudioRef.current.paused) {
+            return htmlAudioRef.current.currentTime;
+        }
         const ctx = audioCtxRef.current;
-        if (!ctx || !isPlayingRef.current) return currentTimeRef.current;
+        if (!ctx || ctx.state === 'closed' || !isPlayingRef.current) return currentTimeRef.current;
         const elapsed = ctx.currentTime - playStartClockRef.current;
         return Math.max(0, playStartPosRef.current + elapsed);
     }, []);
@@ -585,49 +714,96 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             try { src.disconnect(); } catch { /* ignore */ }
         });
         activeSourcesRef.current.clear();
+        if (htmlAudioRef.current) {
+            try { htmlAudioRef.current.pause(); } catch { /* ignore */ }
+        }
     };
 
     // Schedule the master + every loaded stem at the current transport position.
     // ALL sources are started with the same (when, offset), so they are sample-locked.
     const scheduleAll = async () => {
         const ctx = audioCtxRef.current || ensureAudioContext();
-        if (!ctx || !masterGainRef.current) return;
+        if (!ctx || ctx.state === 'closed') return;
+        buildGraph();
+        if (!masterGainRef.current || masterGainRef.current.context !== ctx) return;
         stopSources();
         const startAt = ctx.currentTime;
         const pos = Math.max(0, Math.min(durationRef.current, currentTimeRef.current));
+        let hasScheduledSource = false;
 
-        const masterOrigBuf = bufCacheRef.current['__master_orig__'] || bufCacheRef.current['__master__'];
-        if (masterOrigBuf && pos < masterOrigBuf.duration) {
-            const src = ctx.createBufferSource();
-            src.buffer = masterOrigBuf;
-            src.connect(masterOrigGainRef.current || masterMixGainRef.current!);
-            const offset = Math.min(Math.max(pos, 0), Math.max(0, masterOrigBuf.duration - 0.02));
-            src.start(startAt, offset, Math.max(0, masterOrigBuf.duration - offset));
-            activeSourcesRef.current.add(src);
+        const hasMastered = Boolean(masteredPath || job.mastered_path);
+        const isMasteredAudition = hasMastered && masterAuditionMode === 'mastered';
+
+        if (isMasteredAudition) {
+            // 1. Audition Mode B: Matchering reference master
+            const masterPostBuf = bufCacheRef.current['__master_post__'];
+            if (masterPostBuf && pos < masterPostBuf.duration) {
+                const target = (masterPostGainRef.current && masterPostGainRef.current.context === ctx)
+                    ? masterPostGainRef.current
+                    : masterGainRef.current;
+                if (target && target.context === ctx) {
+                    const src = ctx.createBufferSource();
+                    src.buffer = masterPostBuf;
+                    src.connect(target);
+                    const offset = Math.min(Math.max(pos, 0), Math.max(0, masterPostBuf.duration - 0.02));
+                    src.start(startAt, offset, Math.max(0, masterPostBuf.duration - offset));
+                    activeSourcesRef.current.add(src);
+                    hasScheduledSource = true;
+                }
+            }
+        } else if (stemChannels.length > 0) {
+            // 2. Multitrack Mode: Schedule ONLY the multitrack stem channels!
+            // CRITICAL: masterOrigBuf is NEVER scheduled here. In a multitrack DAW,
+            // stems route through their own gain/pan nodes so mute, solo, and faders work.
+            const hasSolo = stemChannels.some(s => s.isSolo);
+            stemChannels.forEach(stem => {
+                const buf = bufCacheRef.current[stem.id];
+                if (!buf || pos >= buf.duration) return;
+                const perStem = hasSolo
+                    ? (stem.isSolo && !stem.isMuted ? stem.volume / 100 : 0)
+                    : (!stem.isMuted ? stem.volume / 100 : 0);
+                const gain = ensureStemNodes(stem.id, perStem);
+                if (!gain || gain.context !== ctx) return;
+                const src = ctx.createBufferSource();
+                src.buffer = buf;
+                src.connect(gain);
+                const offset = Math.min(Math.max(pos, 0), Math.max(0, buf.duration - 0.02));
+                src.start(startAt, offset, Math.max(0, buf.duration - offset));
+                activeSourcesRef.current.add(src);
+                hasScheduledSource = true;
+            });
+        } else {
+            // 3. Fallback Mode: Track has NO separated stems — schedule the single stereo master track
+            const masterOrigBuf = bufCacheRef.current['__master_orig__'] || bufCacheRef.current['__master__'];
+            if (masterOrigBuf && pos < masterOrigBuf.duration) {
+                const target = (masterOrigGainRef.current && masterOrigGainRef.current.context === ctx)
+                    ? masterOrigGainRef.current
+                    : ((masterMixGainRef.current && masterMixGainRef.current.context === ctx) ? masterMixGainRef.current : masterGainRef.current);
+                if (target && target.context === ctx) {
+                    const src = ctx.createBufferSource();
+                    src.buffer = masterOrigBuf;
+                    src.connect(target);
+                    const offset = Math.min(Math.max(pos, 0), Math.max(0, masterOrigBuf.duration - 0.02));
+                    src.start(startAt, offset, Math.max(0, masterOrigBuf.duration - offset));
+                    activeSourcesRef.current.add(src);
+                    hasScheduledSource = true;
+                }
+            }
         }
 
-        const masterPostBuf = bufCacheRef.current['__master_post__'];
-        if (masterPostBuf && pos < masterPostBuf.duration) {
-            const src = ctx.createBufferSource();
-            src.buffer = masterPostBuf;
-            src.connect(masterPostGainRef.current || masterGainRef.current!);
-            const offset = Math.min(Math.max(pos, 0), Math.max(0, masterPostBuf.duration - 0.02));
-            src.start(startAt, offset, Math.max(0, masterPostBuf.duration - offset));
-            activeSourcesRef.current.add(src);
+        // Resilient Fallback: If no Web Audio buffers were loaded/scheduled, stream master via HTMLAudioElement
+        // ONLY if track has no stems (never during multitrack playback)
+        const mUrl = getMasterUrl();
+        if (!hasScheduledSource && mUrl && stemChannels.length === 0) {
+            if (!htmlAudioRef.current) {
+                htmlAudioRef.current = new Audio();
+                htmlAudioRef.current.crossOrigin = 'anonymous';
+            }
+            htmlAudioRef.current.src = mUrl;
+            htmlAudioRef.current.currentTime = pos;
+            htmlAudioRef.current.volume = isMasterMuted ? 0 : Math.max(0, Math.min(1, masterVolume));
+            htmlAudioRef.current.play().catch(e => console.warn('HTMLAudio fallback play error:', e));
         }
-
-        stemChannels.forEach(stem => {
-            const buf = bufCacheRef.current[stem.id];
-            if (!buf || pos >= buf.duration) return;
-            const gain = ensureStemNodes(stem.id);
-            if (!gain) return;
-            const src = ctx.createBufferSource();
-            src.buffer = buf;
-            src.connect(gain);
-            const offset = Math.min(Math.max(pos, 0), Math.max(0, buf.duration - 0.02));
-            src.start(startAt, offset, Math.max(0, buf.duration - offset));
-            activeSourcesRef.current.add(src);
-        });
 
         playStartClockRef.current = startAt;
         playStartPosRef.current = pos;
@@ -704,7 +880,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     // Push mix state (vol/mute/solo/pan/master) into the graph nodes.
     useEffect(() => {
         applyMixParams();
-    }, [stemChannels, masterVolume, isMasterMuted, hasLoadedStems]); // eslint-disable-line react-hooks/exhaustive-deps
+    }, [stemChannels, masterVolume, isMasterMuted, hasLoadedStems, mode, pianoRollTrackFilter]); // eslint-disable-line react-hooks/exhaustive-deps
 
     // Keep the playback-scheduler's duration mirror in sync with the UI duration
     // (which becomes exact once the master buffer decodes).
@@ -713,15 +889,17 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
     }, [duration]);
 
     // Build the graph and pre-decode the master + active stems so first play is
-    // instant. Guard is per-source: session restore may change stemSource after
-    // mount, and the restored source MUST be decoded too.
+    // instant. Guard is per-source & channels so newly separated or switched stems
+    // decode immediately.
     useEffect(() => {
         ensureAudioContext();
-        if (decodeStartedRef.current === stemSource) return;
-        decodeStartedRef.current = stemSource;
-        prepareBuffers();
+        const channelKey = stemChannels.map(c => c.id).sort().join(',');
+        const loadKey = `${job.id}_${stemSource}_${channelKey}`;
+        if (decodeStartedRef.current === loadKey) return;
+        decodeStartedRef.current = loadKey;
+        void prepareBuffers(stemChannels);
         // eslint-disable-next-line react-hooks/exhaustive-deps
-    }, [stemSource]);
+    }, [job.id, stemSource, stemChannels]);
 
     // Close the shared AudioContext and tear down all nodes + sources on unmount
     // so nothing leaks if the workspace is closed.
@@ -733,25 +911,14 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             if (rafRef.current) cancelAnimationFrame(rafRef.current);
             rafRef.current = 0;
             stopSources();
-            Object.keys(stemGainRefs.current).forEach(id => {
-                try { stemGainRefs.current[id].disconnect(); } catch { /* ignore */ }
-            });
-            Object.keys(stemPanRefs.current).forEach(id => {
-                try { stemPanRefs.current[id].disconnect(); } catch { /* ignore */ }
-            });
-            Object.keys(stemAnalyserRefs.current).forEach(id => {
-                try { stemAnalyserRefs.current[id].disconnect(); } catch { /* ignore */ }
-            });
-            if (audioCtxRef.current) {
-                audioCtxRef.current.close().catch(console.error);
-                audioCtxRef.current = null;
-                masterGainRef.current = null;
-                masterMixGainRef.current = null;
-                masterAnalyserRef.current = null;
+            resetAudioNodes();
+            // Shared singleton AudioContext: DO NOT call .close()!
+            // Node disconnects in resetAudioNodes() already cleaned up the graph.
+            audioCtxRef.current = null;
+            if (htmlAudioRef.current) {
+                try { htmlAudioRef.current.src = ''; } catch { /* ignore */ }
+                htmlAudioRef.current = null;
             }
-            stemGainRefs.current = {};
-            stemPanRefs.current = {};
-            stemAnalyserRefs.current = {};
             decodeStartedRef.current = null;
             preparedIdsRef.current = new Set();
         };
@@ -769,7 +936,10 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         const ctx = audioCtxRef.current || ensureAudioContext();
         if (!ctx) return;
         
-        // 1. Ensure AudioContext is actively running (browser autoplay / resume policy)
+        // 1. Pause global engine to enforce single-stream playback (never two engines playing)
+        try { enginePause(); } catch { /* ignore */ }
+
+        // 2. Ensure AudioContext is actively running (browser autoplay / resume policy)
         if (ctx.state === 'suspended') {
             try {
                 await ctx.resume();
@@ -778,46 +948,69 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             }
         }
 
-        // 2. Auto-reset to 0 if starting playback at or past track duration
+        // 3. Auto-reset to 0 if starting playback at or past track duration
         if (currentTimeRef.current >= durationRef.current - 0.05) {
             currentTimeRef.current = 0;
             setCurrentTime(0);
         }
 
-        // 3. Decode any buffer that isn't cached yet
-        try {
-            const jobs: { id: string; url: string }[] = [];
-            const mUrl = getMasterUrl();
-            if (mUrl && !bufCacheRef.current['__master__']) jobs.push({ id: '__master__', url: mUrl });
-            stemChannels.forEach(stem => {
-                if (stem.audioUrl && !bufCacheRef.current[stem.id]) {
-                    jobs.push({ id: stem.id, url: stem.audioUrl });
-                    preparedIdsRef.current.add(stem.id);
-                }
-            });
-            if (jobs.length) {
-                const results = await Promise.all(jobs.map(j => decodeToBuffer(j.id, j.url).then(b => ({ id: j.id, b }))));
-                const loaded: Record<string, boolean> = {};
-                results.forEach(r => { if (r.b) loaded[r.id] = true; });
-                setLoadedStemIds(() => {
-                    const next: Record<string, boolean> = {};
-                    preparedIdsRef.current.forEach(id => { next[id] = loaded[id] || !!bufCacheRef.current[id]; });
-                    return next;
-                });
-                const m = bufCacheRef.current['__master__'];
-                if (m) setDuration(m.duration);
-                refreshStemVisuals();
-            }
+        // 4. Ensure required buffers are decoded before starting playback
+        const isMasteredAudition = Boolean(masteredPath || job.mastered_path) && masterAuditionMode === 'mastered';
 
-            // 4. Schedule sources on hardware master clock
-            await scheduleAll();
-            isPlayingRef.current = true;
-            setIsPlaying(true);
-            lastUiTickRef.current = 0;
-            startPlayheadLoop();
-        } catch (err) {
-            console.error('Playback initialization error:', err);
+        if (isMasteredAudition) {
+            const effMastered = masteredPath || job.mastered_path;
+            if (effMastered && !bufCacheRef.current['__master_post__']) {
+                setIsBuffering(true);
+                try {
+                    await decodeToBuffer('__master_post__', api.getAudioUrl(effMastered));
+                } finally {
+                    setIsBuffering(false);
+                }
+            }
+        } else if (stemChannels.length > 0) {
+            // Multitrack mode: ensure active stem buffers are decoded
+            const uncached = stemChannels.filter(s => s.audioUrl && !bufCacheRef.current[s.id]);
+            if (uncached.length > 0) {
+                setIsBuffering(true);
+                try {
+                    await Promise.all(uncached.map(async stem => {
+                        preparedIdsRef.current.add(stem.id);
+                        const buf = await decodeToBuffer(stem.id, stem.audioUrl!);
+                        if (buf) {
+                            setLoadedStemIds(prev => ({ ...prev, [stem.id]: true }));
+                        }
+                    }));
+                    refreshStemVisuals();
+                } catch (e) {
+                    console.error('Stem buffer decode error:', e);
+                } finally {
+                    setIsBuffering(false);
+                }
+            }
+        } else {
+            // Fallback mode: no stems exist for this track — decode master
+            const mUrl = getMasterUrl();
+            if (mUrl && !bufCacheRef.current['__master__']) {
+                setIsBuffering(true);
+                try {
+                    const masterBuf = await decodeToBuffer('__master__', mUrl);
+                    if (masterBuf) {
+                        bufCacheRef.current['__master_orig__'] = masterBuf;
+                        setDuration(masterBuf.duration);
+                        durationRef.current = masterBuf.duration;
+                    }
+                } finally {
+                    setIsBuffering(false);
+                }
+            }
         }
+
+        // 5. Start multitrack playback with all active stem buffers sample-locked
+        await scheduleAll();
+        isPlayingRef.current = true;
+        setIsPlaying(true);
+        lastUiTickRef.current = 0;
+        startPlayheadLoop();
     };
 
     const pauseAll = () => {
@@ -825,6 +1018,9 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         currentTimeRef.current = finalPos;
         setCurrentTime(finalPos);
         stopSources();
+        if (htmlAudioRef.current) {
+            try { htmlAudioRef.current.pause(); } catch { /* ignore */ }
+        }
         isPlayingRef.current = false;
         setIsPlaying(false);
     };
@@ -839,6 +1035,9 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         const clamped = Math.max(0, Math.min(durationRef.current || duration, time));
         currentTimeRef.current = clamped;
         setCurrentTime(clamped);
+        if (htmlAudioRef.current) {
+            try { htmlAudioRef.current.currentTime = clamped; } catch { /* ignore */ }
+        }
         if (isPlayingRef.current) {
             const now = performance.now();
             if (now - lastScheduleAtRef.current > 200) {
@@ -918,24 +1117,84 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
         });
     }, []);
 
-    const handleChannelVolumeChange = (id: string, volume: number) => {
+    const handleChannelVolumeChange = useCallback((id: string, volume: number) => {
         setStemChannels(prev => prev.map(c => c.id === id ? { ...c, volume } : c));
-    };
+    }, []);
 
-    const handleChannelPanChange = (id: string, pan: number) => {
+    const handleChannelPanChange = useCallback((id: string, pan: number) => {
         setStemChannels(prev => prev.map(c => c.id === id ? { ...c, pan } : c));
-    };
+    }, []);
 
-    const handleChannelToggleMute = (id: string) => {
+    const handleChannelToggleMute = useCallback((id: string) => {
         setStemChannels(prev => prev.map(c => c.id === id ? { ...c, isMuted: !c.isMuted } : c));
-    };
+    }, []);
 
-    const handleChannelToggleSolo = (id: string) => {
+    const handleChannelToggleSolo = useCallback((id: string) => {
         setStemChannels(prev => prev.map(c => c.id === id ? { ...c, isSolo: !c.isSolo } : c));
+    }, []);
+
+    const handleSetLoopStart = (time: number) => {
+        setLoopStart(time);
+        if (loopEnd !== null && time >= loopEnd) {
+            setLoopEnd(Math.min(duration, time + barDuration));
+        }
+        setIsLooping(true);
     };
 
-    const handleExport = (format: string) => {
-        window.open(`${API_BASE_URL}/transcribe/export/${job.id}/${format}`, '_blank');
+    const handleSetLoopEnd = (time: number) => {
+        if (loopStart !== null && time <= loopStart) {
+            setLoopStart(Math.max(0, time - barDuration));
+        }
+        setLoopEnd(time);
+        setIsLooping(true);
+    };
+
+    const handleMasteringComplete = async (newPath: string) => {
+        setMasteredPath(newPath);
+        setMasterAuditionMode('mastered');
+        const url = api.getAudioUrl(newPath);
+        await decodeToBuffer('__master_post__', url);
+        if (isPlayingRef.current) {
+            scheduleAll();
+        } else {
+            applyMixParams();
+        }
+    };
+
+    const handleSeparateStems = async () => {
+        if (!job.id || isSeparating) return;
+        setIsSeparating(true);
+        try {
+            const res = await api.separateStems(job.id);
+            if (res?.job?.stems_json) {
+                const nextParsed = safeJsonParse(res.job.stems_json, {} as StemsMap, 'stems_json');
+                const nextReal: StemChannel[] = Object.entries(nextParsed)
+                    .filter(([k, v]) => !reservedStemKeys.has(k) && typeof v === 'string' && !!v)
+                    .map(([k, audio]) => {
+                        const meta = getStemMeta(k);
+                        return {
+                            id: k,
+                            name: `${meta.icon} ${meta.label}`,
+                            color: meta.gradient,
+                            volume: k === 'drums' ? 90 : k === 'bass' ? 88 : 85,
+                            pan: 0,
+                            isMuted: false,
+                            isSolo: false,
+                            audioUrl: api.getAudioUrl(audio as string)
+                        };
+                    });
+                if (nextReal.length > 0) {
+                    setStemSource('neural');
+                    setStemChannels(nextReal);
+                    mixMemoryRef.current['neural'] = nextReal;
+                    decodeStartedRef.current = null;
+                }
+            }
+        } catch (e) {
+            console.error('Stem separation failed:', e);
+        } finally {
+            setIsSeparating(false);
+        }
     };
 
     const formatTime = (seconds: number = 0) => {
@@ -951,7 +1210,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                 scheduled against one AudioContext.currentTime master clock. */}
 
             {/* Top Workspace Header Bar */}
-            <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-3 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/70 dark:bg-[#12141c]/80 backdrop-blur-2xl flex-shrink-0 z-20 shadow-apple-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-4 sm:px-6 py-3 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/95 dark:bg-[#12141c]/95 flex-shrink-0 z-20 shadow-apple-sm">
                 <div className="flex items-center space-x-3 min-w-0">
                     <div className="w-8 h-8 rounded-xl bg-teal-500/10 dark:bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/20 flex items-center justify-center font-bold text-xs p-0.5 flex-shrink-0 overflow-hidden">
                         <img 
@@ -974,10 +1233,33 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                         </div>
                         <p className="text-[10px] text-slate-500 dark:text-slate-400 font-mono truncate max-w-xs sm:max-w-md">
                             {hasLoadedStems
-                                ? `${stemChannels.length} ${stemSource === 'muscriptor' ? 'Dynamic Instruments (MuScriptor)' : 'Master Stems (HTDemucs)'} · Active`
-                                : "Master Audio"} · {notes.length} MIDI Notes
+                                ? `${stemChannels.length} ${stemSource === 'muscriptor' ? 'Dynamic Instruments (MuScriptor)' : 'Master Stems (Neural)'} · Active`
+                                : stemChannels.length > 0
+                                    ? `${stemChannels.length} Stems · Loading...`
+                                    : "Master Audio (Stems not separated yet)"} · {notes.length} MIDI Notes
                         </p>
                     </div>
+                    {stemChannels.length === 0 && (
+                        <button
+                            onClick={handleSeparateStems}
+                            disabled={isSeparating}
+                            title="Separate master audio into neural stems (vocals, drums, bass, other)"
+                            aria-label="Separate Stems"
+                            className="px-2.5 py-1 rounded-lg text-[10px] sm:text-xs font-bold bg-teal-500/10 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400 border border-teal-500/30 flex items-center space-x-1.5 transition-all shadow-sm active:scale-95 flex-shrink-0"
+                        >
+                            {isSeparating ? (
+                                <>
+                                    <Loader2 size={12} className="animate-spin" />
+                                    <span>Separating Stems...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Wand2 size={12} />
+                                    <span>Separate Stems</span>
+                                </>
+                            )}
+                        </button>
+                    )}
                 </div>
 
                 {/* Stem Source Selector — user chooses between the real neural
@@ -1043,56 +1325,34 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                     })}
                 </div>
 
-                {/* Right Actions & Export Dropdown */}
+                {/* Right Actions & Export Modal Trigger */}
                 <div className="flex items-center space-x-2 flex-shrink-0">
-                    <div className="relative" ref={exportMenuRef}>
+                    {onToggleComposer && (
                         <button
-                            onClick={() => setIsExportOpen(v => !v)}
-                            title="Export Multi-Track MIDI, MusicXML Score, or Timed Lyrics"
-                            aria-label="Export DAW Assets"
-                            aria-expanded={isExportOpen}
-                            aria-haspopup="menu"
-                            className={`px-3 sm:px-3.5 py-1.5 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition-all shadow-md shadow-teal-500/20 active:scale-95 ${isExportOpen ? 'ring-2 ring-teal-500/50' : ''}`}
+                            onClick={onToggleComposer}
+                            title={isComposerOpen ? "Hide Composer Sidebar (Maximize Screen Space)" : "Show Composer Sidebar"}
+                            aria-label={isComposerOpen ? "Hide Composer Sidebar" : "Show Composer Sidebar"}
+                            className={`px-2.5 sm:px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 transition-all shadow-sm active:scale-95 ${
+                                isComposerOpen
+                                    ? 'bg-teal-500/10 border-teal-500/30 text-teal-700 dark:text-teal-300 hover:bg-teal-500/20'
+                                    : 'bg-black/[0.04] dark:bg-white/5 border-black/[0.06] dark:border-white/10 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] dark:hover:bg-white/10'
+                            }`}
                         >
-                            <Download size={13} />
-                            <span className="hidden sm:inline">Export DAW Assets</span>
-                            <span className="sm:hidden">Export</span>
+                            <Sparkles size={13} className={isComposerOpen ? "text-teal-500" : "text-slate-400"} />
+                            <span className="hidden md:inline">{isComposerOpen ? "Hide Composer" : "Composer"}</span>
                         </button>
-                        {isExportOpen && (
-                            <div
-                                role="menu"
-                                className="absolute right-0 mt-1.5 w-52 bg-white dark:bg-[#181a24] border border-black/[0.08] dark:border-white/10 rounded-2xl shadow-apple-lg p-1.5 z-50 animate-fade-in"
-                            >
-                                <button
-                                    role="menuitem"
-                                    onClick={() => { handleExport('midi'); setIsExportOpen(false); }}
-                                    title="Download .mid MIDI file"
-                                    className="w-full text-left px-3 py-2 text-xs font-semibold rounded-xl hover:bg-teal-500/10 text-slate-800 dark:text-slate-200 hover:text-teal-600 dark:hover:text-teal-300 flex items-center justify-between"
-                                >
-                                    <span>Multi-Track MIDI (.mid)</span>
-                                    <Music size={12} className="text-teal-500" />
-                                </button>
-                                <button
-                                    role="menuitem"
-                                    onClick={() => { handleExport('musicxml'); setIsExportOpen(false); }}
-                                    title="Download W3C MusicXML Sheet Music Score"
-                                    className="w-full text-left px-3 py-2 text-xs font-semibold rounded-xl hover:bg-teal-500/10 text-slate-800 dark:text-slate-200 hover:text-teal-600 dark:hover:text-teal-300 flex items-center justify-between"
-                                >
-                                    <span>MusicXML Sheet (.musicxml)</span>
-                                    <FileText size={12} className="text-cyan-500" />
-                                </button>
-                                <button
-                                    role="menuitem"
-                                    onClick={() => { handleExport('lrc'); setIsExportOpen(false); }}
-                                    title="Download Karaoke Synchronized Lyrics"
-                                    className="w-full text-left px-3 py-2 text-xs font-semibold rounded-xl hover:bg-teal-500/10 text-slate-800 dark:text-slate-200 hover:text-teal-600 dark:hover:text-teal-300 flex items-center justify-between"
-                                >
-                                    <span>Timed Lyrics (.lrc)</span>
-                                    <CheckCircle2 size={12} className="text-amber-500" />
-                                </button>
-                            </div>
-                        )}
-                    </div>
+                    )}
+
+                    <button
+                        onClick={() => setIsExportOpen(true)}
+                        title="Open Mastering & Export Studio"
+                        aria-label="Export DAW Assets"
+                        className="px-3 sm:px-3.5 py-1.5 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition-all shadow-md shadow-teal-500/20 active:scale-95"
+                    >
+                        <Download size={13} />
+                        <span className="hidden sm:inline">Export DAW Assets</span>
+                        <span className="sm:hidden">Export</span>
+                    </button>
 
                     {onClose && (
                         <button
@@ -1113,7 +1373,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                     <div className="h-full flex flex-col items-center justify-center p-8 space-y-6">
                         {/* Artwork with Apple App Icon styling */}
                         <div className="relative group">
-                            <div className="w-52 h-52 rounded-3xl bg-gradient-to-tr from-teal-500/20 via-cyan-500/20 to-sky-500/20 border border-black/[0.08] dark:border-white/10 shadow-apple-lg flex items-center justify-center p-2 backdrop-blur-xl overflow-hidden">
+                            <div className="w-52 h-52 rounded-3xl bg-gradient-to-tr from-teal-500/20 via-cyan-500/20 to-sky-500/20 border border-black/[0.08] dark:border-white/10 shadow-apple-lg flex items-center justify-center p-2 overflow-hidden">
                                 <img 
                                     src={job.cover_image_path ? (job.cover_image_path.startsWith('http') ? job.cover_image_path : `${API_BASE_URL}${job.cover_image_path}`) : '/milimo_logo.png'} 
                                     alt="Artwork" 
@@ -1143,7 +1403,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
 
                         {/* Synchronized Karaoke Lyrics Stream */}
                         {timedLyrics.length > 0 && activeLineIndex !== -1 && (
-                            <div className="h-20 w-full max-w-xl bg-white/70 dark:bg-[#12141c]/70 border border-black/[0.06] dark:border-white/10 rounded-2xl p-3 flex flex-col items-center justify-center text-center space-y-0.5 overflow-hidden shadow-apple-sm backdrop-blur-xl">
+                            <div className="h-20 w-full max-w-xl bg-white/90 dark:bg-[#12141c]/90 border border-black/[0.06] dark:border-white/10 rounded-2xl p-3 flex flex-col items-center justify-center text-center space-y-0.5 overflow-hidden shadow-apple-sm">
                                 {activeLineIndex > 0 && (
                                     <p className="text-[11px] font-mono text-slate-400 dark:text-slate-500 opacity-50 truncate max-w-md">
                                         {timedLyrics[activeLineIndex - 1]?.text}
@@ -1173,6 +1433,8 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                         onToggleSolo={handleChannelToggleSolo}
                         stemPeaks={stemPeaks}
                         stemDurations={stemDurations}
+                        onSeparateStems={handleSeparateStems}
+                        isSeparating={isSeparating}
                     />
                 )}
 
@@ -1185,6 +1447,8 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                         isPlaying={isPlaying}
                         getPosition={getPosition}
                         getAudioContext={ensureAudioContext}
+                        activeTrackFilter={pianoRollTrackFilter}
+                        onTrackFilterChange={setPianoRollTrackFilter}
                     />
                 )}
 
@@ -1215,17 +1479,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                         masterAuditionMode={masterAuditionMode}
                         onMasterAuditionModeChange={setMasterAuditionMode}
                         hasMasteredTrack={Boolean(masteredPath || job.mastered_path)}
-                        onMasteringComplete={async (newPath: string) => {
-                            setMasteredPath(newPath);
-                            setMasterAuditionMode('mastered');
-                            const url = newPath.startsWith('http') ? newPath : `${API_BASE_URL}${newPath}`;
-                            await decodeToBuffer('__master_post__', url);
-                            if (isPlayingRef.current) {
-                                scheduleAll();
-                            } else {
-                                applyMixParams();
-                            }
-                        }}
+                        onMasteringComplete={handleMasteringComplete}
                     />
                 )}
 
@@ -1343,7 +1597,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
             </div>
 
             {/* Bottom Transport Control Bar */}
-            <div className="px-6 py-3 border-t border-black/[0.06] dark:border-white/[0.08] bg-white/80 dark:bg-[#12141c]/90 backdrop-blur-2xl flex flex-wrap items-center justify-between gap-4 z-20 shadow-apple-md">
+            <div className="px-6 py-3 border-t border-black/[0.06] dark:border-white/[0.08] bg-white/95 dark:bg-[#12141c]/95 flex flex-wrap items-center justify-between gap-4 z-20 shadow-apple-md">
                 {/* Transport Buttons */}
                 <div className="flex items-center space-x-1 sm:space-x-1.5 flex-shrink-0">
                     {/* Return to Zero / Start */}
@@ -1374,13 +1628,21 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                         <RotateCcw size={15} />
                     </button>
 
-                    {/* Play / Pause Hero Button */}
+                    {/* Play / Pause Hero Button with Buffering State */}
                     <button
                         onClick={togglePlay}
-                        className="w-10 h-10 rounded-2xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold flex items-center justify-center shadow-apple-md active:scale-95 transition-transform"
-                        title={isPlaying ? "Pause (Space / K)" : "Play (Space / K)"}
+                        disabled={isBuffering}
+                        className="w-10 h-10 rounded-2xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold flex items-center justify-center shadow-apple-md active:scale-95 transition-transform disabled:opacity-75"
+                        title={isBuffering ? "Loading audio..." : isPlaying ? "Pause (Space / K)" : "Play (Space / K)"}
+                        aria-label={isBuffering ? "Loading audio" : isPlaying ? "Pause Audio" : "Play Audio"}
                     >
-                        {isPlaying ? <Pause size={18} /> : <Play size={18} className="ml-0.5" />}
+                        {isBuffering ? (
+                            <Loader2 size={18} className="animate-spin text-slate-950" />
+                        ) : isPlaying ? (
+                            <Pause size={18} />
+                        ) : (
+                            <Play size={18} className="ml-0.5" />
+                        )}
                     </button>
 
                     {/* Advance 10s */}
@@ -1411,21 +1673,21 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                     {/* A-B Loop: set region markers at the playhead, then arm */}
                     <div className="flex items-center rounded-xl bg-black/[0.04] dark:bg-white/5 ml-1 overflow-hidden">
                         <button
-                            onClick={() => setLoopStart(currentTime)}
+                            onClick={() => handleSetLoopStart(currentTime)}
                             title={`Set loop start (A) at ${formatTime(currentTime)}`}
                             aria-label="Set loop start point"
-                            className={`px-2 py-1.5 text-[10px] font-mono font-bold transition-colors ${
-                                loopStart !== null ? 'text-teal-600 dark:text-teal-400' : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                            className={`px-2 py-1.5 text-[10px] font-mono font-bold transition-colors cursor-pointer ${
+                                loopStart !== null ? 'text-teal-600 dark:text-teal-400 font-extrabold' : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                             }`}
                         >
                             A{loopStart !== null ? '·' : ''}
                         </button>
                         <button
-                            onClick={() => setLoopEnd(currentTime)}
+                            onClick={() => handleSetLoopEnd(currentTime)}
                             title={`Set loop end (B) at ${formatTime(currentTime)}`}
                             aria-label="Set loop end point"
-                            className={`px-2 py-1.5 text-[10px] font-mono font-bold border-x border-black/[0.06] dark:border-white/10 transition-colors ${
-                                loopEnd !== null ? 'text-teal-600 dark:text-teal-400' : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                            className={`px-2 py-1.5 text-[10px] font-mono font-bold border-x border-black/[0.06] dark:border-white/10 transition-colors cursor-pointer ${
+                                loopEnd !== null ? 'text-teal-600 dark:text-teal-400 font-extrabold' : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
                             }`}
                         >
                             B{loopEnd !== null ? '·' : ''}
@@ -1435,7 +1697,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                             aria-pressed={isLooping}
                             aria-label="Toggle loop"
                             title={loopStart !== null && loopEnd !== null ? `Loop A–B (${formatTime(loopStart)}–${formatTime(loopEnd)})` : 'Loop entire track'}
-                            className={`p-1.5 transition-colors ${
+                            className={`p-1.5 transition-colors cursor-pointer ${
                                 isLooping
                                     ? 'text-teal-600 dark:text-teal-400 bg-teal-500/10'
                                     : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
@@ -1448,7 +1710,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                                 onClick={() => { setLoopStart(null); setLoopEnd(null); }}
                                 title="Clear loop region"
                                 aria-label="Clear loop region"
-                                className="px-1.5 py-1.5 text-[10px] font-bold text-slate-400 hover:text-rose-500 transition-colors"
+                                className="px-1.5 py-1.5 text-[10px] font-bold text-slate-400 hover:text-rose-500 transition-colors cursor-pointer"
                             >
                                 ✕
                             </button>
@@ -1481,7 +1743,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                         onClick={() => setIsMasterMuted(!isMasterMuted)}
                         title={isMasterMuted ? "Unmute Master Volume" : "Mute Master Volume"}
                         aria-label={isMasterMuted ? "Unmute Master Volume" : "Mute Master Volume"}
-                        className="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200"
+                        className="text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 cursor-pointer"
                     >
                         {isMasterMuted ? <VolumeX size={16} /> : <Volume2 size={16} />}
                     </button>
@@ -1495,15 +1757,25 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({ job, onClose
                             setIsMasterMuted(false);
                             setMasterVolume(parseFloat(e.target.value));
                         }}
-                        title={`Master Volume: ${Math.round(masterVolume * 100)}%`}
+                        onDoubleClick={() => setMasterVolume(1.0)}
+                        title={`Master Volume: ${Math.round(masterVolume * 100)}% (double-click = unity 100%)`}
                         aria-label="Master Volume Slider"
                         className="w-20 sm:w-24 h-1.5 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer accent-teal-500"
                     />
-                    <span className="text-[10px] font-mono text-slate-400 w-8">
+                    <span className="text-[10px] font-mono text-slate-400 w-8 tabular-nums">
                         {isMasterMuted ? '0%' : `${Math.round(masterVolume * 100)}%`}
                     </span>
                 </div>
             </div>
+
+            {/* Flagship Mastering & Export Studio Modal */}
+            <MasteringExportModal
+                isOpen={isExportOpen}
+                onClose={() => setIsExportOpen(false)}
+                job={job}
+                hasMasteredTrack={Boolean(masteredPath || job.mastered_path)}
+                onMasteringComplete={handleMasteringComplete}
+            />
         </div>
     );
 };

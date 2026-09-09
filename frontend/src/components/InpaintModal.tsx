@@ -55,29 +55,35 @@ export const InpaintModal: React.FC<InpaintModalProps> = ({
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/40 backdrop-blur-sm">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
             {toast && <Toast message={toast.msg} type={toast.type} onClose={() => setToast(null)} />}
 
-            <div ref={panelRef}><GlassCard className="w-full max-w-md p-6 bg-white/90">
+            <div ref={panelRef} className="w-full max-w-md">
+                <GlassCard className="w-full p-6 bg-white/95 dark:bg-[#141620]/95 border border-black/10 dark:border-white/10 text-slate-900 dark:text-slate-100 shadow-2xl">
                 <div className="flex items-center justify-between mb-6">
-                    <h3 className="text-lg font-semibold flex items-center gap-2">
-                        <Wand2 className="w-5 h-5 text-indigo-500" />
+                    <h3 className="text-lg font-semibold flex items-center gap-2 text-slate-900 dark:text-white">
+                        <Wand2 className="w-5 h-5 text-teal-500" />
                         {title ? `Repair: ${title}` : 'Repair Audio'}
                     </h3>
-                    <button onClick={onClose} className="p-1 hover:bg-slate-100 rounded-full">
-                        <X className="w-5 h-5 text-slate-500" />
+                    <button
+                        onClick={onClose}
+                        aria-label="Close modal"
+                        title="Close"
+                        className="p-1.5 hover:bg-black/5 dark:hover:bg-white/10 rounded-lg text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+                    >
+                        <X className="w-5 h-5" />
                     </button>
                 </div>
 
                 <div className="space-y-6">
-                    <p className="text-sm text-slate-600">
+                    <p className="text-sm text-slate-600 dark:text-slate-300">
                         Select a segment to regenerate. The audio before and after this range will remain unchanged.
                     </p>
 
                     {/* Range Inputs */}
                     <div className="space-y-4">
                         <div>
-                            <label className="text-xs font-semibold uppercase text-slate-500">Start Time</label>
+                            <label className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">Start Time</label>
                             <div className="flex items-center gap-4">
                                 <input
                                     type="range"
@@ -90,14 +96,15 @@ export const InpaintModal: React.FC<InpaintModalProps> = ({
                                         setStartTime(v);
                                         if (v >= endTime) setEndTime(Math.min(v + 1, duration));
                                     }}
-                                    className="w-full accent-indigo-500"
+                                    aria-label="Inpaint start time in seconds"
+                                    className="w-full accent-teal-500"
                                 />
-                                <span className="font-mono text-sm w-12">{fmt(startTime)}</span>
+                                <span className="font-mono text-sm w-12 text-slate-700 dark:text-slate-300">{fmt(startTime)}</span>
                             </div>
                         </div>
 
                         <div>
-                            <label className="text-xs font-semibold uppercase text-slate-500">End Time</label>
+                            <label className="text-xs font-semibold uppercase text-slate-500 dark:text-slate-400">End Time</label>
                             <div className="flex items-center gap-4">
                                 <input
                                     type="range"
@@ -110,32 +117,31 @@ export const InpaintModal: React.FC<InpaintModalProps> = ({
                                         setEndTime(v);
                                         if (v <= startTime) setStartTime(Math.max(0, v - 1));
                                     }}
-                                    className="w-full accent-indigo-500"
+                                    aria-label="Inpaint end time in seconds"
+                                    className="w-full accent-teal-500"
                                 />
-                                <span className="font-mono text-sm w-12">{fmt(endTime)}</span>
+                                <span className="font-mono text-sm w-12 text-slate-700 dark:text-slate-300">{fmt(endTime)}</span>
                             </div>
                         </div>
                     </div>
 
                     {/* Visualization Bar */}
-                    <div className="h-4 bg-slate-200 rounded-full overflow-hidden relative">
+                    <div className="h-4 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden relative">
                         {/* Start Segment (Safe) */}
                         <div
-                            className="absolute top-0 left-0 h-full bg-slate-300"
+                            className="absolute top-0 left-0 h-full bg-slate-300 dark:bg-slate-700"
                             style={{ width: `${(startTime / duration) * 100}%` }}
                         />
                         {/* Repair Segment (Danger/Active) */}
                         <div
-                            className="absolute top-0 h-full bg-indigo-500/50 backdrop-blur-sm border-x border-indigo-500 flex items-center justify-center"
+                            className="absolute top-0 h-full bg-teal-500/50 backdrop-blur-sm border-x border-teal-500 flex items-center justify-center"
                             style={{
                                 left: `${(startTime / duration) * 100}%`,
                                 width: `${((endTime - startTime) / duration) * 100}%`
                             }}
                         >
-                            <span className="text-[10px] text-indigo-900 font-bold tracking-tighter">REPAIR</span>
+                            <span className="text-[10px] text-teal-950 dark:text-white font-bold tracking-tighter">REPAIR</span>
                         </div>
-                        {/* End Segment (Safe) */}
-                        {/* Implicitly the rest */}
                     </div>
 
                     <div className="flex justify-end pt-4">

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { type Job, type TimedLine, API_BASE_URL } from '../../api';
+import { type Job, type TimedLine, API_BASE_URL, api } from '../../api';
 import { useAudioEngine } from '../../context/AudioEngineContext';
 import { DEFAULT_COVER_ART } from '../../constants/assets';
 import {
@@ -27,6 +27,7 @@ import {
   FileText,
   Loader2
 } from 'lucide-react';
+import { SpectralVisualizer } from './SpectralVisualizer';
 
 interface GlobalAudioPlayerProps {
   onOpenWorkspace: (job: Job) => void;
@@ -48,6 +49,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
     repeatMode,
     isShuffle,
     playlist,
+    analyserNode,
     playTrack,
     togglePlay,
     nextTrack,
@@ -164,9 +166,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
 
   const downloadAudio = () => {
     if (!currentSong?.audio_path) return;
-    const url = currentSong.audio_path.startsWith('http')
-      ? currentSong.audio_path
-      : `${API_BASE_URL}${currentSong.audio_path}`;
+    const url = api.getAudioUrl(currentSong.audio_path);
     const a = document.createElement('a');
     a.href = url;
     a.download = `${currentSong.title || 'milimo_track'}.wav`;
@@ -189,7 +189,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
     <div className="fixed bottom-6 left-0 right-0 z-50 flex flex-col items-center pointer-events-none px-3 sm:px-6 animate-slide-up">
       {/* Playback error banner with retry */}
       {playbackError && (
-        <div className="w-full max-w-5xl mb-2 px-4 py-2.5 rounded-2xl bg-rose-500/10 border border-rose-500/30 backdrop-blur-2xl pointer-events-auto flex items-center justify-between gap-3 animate-fade-in" role="alert">
+        <div className="w-full max-w-5xl mb-2 px-4 py-2.5 rounded-2xl bg-rose-50 dark:bg-rose-950/80 border border-rose-500/30 shadow-apple-md pointer-events-auto flex items-center justify-between gap-3 animate-fade-in" role="alert">
           <p className="text-[11px] font-semibold text-rose-700 dark:text-rose-300 truncate">{playbackError}</p>
           <div className="flex items-center gap-2 shrink-0">
             {currentSong && (
@@ -212,7 +212,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
       )}
       {/* Up Next Queue Drawer */}
       {isQueueOpen && (
-        <div className="w-full max-w-5xl bg-white/95 dark:bg-[#12141c]/95 border border-black/[0.08] dark:border-white/10 shadow-apple-2xl backdrop-blur-2xl rounded-3xl p-5 mb-3 pointer-events-auto flex flex-col max-h-[380px] animate-fade-in">
+        <div className="w-full max-w-5xl bg-white/95 dark:bg-[#12141c]/95 border border-black/[0.08] dark:border-white/10 shadow-apple-2xl rounded-3xl p-5 mb-3 pointer-events-auto flex flex-col max-h-[380px] animate-fade-in">
           <div className="flex items-center justify-between pb-3 border-b border-black/[0.06] dark:border-white/10">
             <div className="flex items-center space-x-2">
               <ListMusic size={18} className="text-teal-600 dark:text-teal-400" />
@@ -253,7 +253,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
                     className="w-full h-full object-cover"
                   />
                   {isPlaying && (
-                    <div className="absolute inset-0 bg-teal-900/40 backdrop-blur-[1px] flex items-center justify-center">
+                    <div className="absolute inset-0 bg-teal-900/60 flex items-center justify-center">
                       <div className="w-3 h-3 flex items-end justify-center space-x-0.5">
                         <div className="w-0.5 h-full bg-teal-300 animate-pulse" />
                         <div className="w-0.5 h-2/3 bg-teal-300 animate-pulse" />
@@ -341,7 +341,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
 
       {/* Synchronized Lyrics Drawer */}
       {isLyricsOpen && (
-        <div className="w-full max-w-5xl bg-white/95 dark:bg-[#12141c]/95 border border-black/[0.08] dark:border-white/10 shadow-apple-2xl backdrop-blur-2xl rounded-3xl p-5 mb-3 pointer-events-auto flex flex-col max-h-[380px] animate-fade-in">
+        <div className="w-full max-w-5xl bg-white/95 dark:bg-[#12141c]/95 border border-black/[0.08] dark:border-white/10 shadow-apple-2xl rounded-3xl p-5 mb-3 pointer-events-auto flex flex-col max-h-[380px] animate-fade-in">
           <div className="flex items-center justify-between pb-3 border-b border-black/[0.06] dark:border-white/10">
             <div className="flex items-center space-x-2">
               <Mic2 size={18} className="text-teal-600 dark:text-teal-400" />
@@ -461,7 +461,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
       )}
 
       {/* Main Floating Apple Player Bar */}
-      <div className="w-full max-w-5xl bg-white/90 dark:bg-[#12141c]/90 border border-black/[0.08] dark:border-white/10 shadow-apple-2xl backdrop-blur-2xl rounded-3xl p-3 sm:p-4 pointer-events-auto flex flex-col space-y-2.5 transition-all">
+      <div className="w-full max-w-5xl bg-white/95 dark:bg-[#12141c]/95 border border-black/[0.08] dark:border-white/10 shadow-apple-2xl rounded-3xl p-3 sm:p-4 pointer-events-auto flex flex-col space-y-2.5 transition-all">
         {/* Scrubber Progress Bar */}
         <div className="flex items-center space-x-2 sm:space-x-3 w-full px-1">
           <button
@@ -495,13 +495,13 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
 
         {/* 3-Zone Isolated Flex Layout: Left Track Info, Center Transport, Right Tools */}
         <div className="flex items-center justify-between gap-3 w-full">
-          {/* Zone 1: Left Track Identity */}
+          {/* Zone 1: Left Track Identity (Zero-collision responsive bounds) */}
           <div
             onClick={() => onSelectTrack?.(currentSong)}
-            className="flex items-center space-x-2.5 min-w-0 max-w-[200px] sm:max-w-[240px] md:max-w-[280px] shrink cursor-pointer group/player-track hover:opacity-90 transition-opacity"
+            className="flex items-center space-x-2 sm:space-x-2.5 min-w-0 max-w-[125px] xs:max-w-[160px] sm:max-w-[210px] md:max-w-[270px] shrink cursor-pointer group/player-track hover:opacity-90 transition-opacity"
             title="Open Track Studio"
           >
-            <div className="w-10 h-10 sm:w-11 sm:h-11 rounded-2xl bg-gradient-to-tr from-teal-500/20 via-cyan-500/20 to-sky-500/20 border border-black/[0.08] dark:border-white/10 p-0.5 shrink-0 flex items-center justify-center shadow-sm relative overflow-hidden group">
+            <div className="w-9 h-9 sm:w-11 sm:h-11 rounded-2xl bg-gradient-to-tr from-teal-500/20 via-cyan-500/20 to-sky-500/20 border border-black/[0.08] dark:border-white/10 p-0.5 shrink-0 flex items-center justify-center shadow-sm relative group">
               <img
                 src={artworkUrl}
                 alt="Track Cover"
@@ -510,20 +510,23 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
                   (e.target as HTMLImageElement).src = DEFAULT_COVER_ART;
                 }}
               />
-              <Disc
-                size={16}
-                className={`absolute text-teal-300 drop-shadow-md transition-transform ${
-                  isPlaying ? 'animate-spin-slow' : 'opacity-0 group-hover:opacity-100'
-                }`}
-              />
+              {isPlaying && (
+                <span
+                  className="absolute -bottom-1 -right-1 w-4 h-4 rounded-full bg-teal-500 text-slate-950 flex items-center justify-center shadow-sm ring-2 ring-white dark:ring-[#12141c] animate-fade-in"
+                  title="Track is actively playing"
+                  aria-label="Playing indicator"
+                >
+                  <Disc size={10} className="animate-spin-slow" />
+                </span>
+              )}
             </div>
 
             <div className="min-w-0 flex-1 overflow-hidden">
               <h3 className="text-xs sm:text-sm font-bold text-slate-900 dark:text-slate-100 truncate group-hover/player-track:text-teal-600 dark:group-hover/player-track:text-teal-400 transition-colors">
                 {currentSong.title || currentSong.prompt || 'Untitled Track'}
               </h3>
-              <div className="flex items-center space-x-1.5 mt-0.5 truncate">
-                <span className="text-[10px] sm:text-[10px] font-mono px-1.5 py-px rounded-md bg-teal-500/10 text-teal-700 dark:text-teal-300 font-semibold border border-teal-500/20 truncate">
+              <div className="flex items-center space-x-1 mt-0.5 truncate">
+                <span className="text-[9px] sm:text-[10px] font-mono px-1.5 py-px rounded-md bg-teal-500/10 text-teal-700 dark:text-teal-300 font-semibold border border-teal-500/20 truncate">
                   {currentSong.model_provider || 'MiniMax Music 3'}
                 </span>
               </div>
@@ -699,6 +702,17 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
                 title={`Playback Volume: ${Math.round((isMuted ? 0 : volume) * 100)}% (Arrow Up/Down)`}
                 aria-label="Playback Volume Slider"
                 className="w-12 sm:w-16 accent-teal-500 h-1.5 bg-slate-200 dark:bg-slate-800 rounded-lg appearance-none cursor-pointer"
+              />
+            </div>
+
+            {/* Live Dock Spectrum Visualizer */}
+            <div className="hidden xl:flex items-center w-16 px-1 py-1 rounded-md bg-black/5 dark:bg-white/5 border border-black/5 dark:border-white/5 shrink-0">
+              <SpectralVisualizer
+                analyser={analyserNode}
+                isPlaying={isPlaying}
+                height={16}
+                barCount={12}
+                variant="bars"
               />
             </div>
 

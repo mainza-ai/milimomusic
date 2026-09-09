@@ -7,9 +7,9 @@ axios.interceptors.request.use((config) => {
     return config;
 });
 
-// API base is configurable via Vite env; defaults to local backend for development.
-const API_BASE_URL: string = (import.meta as any).env?.VITE_API_URL ?? (
-    (import.meta as any).env?.DEV ? 'http://localhost:8000' : ''
+// API base is configurable via Vite env; defaults to IPv4 loopback http://127.0.0.1:8000 for development
+const API_BASE_URL: string = (import.meta as any).env?.VITE_API_URL || (
+    (import.meta as any).env?.DEV ? 'http://127.0.0.1:8000' : ''
 );
 
 export { API_BASE_URL };
@@ -112,6 +112,7 @@ export interface Job {
     audio_path?: string;
     error_msg?: string;
     created_at: string;
+    updated_at?: string;
     duration_ms?: number;
     seed?: number;
     is_favorite?: boolean;
@@ -120,6 +121,7 @@ export interface Job {
     cover_image_path?: string;
     image_prompt?: string;
     video_path?: string;
+    video_config_json?: string;
 
     // v2 Generation & Provider
     model_provider?: string;
@@ -365,7 +367,9 @@ export const api = {
         isInstrumental?: boolean,
         coverImagePath?: string,
         imagePrompt?: string,
-        sessionId?: string
+        sessionId?: string,
+        autoGenerateCover: boolean = true,
+        coverImageModelId?: string
     ) => {
         const res = await axios.post(`${API_BASE_URL}/generate/music`, {
             prompt,
@@ -386,7 +390,9 @@ export const api = {
             is_instrumental: isInstrumental,
             cover_image_path: coverImagePath,
             image_prompt: imagePrompt,
-            session_id: sessionId
+            session_id: sessionId,
+            auto_generate_cover: autoGenerateCover,
+            cover_image_model_id: coverImageModelId
         });
         return res.data;
     },
@@ -480,6 +486,11 @@ export const api = {
         return res.data;
     },
 
+    separateStems: async (jobId: string): Promise<{ status: string; job: Job }> => {
+        const res = await axios.post<{ status: string; job: Job }>(`${API_BASE_URL}/tracks/${jobId}/separate`);
+        return res.data;
+    },
+
     getHistory: async (limit: number = 50, offset: number = 0, status: string = 'all', search?: string) => {
         const res = await axios.get<Job[]>(`${API_BASE_URL}/history`, {
             params: { limit, offset, status: status === 'all' ? undefined : status, search }
@@ -487,10 +498,26 @@ export const api = {
         return res.data;
     },
 
-    getAudioUrl: (path: string) => {
+    getAudioUrl: (path?: string | null): string => {
         if (!path) return '';
-        if (path.startsWith('http')) return path;
-        return `${API_BASE_URL}${path}`;
+        if (path.startsWith('http://') || path.startsWith('https://')) return path;
+        
+        let normalized = path.trim();
+        // Rewrite generated_audio prefixes to canonical /audio mount
+        if (normalized.startsWith('/generated_audio/')) {
+            normalized = normalized.replace('/generated_audio/', '/audio/');
+        } else if (normalized.startsWith('generated_audio/')) {
+            normalized = normalized.replace('generated_audio/', '/audio/');
+        } else if (normalized.startsWith('/stems/')) {
+            normalized = `/audio${normalized}`;
+        } else if (normalized.startsWith('stems/')) {
+            normalized = `/audio/${normalized}`;
+        } else if (normalized.startsWith('audio/')) {
+            normalized = `/${normalized}`;
+        } else if (!normalized.startsWith('/')) {
+            normalized = `/audio/${normalized}`;
+        }
+        return `${API_BASE_URL}${normalized}`;
     },
 
     getDownloadUrl: (jobId: string) => {
@@ -526,7 +553,7 @@ export const api = {
 export const modelsApi = {
     getModelTree: async (): Promise<ModelVariant[]> => {
         const res = await axios.get(`${API_BASE_URL}/models/tree`);
-        return res.data.models;
+        return res.data?.models || (Array.isArray(res.data) ? res.data : []);
     },
     startModelDownload: async (repoId: string, category?: 'audio' | 'image' | 'video'): Promise<ModelDownloadStatus> => {
         const res = await axios.post(`${API_BASE_URL}/models/download`, { repo_id: repoId, category: category || undefined });
@@ -641,6 +668,7 @@ export interface LLMConfig {
     deepseek?: ProviderConfig;
     opencode?: ProviderConfig;
     omlx?: ProviderConfig;
+    anthropic?: ProviderConfig;
 }
 
 export interface Style {
@@ -757,6 +785,12 @@ export const sessionApi = {
 };
 
 export const coverApi = {
+    getCoverUrl: (path?: string | null): string => {
+        if (!path) return '/milimo_logo.png';
+        if (path.startsWith('http://') || path.startsWith('https://')) return path;
+        const normalized = path.replace(/^\/+/, '');
+        return `${API_BASE_URL}/${normalized}`;
+    },
     uploadCoverImage: async (file: File): Promise<{ url: string; filename: string }> => {
         const formData = new FormData();
         formData.append('file', file);
@@ -765,12 +799,16 @@ export const coverApi = {
         });
         return res.data;
     },
-    generateCoverPrompt: async (params: { title?: string; description?: string; tags?: string; genre?: string }): Promise<{ prompt: string }> => {
+    generateCoverPrompt: async (params: { title?: string; description?: string; tags?: string; genre?: string; lyrics?: string }): Promise<{ prompt: string; llm_used: boolean; provider: string | null }> => {
         const res = await axios.post(`${API_BASE_URL}/generate/cover-prompt`, params);
         return res.data;
     },
-    generateCoverImage: async (params: { prompt: string; style?: string; model_id?: string }): Promise<{ url: string; prompt: string }> => {
-        const res = await axios.post(`${API_BASE_URL}/generate/cover-image`, params);
+    generateCoverImage: async (params: { prompt: string; style?: string; model_id?: string; aspect_ratio?: string; title?: string; artist?: string }): Promise<{ url: string; prompt: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/generate/cover-image`, params, { timeout: 180000 });
+        return res.data;
+    },
+    generateJobCover: async (jobId: string, params?: { prompt?: string; style?: string; model_id?: string; aspect_ratio?: string; artist?: string }): Promise<Job> => {
+        const res = await axios.post(`${API_BASE_URL}/jobs/${jobId}/generate-cover`, params || {}, { timeout: 180000 });
         return res.data;
     }
 };
@@ -1243,6 +1281,18 @@ export const videoApi = {
     },
     getVideo: async (jobId: string): Promise<{ video_path: string | null; has_video: boolean }> => {
         const res = await axios.get(`${API_BASE_URL}/videos/${jobId}`);
+        return res.data;
+    },
+    deleteVideo: async (jobId: string): Promise<{ status: string; job_id: string; removed_files: number }> => {
+        const res = await axios.delete(`${API_BASE_URL}/videos/${jobId}`);
+        return res.data;
+    },
+    getVideoModels: async (): Promise<Record<string, { id: string; name: string; max_duration: number; local_weights_present: boolean; family: string; description: string }>> => {
+        const res = await axios.get(`${API_BASE_URL}/videos/models`);
+        return res.data;
+    },
+    getActiveVideoEngine: async (): Promise<{ engine: string; model_id: string | null; name: string | null; weights_present: boolean }> => {
+        const res = await axios.get(`${API_BASE_URL}/videos/active-engine`);
         return res.data;
     }
 };

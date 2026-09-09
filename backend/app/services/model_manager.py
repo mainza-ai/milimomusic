@@ -81,6 +81,19 @@ def _get_custom_models_path() -> str:
     return candidates[0]
 
 
+def _get_active_models_path() -> str:
+    """Return the resolved path to active_models.json."""
+    candidates = [
+        os.path.join(str(get_data_dir()), "models", "active_models.json"),
+        os.path.abspath(os.path.join("backend", "data", "models", "active_models.json")),
+        os.path.abspath(os.path.join("data", "models", "active_models.json")),
+    ]
+    for c in candidates:
+        if os.path.isfile(c):
+            return c
+    return candidates[0]
+
+
 def resolve_hf_snapshot(repo_id: str, category: Optional[str] = None) -> Optional[str]:
     """Find local snapshot directory for a huggingface repo ID.
     Supports canonical models/{category}/<org>__<repo>, models/<org>__<repo>,
@@ -133,20 +146,27 @@ def resolve_hf_snapshot(repo_id: str, category: Optional[str] = None) -> Optiona
                     pass
 
         # 2. Check ~/.cache/huggingface/hub/models--{org}--{repo}
-        hf_hub_name = f"models--{repo_id.replace('/', '--')}"
-        hub_dir = os.path.expanduser(os.path.join("~", ".cache", "huggingface", "hub", hf_hub_name))
-        if os.path.isdir(hub_dir):
-            snapshots_dir = os.path.join(hub_dir, "snapshots")
-            if os.path.isdir(snapshots_dir):
-                try:
-                    snaps = [s for s in os.listdir(snapshots_dir) if not s.startswith(".")]
-                    if snaps:
-                        snaps.sort(key=lambda s: os.path.getmtime(os.path.join(snapshots_dir, s)), reverse=True)
-                        candidate = os.path.join(snapshots_dir, snaps[0])
-                        if os.path.isdir(candidate) and len(os.listdir(candidate)) > 0:
-                            return candidate
-                except (OSError, PermissionError):
-                    pass
+        escaped_repo_hf = repo_id.replace("/", "--")
+        hub_candidates = [f"models--{escaped_repo_hf}"]
+        if "-base-" not in escaped_repo_hf and "-klein-" in escaped_repo_hf:
+            hub_candidates.append(f"models--{escaped_repo_hf.replace('-klein-', '-klein-base-')}")
+            hub_candidates.append(f"models--{escaped_repo_hf.replace('-klein-', '-klein-base-').lower()}")
+
+        hf_root = os.path.expanduser(os.path.join("~", ".cache", "huggingface", "hub"))
+        for hf_cand in hub_candidates:
+            hub_dir = os.path.join(hf_root, hf_cand)
+            if os.path.isdir(hub_dir):
+                snapshots_dir = os.path.join(hub_dir, "snapshots")
+                if os.path.isdir(snapshots_dir):
+                    try:
+                        snaps = [s for s in os.listdir(snapshots_dir) if not s.startswith(".")]
+                        if snaps:
+                            snaps.sort(key=lambda s: os.path.getmtime(os.path.join(snapshots_dir, s)), reverse=True)
+                            candidate = os.path.join(snapshots_dir, snaps[0])
+                            if os.path.isdir(candidate) and len(os.listdir(candidate)) > 0:
+                                return candidate
+                    except (OSError, PermissionError):
+                        pass
     except Exception:
         pass
     return None
@@ -523,10 +543,10 @@ class ModelManager:
         catalog.extend(self._load_custom_models())
 
         # Scan install status
-        results = []
         heartlib_ckpt_dir = str(get_heartmula_ckpt_dir())
         heartmula_installed = os.path.isdir(heartlib_ckpt_dir) and os.path.isdir(os.path.join(heartlib_ckpt_dir, "HeartMuLa-oss-3B"))
 
+        raw_items = []
         for item in catalog:
             local_path = None
             is_installed = False
@@ -558,19 +578,47 @@ class ModelManager:
                         is_installed = True
                         local_path = resolved
 
-            cat = item.get("category", "audio")
-            if cat == "image":
-                is_active = (item["id"] == getattr(self, "_active_image_model_id", None)) or (
-                    not getattr(self, "_active_image_model_id", None) and item.get("is_default", False)
-                )
-            elif cat == "video":
-                is_active = (item["id"] == getattr(self, "_active_video_model_id", None)) or (
-                    not getattr(self, "_active_video_model_id", None) and item.get("is_default", False)
-                )
+            raw_items.append((item, is_installed, local_path))
+
+        # Determine definitive active ID per category from persisted config or installed fallback
+        active_dict = self._load_active_models()
+        active_ids: Dict[str, str] = {}
+        for cat in ("audio", "image", "video", "audio_separator"):
+            items_in_cat = [t for t in raw_items if t[0].get("category", "audio") == cat]
+            if not items_in_cat:
+                continue
+
+            target_id = active_dict.get(cat)
+            if not target_id:
+                if cat == "image":
+                    target_id = getattr(self, "_active_image_model_id", None)
+                elif cat == "video":
+                    target_id = getattr(self, "_active_video_model_id", None)
+                elif cat == "audio":
+                    target_id = getattr(self, "_active_model_id", None)
+
+            # Match target_id
+            matched = next((t for t in items_in_cat if t[0]["id"] == target_id or t[0].get("repo_id") == target_id), None)
+            if matched:
+                active_ids[cat] = matched[0]["id"]
             else:
-                is_active = (item["id"] == self._active_model_id) or (
-                    local_path and DEFAULT_MINIMAX_SNAPSHOT and os.path.abspath(local_path) == os.path.abspath(DEFAULT_MINIMAX_SNAPSHOT)
-                )
+                # Fallback: prefer installed model in this category
+                installed = [t for t in items_in_cat if t[1]]
+                if installed:
+                    default_installed = next((t for t in installed if t[0].get("is_default")), None)
+                    active_ids[cat] = (default_installed or installed[0])[0]["id"]
+                else:
+                    default_item = next((t for t in items_in_cat if t[0].get("is_default")), None)
+                    active_ids[cat] = (default_item or items_in_cat[0])[0]["id"]
+
+        self._active_image_model_id = active_ids.get("image")
+        self._active_video_model_id = active_ids.get("video")
+        self._active_model_id = active_ids.get("audio")
+
+        results = []
+        for item, is_installed, local_path in raw_items:
+            cat = item.get("category", "audio")
+            is_active = (item["id"] == active_ids.get(cat))
 
             variant = ModelVariant(
                 id=item["id"],
@@ -602,23 +650,27 @@ class ModelManager:
         return active
 
     def set_active_model(self, model_id: str) -> Dict[str, Any]:
-        """Set the active model and update runtime path based on its category."""
+        """Set the active model, persist selection to disk, and update runtime environment."""
         tree = self.get_model_tree()
         match = next((m for m in tree if m["id"] == model_id or m.get("repo_id") == model_id), None)
         if not match:
             raise ValueError(f"Model ID '{model_id}' not found in catalog.")
 
         cat = match.get("category", "audio")
+        active_dict = self._load_active_models()
+        active_dict[cat] = match["id"]
+        self._save_active_models(active_dict)
+
         if cat == "image":
             self._active_image_model_id = match["id"]
             if match.get("local_path"):
                 os.environ["IMAGE_MODEL_PATH"] = match["local_path"]
-            logger.info(f"Active image/cover model switched to {match['name']}")
+            logger.info(f"Active image/cover model switched to {match['name']} ({match['id']})")
         elif cat == "video":
             self._active_video_model_id = match["id"]
             if match.get("local_path"):
                 os.environ["VIDEO_MODEL_PATH"] = match["local_path"]
-            logger.info(f"Active video model switched to {match['name']}")
+            logger.info(f"Active video model switched to {match['name']} ({match['id']})")
         else:
             self._active_model_id = match["id"]
             if match.get("local_path"):
@@ -669,6 +721,29 @@ class ModelManager:
 
         logger.info(f"Fresh installation detected with zero installed audio models. Smallest model recommended: {smallest}")
         return smallest
+
+    def _load_active_models(self) -> Dict[str, str]:
+        """Load persisted active model selections across categories."""
+        path = _get_active_models_path()
+        if os.path.exists(path):
+            try:
+                with open(path, "r", encoding="utf-8") as f:
+                    data = json.load(f)
+                    if isinstance(data, dict):
+                        return data
+            except Exception as e:
+                logger.warning(f"Could not load active_models.json: {e}")
+        return {}
+
+    def _save_active_models(self, data: Dict[str, str]) -> None:
+        """Persist active model selections across categories."""
+        path = _get_active_models_path()
+        try:
+            os.makedirs(os.path.dirname(os.path.abspath(path)), exist_ok=True)
+            with open(path, "w", encoding="utf-8") as f:
+                json.dump(data, f, indent=2)
+        except Exception as e:
+            logger.warning(f"Could not save active_models.json: {e}")
 
     def _load_custom_models(self) -> List[Dict[str, Any]]:
         """Load user-registered custom models from disk."""

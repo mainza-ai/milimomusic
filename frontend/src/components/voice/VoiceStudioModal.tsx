@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Mic, Upload, Trash2, X, AlertTriangle, ShieldCheck, Play, Pause, Activity } from 'lucide-react';
-import { voiceApi, type VoiceProfile } from '../../api';
+import { api, voiceApi, type VoiceProfile } from '../../api';
+import { toast } from '../../utils/toast';
 
 interface VoiceStudioModalProps {
     isOpen: boolean;
@@ -18,12 +19,23 @@ export const VoiceStudioModal: React.FC<VoiceStudioModalProps> = ({ isOpen, onCl
     const [playingProfileId, setPlayingProfileId] = useState<string | null>(null);
     const audioRef = useRef<HTMLAudioElement | null>(null);
 
+    // Unmount cleanup to stop any active audio preview
+    useEffect(() => {
+        return () => {
+            if (audioRef.current) {
+                audioRef.current.pause();
+                audioRef.current = null;
+            }
+        };
+    }, []);
+
     const loadProfiles = async () => {
         try {
             const list = await voiceApi.listProfiles();
             setProfiles(list);
         } catch (e) {
             console.error('Failed to load voice profiles', e);
+            toast('Failed to load voice profiles', 'error');
         }
     };
 
@@ -39,15 +51,6 @@ export const VoiceStudioModal: React.FC<VoiceStudioModalProps> = ({ isOpen, onCl
         }
     }, [isOpen]);
 
-    useEffect(() => {
-        return () => {
-            if (audioRef.current) {
-                audioRef.current.pause();
-                audioRef.current = null;
-            }
-        };
-    }, []);
-
     const togglePlayPreview = (profile: VoiceProfile) => {
         if (!profile.sample_audio_path) return;
 
@@ -58,15 +61,20 @@ export const VoiceStudioModal: React.FC<VoiceStudioModalProps> = ({ isOpen, onCl
             if (audioRef.current) {
                 audioRef.current.pause();
             }
-            const audio = new Audio(profile.sample_audio_path);
+            const fullUrl = api.getAudioUrl(profile.sample_audio_path);
+            const audio = new Audio(fullUrl);
             audioRef.current = audio;
             setPlayingProfileId(profile.id);
             audio.play().catch((err) => {
                 console.warn('Audio preview playback error:', err);
+                toast('Audio preview playback error', 'error');
                 setPlayingProfileId(null);
             });
             audio.onended = () => setPlayingProfileId(null);
-            audio.onerror = () => setPlayingProfileId(null);
+            audio.onerror = () => {
+                toast('Failed to load preview audio', 'error');
+                setPlayingProfileId(null);
+            };
         }
     };
 
@@ -87,39 +95,42 @@ export const VoiceStudioModal: React.FC<VoiceStudioModalProps> = ({ isOpen, onCl
             setDescription('');
             setConsentConfirmed(false);
             setFile(null);
+            toast('Voice profile created successfully', 'success');
             loadProfiles();
         } catch (err: any) {
             const msg = err.response?.data?.detail?.error?.message || err.response?.data?.detail || err.message;
-            alert('Failed to create voice profile: ' + msg);
+            toast('Failed to create voice profile: ' + msg, 'error');
         } finally {
             setIsSubmitting(false);
         }
     };
 
     const handleDelete = async (id: string) => {
-        if (!confirm('Are you sure you want to delete this voice profile?')) return;
+        if (!window.confirm('Are you sure you want to delete this voice profile?')) return;
         try {
             if (playingProfileId === id && audioRef.current) {
                 audioRef.current.pause();
                 setPlayingProfileId(null);
             }
             await voiceApi.deleteProfile(id);
+            toast('Voice profile deleted', 'info');
             loadProfiles();
         } catch (e) {
             console.error('Failed to delete voice profile', e);
+            toast('Failed to delete voice profile', 'error');
         }
     };
 
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/80 backdrop-blur-md animate-fade-in">
-            <div className="bg-white/90 dark:bg-[#14161f]/95 border border-black/[0.08] dark:border-white/10 rounded-3xl w-full max-w-3xl overflow-hidden shadow-apple-lg flex flex-col max-h-[90vh] backdrop-blur-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
+            <div className="w-full max-w-2xl bg-white dark:bg-[#12141c] border border-black/[0.08] dark:border-white/10 rounded-3xl shadow-apple-2xl flex flex-col max-h-[90vh] overflow-hidden animate-fade-in">
                 {/* Header */}
-                <div className="flex items-center justify-between px-6 py-4 border-b border-black/[0.06] dark:border-white/10 bg-black/[0.02] dark:bg-[#181a24]">
+                <div className="px-6 py-5 border-b border-black/[0.06] dark:border-white/10 flex items-center justify-between">
                     <div className="flex items-center space-x-3">
-                        <div className="w-9 h-9 rounded-xl bg-teal-500/10 dark:bg-teal-500/20 text-teal-700 dark:text-teal-400 border border-teal-500/20 flex items-center justify-center">
-                            <Mic size={18} />
+                        <div className="w-9 h-9 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center">
+                            <Mic size={20} />
                         </div>
                         <div>
                             <h2 className="text-base font-bold text-slate-900 dark:text-slate-100">
@@ -132,6 +143,8 @@ export const VoiceStudioModal: React.FC<VoiceStudioModalProps> = ({ isOpen, onCl
                     </div>
                     <button
                         onClick={onClose}
+                        aria-label="Close modal"
+                        title="Close"
                         className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
                     >
                         <X size={18} />

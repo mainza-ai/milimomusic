@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
     type Job,
     videoApi,
+    api,
     type StoryboardScene,
     type VideoPlanResult,
     type VideoTaskStatus,
@@ -10,6 +11,7 @@ import {
 } from '../../api';
 import {
     Play,
+    Pause,
     Film,
     Wand2,
     Download,
@@ -20,15 +22,21 @@ import {
     Mic,
     Type,
     Layers,
-    AlertCircle
+    AlertCircle,
+    RefreshCw,
+    Trash2
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
+import { toast } from '../../utils/toast';
 import { AppFooter } from '../ui/AppFooter';
 
 interface MusicVideosViewProps {
     songs: Job[];
     onPlay: (job: Job) => void;
     initialSelectedSongId?: string | null;
+    isPlaying?: boolean;
+    playingSongId?: string | null;
+    onUpdateSong?: (job: Job) => void;
 }
 
 export type VideoModelKey = 'hailuo_h3' | 'hunyuan' | 'cogvideox' | 'wan2.1' | 'audioreactive';
@@ -41,26 +49,91 @@ export const MODEL_CONSTRAINTS: Record<VideoModelKey, { label: string; minSec: n
     'audioreactive': { label: 'Audio-Reactive Full', minSec: 5.0, maxSec: 120.0, defaultSec: 120.0, desc: 'Continuous full-timeline audio reactive spectrum & waveform visualizer' },
 };
 
-export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay, initialSelectedSongId }) => {
-    const completedSongs = songs.filter(s => s.status === 'completed' && s.audio_path);
-    const [selectedSongId, setSelectedSongId] = useState<string | null>(initialSelectedSongId || completedSongs[0]?.id || null);
+export const isValidVideoEngine = (e: string): e is VideoModelKey => e in MODEL_CONSTRAINTS;
+
+/** Window event dispatched when Models & HW activation changes (see ModelsManagerModal). */
+export const VIDEO_ACTIVE_MODEL_EVENT = 'milimo:model-activated';
+
+export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
+    songs,
+    onPlay,
+    initialSelectedSongId,
+    isPlaying = false,
+    playingSongId = null,
+    onUpdateSong
+}) => {
+    const completedSongs = useMemo<Job[]>(() => songs.filter((s: Job) => s.status === 'completed' && Boolean(s.audio_path)), [songs]);
+    const [selectedSongId, setSelectedSongId] = useState<string | null>(() => {
+        if (initialSelectedSongId) return initialSelectedSongId;
+        const saved = localStorage.getItem('milimo_selected_video_song_id');
+        if (saved && completedSongs.some(s => s.id === saved)) return saved;
+        const withVideo = completedSongs.find(s => !!s.video_path);
+        return withVideo?.id || completedSongs[0]?.id || null;
+    });
+
+    const handleSelectSong = (id: string) => {
+        setSelectedSongId(id);
+        localStorage.setItem('milimo_selected_video_song_id', id);
+    };
+
+    useEffect(() => {
+        if (!selectedSongId && completedSongs.length > 0) {
+            const saved = localStorage.getItem('milimo_selected_video_song_id');
+            const target = completedSongs.find(s => s.id === saved) || completedSongs.find(s => !!s.video_path) || completedSongs[0];
+            if (target) setSelectedSongId(target.id);
+        }
+    }, [completedSongs, selectedSongId]);
 
     // Style & Model Engine settings
     const [videoModel, setVideoModel] = useState<VideoModelKey>('hailuo_h3');
+    // Engine the user marked active in Models & HW — the page follows it by
+    // default and on activation changes; manual override is still allowed.
+    const [activeVideoEngine, setActiveVideoEngine] = useState<VideoModelKey | null>(null);
+    const [modelRegistry, setModelRegistry] = useState<Record<string, any>>({});
     const [clipDuration, setClipDuration] = useState<number>(() => {
         const saved = localStorage.getItem('milimo_video_clip_len_hailuo_h3');
         return saved ? Math.min(15.0, Math.max(5.0, parseFloat(saved))) : 15.0;
     });
 
-    const [videoStyle, setVideoStyle] = useState<'neon-cyberpunk' | 'anime-cinematic' | 'retro-vhs' | 'minimal-lyrics'>('neon-cyberpunk');
-    const [resolution, setResolution] = useState<'720p' | '1080p'>('720p');
-
-    const handleSelectModel = (model: VideoModelKey) => {
+    const selectEngine = useCallback((model: VideoModelKey) => {
         setVideoModel(model);
         const conf = MODEL_CONSTRAINTS[model];
         const saved = localStorage.getItem(`milimo_video_clip_len_${model}`);
         const resolved = saved ? Math.min(conf.maxSec, Math.max(conf.minSec, parseFloat(saved))) : conf.defaultSec;
         setClipDuration(resolved);
+    }, []);
+
+    useEffect(() => {
+        let alive = true;
+        videoApi.getVideoModels().then((reg) => { if (alive) setModelRegistry(reg); }).catch(() => {});
+
+        const applyActiveEngine = () => {
+            videoApi.getActiveVideoEngine()
+                .then((r) => {
+                    if (!alive) return;
+                    if (r.engine && isValidVideoEngine(r.engine)) {
+                        setActiveVideoEngine(r.engine);
+                        // Follow the Models & HW active engine (manual override is
+                        // transient until the next activation change).
+                        selectEngine(r.engine);
+                    }
+                })
+                .catch(() => {});
+        };
+        applyActiveEngine();
+        window.addEventListener(VIDEO_ACTIVE_MODEL_EVENT, applyActiveEngine);
+        return () => {
+            alive = false;
+            window.removeEventListener(VIDEO_ACTIVE_MODEL_EVENT, applyActiveEngine);
+        };
+    }, [selectEngine]);
+
+    const [videoStyle, setVideoStyle] = useState<'neon-cyberpunk' | 'anime-cinematic' | 'retro-vhs' | 'minimal-lyrics'>('neon-cyberpunk');
+    const [resolution, setResolution] = useState<'720p' | '1080p'>('720p');
+    const [isDeletingVideo, setIsDeletingVideo] = useState(false);
+
+    const handleSelectModel = (model: VideoModelKey) => {
+        selectEngine(model);
     };
 
     const handleClipDurationChange = (val: number) => {
@@ -96,6 +169,16 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay,
     const [renderedVideoUrl, setRenderedVideoUrl] = useState<string | null>(null);
     const pollRef = useRef<number | undefined>(undefined);
 
+    // Unmount cleanup to prevent leaking video polling interval
+    useEffect(() => {
+        return () => {
+            if (pollRef.current) {
+                window.clearInterval(pollRef.current);
+                pollRef.current = undefined;
+            }
+        };
+    }, []);
+
     // Fallback legacy storyboard scenes
     const [isGeneratingStory, setIsGeneratingStory] = useState(false);
     const [storyboardScenes, setStoryboardScenes] = useState<StoryboardScene[]>([
@@ -118,14 +201,27 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay,
     }
 
     useEffect(() => {
+        if (!selectedSongId) {
+            setRenderedVideoUrl(null);
+            return;
+        }
         if (activeSong?.video_path) {
             setRenderedVideoUrl(activeSong.video_path);
         } else {
-            setRenderedVideoUrl(null);
+            videoApi.getVideo(selectedSongId).then(res => {
+                if (res?.has_video && res.video_path) {
+                    setRenderedVideoUrl(res.video_path);
+                    if (activeSong && onUpdateSong) {
+                        onUpdateSong({ ...activeSong, video_path: res.video_path });
+                    }
+                } else {
+                    setRenderedVideoUrl(null);
+                }
+            }).catch(() => setRenderedVideoUrl(null));
         }
         setPlanResult(null);
         setActiveTask(null);
-    }, [selectedSongId]);
+    }, [selectedSongId, activeSong?.video_path]);
 
     useEffect(() => {
         return () => {
@@ -146,8 +242,10 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay,
             };
             const plan = await videoApi.planVideo(activeSong.id, params);
             setPlanResult(plan);
-        } catch (err) {
+            toast(`Scene plan created: ${plan.total_clips} scenes ready for production.`, 'success');
+        } catch (err: any) {
             console.error('Failed to plan video scenes:', err);
+            toast(err?.response?.data?.detail || 'Failed to plan video scenes. Please ensure the track is completed.', 'error');
         } finally {
             setIsPlanning(false);
         }
@@ -192,6 +290,9 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay,
                         setIsRendering(false);
                         if (status.video_url) {
                             setRenderedVideoUrl(status.video_url);
+                            if (activeSong && onUpdateSong) {
+                                onUpdateSong({ ...activeSong, video_path: status.video_url });
+                            }
                         }
                     } else if (status.status === 'error') {
                         window.clearInterval(pollRef.current);
@@ -201,7 +302,56 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay,
             }, 1000);
         } catch (err) {
             console.error('Failed to start video rendering:', err);
+            toast('Failed to start video rendering. Please check backend service.', 'error');
             setIsRendering(false);
+        }
+    };
+
+    // Apply the render config the existing video was generated with so a
+    // regeneration is faithful (same engine, style, resolution, lip-sync,
+    // subtitles, clip length) instead of whatever the page currently shows.
+    const applyStoredVideoConfig = (job: Job) => {
+        if (!job?.video_config_json) return;
+        try {
+            const cfg = JSON.parse(job.video_config_json) as Record<string, any>;
+            if (cfg.model_name && isValidVideoEngine(cfg.model_name)) {
+                selectEngine(cfg.model_name);
+            }
+            if (cfg.max_clip_duration) {
+                const engine = (cfg.model_name && isValidVideoEngine(cfg.model_name)) ? cfg.model_name : videoModel;
+                const conf = MODEL_CONSTRAINTS[engine];
+                const clamped = Math.min(conf.maxSec, Math.max(conf.minSec, parseFloat(cfg.max_clip_duration)));
+                setClipDuration(clamped);
+            }
+            if (cfg.visual_style && ['neon-cyberpunk', 'anime-cinematic', 'retro-vhs', 'minimal-lyrics'].includes(cfg.visual_style)) {
+                setVideoStyle(cfg.visual_style);
+            }
+            if (cfg.resolution === '1080p' || cfg.resolution === '720p') setResolution(cfg.resolution);
+            if (typeof cfg.enable_lip_sync === 'boolean') setEnableLipSync(cfg.enable_lip_sync);
+            if (typeof cfg.burn_lyrics === 'boolean') setBurnSubtitles(cfg.burn_lyrics);
+            if (cfg.subtitle_style && ['neon', 'cinematic', 'karaoke'].includes(cfg.subtitle_style)) setSubtitleStyle(cfg.subtitle_style);
+        } catch { /* unreadable config — fall back to current page settings */ }
+    };
+
+    const handleRegenerateVideo = async () => {
+        if (!activeSong) return;
+        applyStoredVideoConfig(activeSong);
+        await handleRenderAdvancedVideo();
+    };
+
+    const handleDeleteVideo = async () => {
+        if (!activeSong) return;
+        if (!window.confirm(`Delete the rendered video for "${activeSong.title || activeSong.prompt.slice(0, 40)}"? The track and audio stay untouched.`)) return;
+        setIsDeletingVideo(true);
+        try {
+            await videoApi.deleteVideo(activeSong.id);
+            setRenderedVideoUrl(null);
+            onUpdateSong?.({ ...activeSong, video_path: undefined as any, video_config_json: undefined as any });
+            toast('Video deleted.', 'success');
+        } catch (e: any) {
+            toast(e?.response?.data?.detail || 'Failed to delete video.', 'error');
+        } finally {
+            setIsDeletingVideo(false);
         }
     };
 
@@ -213,16 +363,18 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay,
             const scenes = await videoApi.generateStoryboard(activeSong.id, videoStyle);
             if (scenes && scenes.length > 0) {
                 setStoryboardScenes(scenes);
+                toast('Storyboard sequence generated with dynamic directing prompts.', 'success');
             }
-        } catch (err) {
+        } catch (err: any) {
             console.error('Failed to generate storyboard:', err);
+            toast(err?.response?.data?.detail || 'Failed to generate storyboard scenes.', 'error');
         } finally {
             setIsGeneratingStory(false);
         }
     };
 
     return (
-        <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 flex flex-col justify-between min-h-full">
+        <div className="flex-1 overflow-y-auto p-6 md:p-8 pb-28 sm:pb-32 space-y-6 flex flex-col justify-between min-h-full">
             <div className="space-y-6">
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -244,8 +396,10 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay,
 
                     {renderedVideoUrl && (
                         <a
-                            href={renderedVideoUrl}
+                            href={api.getAudioUrl(renderedVideoUrl)}
                             download={`${activeSong?.title || 'track'}_music_video.mp4`}
+                            target="_blank"
+                            rel="noopener noreferrer"
                             className="px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-teal-500/20 active:scale-95 transition-all self-start sm:self-auto"
                         >
                             <Download size={14} />
@@ -265,12 +419,12 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay,
                             </label>
                             <select
                                 value={selectedSongId || ''}
-                                onChange={(e) => setSelectedSongId(e.target.value)}
+                                onChange={(e) => handleSelectSong(e.target.value)}
                                 className="w-full apple-input text-xs font-mono"
                             >
                                 {completedSongs.map(s => (
                                     <option key={s.id} value={s.id}>
-                                        {s.title || s.prompt.slice(0, 30)}
+                                        {s.video_path ? '🎬 ' : '🎵 '}{s.title || s.prompt.slice(0, 30)}{s.video_path ? ' · [Video Ready]' : ''}
                                     </option>
                                 ))}
                             </select>
@@ -325,7 +479,19 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay,
                                             }`}
                                         >
                                             <div className="flex items-center justify-between">
-                                                <span>{conf.label}</span>
+                                                <div className="flex items-center gap-1.5">
+                                                    <span>{conf.label}</span>
+                                                    {activeVideoEngine === key && (
+                                                        <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-teal-500/15 text-teal-700 dark:text-teal-300 font-bold border border-teal-500/20">
+                                                            ● Active in Models
+                                                        </span>
+                                                    )}
+                                                    {modelRegistry[key]?.local_weights_present && (
+                                                        <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold">
+                                                            ⚡ Local Ready
+                                                        </span>
+                                                    )}
+                                                </div>
                                                 <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-teal-500/10 text-teal-600 dark:text-teal-400">
                                                     Max: {conf.maxSec}s
                                                 </span>
@@ -497,12 +663,34 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay,
                             {/* Video Canvas / Player */}
                             <div className="relative aspect-video rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 border border-white/10 flex flex-col items-center justify-center p-6 text-center overflow-hidden shadow-apple-lg group">
                                 {renderedVideoUrl ? (
-                                    <video
-                                        src={renderedVideoUrl}
-                                        controls
-                                        autoPlay
-                                        className="w-full h-full object-cover rounded-xl"
-                                    />
+                                    <>
+                                        <video
+                                            src={api.getAudioUrl(renderedVideoUrl)}
+                                            controls
+                                            autoPlay
+                                            className="w-full h-full object-cover rounded-xl"
+                                        />
+                                        <div className="absolute bottom-3 right-3 flex items-center gap-2">
+                                            <button
+                                                onClick={handleRegenerateVideo}
+                                                disabled={isRendering || isDeletingVideo}
+                                                className="px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 font-bold text-[11px] rounded-lg flex items-center gap-1.5 shadow-md transition-all disabled:opacity-50"
+                                                title="Re-render with the same configuration this video was generated with"
+                                            >
+                                                {isRendering ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                                                <span>{isRendering ? 'Rendering…' : 'Regenerate'}</span>
+                                            </button>
+                                            <button
+                                                onClick={handleDeleteVideo}
+                                                disabled={isRendering || isDeletingVideo}
+                                                className="px-3 py-1.5 bg-rose-500/90 hover:bg-rose-500 text-white font-bold text-[11px] rounded-lg flex items-center gap-1.5 shadow-md transition-all disabled:opacity-50"
+                                                title="Delete this rendered video (track and audio stay untouched)"
+                                            >
+                                                {isDeletingVideo ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                                                <span>{isDeletingVideo ? 'Deleting…' : 'Delete'}</span>
+                                            </button>
+                                        </div>
+                                    </>
                                 ) : (
                                     <>
                                         <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(20,184,166,0.15),transparent_70%)] pointer-events-none" />
@@ -523,8 +711,17 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({ songs, onPlay,
                                                 onClick={() => activeSong && onPlay(activeSong)}
                                                 className="px-4 py-2 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md transition-all active:scale-95"
                                             >
-                                                <Play size={13} className="ml-0.5" />
-                                                <span>Preview Audio</span>
+                                                {isPlaying && playingSongId === activeSong?.id ? (
+                                                    <>
+                                                        <Pause size={13} className="ml-0.5" />
+                                                        <span>Pause Audio</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Play size={13} className="ml-0.5" />
+                                                        <span>Preview Audio</span>
+                                                    </>
+                                                )}
                                             </button>
                                             <button
                                                 onClick={handlePlanScenes}

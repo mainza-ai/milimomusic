@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
     Download, Trash2, Volume2, Maximize2, Check, RefreshCw, Music, Drum,
     Undo2, Redo2, Magnet, Crosshair, ZoomIn, ZoomOut, Save, AlertTriangle
@@ -22,6 +22,9 @@ interface PianoRollProps {
      * voices, and synth timing is trivially coherent with the transport.
      */
     getAudioContext: () => AudioContext | null;
+    /** Active track/instrument filter to isolate playback and view */
+    activeTrackFilter?: string;
+    onTrackFilterChange?: (track: string) => void;
 }
 
 // ---------------------------------------------------------------------------
@@ -42,6 +45,27 @@ function pitchName(midi: number): { name: string; isBlack: boolean; isC: boolean
         isC: pc === 0,
     };
 }
+
+export type MusicalScale =
+    | 'chromatic'
+    | 'major'
+    | 'minor'
+    | 'pentatonic_major'
+    | 'pentatonic_minor'
+    | 'blues'
+    | 'dorian'
+    | 'mixolydian';
+
+export const SCALE_DEFINITIONS: Record<MusicalScale, { label: string; intervals: number[] }> = {
+    chromatic: { label: 'Chromatic (All)', intervals: [0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11] },
+    major: { label: 'Major (Ionian)', intervals: [0, 2, 4, 5, 7, 9, 11] },
+    minor: { label: 'Natural Minor (Aeolian)', intervals: [0, 2, 3, 5, 7, 8, 10] },
+    pentatonic_major: { label: 'Major Pentatonic', intervals: [0, 2, 4, 7, 9] },
+    pentatonic_minor: { label: 'Minor Pentatonic', intervals: [0, 3, 5, 7, 10] },
+    blues: { label: 'Blues', intervals: [0, 3, 5, 6, 7, 10] },
+    dorian: { label: 'Dorian', intervals: [0, 2, 3, 5, 7, 9, 10] },
+    mixolydian: { label: 'Mixolydian', intervals: [0, 2, 4, 5, 7, 9, 10] },
+};
 
 interface RollKey { num: number; name: string; isC: boolean; isBlack: boolean; }
 
@@ -79,11 +103,17 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
     onSeek,
     isPlaying = false,
     getPosition,
-    getAudioContext
+    getAudioContext,
+    activeTrackFilter,
+    onTrackFilterChange
 }) => {
-    const [selectedTrack, setSelectedTrack] = useState('all');
+    const [localTrack, setLocalTrack] = useState('all');
+    const selectedTrack = activeTrackFilter !== undefined ? activeTrackFilter : localTrack;
+    const handleSetSelectedTrack = (t: string) => {
+        setLocalTrack(t);
+        if (onTrackFilterChange) onTrackFilterChange(t);
+    };
     const [isMidiSynthEnabled, setIsMidiSynthEnabled] = useState(true);
-    const [activePitches, setActivePitches] = useState<Set<number>>(new Set());
     // Notes already handed to the audio clock this pass (object identity).
     const scheduledRef = useRef<Set<NoteEvent>>(new Set());
     const lastSchedulePosRef = useRef(0);
@@ -115,13 +145,62 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
     const contentRef = useRef<HTMLDivElement>(null);
     const gridFocusRef = useRef<HTMLDivElement>(null);
     const lastActionRef = useRef<string>('');
+    const gridWidthRef = useRef<number>(0);
+    const scrollWidthRef = useRef<number>(0);
+
+    // Dynamic track filter pills computed directly from notes present in the score
+    const availableTrackPills = useMemo(() => {
+        const counts: Record<string, number> = {};
+        notesList.forEach(n => {
+            const inst = (n.instrument || 'Piano').trim();
+            counts[inst] = (counts[inst] || 0) + 1;
+        });
+
+        const pills: Array<{ id: string; label: string; count: number; color: string }> = [
+            { id: 'all', label: 'All', count: notesList.length, color: 'bg-teal-500' }
+        ];
+
+        const COLOR_POOL = [
+            'bg-teal-500', 'bg-rose-500', 'bg-amber-500', 'bg-cyan-500',
+            'bg-violet-500', 'bg-emerald-500', 'bg-orange-500', 'bg-indigo-500'
+        ];
+
+        let cIdx = 1;
+        Object.entries(counts).forEach(([inst, cnt]) => {
+            const lower = inst.toLowerCase();
+            let color = COLOR_POOL[cIdx % COLOR_POOL.length];
+            if (lower.includes('drum') || lower.includes('percussion')) color = 'bg-rose-500';
+            else if (lower.includes('bass')) color = 'bg-amber-500';
+            else if (lower.includes('vocal') || lower.includes('voice')) color = 'bg-cyan-500';
+            else if (lower.includes('piano') || lower.includes('key')) color = 'bg-teal-500';
+            else if (lower.includes('guitar')) color = 'bg-orange-500';
+            else if (lower.includes('clarinet') || lower.includes('reed')) color = 'bg-emerald-500';
+
+            pills.push({
+                id: inst,
+                label: inst,
+                count: cnt,
+                color
+            });
+            cIdx++;
+        });
+
+        const lowPitches = notesList.filter(n => n.pitch < 48);
+        if (!Object.keys(counts).some(k => k.toLowerCase().includes('bass')) && lowPitches.length > 0) {
+            pills.push({
+                id: '__bass_low__',
+                label: 'Bass (Low)',
+                count: lowPitches.length,
+                color: 'bg-amber-500'
+            });
+        }
+
+        return pills;
+    }, [notesList]);
 
     // Prop → state sync: re-parse when the parent swaps the active track.
-    // Resetting selection + history here is intentional — a new document
-    // invalidates prior undo state. (Pre-existing v1 pattern.)
     useEffect(() => {
         if (job.notes_json) {
-            // eslint-disable-next-line react-hooks/set-state-in-effect -- intentional prop→state sync
             setNotesList(safeJsonParse<NoteEvent[]>(job.notes_json, [], 'notes_json'));
             setSelectedNotes(new Set());
             undoRef.current = [];
@@ -130,9 +209,18 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
         }
     }, [job.notes_json]);
 
-    const filteredNotes = selectedTrack === 'all'
-        ? notesList
-        : notesList.filter(n => ((n.instrument || '')).toLowerCase().includes(selectedTrack.toLowerCase()));
+    const filteredNotes = useMemo(() => {
+        if (selectedTrack === 'all') return notesList;
+        if (selectedTrack === '__bass_low__') return notesList.filter(n => n.pitch < 48);
+        const sel = selectedTrack.toLowerCase().trim();
+        return notesList.filter(n => {
+            const inst = (n.instrument || '').toLowerCase().trim();
+            return inst === sel || inst.includes(sel) || sel.includes(inst) ||
+                (sel.includes('vocal') && inst.includes('voice')) ||
+                (sel.includes('voice') && inst.includes('vocal')) ||
+                (sel.includes('drum') && inst.includes('percussion'));
+        });
+    }, [selectedTrack, notesList]);
     const filteredRef = useRef(filteredNotes);
     useEffect(() => { filteredRef.current = filteredNotes; });
 
@@ -154,6 +242,29 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
     const [pitchRange, setPitchRange] = useState<RollKey[]>(() => buildRange(DEFAULT_LO, DEFAULT_HI));
     const [rangeHi, setRangeHi] = useState<number>(DEFAULT_HI);
     const [rangeLo, setRangeLo] = useState<number>(DEFAULT_LO);
+
+    // Scale Lock & Fold Mode State
+    const [selectedRoot, setSelectedRoot] = useState<string>('C');
+    const [selectedScale, setSelectedScale] = useState<MusicalScale>('chromatic');
+    const [isFolded, setIsFolded] = useState<boolean>(false);
+
+    const isPitchInScale = useCallback((midi: number): boolean => {
+        if (selectedScale === 'chromatic') return true;
+        const rootIndex = PC_NAMES.indexOf(selectedRoot);
+        const intervals = SCALE_DEFINITIONS[selectedScale].intervals;
+        const pitchClass = ((midi % 12) + 12) % 12;
+        const relativeDegree = (pitchClass - rootIndex + 12) % 12;
+        return intervals.includes(relativeDegree);
+    }, [selectedRoot, selectedScale]);
+
+    const visiblePitchRange = useMemo<RollKey[]>(() => {
+        if (!isFolded || selectedScale === 'chromatic') {
+            return pitchRange;
+        }
+        const filtered = pitchRange.filter(k => isPitchInScale(k.num));
+        return filtered.length > 0 ? filtered : pitchRange;
+    }, [pitchRange, isFolded, selectedScale, isPitchInScale]);
+
     const fitToNotes = () => {
         if (notesList.length === 0) { setPitchRange(buildRange(DEFAULT_LO, DEFAULT_HI)); setRangeHi(DEFAULT_HI); setRangeLo(DEFAULT_LO); return; }
         let min = Infinity, max = -Infinity;
@@ -182,8 +293,21 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
     const totalMeasures = Math.max(1, Math.ceil(timeScale / measureDuration));
     const measuresArray = Array.from({ length: totalMeasures }, (_, i) => i + 1);
     const pitchIndexFor = (midi: number): number => {
-        const idx = pitchRange.findIndex(k => k.num === midi);
-        return idx === -1 ? Math.max(0, Math.min(pitchRange.length - 1, pitchRange[0] ? pitchRange[0].num - midi : 0)) : idx;
+        const idx = visiblePitchRange.findIndex(k => k.num === midi);
+        if (idx !== -1) return idx;
+        if (isFolded && visiblePitchRange.length > 0) {
+            let closestIdx = 0;
+            let minDiff = Infinity;
+            visiblePitchRange.forEach((k, i) => {
+                const diff = Math.abs(k.num - midi);
+                if (diff < minDiff) {
+                    minDiff = diff;
+                    closestIdx = i;
+                }
+            });
+            return closestIdx;
+        }
+        return Math.max(0, Math.min(visiblePitchRange.length - 1, visiblePitchRange[0] ? visiblePitchRange[0].num - midi : 0));
     };
 
     function noteEndOf(n: NoteEvent): number {
@@ -324,34 +448,40 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
             n, start: n.start_time, end: noteEndOf(n), pitch: n.pitch
         }));
         const startX = e.clientX, startY = e.clientY;
-        const rect = contentRef.current?.getBoundingClientRect();
-        if (!rect) return;
-        const secPerPx = timeScale / rect.width;
+        const gridW = gridWidthRef.current || contentRef.current?.offsetWidth || 1;
+        const secPerPx = timeScale / gridW;
         let moved = false;
+        let moveRaf = 0;
 
         const onMove = (ev: MouseEvent) => {
             const dx = ev.clientX - startX;
             const dy = ev.clientY - startY;
             if (!moved && Math.abs(dx) < 4 && Math.abs(dy) < 4) return;
             moved = true;
-            const rawDt = dx * secPerPx;
-            const dt = snapSec > 0 ? Math.round(rawDt / snapSec) * snapSec : rawDt;
-            const dp = mode === 'move' ? Math.round(-dy / rowH) : 0;
-            const next = new Map<NoteEvent, PreviewPos>();
-            for (const it of items) {
-                if (mode === 'move') {
-                    const s = Math.max(0, it.start + dt);
-                    next.set(it.n, { start: s, end: s + (it.end - it.start), pitch: clampPitch(it.pitch + dp) });
-                } else {
-                    const end = Math.max(it.start + 0.05, it.end + dt);
-                    next.set(it.n, { start: it.start, end, pitch: it.pitch });
+
+            if (moveRaf) return;
+            moveRaf = requestAnimationFrame(() => {
+                moveRaf = 0;
+                const rawDt = dx * secPerPx;
+                const dt = snapSec > 0 ? Math.round(rawDt / snapSec) * snapSec : rawDt;
+                const dp = mode === 'move' ? Math.round(-dy / rowH) : 0;
+                const next = new Map<NoteEvent, PreviewPos>();
+                for (const it of items) {
+                    if (mode === 'move') {
+                        const s = Math.max(0, it.start + dt);
+                        next.set(it.n, { start: s, end: s + (it.end - it.start), pitch: clampPitch(it.pitch + dp) });
+                    } else {
+                        const end = Math.max(it.start + 0.05, it.end + dt);
+                        next.set(it.n, { start: it.start, end, pitch: it.pitch });
+                    }
                 }
-            }
-            previewMapRef.current = next;
-            setDragPreview(next);
+                previewMapRef.current = next;
+                setDragPreview(next);
+            });
         };
 
         const onUp = () => {
+            if (moveRaf) cancelAnimationFrame(moveRaf);
             window.removeEventListener('mousemove', onMove);
             window.removeEventListener('mouseup', onUp);
             if (!moved) {
@@ -417,9 +547,9 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                 const t0 = (minX / rect.width) * timeScale;
                 const t1 = (maxX / rect.width) * timeScale;
                 const idxLo = Math.max(0, Math.floor(maxY / rowH));
-                const idxHi = Math.min(pitchRange.length - 1, Math.floor(minY / rowH));
-                const pHi = pitchRange[idxLo]?.num ?? 127;
-                const pLo = pitchRange[idxHi]?.num ?? 0;
+                const idxHi = Math.min(visiblePitchRange.length - 1, Math.floor(minY / rowH));
+                const pHi = visiblePitchRange[idxLo]?.num ?? 127;
+                const pLo = visiblePitchRange[idxHi]?.num ?? 0;
                 const hits = filteredRef.current.filter(n =>
                     n.start_time < t1 && noteEndOf(n) > t0 && n.pitch >= pLo && n.pitch <= pHi
                 );
@@ -442,7 +572,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
         if (!rect) return;
         const t = ((e.clientX - rect.left) / rect.width) * timeScale;
         const rowIdx = Math.floor((e.clientY - rect.top) / rowH);
-        const key = pitchRange[Math.max(0, Math.min(pitchRange.length - 1, rowIdx))];
+        const key = visiblePitchRange[Math.max(0, Math.min(visiblePitchRange.length - 1, rowIdx))];
         if (!key) return;
         const snappedStart = snapTime(t);
         const dur = snapSec > 0 ? snapSec : 0.5;
@@ -513,17 +643,79 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
         window.clearTimeout(savedTimerRef.current);
     }, []);
 
+    // ── Dimension tracking (eliminates getBoundingClientRect layout reflows) ─
+    useEffect(() => {
+        if (!contentRef.current || !scrollRef.current) return;
+        const ro = new ResizeObserver((entries) => {
+            for (const entry of entries) {
+                if (entry.target === contentRef.current) {
+                    gridWidthRef.current = entry.contentRect.width;
+                } else if (entry.target === scrollRef.current) {
+                    scrollWidthRef.current = entry.contentRect.width;
+                }
+            }
+        });
+        ro.observe(contentRef.current);
+        ro.observe(scrollRef.current);
+        return () => ro.disconnect();
+    }, []);
+
     // ── Follow playhead ─────────────────────────────────────────────────────
     useEffect(() => {
         if (!isPlaying || !followPlayhead || !scrollRef.current || !contentRef.current) return;
         const el = scrollRef.current;
         const content = contentRef.current;
-        const gridW = content.getBoundingClientRect().width;
+        const gridW = gridWidthRef.current || content.offsetWidth;
+        const clientW = scrollWidthRef.current || el.clientWidth;
         const px = content.offsetLeft + (progressPercent / 100) * gridW;
-        if (px < el.scrollLeft + 48 || px > el.scrollLeft + el.clientWidth - 96) {
-            el.scrollLeft = Math.max(0, px - el.clientWidth * 0.35);
+        if (px < el.scrollLeft + 48 || px > el.scrollLeft + clientW - 96) {
+            el.scrollLeft = Math.max(0, px - clientW * 0.35);
         }
     }, [currentTime, isPlaying, followPlayhead, progressPercent]);
+
+    // ── 2D Visible window for viewport virtualization (horizontal time + vertical pitch rows)
+    const [visibleWindow, setVisibleWindow] = useState<{
+        start: number;
+        end: number;
+        topRow: number;
+        bottomRow: number;
+    }>({ start: 0, end: 60, topRow: 0, bottomRow: 120 });
+    const scrollRafRef = useRef<number | null>(null);
+
+    const updateVisibleWindow = useCallback(() => {
+        const el = scrollRef.current;
+        const content = contentRef.current;
+        if (!el || !content) return;
+        const gridW = gridWidthRef.current || content.offsetWidth || 1;
+        const clientW = scrollWidthRef.current || el.clientWidth || 1;
+        const leftSec = Math.max(0, (el.scrollLeft / gridW) * timeScale);
+        const rightSec = ((el.scrollLeft + clientW) / gridW) * timeScale;
+        const overscanSec = Math.max(3, (rightSec - leftSec) * 0.3); // 30% time overscan
+
+        const scrollTop = el.scrollTop;
+        const clientH = el.clientHeight || 600;
+        const topRow = Math.max(0, Math.floor((scrollTop - 32) / rowH) - 3);
+        const bottomRow = Math.ceil((scrollTop + clientH) / rowH) + 3;
+
+        setVisibleWindow({
+            start: Math.max(0, leftSec - overscanSec),
+            end: rightSec + overscanSec,
+            topRow,
+            bottomRow
+        });
+    }, [timeScale, rowH]);
+
+    const handleScroll = useCallback(() => {
+        if (scrollRafRef.current) return;
+        scrollRafRef.current = requestAnimationFrame(() => {
+            scrollRafRef.current = null;
+            updateVisibleWindow();
+        });
+    }, [updateVisibleWindow]);
+
+    useEffect(() => {
+        updateVisibleWindow();
+    }, [updateVisibleWindow, zoomX]);
 
     // Resume helper for the SHARED session context (auditioning paths).
     const getSharedContext = (): AudioContext | null => {
@@ -532,6 +724,17 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
             void ctx.resume().catch(() => {});
         }
         return ctx;
+    };
+
+    const synthBusRef = useRef<GainNode | null>(null);
+    const getSynthBus = (ctx: AudioContext): GainNode => {
+        if (!synthBusRef.current || synthBusRef.current.context !== ctx) {
+            const bus = ctx.createGain();
+            bus.gain.setValueAtTime(0.70, ctx.currentTime);
+            bus.connect(ctx.destination);
+            synthBusRef.current = bus;
+        }
+        return synthBusRef.current;
     };
 
     // Rich Polyphonic Multi-Harmonic Synthesizer.
@@ -545,19 +748,29 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
             if (!ctx) return;
             const now = when ?? ctx.currentTime;
             const freq = midiToFreq(pitch);
-            const inst = instrument.toLowerCase();
+            const inst = (instrument || 'Piano').toLowerCase();
             const REL = 0.08; // release tail after the gated length
             const dur = durSec && durSec > 0 ? Math.min(durSec, 8) : null;
             const end = now + (dur ?? 0);
 
-            setActivePitches(prev => new Set(prev).add(pitch));
-            setTimeout(() => {
-                setActivePitches(prev => {
-                    const next = new Set(prev);
-                    next.delete(pitch);
-                    return next;
-                });
-            }, 300);
+            // Direct DOM visual feedback on piano gutter — completely decoupled
+            // from React state to avoid 60Hz component re-render storms during MIDI playback.
+            const flashKey = () => {
+                const el = document.querySelector(`[data-piano-key="${pitch}"]`);
+                if (el) {
+                    el.classList.add('!bg-teal-500', '!text-slate-950', 'brightness-150', 'translate-x-1');
+                    setTimeout(() => {
+                        el.classList.remove('!bg-teal-500', '!text-slate-950', 'brightness-150', 'translate-x-1');
+                    }, Math.min(250, (durSec || 0.25) * 1000));
+                }
+            };
+
+            if (when === undefined) {
+                flashKey();
+            } else {
+                const delayMs = Math.max(0, (now - ctx.currentTime) * 1000);
+                setTimeout(flashKey, delayMs);
+            }
 
             const masterGain = ctx.createGain();
             const filter = ctx.createBiquadFilter();
@@ -575,7 +788,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                 try { filter.disconnect(); } catch { /* noop */ }
             };
 
-            if (inst.includes('bass')) {
+            if (inst.includes('bass') || selectedTrack === '__bass_low__') {
                 filter.frequency.setValueAtTime(450, now);
                 filter.frequency.exponentialRampToValueAtTime(120, now + 0.5);
 
@@ -610,7 +823,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                 }
 
                 filter.connect(masterGain);
-                masterGain.connect(ctx.destination);
+                masterGain.connect(getSynthBus(ctx));
 
                 osc1.start(now);
                 osc2.start(now);
@@ -619,24 +832,155 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                 sources.push(osc1, osc2);
                 osc2.onended = teardown;
 
-            } else if (inst.includes('drum')) {
-                const osc = ctx.createOscillator();
-                osc.type = 'triangle';
-                osc.frequency.setValueAtTime(150, now);
-                osc.frequency.exponentialRampToValueAtTime(40, now + 0.12);
+            } else if (inst.includes('drum') || inst.includes('percussion')) {
+                // Pitch-aware GM drum synthesis
+                if (pitch === 35 || pitch === 36) {
+                    // Kick drum: exponential sub-sine sweep
+                    const osc = ctx.createOscillator();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(160, now);
+                    osc.frequency.exponentialRampToValueAtTime(45, now + 0.09);
 
-                masterGain.gain.setValueAtTime(0.5, now);
-                masterGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.15);
+                    masterGain.gain.setValueAtTime(0.55, now);
+                    masterGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.22);
 
-                osc.connect(masterGain);
-                masterGain.connect(ctx.destination);
+                    osc.connect(masterGain);
+                    masterGain.connect(getSynthBus(ctx));
 
-                osc.start(now);
-                osc.stop(now + 0.2);
-                sources.push(osc);
-                osc.onended = teardown;
+                    osc.start(now);
+                    osc.stop(now + 0.25);
+                    sources.push(osc);
+                    osc.onended = teardown;
+                } else if (pitch === 38 || pitch === 40) {
+                    // Snare drum: tuned body + noise burst
+                    const osc = ctx.createOscillator();
+                    osc.type = 'triangle';
+                    osc.frequency.setValueAtTime(185, now);
 
-            } else if (inst.includes('vocal')) {
+                    // White noise buffer for snare snap
+                    const bufferSize = ctx.sampleRate * 0.15;
+                    const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+                    const output = noiseBuffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+
+                    const whiteNoise = ctx.createBufferSource();
+                    whiteNoise.buffer = noiseBuffer;
+                    const noiseFilter = ctx.createBiquadFilter();
+                    noiseFilter.type = 'highpass';
+                    noiseFilter.frequency.setValueAtTime(1000, now);
+
+                    const gBody = ctx.createGain();
+                    const gNoise = ctx.createGain();
+                    gBody.gain.setValueAtTime(0.35, now);
+                    gBody.gain.exponentialRampToValueAtTime(0.0001, now + 0.12);
+                    gNoise.gain.setValueAtTime(0.30, now);
+                    gNoise.gain.exponentialRampToValueAtTime(0.0001, now + 0.16);
+
+                    osc.connect(gBody);
+                    whiteNoise.connect(noiseFilter);
+                    noiseFilter.connect(gNoise);
+
+                    gBody.connect(masterGain);
+                    gNoise.connect(masterGain);
+                    masterGain.connect(getSynthBus(ctx));
+
+                    osc.start(now);
+                    whiteNoise.start(now);
+                    osc.stop(now + 0.18);
+                    whiteNoise.stop(now + 0.18);
+                    sources.push(osc, whiteNoise);
+                    osc.onended = teardown;
+                } else if (pitch === 42 || pitch === 44 || pitch === 46 || pitch === 49 || pitch === 51 || pitch === 57) {
+                    // Hi-hats / Cymbals: high-passed noise burst
+                    const isCrash = pitch === 49 || pitch === 57;
+                    const durNoise = isCrash ? 0.45 : (pitch === 46 ? 0.25 : 0.08);
+                    const bufferSize = Math.floor(ctx.sampleRate * durNoise);
+                    const noiseBuffer = ctx.createBuffer(1, bufferSize, ctx.sampleRate);
+                    const output = noiseBuffer.getChannelData(0);
+                    for (let i = 0; i < bufferSize; i++) output[i] = Math.random() * 2 - 1;
+
+                    const whiteNoise = ctx.createBufferSource();
+                    whiteNoise.buffer = noiseBuffer;
+                    const hpFilter = ctx.createBiquadFilter();
+                    hpFilter.type = 'highpass';
+                    hpFilter.frequency.setValueAtTime(6500, now);
+
+                    masterGain.gain.setValueAtTime(isCrash ? 0.35 : 0.28, now);
+                    masterGain.gain.exponentialRampToValueAtTime(0.0001, now + durNoise);
+
+                    whiteNoise.connect(hpFilter);
+                    hpFilter.connect(masterGain);
+                    masterGain.connect(getSynthBus(ctx));
+
+                    whiteNoise.start(now);
+                    whiteNoise.stop(now + durNoise + 0.02);
+                    sources.push(whiteNoise);
+                    whiteNoise.onended = teardown;
+                } else {
+                    // Toms / percussion: resonant pitch drop
+                    const osc = ctx.createOscillator();
+                    osc.type = 'sine';
+                    osc.frequency.setValueAtTime(Math.max(80, freq * 1.2), now);
+                    osc.frequency.exponentialRampToValueAtTime(Math.max(50, freq * 0.7), now + 0.15);
+
+                    masterGain.gain.setValueAtTime(0.45, now);
+                    masterGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.2);
+
+                    osc.connect(masterGain);
+                    masterGain.connect(getSynthBus(ctx));
+
+                    osc.start(now);
+                    osc.stop(now + 0.22);
+                    sources.push(osc);
+                    osc.onended = teardown;
+                }
+
+            } else if (inst.includes('clarinet') || inst.includes('reed') || inst.includes('wind') || inst.includes('oboe') || inst.includes('sax') || inst.includes('flute')) {
+                // Reeds / Woodwinds: odd harmonics with reed resonance
+                filter.frequency.setValueAtTime(2400, now);
+
+                const osc1 = ctx.createOscillator();
+                osc1.type = 'square';
+                osc1.frequency.setValueAtTime(freq, now);
+
+                const osc2 = ctx.createOscillator();
+                osc2.type = 'sine';
+                osc2.frequency.setValueAtTime(freq * 3, now);
+
+                const g1 = ctx.createGain();
+                const g2 = ctx.createGain();
+                g1.gain.setValueAtTime(0.22, now);
+                g2.gain.setValueAtTime(0.12, now);
+
+                osc1.connect(g1);
+                osc2.connect(g2);
+                g1.connect(filter);
+                g2.connect(filter);
+
+                masterGain.gain.setValueAtTime(0.001, now);
+                masterGain.gain.linearRampToValueAtTime(0.32, now + 0.04);
+                let stopAt: number;
+                if (dur) {
+                    masterGain.gain.setValueAtTime(0.28, now + 0.04);
+                    masterGain.gain.exponentialRampToValueAtTime(0.0001, end);
+                    stopAt = end + REL;
+                } else {
+                    masterGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.8);
+                    stopAt = now + 0.85;
+                }
+
+                filter.connect(masterGain);
+                masterGain.connect(getSynthBus(ctx));
+
+                osc1.start(now);
+                osc2.start(now);
+                osc1.stop(stopAt);
+                osc2.stop(stopAt);
+                sources.push(osc1, osc2);
+                osc1.onended = teardown;
+
+            } else if (inst.includes('vocal') || inst.includes('voice') || inst.includes('choir') || inst.includes('lead')) {
+                // Voice / Vocal: triangle wave with 5.5Hz vibrato LFO and formant filter
                 const osc = ctx.createOscillator();
                 osc.type = 'triangle';
                 osc.frequency.setValueAtTime(freq, now);
@@ -648,11 +992,14 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                 lfo.connect(lfoGain);
                 lfoGain.connect(osc.frequency);
 
+                filter.frequency.setValueAtTime(1800, now);
+                filter.Q.setValueAtTime(2.5, now);
+
                 masterGain.gain.setValueAtTime(0.001, now);
-                masterGain.gain.exponentialRampToValueAtTime(0.28, now + 0.08);
+                masterGain.gain.linearRampToValueAtTime(0.32, now + 0.06);
                 let stopAt: number;
                 if (dur) {
-                    masterGain.gain.exponentialRampToValueAtTime(0.22, now + Math.max(0.16, dur * 0.6));
+                    masterGain.gain.exponentialRampToValueAtTime(0.24, now + Math.max(0.16, dur * 0.6));
                     masterGain.gain.exponentialRampToValueAtTime(0.0001, end);
                     stopAt = end + REL;
                 } else {
@@ -660,10 +1007,9 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                     stopAt = now + 0.85;
                 }
 
-                filter.frequency.setValueAtTime(2200, now);
                 osc.connect(filter);
                 filter.connect(masterGain);
-                masterGain.connect(ctx.destination);
+                masterGain.connect(getSynthBus(ctx));
 
                 lfo.start(now);
                 osc.start(now);
@@ -671,6 +1017,51 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                 osc.stop(stopAt);
                 sources.push(osc, lfo);
                 osc.onended = teardown;
+
+            } else if (inst.includes('guitar') || inst.includes('pluck') || inst.includes('string')) {
+                // Guitar / Pluck: fast attack with bright harmonics and natural decay
+                filter.frequency.setValueAtTime(3800, now);
+                filter.frequency.exponentialRampToValueAtTime(900, now + 0.5);
+
+                const osc1 = ctx.createOscillator();
+                osc1.type = 'sawtooth';
+                osc1.frequency.setValueAtTime(freq, now);
+
+                const osc2 = ctx.createOscillator();
+                osc2.type = 'triangle';
+                osc2.frequency.setValueAtTime(freq * 2, now);
+
+                const g1 = ctx.createGain();
+                const g2 = ctx.createGain();
+                g1.gain.setValueAtTime(0.25, now);
+                g2.gain.setValueAtTime(0.15, now);
+
+                osc1.connect(g1);
+                osc2.connect(g2);
+                g1.connect(filter);
+                g2.connect(filter);
+
+                masterGain.gain.setValueAtTime(0.001, now);
+                masterGain.gain.exponentialRampToValueAtTime(0.38, now + 0.015);
+                let stopAt: number;
+                if (dur) {
+                    masterGain.gain.exponentialRampToValueAtTime(0.15, now + Math.max(0.1, dur * 0.5));
+                    masterGain.gain.exponentialRampToValueAtTime(0.0001, end);
+                    stopAt = end + REL;
+                } else {
+                    masterGain.gain.exponentialRampToValueAtTime(0.0001, now + 0.85);
+                    stopAt = now + 0.9;
+                }
+
+                filter.connect(masterGain);
+                masterGain.connect(getSynthBus(ctx));
+
+                osc1.start(now);
+                osc2.start(now);
+                osc1.stop(stopAt);
+                osc2.stop(stopAt);
+                sources.push(osc1, osc2);
+                osc1.onended = teardown;
 
             } else {
                 // Grand Piano with natural acoustic decay & sparkle
@@ -709,7 +1100,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                 }
 
                 filter.connect(masterGain);
-                masterGain.connect(ctx.destination);
+                masterGain.connect(getSynthBus(ctx));
 
                 osc1.start(now);
                 osc2.start(now);
@@ -791,7 +1182,14 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                 );
             }
 
-            if (scheduledRef.current.size > 2000) scheduledRef.current.clear();
+            if (scheduledRef.current.size > 500) {
+                const pruneBefore = pos - 4.0;
+                for (const n of scheduledRef.current) {
+                    if (n.start_time < pruneBefore) {
+                        scheduledRef.current.delete(n);
+                    }
+                }
+            }
             lastSchedulePosRef.current = pos;
             raf = requestAnimationFrame(tick);
         };
@@ -801,8 +1199,8 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
     }, [isPlaying, isMidiSynthEnabled, getPosition]);
 
     // Color-Coding Design by Instrument Role (Clean Studio Aesthetics)
-    const getNoteStyle = (instrument: string) => {
-        const inst = instrument.toLowerCase();
+    const getNoteStyle = (instrument?: string) => {
+        const inst = (instrument || (selectedTrack !== 'all' ? selectedTrack : 'piano')).toLowerCase();
         if (inst.includes('bass')) {
             return {
                 bg: 'bg-gradient-to-r from-amber-400 via-amber-500 to-orange-500',
@@ -833,13 +1231,33 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                 label: 'Vocal'
             };
         }
-        if (inst.includes('guitar') || inst.includes('string')) {
+        if (inst.includes('guitar')) {
             return {
-                bg: 'bg-gradient-to-r from-yellow-400 via-amber-400 to-orange-400',
-                border: 'border-yellow-300 dark:border-yellow-400/80',
+                bg: 'bg-gradient-to-r from-amber-400 via-orange-400 to-amber-500',
+                border: 'border-amber-300 dark:border-amber-400/80',
                 text: 'text-slate-950 font-black',
-                shadow: 'shadow-md shadow-yellow-500/25',
+                shadow: 'shadow-md shadow-amber-500/25',
                 badge: 'bg-amber-950/20 text-slate-950',
+                label: 'Guitar'
+            };
+        }
+        if (inst.includes('clarinet') || inst.includes('reed') || inst.includes('woodwind') || inst.includes('wind')) {
+            return {
+                bg: 'bg-gradient-to-r from-emerald-400 via-teal-500 to-green-500',
+                border: 'border-emerald-300 dark:border-emerald-400/80',
+                text: 'text-slate-950 font-black',
+                shadow: 'shadow-md shadow-emerald-500/25',
+                badge: 'bg-emerald-950/20 text-slate-950',
+                label: 'Clarinet'
+            };
+        }
+        if (inst.includes('string') || inst.includes('violin') || inst.includes('cello')) {
+            return {
+                bg: 'bg-gradient-to-r from-violet-400 via-purple-400 to-indigo-500',
+                border: 'border-violet-300 dark:border-violet-400/80',
+                text: 'text-white font-black',
+                shadow: 'shadow-md shadow-violet-500/25',
+                badge: 'bg-black/30 text-white',
                 label: 'Strings'
             };
         }
@@ -876,37 +1294,33 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
     useEffect(() => { beginDragRef.current = beginDrag; });
     useEffect(() => { playToneRef.current = playSynthesizerTone; });
 
-    const keyboardKeys = useMemo(() => pitchRange.map(p => {
+    const keyboardKeys = useMemo(() => visiblePitchRange.map(p => {
         const isBlack = p.isBlack;
         const isMiddleC = p.num === 60;
-        const isKeyActive = activePitches.has(p.num);
+        const inScale = isPitchInScale(p.num);
+        const isRoot = p.name.startsWith(selectedRoot);
 
         return (
             <button
                 key={p.num}
+                data-piano-key={p.num}
                 style={{ height: rowH }}
                 onClick={() => playToneRef.current(p.num, selectedTrack)}
-                title={`Click to play ${p.name} (MIDI Note ${p.num})`}
+                title={`Click to play ${p.name} (MIDI Note ${p.num}) ${inScale ? '· In Scale' : ''}`}
                 aria-label={`Piano Key ${p.name}`}
                 className={`text-[10px] font-mono font-bold flex items-center justify-between px-3 transition-all duration-75 relative group ${
                     isBlack
-                        ? `bg-gradient-to-r from-[#121318] via-[#242633] to-[#15161f] text-slate-200 border-t border-b border-black/90 shadow-[inset_0_1px_1px_rgba(255,255,255,0.12),0_2px_4px_rgba(0,0,0,0.8)] pr-4 ${
-                              isKeyActive
-                                  ? 'brightness-150 translate-x-1 !bg-teal-500 !text-slate-950 font-black shadow-teal-500/50'
-                                  : 'hover:brightness-125'
-                          }`
-                        : `bg-gradient-to-r from-[#ffffff] via-[#f7f5f0] to-[#eae4d8] dark:from-[#2a2d3d] dark:via-[#222533] dark:to-[#1a1c28] text-slate-900 dark:text-slate-100 border-b border-[#cfc7b8] dark:border-[#12141c] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] ${
-                              isKeyActive
-                                  ? 'brightness-125 translate-x-1 !bg-teal-400 !text-slate-950 font-black shadow-teal-500/50'
-                                  : 'hover:brightness-105'
-                          }`
-                }`}
+                        ? 'bg-gradient-to-r from-[#121318] via-[#242633] to-[#15161f] text-slate-200 border-t border-b border-black/90 shadow-[inset_0_1px_1px_rgba(255,255,255,0.12),0_2px_4px_rgba(0,0,0,0.8)] pr-4 hover:brightness-125'
+                        : 'bg-gradient-to-r from-[#ffffff] via-[#f7f5f0] to-[#eae4d8] dark:from-[#2a2d3d] dark:via-[#222533] dark:to-[#1a1c28] text-slate-900 dark:text-slate-100 border-b border-[#cfc7b8] dark:border-[#12141c] shadow-[inset_0_1px_0_rgba(255,255,255,0.8)] hover:brightness-105'
+                } ${!inScale && selectedScale !== 'chromatic' && !isFolded ? 'opacity-40' : ''}`}
             >
                 <div className="flex items-center gap-1.5 min-w-0">
                     <span
                         className={`tracking-tight ${
                             isMiddleC
                                 ? 'text-teal-600 dark:text-teal-400 font-extrabold text-[11px] underline decoration-teal-500 decoration-2'
+                                : isRoot
+                                ? 'text-cyan-600 dark:text-cyan-400 font-bold text-[11px]'
                                 : p.isC
                                 ? 'text-teal-600 dark:text-teal-400 font-bold text-[11px]'
                                 : isBlack
@@ -920,6 +1334,10 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                         <span className="text-[10px] font-mono font-bold px-1 rounded bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/30">
                             MID
                         </span>
+                    ) : isRoot && selectedScale !== 'chromatic' ? (
+                        <span className="text-[9px] font-mono font-bold px-1 rounded bg-cyan-500/20 text-cyan-600 dark:text-cyan-300 border border-cyan-500/30">
+                            ROOT
+                        </span>
                     ) : p.isC ? (
                         <span className="w-1.5 h-1.5 rounded-full bg-teal-500 shadow-[0_0_6px_rgba(20,184,166,0.8)]" />
                     ) : null}
@@ -930,7 +1348,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                 </span>
             </button>
         );
-    }), [pitchRange, rowH, activePitches, selectedTrack]);
+    }), [visiblePitchRange, rowH, selectedTrack, selectedScale, selectedRoot, isFolded, isPitchInScale]);
 
     const rulerBars = useMemo(() => measuresArray.map(bar => {
         const barStart = (bar - 1) * measureDuration;
@@ -961,9 +1379,11 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
         );
     }), [measuresArray, measureDuration, timeScale]);
 
-    const pitchRows = useMemo(() => pitchRange.map(p => {
+    const pitchRows = useMemo(() => visiblePitchRange.map(p => {
         const isBlack = p.isBlack;
         const isMiddleC = p.num === 60;
+        const inScale = isPitchInScale(p.num);
+        const isRoot = p.name.startsWith(selectedRoot);
 
         return (
             <div
@@ -972,12 +1392,16 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                 className={`border-b w-full transition-colors flex items-center relative ${
                     isMiddleC
                         ? 'bg-teal-500/[0.12] dark:bg-teal-500/[0.18] border-teal-500/40'
+                        : isRoot && selectedScale !== 'chromatic'
+                        ? 'bg-cyan-500/[0.08] dark:bg-cyan-500/[0.12] border-cyan-500/30'
+                        : inScale && selectedScale !== 'chromatic'
+                        ? 'bg-teal-500/[0.03] dark:bg-teal-500/[0.05] border-black/[0.03] dark:border-white/[0.03]'
                         : p.isC
                         ? 'bg-teal-500/[0.06] dark:bg-teal-500/[0.10] border-teal-500/30'
                         : isBlack
                         ? 'bg-black/[0.04] dark:bg-black/35 border-black/[0.04] dark:border-white/[0.04]'
                         : 'bg-white/50 dark:bg-[#12141e]/50 border-black/[0.03] dark:border-white/[0.02]'
-                }`}
+                } ${!inScale && selectedScale !== 'chromatic' && !isFolded ? 'opacity-40' : ''}`}
             >
                 {p.isC && (
                     <span className="ml-3 text-[10px] font-mono font-bold text-teal-600/70 dark:text-teal-400/70 pointer-events-none select-none">
@@ -986,91 +1410,111 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                 )}
             </div>
         );
-    }), [pitchRange, rowH]);
+    }), [visiblePitchRange, rowH, selectedScale, selectedRoot, isFolded, isPitchInScale]);
 
-    const noteBlocks = useMemo(() => filteredNotes.map((note, idx) => {
-        const g = geomFor(note);
-        const pitchIndex = pitchIndexFor(g.pitch);
-        const top = pitchIndex * rowH;
-        const noteDur = Math.max(0.05, g.end - g.start);
-        const leftPercent = (g.start / timeScale) * 100;
-        const widthPercent = Math.max(0.6, (noteDur / timeScale) * 100);
-        const isSelected = selectedNotes.has(note);
-        const noteStyle = getNoteStyle(note.instrument);
-        const isDrum = note.instrument?.toLowerCase().includes('drum') || note.instrument?.toLowerCase().includes('percussion');
-        const displayPitch = note.note_name || pitchName(g.pitch).name;
+    const baseGridWidth = useMemo(() => Math.max(2400, Math.round(timeScale * 36)), [timeScale]);
 
-        if (isDrum) {
+    const noteBlocks = useMemo(() => {
+        const isDense = filteredNotes.length > 80;
+        const targetNotes = isDense
+            ? filteredNotes.filter(note => {
+                if (selectedNotes.has(note)) return true;
+                const g = geomFor(note);
+                if (g.end < visibleWindow.start || g.start > visibleWindow.end) return false;
+                const pitchIndex = pitchIndexFor(g.pitch);
+                if (pitchIndex < visibleWindow.topRow || pitchIndex > visibleWindow.bottomRow) return false;
+                return true;
+            })
+            : filteredNotes;
+
+        return targetNotes.map((note) => {
+            const g = geomFor(note);
+            const pitchIndex = pitchIndexFor(g.pitch);
+            const top = pitchIndex * rowH;
+            const noteDur = Math.max(0.05, g.end - g.start);
+            const leftPercent = (g.start / timeScale) * 100;
+            const widthPercent = Math.max(0.6, (noteDur / timeScale) * 100);
+            const isSelected = selectedNotes.has(note);
+            const noteStyle = getNoteStyle(note.instrument);
+            const isDrum = (note.instrument || '').toLowerCase().includes('drum') || (note.instrument || '').toLowerCase().includes('percussion');
+            const displayPitch = note.note_name || pitchName(g.pitch).name;
+            const noteKey = (note as any).id || `${note.pitch}_${Math.round(note.start_time * 1000)}_${note.instrument || ''}`;
+
+            if (isDrum) {
+                return (
+                    <div
+                        key={noteKey}
+                        onMouseDown={(e) => beginDragRef.current(e, note, 'move')}
+                        className={`absolute min-w-[20px] max-w-[28px] rounded-full border shadow-sm flex items-center justify-center cursor-grab active:cursor-grabbing z-10 ${
+                            noteStyle.bg
+                        } ${noteStyle.border} ${noteStyle.shadow} ${
+                            isSelected
+                                ? 'ring-2 ring-white z-30 shadow-lg'
+                                : 'hover:opacity-90'
+                        }`}
+                        style={{
+                            top: `${top + 2}px`,
+                            left: `${leftPercent}%`,
+                            height: `${Math.max(14, rowH - 4)}px`,
+                            contain: 'layout style paint',
+                        }}
+                        title={`Drum Hit [${g.start.toFixed(2)}s] · Velocity: ${note.velocity || 85}`}
+                    >
+                        <span className="text-white select-none pointer-events-none"><Drum size={10} /></span>
+                    </div>
+                );
+            }
+
             return (
                 <div
-                    key={idx}
-                    onMouseDown={(e) => beginDragRef.current(e, note, 'move')}
-                    className={`absolute min-w-[20px] max-w-[28px] rounded-full border shadow-sm flex items-center justify-center cursor-grab active:cursor-grabbing transition-shadow z-10 ${
+                    key={noteKey}
+                    onMouseDown={(e) => {
+                        const target = e.target as HTMLElement | null;
+                        const isResize = target?.getAttribute('data-resize') === 'true';
+                        beginDragRef.current(e, note, isResize ? 'resize' : 'move');
+                    }}
+                    className={`absolute rounded-lg border shadow-sm flex items-center justify-between px-2 text-[10px] font-mono font-bold z-10 overflow-hidden ${
                         noteStyle.bg
-                    } ${noteStyle.border} ${noteStyle.shadow} ${
+                    } ${noteStyle.border} ${noteStyle.text} ${noteStyle.shadow} ${
                         isSelected
                             ? 'ring-2 ring-white z-30 shadow-lg'
-                            : 'hover:brightness-110'
+                            : 'hover:opacity-90'
                     }`}
                     style={{
-                        top: `${top + 2}px`,
+                        top: `${top + 1}px`,
                         left: `${leftPercent}%`,
-                        height: `${Math.max(14, rowH - 4)}px`,
+                        width: `${widthPercent}%`,
+                        minWidth: '24px',
+                        height: `${rowH - 2}px`,
+                        cursor: 'grab',
+                        contain: 'layout style paint',
                     }}
-                    title={`Drum Hit [${g.start.toFixed(2)}s] · Velocity: ${note.velocity || 85}`}
+                    title={`${displayPitch} (${note.instrument || 'Piano'}) [${g.start.toFixed(2)}s - ${g.end.toFixed(2)}s] · Velocity: ${note.velocity || 85} · drag right edge to resize`}
                 >
-                    <span className="text-white select-none"><Drum size={10} /></span>
+                    <span className="truncate pointer-events-none">{displayPitch}</span>
+
+                    {widthPercent > 2.5 && (
+                        <span
+                            className={`hidden sm:inline-block text-[10px] font-mono px-1 py-px rounded-md pointer-events-none ${noteStyle.badge}`}
+                        >
+                            {noteStyle.label}
+                        </span>
+                    )}
+                    {/* Resize affordance strip */}
+                    <span
+                        data-resize="true"
+                        className="absolute right-0 top-0 bottom-0 w-2.5 cursor-ew-resize z-20"
+                        aria-hidden
+                    />
                 </div>
             );
-        }
-
-        return (
-            <div
-                key={idx}
-                onMouseDown={(e) => {
-                    // Right-edge zone initiates resize instead of move.
-                    const el = e.currentTarget.getBoundingClientRect();
-                    beginDragRef.current(e, note, el.right - e.clientX <= 8 ? 'resize' : 'move');
-                }}
-                className={`absolute rounded-lg border shadow-sm flex items-center justify-between px-2 text-[10px] font-mono font-bold transition-shadow z-10 overflow-hidden ${
-                    noteStyle.bg
-                } ${noteStyle.border} ${noteStyle.text} ${noteStyle.shadow} ${
-                    isSelected
-                        ? 'ring-2 ring-white z-30 shadow-lg'
-                        : 'hover:brightness-110'
-                }`}
-                style={{
-                    top: `${top + 1}px`,
-                    left: `${leftPercent}%`,
-                    width: `${widthPercent}%`,
-                    minWidth: '24px',
-                    height: `${rowH - 2}px`,
-                    cursor: 'grab'
-                }}
-                title={`${displayPitch} (${note.instrument}) [${g.start.toFixed(2)}s - ${g.end.toFixed(2)}s] · Velocity: ${note.velocity || 85} · drag right edge to resize`}
-            >
-                <span className="truncate pointer-events-none">{displayPitch}</span>
-
-                {widthPercent > 2.5 && (
-                    <span
-                        className={`hidden sm:inline-block text-[10px] font-mono px-1 py-px rounded-md pointer-events-none ${noteStyle.badge}`}
-                    >
-                        {noteStyle.label}
-                    </span>
-                )}
-                {/* Resize affordance strip */}
-                <span
-                    className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize"
-                    aria-hidden
-                />
-            </div>
-        );
-    }), [filteredNotes, selectedNotes, dragPreview, rowH, timeScale]);
+        });
+    }, [filteredNotes, selectedNotes, dragPreview, rowH, timeScale, visibleWindow]);
 
     return (
         <div className="flex flex-col h-full bg-[#f4f4f7] dark:bg-[#0b0d13] text-slate-900 dark:text-slate-200 select-none overflow-hidden transition-colors duration-200">
             {/* Top Toolbar Header */}
-            <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-3 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/80 dark:bg-[#12141c]/90 backdrop-blur-2xl z-20 shadow-apple-sm">
+            <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-3 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/95 dark:bg-[#12141c]/95 z-20 shadow-apple-sm">
                 <div className="flex items-center space-x-3">
                     <div className="w-8 h-8 rounded-xl bg-teal-500/10 dark:bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/20 flex items-center justify-center font-bold text-xs">
                         <Music size={15} />
@@ -1143,6 +1587,59 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                         <span>Quantize</span>
                     </button>
 
+                    {/* Musical Scale & Root Selector + Fold Mode */}
+                    <div className="flex items-center gap-1 bg-black/[0.04] dark:bg-white/5 p-0.5 rounded-xl border border-black/[0.06] dark:border-white/10">
+                        <select
+                            value={selectedRoot}
+                            onChange={(e) => setSelectedRoot(e.target.value)}
+                            title="Scale Root Key"
+                            aria-label="Scale Root Note"
+                            className="bg-transparent text-[11px] font-mono font-bold px-2 py-1 text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
+                        >
+                            {PC_NAMES.map((pc) => (
+                                <option key={pc} value={pc} className="bg-white dark:bg-[#181a24]">
+                                    {pc}
+                                </option>
+                            ))}
+                        </select>
+
+                        <select
+                            value={selectedScale}
+                            onChange={(e) => setSelectedScale(e.target.value as MusicalScale)}
+                            title="Musical Scale Filter"
+                            aria-label="Musical Scale"
+                            className="bg-transparent text-[11px] font-mono font-bold px-2 py-1 text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
+                        >
+                            {(Object.keys(SCALE_DEFINITIONS) as MusicalScale[]).map((scaleKey) => (
+                                <option key={scaleKey} value={scaleKey} className="bg-white dark:bg-[#181a24]">
+                                    {SCALE_DEFINITIONS[scaleKey].label}
+                                </option>
+                            ))}
+                        </select>
+
+                        {/* Fold Mode Button */}
+                        <button
+                            onClick={() => setIsFolded(!isFolded)}
+                            disabled={selectedScale === 'chromatic'}
+                            title={
+                                selectedScale === 'chromatic'
+                                    ? 'Select a scale first to enable Fold Mode'
+                                    : isFolded
+                                    ? 'Disable Fold (Show all 12 chromatic pitches)'
+                                    : `Fold Mode: Hide out-of-scale pitches (Lock to ${selectedRoot} ${SCALE_DEFINITIONS[selectedScale].label})`
+                            }
+                            aria-label="Toggle Scale Fold Mode"
+                            aria-pressed={isFolded}
+                            className={`px-2 py-1 rounded-lg text-xs font-bold transition-all ${
+                                isFolded
+                                    ? 'bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-black shadow-sm'
+                                    : 'text-slate-500 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200 disabled:opacity-30 disabled:pointer-events-none'
+                            }`}
+                        >
+                            Fold
+                        </button>
+                    </div>
+
                     {/* Velocity for selection */}
                     {selectedNotes.size > 0 && (
                         <label className="flex items-center gap-1.5 text-[10px] font-mono font-bold text-slate-500 dark:text-slate-400" title="Velocity of selected notes">
@@ -1200,26 +1697,25 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                     </button>
 
                     {/* Track Filter / Solo Pills */}
-                    <div className="flex items-center bg-black/[0.04] dark:bg-[#181a24] border border-black/[0.06] dark:border-white/10 rounded-xl p-1 space-x-1 text-xs">
-                        {[
-                            { id: 'all', label: 'All', color: 'bg-teal-500' },
-                            { id: 'piano', label: 'Piano', color: 'bg-teal-500' },
-                            { id: 'bass', label: 'Bass', color: 'bg-amber-500' },
-                            { id: 'drums', label: 'Drums', color: 'bg-rose-500' },
-                            { id: 'vocal', label: 'Vocal', color: 'bg-cyan-500' }
-                        ].map(t => (
+                    <div className="flex items-center bg-black/[0.04] dark:bg-[#181a24] border border-black/[0.06] dark:border-white/10 rounded-xl p-1 space-x-1 text-xs overflow-x-auto max-w-[440px]">
+                        {availableTrackPills.map(t => (
                             <button
                                 key={t.id}
-                                onClick={() => setSelectedTrack(t.id)}
-                                title={`Filter piano roll notes to ${t.label}`}
+                                onClick={() => handleSetSelectedTrack(t.id)}
+                                title={`Filter piano roll notes to ${t.label} (${t.count} notes)`}
                                 aria-pressed={selectedTrack === t.id}
-                                className={`px-2.5 py-1 rounded-lg font-bold capitalize transition-all ${
+                                className={`px-2.5 py-1 rounded-lg font-bold capitalize transition-all whitespace-nowrap flex items-center gap-1.5 cursor-pointer ${
                                     selectedTrack === t.id
                                         ? `${t.color} text-slate-950 shadow-sm`
                                         : 'text-slate-500 hover:text-slate-900 dark:hover:text-slate-200'
                                 }`}
                             >
-                                {t.label}
+                                <span>{t.label}</span>
+                                <span className={`text-[10px] px-1.5 py-0.2 rounded-full font-mono font-semibold ${
+                                    selectedTrack === t.id ? 'bg-black/20 text-slate-950' : 'bg-black/[0.06] dark:bg-white/10 text-slate-400'
+                                }`}>
+                                    {t.count}
+                                </span>
                             </button>
                         ))}
                     </div>
@@ -1276,7 +1772,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
             </div>
 
             {/* Main Piano Roll Canvas: Synchronized Scroll Container */}
-            <div ref={scrollRef} className="flex-1 overflow-auto relative flex bg-[#ebebf0] dark:bg-[#0a0c12]">
+            <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-auto relative flex bg-[#ebebf0] dark:bg-[#0a0c12]">
                 {/* 1. Left Piano Keys Keyboard (Sticky on Left X, Scrolling on Y) */}
                 <div className="sticky left-0 z-20 flex-shrink-0 w-36 bg-slate-200 dark:bg-[#1a1c24] border-r-4 border-r-teal-600 shadow-2xl flex flex-col pt-8 select-none">
                     <div className="absolute top-0 left-0 right-0 h-8 bg-gradient-to-b from-slate-300 via-slate-200 to-slate-400 dark:from-[#252836] dark:via-[#1c1e28] dark:to-[#12131b] border-b border-black/30 dark:border-black/60 flex items-center justify-between px-3 text-[10px] font-mono text-slate-600 dark:text-slate-400 font-bold shadow-sm">
@@ -1293,7 +1789,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                     tabIndex={0}
                     data-hotkey-local
                     className="flex-1 relative cursor-crosshair flex flex-col outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-teal-500/40"
-                    style={{ minWidth: `${1200 * zoomX}px` }}
+                    style={{ minWidth: `${baseGridWidth * zoomX}px` }}
                 >
                     {/* Top Measure Ruler Bar (click to seek) */}
                     <div
@@ -1301,7 +1797,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                             const rect = e.currentTarget.getBoundingClientRect();
                             onSeek(((e.clientX - rect.left) / rect.width) * timeScale);
                         }}
-                        className="sticky top-0 h-8 bg-white/95 dark:bg-[#141622]/95 border-b border-black/[0.08] dark:border-white/10 flex items-center z-10 backdrop-blur-md shadow-sm cursor-pointer"
+                        className="sticky top-0 h-8 bg-white/95 dark:bg-[#141622]/95 border-b border-black/[0.08] dark:border-white/10 flex items-center z-10 shadow-sm cursor-pointer"
                         title="Click to move the playhead"
                     >
                         <div className="w-full relative h-full">
@@ -1343,7 +1839,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
 
                         {/* Interactive Playhead Line */}
                         <div
-                            className="absolute top-0 bottom-0 w-0.5 bg-rose-500 z-30 pointer-events-none transition-all duration-75 shadow-lg shadow-rose-500/50"
+                            className="absolute top-0 bottom-0 w-0.5 bg-rose-500 z-30 pointer-events-none will-change-[left] shadow-lg shadow-rose-500/50"
                             style={{ left: `${progressPercent}%` }}
                         >
                             <div className="w-3.5 h-3.5 bg-rose-500 -ml-1.5 -top-1 absolute rounded-full shadow-md border-2 border-white" />
@@ -1353,7 +1849,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
             </div>
 
             {/* Bottom status strip: zoom + follow */}
-            <div className="flex items-center justify-between px-4 py-1.5 border-t border-black/[0.06] dark:border-white/[0.08] bg-white/70 dark:bg-[#12141c]/80 backdrop-blur-xl text-[10px] font-mono text-slate-500 dark:text-slate-400 flex-shrink-0">
+            <div className="flex items-center justify-between px-4 py-1.5 border-t border-black/[0.06] dark:border-white/[0.08] bg-white/95 dark:bg-[#12141c]/95 text-[10px] font-mono text-slate-500 dark:text-slate-400 flex-shrink-0">
                 <div className="flex items-center gap-3">
                     <div className="flex items-center gap-1">
                         <button

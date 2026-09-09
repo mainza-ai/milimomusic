@@ -52,7 +52,7 @@ export const FloatingStatusWidget: React.FC = () => {
     if (!task) return null;
 
     return (
-        <div className="fixed bottom-6 right-6 z-50 bg-white/90 dark:bg-[#141620]/95 backdrop-blur-2xl border border-teal-500/30 rounded-3xl shadow-apple-lg p-4 w-80 text-slate-800 dark:text-slate-200 animate-slide-up select-none">
+        <div className="fixed bottom-6 right-6 z-50 bg-white/95 dark:bg-[#141620]/95 border border-teal-500/30 rounded-3xl shadow-apple-lg p-4 w-80 text-slate-800 dark:text-slate-200 animate-slide-up select-none">
             <div className="flex items-center justify-between mb-2">
                 <div className="flex items-center space-x-2">
                     <span className="w-2 h-2 rounded-full bg-teal-500 animate-ping" />

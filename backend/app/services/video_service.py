@@ -36,11 +36,13 @@ from app.models import Job
 from app.services.llm_service import LLMService
 from app.transcription.karaoke import lyric_sync_engine
 
+from app.core.paths import get_generated_audio_dir, get_data_dir
+
 logger = logging.getLogger(__name__)
 
-VIDEO_DIR = "generated_audio/videos"
+VIDEO_DIR = str(get_generated_audio_dir() / "videos")
 os.makedirs(VIDEO_DIR, exist_ok=True)
-TEMP_DIR = os.path.join("data", "video_cache")
+TEMP_DIR = str(get_data_dir() / "video_cache")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
 STYLE_PALETTES = {
@@ -74,6 +76,17 @@ STYLE_PALETTES = {
     }
 }
 
+# Video palette key -> cinematic image descriptor for scene-background stills.
+# The palette key drives ffmpeg colors; this descriptor drives the diffusion
+# prompt (they are different surfaces — never pass the palette key as an
+# image style).
+SCENE_STYLE_DESCRIPTORS: Dict[str, str] = {
+    "neon-cyberpunk": "neon-lit cyberpunk city atmosphere, rain-slicked streets, volumetric glow",
+    "anime-cinematic": "anime cinematic film aesthetic, dramatic sky, expressive lighting",
+    "retro-vhs": "80s retro film aesthetic, soft grain, neon dusk glow",
+    "minimal-lyrics": "minimal atmospheric cinema, soft gradient light, empty space",
+}
+
 MODEL_MAX_DURATIONS: Dict[str, float] = {
     "hailuo_h3": 15.0,
     "hunyuan": 15.0,
@@ -81,6 +94,38 @@ MODEL_MAX_DURATIONS: Dict[str, float] = {
     "wan2.1": 5.0,
     "audioreactive": 120.0,
 }
+
+# Model-manager video model -> Music Videos page engine key. Catalog ids AND
+# repo ids/names are keyword-matched so user-downloaded (custom_*) models map
+# too. Mirrors modality.py's keyword rules; audioreactive has no model entry.
+VIDEO_ENGINE_HINTS = (
+    ("hailuo_h3", ("hailuo", "h3", "minimax")),
+    ("hunyuan", ("hunyuan",)),
+    ("cogvideox", ("cogvideo", "cogvideox")),
+    ("wan2.1", ("wan2", "wan-2", "wanvideo", "wan_2")),
+)
+
+DEFAULT_VIDEO_ENGINE = "hailuo_h3"
+
+
+def resolve_engine_for_video_model(model_info: Optional[Dict[str, Any]]) -> str:
+    """Map a model-manager video model entry to a Music Videos engine key.
+
+    Blob = id + repo_id + name lowercased; first keyword-family hit wins.
+    Returns DEFAULT_VIDEO_ENGINE when nothing maps (backwards compatible).
+    """
+    if not model_info:
+        return DEFAULT_VIDEO_ENGINE
+    blob = " ".join(
+        str(model_info.get(k) or "")
+        for k in ("id", "repo_id", "name", "local_path")
+    ).lower()
+    if not blob.strip():
+        return DEFAULT_VIDEO_ENGINE
+    for engine, keywords in VIDEO_ENGINE_HINTS:
+        if any(k in blob for k in keywords):
+            return engine
+    return DEFAULT_VIDEO_ENGINE
 
 
 class VideoService:
@@ -111,9 +156,84 @@ class VideoService:
             return 5.0
         return MODEL_MAX_DURATIONS.get(m, 5.0)
 
+    @classmethod
+    def get_available_video_models(cls) -> Dict[str, Any]:
+        """Detect local video model weights in models/video/ and return model registry."""
+        base_models_dir = os.path.join(os.getcwd(), "models", "video")
+        h3_path = os.path.join(base_models_dir, "pipenetwork__MiniMax-H3-MLX-8bit")
+        has_h3 = os.path.isdir(h3_path) and any(f.endswith(".safetensors") for f in os.listdir(h3_path) if os.path.isfile(os.path.join(h3_path, f)))
+        return {
+            "hailuo_h3": {
+                "id": "hailuo_h3",
+                "name": "MiniMax Hailuo H3 (33B DiT)",
+                "max_duration": 15.0,
+                "local_weights_present": has_h3,
+                "weights_path": h3_path if has_h3 else None,
+                "family": "dit",
+                "description": "33B Omni-Modal DiT flagship with high visual fidelity and beat-matched rhythm"
+            },
+            "hunyuan": {
+                "id": "hunyuan",
+                "name": "Tencent HunyuanVideo (13B DiT)",
+                "max_duration": 15.0,
+                "local_weights_present": False,
+                "family": "dit",
+                "description": "Open-source 13B visual DiT sequence renderer with wide panoramic sweeps"
+            },
+            "cogvideox": {
+                "id": "cogvideox",
+                "name": "THUDM CogVideoX 1.5 (5B)",
+                "max_duration": 10.0,
+                "local_weights_present": False,
+                "family": "3d-vae",
+                "description": "5B 3D causal VAE model with emotive cinematic depth zooms"
+            },
+            "wan2.1": {
+                "id": "wan2.1",
+                "name": "Wan-AI Wan 2.1 (1.3B/14B)",
+                "max_duration": 5.0,
+                "local_weights_present": False,
+                "family": "t2v",
+                "description": "Lightweight text-to-video diffusion with rapid tempo cuts"
+            },
+            "audioreactive": {
+                "id": "audioreactive",
+                "name": "Audio-Reactive Synth Visualizer",
+                "max_duration": 120.0,
+                "local_weights_present": True,
+                "family": "procedural",
+                "description": "Real-time procedural waveform, frequency spectrum, and chromatic plasma synthesis"
+            }
+        }
+
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             return self._tasks.get(task_id)
+
+    @classmethod
+    def get_active_video_engine(cls) -> Dict[str, Any]:
+        """Resolve the engine the Music Videos page should default to.
+
+        Reads the model the user marked active in Models & HW
+        (model_manager, persisted in active_models.json under 'video') and maps
+        it to a page engine key. Falls back to the hardcoded default engine
+        when none is active or the model doesn't map.
+        """
+        from app.services.model_manager import model_manager  # lazy: avoids import cycle
+
+        try:
+            active = model_manager.get_active_model("video")
+        except Exception as e:
+            logger.warning(f"Could not resolve active video model: {e}")
+            active = None
+
+        engine = resolve_engine_for_video_model(active) if active else DEFAULT_VIDEO_ENGINE
+        return {
+            "engine": engine,
+            "model_id": (active or {}).get("id"),
+            "name": (active or {}).get("name"),
+            "weights_present": bool(active and active.get("is_installed")),
+        }
 
     def _update_task(self, task_id: str, **kwargs):
         with self._lock:
@@ -537,23 +657,42 @@ class VideoService:
         Ken Burns and atmospheric particle field generation.
         """
         palette = STYLE_PALETTES.get(style, STYLE_PALETTES["neon-cyberpunk"])
+        fps = 25
+        total_d = max(1, int(round(duration * fps)))
+
+        prompt_str = (prompt or "").lower()
+        if "close-up" in prompt_str or "tight" in prompt_str:
+            zoom_expr = "min(zoom+0.0018,1.28)"
+            x_expr = "iw/2-(iw/zoom/2)"
+            y_expr = "ih/2-(ih/zoom/2)"
+        elif "pan" in prompt_str or "sweep" in prompt_str or "environmental" in prompt_str:
+            zoom_expr = "1.15"
+            x_expr = "if(lte(on,1),(iw-iw/zoom)/2,x+0.8)"
+            y_expr = "ih/2-(ih/zoom/2)"
+        elif "crane" in prompt_str or "low" in prompt_str or "dutch" in prompt_str:
+            zoom_expr = "min(zoom+0.0012,1.20)"
+            x_expr = "iw/2-(iw/zoom/2)+sin(in/20)*25"
+            y_expr = "ih/2-(ih/zoom/2)+cos(in/25)*30"
+        else:
+            zoom_expr = "min(zoom+0.0014,1.22)"
+            x_expr = "iw/2-(iw/zoom/2)+sin(in/25)*30"
+            y_expr = "ih/2-(ih/zoom/2)+cos(in/30)*20"
 
         if bg_image and os.path.isfile(bg_image):
-            # Dynamic multi-axis Ken Burns motion with orbital sweep
-            fps = 25
-            total_d = int(duration * fps)
             filter_str = (
                 f"scale={int(width * 1.25)}:{int(height * 1.25)},"
-                f"zoompan=z='min(zoom+0.0012,1.20)':x='iw/2-(iw/zoom/2)+sin(in/25)*35':"
-                f"y='ih/2-(ih/zoom/2)+cos(in/30)*25':d={total_d}:s={width}x{height},"
-                f"eq=contrast=1.08:saturation=1.18:brightness=0.01"
+                f"zoompan=z='{zoom_expr}':x='{x_expr}':y='{y_expr}':d={total_d}:s={width}x{height},"
+                f"eq=contrast=1.10:saturation=1.20:brightness=0.01"
             )
             cmd = [
                 "ffmpeg", "-y",
                 "-loop", "1", "-i", bg_image,
+                "-f", "lavfi", "-t", str(duration), "-i", "anullsrc=r=44100:cl=stereo",
                 "-vf", filter_str,
                 "-t", str(duration),
                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest",
                 out_path
             ]
         else:
@@ -571,12 +710,103 @@ class VideoService:
             cmd = [
                 "ffmpeg", "-y",
                 "-f", "lavfi", "-i", filter_str,
+                "-f", "lavfi", "-t", str(duration), "-i", "anullsrc=r=44100:cl=stereo",
                 "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest",
+                "-t", str(duration),
+                out_path
+            ]
+
+        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        _, err = await proc.communicate()
+        if proc.returncode != 0 or not os.path.isfile(out_path):
+            logger.error(f"render_broll_clip failed ({proc.returncode}): {err.decode('utf-8', errors='ignore')}")
+
+    async def generate_storyboard(
+        self,
+        job: Job,
+        visual_style: str = "neon-cyberpunk"
+    ) -> List[Dict[str, Any]]:
+        """
+        Generate a beat-matched, musical scene storyboard sequence for a job.
+        Used by the AI Music Video Studio for directing notes and clip planning.
+        """
+        clips = self.segment_song_for_video(
+            job=job,
+            max_clip_duration=15.0,
+            bpm=120.0,
+            visual_style=visual_style
+        )
+        scenes = []
+        for c in clips:
+            scenes.append({
+                "time": c["time_str"],
+                "prompt": c["prompt"],
+                "camera": c["camera"],
+                "lighting": c.get("lighting", "Cyan and magenta anamorphic rim lighting")
+            })
+        return scenes
+
+    async def render_audio_reactive_video(
+        self,
+        job: Job,
+        visual_style: str = "neon-cyberpunk",
+        resolution: str = "720p"
+    ) -> str:
+        """
+        Render an audio-reactive visualizer music video using ffmpeg.
+        Outputs an MP4 with stereo audio and returns the static URL path.
+        """
+        resolved_master = self.resolve_audio_path(job.audio_path)
+        if not resolved_master or not os.path.isfile(resolved_master):
+            raise FileNotFoundError(f"Master audio file not found for job: {job.audio_path}")
+
+        palette = STYLE_PALETTES.get(visual_style, STYLE_PALETTES["neon-cyberpunk"])
+        colors = palette.get("colors", "0x14b8a6|0x06b6d4")
+        width, height = (1920, 1080) if resolution == "1080p" else (1280, 720)
+
+        out_filename = f"{job.id}_reactive.mp4"
+        out_path = os.path.join(VIDEO_DIR, out_filename)
+
+        face_image = self.resolve_face_image(job)
+        if face_image and os.path.isfile(face_image):
+            filter_complex = (
+                f"[1:a]showwaves=s={width}x{int(height * 0.35)}:mode=line:colors={colors}:scale=sqrt[wv];"
+                f"[0:v]scale={width}:{height},boxblur=4:1[bg];"
+                f"[bg][wv]overlay=(W-w)/2:H-h-40[v]"
+            )
+            cmd = [
+                "ffmpeg", "-y",
+                "-loop", "1", "-i", face_image,
+                "-i", resolved_master,
+                "-filter_complex", filter_complex,
+                "-map", "[v]", "-map", "1:a",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest",
+                out_path
+            ]
+        else:
+            filter_complex = (
+                f"[0:a]showcqt=s={width}x{height}:csp=bt709:bar_g=2:basefreq=40:endfreq=12000[v]"
+            )
+            cmd = [
+                "ffmpeg", "-y",
+                "-i", resolved_master,
+                "-filter_complex", filter_complex,
+                "-map", "[v]", "-map", "0:a",
+                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
+                "-c:a", "aac", "-b:a", "192k",
+                "-shortest",
                 out_path
             ]
 
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
         await proc.communicate()
+
+        video_url = f"/audio/videos/{out_filename}"
+        return video_url
 
     async def render_advanced_music_video(
         self,
@@ -645,6 +875,16 @@ class VideoService:
             rendered_clips: List[str] = []
             total_clips = len(clips)
 
+            if model_name == "audioreactive":
+                self._update_task(task_id, step="Rendering Audio-Reactive Visualizer Video", progress=50)
+                video_url = await self.render_audio_reactive_video(
+                    job=job,
+                    visual_style=style,
+                    resolution=resolution
+                )
+                self._update_task(task_id, status="completed", progress=100, step="Completed", video_url=video_url)
+                return video_url
+
             for idx, clip in enumerate(clips):
                 clip_file = os.path.join(TEMP_DIR, f"clip_{task_id}_{idx:03d}.mp4")
                 self._update_task(
@@ -664,18 +904,39 @@ class VideoService:
                         width=w, height=h
                     )
                 else:
+                    scene_bg = None
+                    try:
+                        from app.services.image_service import image_service
+                        scene_prompt = clip.get("prompt") or f"{style} music video, {clip.get('scene_type', 'cinematic')} shot"
+                        scene_descriptor = SCENE_STYLE_DESCRIPTORS.get(style, style)
+                        bg = image_service.generate_scene_background(
+                            prompt=scene_prompt,
+                            style=scene_descriptor,
+                            width=w,
+                            height=h,
+                        )
+                        if bg.get("ok") and bg.get("dest_path") and os.path.isfile(bg["dest_path"]):
+                            scene_bg = bg["dest_path"]
+                            logger.info(f"Scene background still for clip {idx + 1}: {scene_bg}")
+                    except Exception as e:
+                        logger.warning(f"Failed to generate unique scene visual ({e}), falling back.")
+                        scene_bg = face_image
+
                     await self.render_broll_clip(
                         style=style,
                         duration=clip["duration"],
                         out_path=clip_file,
                         width=w, height=h,
-                        bg_image=face_image,
+                        bg_image=scene_bg,
                         prompt=clip.get("prompt"),
                         model_name=model_name
                     )
 
                 if os.path.isfile(clip_file) and os.path.getsize(clip_file) > 0:
                     rendered_clips.append(clip_file)
+
+            if not rendered_clips:
+                raise RuntimeError("No video scenes were successfully rendered.")
 
             # Step 3: Video Assembly
             self._update_task(task_id, step="Assembling & Stitching Video Scenes", progress=80)
@@ -693,37 +954,58 @@ class VideoService:
                 stitched_video
             ]
             proc = await asyncio.create_subprocess_exec(*cmd_concat, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            await proc.communicate()
+            _, err_concat = await proc.communicate()
+            if proc.returncode != 0 or not os.path.isfile(stitched_video) or os.path.getsize(stitched_video) == 0:
+                logger.warning(f"Fast stream copy concat failed ({err_concat.decode('utf-8', errors='ignore')[:150]}), falling back to re-encode concat.")
+                cmd_concat_fallback = [
+                    "ffmpeg", "-y",
+                    "-f", "concat", "-safe", "0",
+                    "-i", concat_list_path,
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
+                    "-c:a", "aac", "-b:a", "192k",
+                    stitched_video
+                ]
+                proc_fb = await asyncio.create_subprocess_exec(*cmd_concat_fallback, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                await proc_fb.communicate()
+
+            if not os.path.isfile(stitched_video) or os.path.getsize(stitched_video) == 0:
+                raise RuntimeError(f"Video scene stitching failed: {err_concat.decode('utf-8', errors='ignore')[:200]}")
 
             # Step 4: Synchronized Lyric Subtitles & Master Audio Remuxing
             self._update_task(task_id, step="Burning Synchronized Lyrics & Remuxing Audio", progress=90)
             out_filename = f"{job.id}_master_mv.mp4"
             out_path = os.path.join(VIDEO_DIR, out_filename)
 
-            # Generate ASS Subtitles
-            timed_lines = lyric_sync_engine.align_lyrics(
-                lyrics=job.lyrics or "",
-                duration_sec=float((job.duration_ms or 180000) / 1000.0),
-                vocal_stem_path=vocal_stem
-            )
-            ass_text = self.generate_karaoke_ass(timed_lines, width=w, height=h, style=style)
-            ass_path = os.path.join(TEMP_DIR, f"lyrics_{task_id}.ass")
-            with open(ass_path, "w", encoding="utf-8") as f:
-                f.write(ass_text)
-
             # Master Remuxing
             cmd_final = [
                 "ffmpeg", "-y",
-                "-i", stitched_video if os.path.isfile(stitched_video) else resolved_master,
+                "-i", stitched_video,
                 "-i", resolved_master,
                 "-map", "0:v:0", "-map", "1:a:0",
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
+                "-c:v", "copy",
                 "-c:a", "aac", "-b:a", "256k",
                 "-shortest",
                 out_path
             ]
             proc_final = await asyncio.create_subprocess_exec(*cmd_final, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            await proc_final.communicate()
+            _, err_final = await proc_final.communicate()
+            if proc_final.returncode != 0 or not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
+                logger.warning("Stream copy remux failed, falling back to re-encode remux.")
+                cmd_final_re = [
+                    "ffmpeg", "-y",
+                    "-i", stitched_video,
+                    "-i", resolved_master,
+                    "-map", "0:v:0", "-map", "1:a:0",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
+                    "-c:a", "aac", "-b:a", "256k",
+                    "-shortest",
+                    out_path
+                ]
+                proc_re = await asyncio.create_subprocess_exec(*cmd_final_re, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                await proc_re.communicate()
+
+            if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
+                raise RuntimeError("Failed to generate master music video output file.")
 
             video_url = f"/audio/videos/{out_filename}"
             self._update_task(task_id, status="completed", progress=100, step="Completed", video_url=video_url)

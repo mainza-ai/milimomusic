@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import axios from 'axios';
 import {
   api,
@@ -20,8 +20,10 @@ import { SessionWorkspace } from './components/workspace/SessionWorkspace';
 import { FloatingStatusWidget } from './components/ui/FloatingStatusWidget';
 import { MilimoLogo } from './components/ui/MilimoLogo';
 import { useTheme } from './context/ThemeContext';
-import { useAudioEngine } from './context/AudioEngineContext';
+import { useAudioControls } from './context/AudioEngineContext';
+import type { LLMConfig } from './api';
 import { toast } from './utils/toast';
+import { CommandPalette, type CommandItem } from './components/ui/CommandPalette';
 
 // Dedicated Reference IA Views
 import { SongsView } from './components/views/SongsView';
@@ -67,7 +69,12 @@ import {
   Square,
   Play,
   CheckCircle2,
-  AlertCircle
+  AlertCircle,
+  Loader2,
+  Search,
+  Pause,
+  SkipForward,
+  SkipBack
 } from 'lucide-react';
 
 export type NavView =
@@ -105,19 +112,40 @@ function App() {
   const [attachmentPath, setAttachmentPath] = useState<string | null>(null);
   const attachmentInputRef = useRef<HTMLInputElement>(null);
 
-  // Centralized Audio Playback Engine
+  // Centralized Audio Playback Engine (Controls only — stable reference decoupled from currentTime ticks)
   const {
     currentTrack: engineTrack,
     isPlaying: engineIsPlaying,
     playTrack: enginePlayTrack,
     togglePlay: engineTogglePlay,
     pause: enginePause,
-    stop: engineStop
-  } = useAudioEngine();
+    stop: engineStop,
+    nextTrack: engineNextTrack,
+    prevTrackOrRestart: enginePrevTrack
+  } = useAudioControls();
 
   const playingSong = engineTrack;
   const isPlayingAudio = engineIsPlaying;
   const [activeProject, setActiveProject] = useState<Project | null>(null);
+
+  // Centralized LLM Configuration & Model State (Single Source of Truth)
+  const [llmConfig, setLlmConfig] = useState<LLMConfig>({});
+  const loadLlmConfig = useCallback(async () => {
+    try {
+      const [cfg, models] = await Promise.all([
+        api.getLLMConfig(),
+        api.getLyricsModels()
+      ]);
+      setLlmConfig(cfg || {});
+      setLyricsModels(Array.isArray(models) ? models : []);
+    } catch (e) {
+      console.error("Failed to load LLM configuration", e);
+    }
+  }, []);
+
+  useEffect(() => {
+    loadLlmConfig();
+  }, [loadLlmConfig]);
 
   // Responsive Layout States
   const [isLeftRailCollapsed, setIsLeftRailCollapsed] = useState<boolean>(() => {
@@ -132,9 +160,54 @@ function App() {
   const [isVoiceStudioOpen, setIsVoiceStudioOpen] = useState(false);
   const [isModelsManagerOpen, setIsModelsManagerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isCreatingSession, setIsCreatingSession] = useState(false);
+  const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
 
   // Chat-first Producer landing input
   const [producerInput, setProducerInput] = useState('');
+  const [isListeningVoice, setIsListeningVoice] = useState(false);
+
+  const handleVoiceInput = () => {
+    const SpeechRecognition = (window as any).SpeechRecognition || (window as any).webkitSpeechRecognition;
+    if (!SpeechRecognition) {
+      toast('Speech recognition is not supported in this browser. Please type your prompt.', 'info');
+      return;
+    }
+    try {
+      const recognition = new SpeechRecognition();
+      recognition.continuous = false;
+      recognition.interimResults = false;
+      recognition.lang = 'en-US';
+      setIsListeningVoice(true);
+      toast('Listening for voice prompt...', 'info');
+
+      recognition.onresult = (event: any) => {
+        const transcript = event.results?.[0]?.[0]?.transcript;
+        if (transcript) {
+          setProducerInput(prev => prev ? `${prev} ${transcript}` : transcript);
+          toast('Voice prompt captured.', 'success');
+        }
+        setIsListeningVoice(false);
+      };
+
+      recognition.onerror = (event: any) => {
+        console.error('Speech recognition error:', event.error);
+        setIsListeningVoice(false);
+        if (event.error !== 'no-speech') {
+          toast(`Voice input error: ${event.error}`, 'error');
+        }
+      };
+
+      recognition.onend = () => {
+        setIsListeningVoice(false);
+      };
+
+      recognition.start();
+    } catch (e) {
+      console.error('Speech recognition exception:', e);
+      setIsListeningVoice(false);
+    }
+  };
 
   // Pagination & Search
   const [historyOffset, setHistoryOffset] = useState(0);
@@ -170,18 +243,21 @@ function App() {
     if (isLoadingHistory && offset !== 0) return;
     setIsLoadingHistory(true);
     try {
-      const jobs = await api.getHistory(HISTORY_LIMIT, offset, filter, search);
+      const rawJobs = await api.getHistory(HISTORY_LIMIT, offset, filter, search);
+      const jobs = Array.isArray(rawJobs) ? rawJobs : [];
       setHasMoreHistory(jobs.length >= HISTORY_LIMIT);
 
+      const uniqueJobs = Array.from(new Map(jobs.map(j => [j.id, j])).values());
       if (replace) {
-        setHistory(jobs);
-        if (jobs.length > 0 && !activeWorkspaceJob) {
-          const recentCompleted = jobs.find(j => j.status === 'completed');
+        setHistory(uniqueJobs);
+        if (uniqueJobs.length > 0 && !activeWorkspaceJob) {
+          const recentCompleted = uniqueJobs.find(j => (j.status || '').toLowerCase() === 'completed');
           if (recentCompleted) setActiveWorkspaceJob(recentCompleted);
         }
       } else {
         setHistory(prev => {
-          const newJobs = jobs.filter(j => !prev.find(p => p.id === j.id));
+          const existingIds = new Set(prev.map(p => p.id));
+          const newJobs = uniqueJobs.filter(j => !existingIds.has(j.id));
           return [...prev, ...newJobs];
         });
       }
@@ -195,13 +271,16 @@ function App() {
   const loadSessions = async () => {
     try {
       const list = await sessionApi.listSessions();
-      setSessions(list);
+      setSessions(Array.isArray(list) ? list : []);
     } catch (e) {
       console.error("Failed to load sessions", e);
+      setSessions([]);
     }
   };
 
   const handleCreateNewSession = async () => {
+    if (isCreatingSession) return;
+    setIsCreatingSession(true);
     try {
       const newSession = await sessionApi.createSession({
         title: DEFAULT_SESSION_TITLE
@@ -210,8 +289,12 @@ function App() {
       setActiveSession(newSession);
       setCurrentNav('explore');
       setProducerInput('');
+      toast('New studio session created', 'success');
     } catch (e) {
       console.error("Failed to create new session", e);
+      toast('Failed to create new session. Check connection.', 'error');
+    } finally {
+      setIsCreatingSession(false);
     }
   };
 
@@ -222,19 +305,212 @@ function App() {
       setCurrentNav('explore');
     } catch (e) {
       console.error("Failed to select session", e);
+      toast('Failed to load session details', 'error');
     }
   };
 
+  // Global ⌘K Command Palette Keydown Listener
+  useEffect(() => {
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setIsCommandPaletteOpen((prev) => !prev);
+      }
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    return () => window.removeEventListener('keydown', handleKeyDown);
+  }, []);
+
+  const commandList = useMemo<CommandItem[]>(() => {
+    return [
+      // Navigation
+      {
+        id: 'nav-explore',
+        title: 'Explore & Chat Producer',
+        subtitle: 'Mainza Studio AI Producer & discovery feed',
+        category: 'Navigation',
+        icon: Compass,
+        shortcut: '1',
+        action: () => setCurrentNav('explore'),
+      },
+      {
+        id: 'nav-songs',
+        title: 'Library / Songs',
+        subtitle: 'All generated audio, stems, and MIDI files',
+        category: 'Navigation',
+        icon: Music,
+        shortcut: '2',
+        action: () => setCurrentNav('songs'),
+      },
+      {
+        id: 'nav-artists',
+        title: 'Artists & Voice Models',
+        subtitle: 'AI singer profiles, timbres, and RVC weights',
+        category: 'Navigation',
+        icon: Users,
+        shortcut: '3',
+        action: () => setCurrentNav('artists'),
+      },
+      {
+        id: 'nav-projects',
+        title: 'Projects',
+        subtitle: 'Albums, EPs, and organized multitrack projects',
+        category: 'Navigation',
+        icon: FolderKanban,
+        shortcut: '4',
+        action: () => setCurrentNav('projects'),
+      },
+      {
+        id: 'nav-playlists',
+        title: 'Playlists',
+        subtitle: 'Curated playlists and custom track sequences',
+        category: 'Navigation',
+        icon: ListMusic,
+        shortcut: '5',
+        action: () => setCurrentNav('playlists'),
+      },
+      {
+        id: 'nav-videos',
+        title: 'Music Videos',
+        subtitle: 'Generative lyrics videos and visualizers',
+        category: 'Navigation',
+        icon: Video,
+        shortcut: '6',
+        action: () => setCurrentNav('videos'),
+      },
+      {
+        id: 'nav-workspace',
+        title: 'DAW Workspace',
+        subtitle: 'Multitrack timeline, mixer, piano roll, notation',
+        category: 'Navigation',
+        icon: Sliders,
+        shortcut: 'D',
+        action: () => {
+          if (history[0]) setActiveWorkspaceJob(history[0]);
+          setCurrentNav('workspace');
+        },
+      },
+      // Actions
+      {
+        id: 'act-new-session',
+        title: 'New Studio Session',
+        subtitle: 'Start a fresh creative session with Mainza Producer',
+        category: 'Actions',
+        icon: Plus,
+        shortcut: '⌘N',
+        action: () => handleCreateNewSession(),
+      },
+      {
+        id: 'act-voice-studio',
+        title: 'Voice Studio (Voice Cloning)',
+        subtitle: 'Zero-shot timbre cloning & RVC v2 inference',
+        category: 'Actions',
+        icon: Mic,
+        shortcut: 'V',
+        action: () => setIsVoiceStudioOpen(true),
+      },
+      {
+        id: 'act-models-manager',
+        title: 'Models & Hardware Manager',
+        subtitle: 'MiniMax Music 3, HeartMuLa, GPU memory offload',
+        category: 'Actions',
+        icon: Cpu,
+        shortcut: 'M',
+        action: () => setIsModelsManagerOpen(true),
+      },
+      {
+        id: 'act-llm-settings',
+        title: 'LLM & Provider Settings',
+        subtitle: 'Configure OpenAI, Anthropic, Gemini, or Ollama',
+        category: 'Actions',
+        icon: Settings,
+        action: () => setIsSettingsOpen(true),
+      },
+      {
+        id: 'act-toggle-composer',
+        title: isComposerOpen ? 'Hide Composer Sidebar' : 'Open Composer Sidebar',
+        subtitle: 'Toggle prompt, lyric conditioning, and style studio',
+        category: 'Actions',
+        icon: Sparkles,
+        action: () => setIsComposerOpen((prev) => !prev),
+      },
+      {
+        id: 'act-toggle-theme',
+        title: theme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode',
+        subtitle: 'Toggle between Dark Glass and Crisp Light themes',
+        category: 'Actions',
+        icon: theme === 'dark' ? Sun : Moon,
+        action: () => setTheme(theme === 'dark' ? 'light' : 'dark'),
+      },
+      // Transport
+      {
+        id: 'trans-play-pause',
+        title: engineIsPlaying ? 'Pause Playback' : 'Resume Playback',
+        subtitle: engineTrack ? (engineTrack.title || engineTrack.prompt.slice(0, 30)) : 'No track loaded',
+        category: 'Transport',
+        icon: engineIsPlaying ? Pause : Play,
+        shortcut: 'Space',
+        action: () => engineTogglePlay(),
+      },
+      {
+        id: 'trans-next',
+        title: 'Next Track in Queue',
+        subtitle: 'Skip to following track',
+        category: 'Transport',
+        icon: SkipForward,
+        shortcut: ']',
+        action: () => engineNextTrack(),
+      },
+      {
+        id: 'trans-prev',
+        title: 'Previous Track / Restart',
+        subtitle: 'Return to start or previous song',
+        category: 'Transport',
+        icon: SkipBack,
+        shortcut: '[',
+        action: () => enginePrevTrack(),
+      },
+      {
+        id: 'trans-stop',
+        title: 'Stop Audio Engine',
+        subtitle: 'Halt all audio playback',
+        category: 'Transport',
+        icon: Square,
+        action: () => engineStop(),
+      },
+    ];
+  }, [
+    theme,
+    isComposerOpen,
+    engineIsPlaying,
+    engineTrack,
+    history,
+    setCurrentNav,
+    handleCreateNewSession,
+    setIsVoiceStudioOpen,
+    setIsModelsManagerOpen,
+    setIsSettingsOpen,
+    setIsComposerOpen,
+    setTheme,
+    engineTogglePlay,
+    engineNextTrack,
+    enginePrevTrack,
+    engineStop
+  ]);
+
   const handleDeleteSession = async (sessionId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
+    if (!window.confirm("Are you sure you want to delete this session?")) return;
     try {
       await sessionApi.deleteSession(sessionId);
       setSessions(prev => prev.filter(s => s.id !== sessionId));
       if (activeSession?.id === sessionId) {
         setActiveSession(null);
       }
+      toast('Session deleted', 'info');
     } catch (err) {
       console.error("Failed to delete session", err);
+      toast('Failed to delete session', 'error');
     }
   };
 
@@ -565,9 +841,12 @@ function App() {
     // 3. API Delete Call & Re-sync
     try {
       await api.deleteJob(jobId);
+      toast('Track permanently deleted.', 'info');
       handleRefresh();
-    } catch (e) {
+    } catch (e: any) {
       console.error("Delete failed on server", e);
+      const errMsg = e?.response?.data?.detail?.error?.message || e?.response?.data?.detail || e?.message || 'Server error';
+      toast(`Failed to delete track: ${errMsg}`, 'error');
       handleRefresh();
     }
   };
@@ -777,7 +1056,9 @@ function App() {
         data.isInstrumental,
         data.coverImagePath,
         data.imagePrompt,
-        activeSession?.id
+        activeSession?.id,
+        data.autoGenerateCover ?? true,
+        data.coverImageModelId
       );
       setCurrentJobId(res.job_id);
       setParentJob(undefined);
@@ -873,6 +1154,9 @@ function App() {
     enginePause();
     setActiveWorkspaceJob(job);
     setCurrentNav('workspace');
+    if (typeof window !== 'undefined' && window.innerWidth < 1440) {
+      setIsComposerOpen(false);
+    }
     try {
       const url = new URL(window.location.href);
       url.searchParams.set('view', 'workspace');
@@ -894,8 +1178,11 @@ function App() {
   };
 
   const handlePlaySong = (job: Job) => {
-    if (!job.audio_path) return;
-    const completed = history.filter(s => s.status === 'completed' && s.audio_path);
+    if (!job.audio_path) {
+      toast(`“${job.title || job.prompt || 'Untitled track'}” has no audio file available yet.`, 'info');
+      return;
+    }
+    const completed = history.filter(s => (s.status || '').toLowerCase() === 'completed' && s.audio_path);
     if (engineTrack?.id === job.id) {
       engineTogglePlay(job);
     } else {
@@ -916,7 +1203,7 @@ function App() {
 
       {/* 1. Apple-Style Persistent Reference Left Navigation Rail */}
       <nav
-        className={`bg-white/85 dark:bg-[#12141c]/90 backdrop-blur-2xl border-r border-black/[0.06] dark:border-white/[0.08] flex flex-col justify-between flex-shrink-0 z-40 shadow-apple-sm dark:shadow-2xl transition-all duration-300 ease-in-out ${
+        className={`bg-white/95 dark:bg-[#12141c]/95 border-r border-black/[0.06] dark:border-white/[0.08] flex flex-col justify-between flex-shrink-0 z-40 shadow-apple-sm dark:shadow-2xl transition-all duration-300 ease-in-out ${
           isMobileMenuOpen
             ? 'fixed inset-y-0 left-0 w-64 translate-x-0'
             : isLeftRailCollapsed
@@ -948,13 +1235,14 @@ function App() {
           {/* Primary CTA: New Session + */}
           <button
             onClick={handleCreateNewSession}
-            className={`w-full py-2.5 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center justify-center space-x-2 transition-all shadow-md shadow-teal-500/20 active:scale-[0.98] ${
+            disabled={isCreatingSession}
+            className={`w-full py-2.5 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center justify-center space-x-2 transition-all shadow-md shadow-teal-500/20 active:scale-[0.98] disabled:opacity-50 ${
               isLeftRailCollapsed ? 'px-0' : 'px-4'
             }`}
             title="New Session"
           >
-            <Plus size={16} />
-            {!isLeftRailCollapsed && <span>New session +</span>}
+            {isCreatingSession ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+            {!isLeftRailCollapsed && <span>{isCreatingSession ? 'Creating...' : 'New session +'}</span>}
           </button>
 
           {/* Flat Reference Navigation (Songs, Projects, Playlists, Videos, Profile, DAW Workspace) */}
@@ -1020,14 +1308,15 @@ function App() {
                 </span>
                 <button
                   onClick={handleCreateNewSession}
-                  className="text-slate-400 hover:text-teal-500 p-0.5 rounded"
+                  disabled={isCreatingSession}
+                  className="text-slate-400 hover:text-teal-500 p-0.5 rounded disabled:opacity-50"
                   title="New Session"
                 >
-                  <Plus size={13} />
+                  {isCreatingSession ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
                 </button>
               </div>
               <div className="space-y-1 max-h-40 overflow-y-auto pr-1">
-                {sessions.map(s => {
+                {(Array.isArray(sessions) ? sessions : []).map(s => {
                   const isActive = activeSession?.id === s.id && currentNav === 'explore';
                   return (
                     <div
@@ -1296,7 +1585,7 @@ function App() {
       {/* 2. Main Content Center Stage */}
       <main className="flex-1 h-full overflow-hidden flex flex-col relative z-10 bg-[#fbfbfd] dark:bg-[#0c0e14] transition-colors duration-200 min-w-0">
         {/* Top Responsive Mobile / Toolbar Strip */}
-        <header className="flex md:hidden items-center justify-between px-4 py-2.5 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/70 dark:bg-[#12141c]/80 backdrop-blur-xl z-20">
+        <header className="flex md:hidden items-center justify-between px-4 py-2.5 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/95 dark:bg-[#12141c]/95 z-20">
           <button
             onClick={() => setIsMobileMenuOpen(true)}
             className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-black/5 dark:hover:bg-white/10"
@@ -1315,7 +1604,7 @@ function App() {
 
         {/* Top Responsive Desktop / Tablet Header */}
         {currentNav !== 'workspace' && (
-          <header className="hidden md:flex items-center justify-between px-6 py-2.5 border-b border-black/[0.04] dark:border-white/[0.06] bg-white/40 dark:bg-[#12141c]/50 backdrop-blur-xl flex-shrink-0 z-20 transition-all">
+          <header className="hidden md:flex items-center justify-between px-6 py-2.5 border-b border-black/[0.04] dark:border-white/[0.06] bg-white/95 dark:bg-[#12141c]/95 flex-shrink-0 z-20 transition-all">
             <div className="flex items-center space-x-3">
               {isLeftRailCollapsed && (
                 <button
@@ -1331,6 +1620,19 @@ function App() {
             </div>
 
             <div className="flex items-center space-x-2 ml-auto">
+              <button
+                onClick={() => setIsCommandPaletteOpen(true)}
+                className="px-3 py-1.5 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 border border-black/[0.06] dark:border-white/10 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 text-xs font-medium flex items-center gap-2 transition-all shadow-sm"
+                title="Open Command Palette (⌘K / Ctrl+K)"
+                aria-label="Open Command Palette"
+              >
+                <Search size={13} className="text-teal-500" />
+                <span className="hidden sm:inline">Quick Actions</span>
+                <kbd className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-black/5 dark:bg-white/10 border border-black/10 dark:border-white/10 text-slate-400 font-bold">
+                  ⌘K
+                </kbd>
+              </button>
+
               <button
                 onClick={() => setIsComposerOpen(!isComposerOpen)}
                 className={`px-3 py-1.5 rounded-xl border text-xs font-bold flex items-center space-x-1.5 transition-all shadow-sm ${
@@ -1350,7 +1652,7 @@ function App() {
 
         {/* Active Studio Generation HUD / Real-Time Progress Notification Banner */}
         {isGenerating && (
-          <div className="mx-4 sm:mx-6 mt-3 p-3.5 sm:p-4 rounded-2xl bg-white/95 dark:bg-[#151824]/95 border border-teal-500/40 shadow-apple-lg backdrop-blur-2xl animate-slide-down flex flex-col gap-2.5 z-30">
+          <div className="mx-4 sm:mx-6 mt-3 p-3.5 sm:p-4 rounded-2xl bg-white/95 dark:bg-[#151824]/95 border border-teal-500/40 shadow-apple-lg animate-slide-down flex flex-col gap-2.5 z-30">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center space-x-3 min-w-0">
                 <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-teal-500 to-cyan-400 p-0.5 flex items-center justify-center flex-shrink-0 animate-pulse">
@@ -1401,6 +1703,8 @@ function App() {
               key={activeWorkspaceJob.id}
               job={activeWorkspaceJob}
               onClose={() => setCurrentNav(previousNav || 'explore')}
+              isComposerOpen={isComposerOpen}
+              onToggleComposer={() => setIsComposerOpen(!isComposerOpen)}
             />
           </div>
         ) : currentNav === 'track-detail' && selectedTrack ? (
@@ -1433,6 +1737,7 @@ function App() {
           <SongsView
             songs={history}
             currentJobId={playingSong?.id}
+            isPlaying={isPlayingAudio}
             onPlay={handlePlaySong}
             onOpenWorkspace={handleOpenWorkspace}
             onToggleFavorite={handleToggleFavorite}
@@ -1470,12 +1775,19 @@ function App() {
             onPlaySong={handlePlaySong}
             onOpenWorkspace={handleOpenWorkspace}
             onSelectTrack={handleSelectTrack}
+            currentSongId={playingSong?.id}
+            isPlaying={isPlayingAudio}
           />
         ) : currentNav === 'videos' ? (
           <MusicVideosView
             songs={history}
             onPlay={handlePlaySong}
             initialSelectedSongId={selectedVideoSongId}
+            isPlaying={isPlayingAudio}
+            playingSongId={playingSong?.id}
+            onUpdateSong={(updatedSong) => {
+              setHistory(prev => prev.map(s => s.id === updatedSong.id ? updatedSong : s));
+            }}
           />
         ) : currentNav === 'profile' ? (
           <ProfileView
@@ -1510,7 +1822,7 @@ function App() {
           </div>
         ) : (
           /* Explore & New Session Stage */
-          <div className="flex-1 overflow-y-auto flex flex-col justify-between p-4 sm:p-6 md:p-8 min-w-0 relative">
+          <div className={`flex-1 overflow-y-auto flex flex-col justify-between p-4 sm:p-6 md:p-8 min-w-0 relative ${engineTrack ? 'pb-28 sm:pb-32' : ''}`}>
             {/* Hidden Attachment Input */}
             <input
               type="file"
@@ -1544,9 +1856,11 @@ function App() {
                     </div>
                     <button
                       onClick={handleCreateNewSession}
-                      className="px-3 py-1.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-xs font-semibold text-slate-600 dark:text-slate-300 transition-colors"
+                      disabled={isCreatingSession}
+                      className="px-3 py-1.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-xs font-semibold text-slate-600 dark:text-slate-300 transition-colors disabled:opacity-50 flex items-center gap-1.5"
                     >
-                      + New Session
+                      {isCreatingSession && <Loader2 size={12} className="animate-spin" />}
+                      <span>{isCreatingSession ? 'Creating...' : '+ New Session'}</span>
                     </button>
                   </div>
 
@@ -1607,7 +1921,7 @@ function App() {
 
                     {isChatSubmitting && (
                       <div className="flex justify-start animate-slide-up">
-                        <div className="p-4 rounded-2xl bg-white/95 dark:bg-[#181a24]/95 border border-teal-500/30 dark:border-teal-500/20 rounded-bl-sm shadow-apple-md flex flex-col gap-2.5 max-w-sm w-full backdrop-blur-xl">
+                        <div className="p-4 rounded-2xl bg-white/95 dark:bg-[#181a24]/95 border border-teal-500/30 dark:border-teal-500/20 rounded-bl-sm shadow-apple-md flex flex-col gap-2.5 max-w-sm w-full">
                           <div className="flex items-center justify-between">
                             <div className="flex items-center gap-2">
                               <span className="w-2 h-2 rounded-full bg-teal-500 animate-ping" />
@@ -1743,7 +2057,7 @@ function App() {
                 </div>
               )}
 
-              <div className="bg-white/80 dark:bg-[#181a24]/90 rounded-2xl border border-black/[0.08] dark:border-white/[0.1] shadow-2xl backdrop-blur-2xl p-2 sm:p-2.5 flex items-center gap-2 transition-all focus-within:border-teal-500/60 focus-within:shadow-[0_0_20px_rgba(20,184,166,0.2)]">
+              <div className="bg-white/95 dark:bg-[#181a24]/95 rounded-2xl border border-black/[0.08] dark:border-white/[0.1] shadow-xl p-2 sm:p-2.5 flex items-center gap-2 transition-all focus-within:border-teal-500/60 focus-within:shadow-[0_0_20px_rgba(20,184,166,0.2)]">
                 {/* Left Action Buttons */}
                 <button
                   onClick={() => attachmentInputRef.current?.click()}
@@ -1777,9 +2091,15 @@ function App() {
 
                 {/* Right Buttons: Mic & Send Arrow */}
                 <button
-                  onClick={() => setProducerInput('Vocal lead with acoustic guitar and ambient reverb')}
-                  className="p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
-                  title="Voice Input"
+                  type="button"
+                  onClick={handleVoiceInput}
+                  className={`p-2 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors ${
+                    isListeningVoice
+                      ? 'text-rose-500 animate-pulse bg-rose-500/10'
+                      : 'text-slate-400 hover:text-slate-700 dark:hover:text-slate-200'
+                  }`}
+                  title={isListeningVoice ? 'Listening...' : 'Voice Input (Dictate prompt)'}
+                  aria-label="Voice input"
                 >
                   <Mic size={18} />
                 </button>
@@ -1847,21 +2167,13 @@ function App() {
 
       {/* 3. Right Slide-Over Composer Panel (Adaptive & Collapsible) */}
       <aside
-        className={`h-full z-30 shadow-apple-lg border-l border-black/[0.06] dark:border-white/[0.08] bg-white/95 dark:bg-[#12141c]/95 backdrop-blur-2xl transition-all duration-300 ease-in-out flex-shrink-0 ${
+        className={`h-full z-30 shadow-apple-lg border-l border-black/[0.06] dark:border-white/[0.08] bg-white/95 dark:bg-[#12141c]/95 transition-all duration-300 ease-in-out flex-shrink-0 ${
           isComposerOpen
             ? 'w-full sm:w-[380px] md:w-[400px] xl:w-[420px] fixed sm:static inset-y-0 right-0 translate-x-0'
             : 'w-0 translate-x-full sm:translate-x-0 sm:w-0 overflow-hidden border-l-0 pointer-events-none'
         }`}
       >
         <div className="h-full w-full sm:w-[380px] md:w-[400px] xl:w-[420px] relative">
-          {/* Close button for responsive mobile / overlay mode */}
-          <button
-            onClick={() => setIsComposerOpen(false)}
-            className="sm:hidden absolute top-4 right-4 z-40 p-1.5 rounded-full bg-black/5 dark:bg-white/10 text-slate-500"
-          >
-            <X size={16} />
-          </button>
-
           <ComposerSidebar
             onGenerate={handleGenerateMusic}
             isGenerating={isGenerating}
@@ -1876,6 +2188,10 @@ function App() {
             activeProject={activeProject}
             onClearActiveProject={() => setActiveProject(null)}
             producerPreset={producerPreset}
+            onClose={() => setIsComposerOpen(false)}
+            llmConfig={llmConfig}
+            onRefreshConfig={loadLlmConfig}
+            onOpenSettings={() => setIsSettingsOpen(true)}
           />
         </div>
       </aside>
@@ -1894,10 +2210,14 @@ function App() {
       <LLMSettingsModal
         isOpen={isSettingsOpen}
         onClose={() => setIsSettingsOpen(false)}
-        currentConfig={{}}
-        onConfigUpdate={() => {
-          api.getLyricsModels().then(setLyricsModels).catch(console.error);
-        }}
+        currentConfig={llmConfig}
+        onConfigUpdate={loadLlmConfig}
+      />
+
+      <CommandPalette
+        isOpen={isCommandPaletteOpen}
+        onClose={() => setIsCommandPaletteOpen(false)}
+        commands={commandList}
       />
 
       {/* Global Apple Studio Dock Player: Contextually hidden on Track Studio & DAW Workspace views */}
@@ -1916,7 +2236,7 @@ function App() {
           with direct Play / Open Studio actions instead of silently refreshing. */}
       {completionNotice && (
         <div className="fixed top-6 right-6 z-[110] animate-slide-down">
-          <div className={`w-80 rounded-2xl border shadow-apple-2xl backdrop-blur-2xl p-4 ${
+          <div className={`w-80 rounded-2xl border shadow-apple-2xl p-4 ${
             completionNotice.ok
               ? 'bg-white/90 dark:bg-[#141620]/95 border-teal-500/30'
               : 'bg-white/90 dark:bg-[#141620]/95 border-rose-500/40'

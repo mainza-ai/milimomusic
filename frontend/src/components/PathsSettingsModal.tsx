@@ -94,16 +94,22 @@ export const PathsSettingsModal: React.FC<PathsSettingsModalProps> = ({ isOpen, 
             placeholder: 'models'
         },
         {
+            key: 'models_directory',
+            label: 'Models Storage Directory',
+            description: 'Where downloaded AI models (Audio, Image/Covers, Video) are stored',
+            placeholder: 'models'
+        },
+        {
             key: 'checkpoints_directory',
-            label: 'LoRA Checkpoints Directory',
-            description: 'Where fine-tuning checkpoints and trained model weights are saved',
-            placeholder: 'data/checkpoints'
+            label: 'Voice Profiles Directory (RVC v2)',
+            description: 'Where trained vocal identity profiles and RVC weights are saved',
+            placeholder: 'data/voice_profiles'
         },
         {
             key: 'datasets_directory',
-            label: 'Datasets Directory',
-            description: 'Where training audio datasets and lyric pairs are stored',
-            placeholder: 'data/datasets'
+            label: 'Audio Cache & Scratch Directory',
+            description: 'Where audio processing cache, temporary stems, and exports are stored',
+            placeholder: 'data/audio_cache'
         },
         {
             key: 'heartmula_model_path',
@@ -116,21 +122,23 @@ export const PathsSettingsModal: React.FC<PathsSettingsModalProps> = ({ isOpen, 
     return createPortal(
         <AnimatePresence>
             {isOpen && (
-                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50 backdrop-blur-sm p-4" ref={panelRef}>
+                <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 backdrop-blur-md p-4" ref={panelRef}>
                     <motion.div
                         initial={{ opacity: 0, scale: 0.95, y: 20 }}
                         animate={{ opacity: 1, scale: 1, y: 0 }}
                         exit={{ opacity: 0, scale: 0.95, y: 20 }}
-                        className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden"
+                        className="bg-white dark:bg-[#141620] border border-black/10 dark:border-white/10 text-slate-900 dark:text-slate-100 rounded-3xl shadow-apple-2xl w-full max-w-lg overflow-hidden"
                     >
                         {/* Header */}
-                        <div className="flex items-center justify-between p-4 border-b border-slate-100 bg-gradient-to-r from-slate-700 to-slate-800">
-                            <h2 className="text-lg font-bold text-white flex items-center gap-2">
+                        <div className="flex items-center justify-between p-5 border-b border-black/[0.06] dark:border-white/10 bg-gradient-to-r from-teal-600 to-cyan-600 dark:from-teal-700 dark:to-cyan-800">
+                            <h2 className="text-base font-bold text-white flex items-center gap-2">
                                 <FolderOpen className="w-5 h-5" />
                                 Path Settings
                             </h2>
                             <button
                                 onClick={onClose}
+                                aria-label="Close modal"
+                                title="Close"
                                 className="p-1 rounded-full hover:bg-white/20 text-white/80 hover:text-white transition-colors"
                             >
                                 <X className="w-5 h-5" />
@@ -141,13 +149,13 @@ export const PathsSettingsModal: React.FC<PathsSettingsModalProps> = ({ isOpen, 
                         <div className="p-6 space-y-5">
                             {isLoading ? (
                                 <div className="flex items-center justify-center py-12">
-                                    <Loader2 className="w-6 h-6 animate-spin text-slate-400" />
+                                    <Loader2 className="w-6 h-6 animate-spin text-teal-500" />
                                 </div>
                             ) : (
                                 <>
                                     {pathFields.map(field => (
                                         <div key={field.key}>
-                                            <label className="block text-sm font-medium text-slate-700 mb-1">
+                                            <label className="block text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-1.5">
                                                 {field.label}
                                             </label>
                                             <div className="relative">
@@ -157,26 +165,26 @@ export const PathsSettingsModal: React.FC<PathsSettingsModalProps> = ({ isOpen, 
                                                     onChange={(e) => handleChange(field.key, e.target.value)}
                                                     onBlur={handleValidate}
                                                     placeholder={field.placeholder || `/path/to/${field.key.replace('_', '-')}`}
-                                                    className={`w-full px-3 py-2 pr-10 border rounded-md focus:ring-2 focus:outline-none text-sm ${validation[field.key]?.valid === false
+                                                    className={`w-full px-3 py-2 pr-10 border rounded-xl focus:ring-2 focus:outline-none text-sm bg-black/[0.02] dark:bg-white/5 dark:border-white/10 dark:text-white ${validation[field.key]?.valid === false
                                                             ? 'border-red-300 focus:ring-red-400'
                                                             : validation[field.key]?.valid === true
-                                                                ? 'border-green-300 focus:ring-green-400'
-                                                                : 'border-slate-200 focus:ring-cyan-400'
+                                                                ? 'border-teal-300 focus:ring-teal-400'
+                                                                : 'border-slate-200 dark:border-white/10 focus:ring-teal-400'
                                                         }`}
                                                 />
                                                 {validation[field.key] && (
                                                     <div className="absolute right-3 top-1/2 -translate-y-1/2">
                                                         {validation[field.key].valid ? (
-                                                            <CheckCircle2 className="w-4 h-4 text-green-500" />
+                                                            <CheckCircle2 className="w-4 h-4 text-teal-500" />
                                                         ) : (
-                                                            <AlertCircle className="w-4 h-4 text-red-500" />
+                                                            <AlertCircle className="w-4 h-4 text-rose-500" />
                                                         )}
                                                     </div>
                                                 )}
                                             </div>
-                                            <p className="text-xs text-slate-500 mt-1">{field.description}</p>
+                                            <p className="text-xs text-slate-500 dark:text-slate-400 mt-1">{field.description}</p>
                                             {validation[field.key]?.valid === false && (
-                                                <p className="text-xs text-red-500 mt-1">
+                                                <p className="text-xs text-rose-500 mt-1">
                                                     Directory does not exist or is not accessible
                                                 </p>
                                             )}
@@ -185,9 +193,9 @@ export const PathsSettingsModal: React.FC<PathsSettingsModalProps> = ({ isOpen, 
 
                                     {/* Message */}
                                     {message && (
-                                        <div className={`p-3 rounded-lg text-sm flex items-center gap-2 ${message.type === 'success'
-                                                ? 'bg-green-50 text-green-700 border border-green-200'
-                                                : 'bg-red-50 text-red-700 border border-red-200'
+                                        <div className={`p-3 rounded-xl text-sm flex items-center gap-2 ${message.type === 'success'
+                                                ? 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20'
+                                                : 'bg-rose-500/10 text-rose-700 dark:text-rose-300 border border-rose-500/20'
                                             }`}>
                                             {message.type === 'success' ? (
                                                 <CheckCircle2 className="w-4 h-4" />
@@ -202,17 +210,17 @@ export const PathsSettingsModal: React.FC<PathsSettingsModalProps> = ({ isOpen, 
                         </div>
 
                         {/* Footer */}
-                        <div className="p-4 border-t border-slate-100 bg-slate-50 flex justify-end gap-3">
+                        <div className="p-4 border-t border-black/[0.06] dark:border-white/10 bg-black/[0.02] dark:bg-white/[0.02] flex justify-end gap-3">
                             <button
                                 onClick={onClose}
-                                className="px-4 py-2 text-slate-600 hover:bg-slate-200 rounded-md transition-colors"
+                                className="px-4 py-2 text-slate-600 dark:text-slate-300 hover:bg-black/5 dark:hover:bg-white/10 rounded-xl text-xs font-semibold transition-colors"
                             >
                                 Cancel
                             </button>
                             <button
                                 onClick={handleSave}
                                 disabled={isSaving}
-                                className="px-4 py-2 bg-cyan-500 hover:bg-cyan-600 text-white rounded-md font-bold text-sm transition-colors disabled:opacity-50 flex items-center gap-2"
+                                className="px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl transition-all disabled:opacity-50 flex items-center gap-2 shadow-sm"
                             >
                                 {isSaving ? (
                                     <Loader2 className="w-4 h-4 animate-spin" />

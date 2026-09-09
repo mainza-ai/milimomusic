@@ -93,6 +93,7 @@ async def test_download_track_sniffs_type_and_404s(client, monkeypatch, tmp_path
 
     # Real file so FileResponse streams it; CWD-relative mount target.
     song_path = Path(__file__).parent.parent / "generated_audio" / ".test_dl_song.wav"
+    song_path.parent.mkdir(parents=True, exist_ok=True)
     song_path.write_bytes(os.urandom(4096))
     try:
         class FakeJob:

@@ -1,9 +1,9 @@
 ---
 title: Artist Domain — Current State
 type: concept
-tags: [artists, crew, albums, releases, voice, production, reference]
+tags: [artists, crew, albums, releases, voice, production, reference, covers]
 created: 2026-08-29
-updated: 2026-09-03
+updated: 2026-09-09
 sources: [artist-phases-execution-spec.md, artist-section-audit.md]
 aliases: [artist domain, artists current state]
 ---
@@ -94,6 +94,21 @@ a 2-track EP is producible (previously produce re-imagined with the default 5).
   Studio handoff, retry, reorder, review chips), run-history panel with aggregates.
 - **Integrity**: zero silent catches (honest toasts everywhere), run recovery on
   reload, deep-links `?view=artists&id=`, per-section ErrorBoundary.
+
+## Cover art surfaces (2026-09-09)
+
+Two generation paths (create-modal and identity-image flows are upload-only and
+bypass overlays by design), both via the lyrics-aware LLM visual prompt +
+Pillow overlay — the old inline f-strings that quoted names verbatim into the
+diffusion prompt are deleted (see [title-only guarantee](artwork-and-static-media-architecture.md)):
+
+- **Profile "Generate art"** — prompt from bio + lore (`era_setting`,
+  `appearance`) + tags; overlay = artist name only, no byline.
+- **Release "Art"** — prompt from release description + bio + lore + tags;
+  overlay = release title + artist byline (owning profile's name).
+- Album-track job covers resolve the byline server-side from
+  `Job.artist_profile_id` (fallback `release_id → Release → ArtistProfile`);
+  standalone/detached tracks render title-only.
 
 ## Related
 [Artist Crew Agents](../entities/artist-crew-agents.md) · [Album Orchestrator Plan](album-orchestrator-plan.md) ·

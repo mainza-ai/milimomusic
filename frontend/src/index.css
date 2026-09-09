@@ -80,7 +80,7 @@ body {
 /* Glassmorphism Surface Helpers */
 @layer utilities {
   .apple-glass {
-    @apply bg-white/70 dark:bg-[#141620]/80 backdrop-blur-2xl border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm dark:shadow-2xl;
+    @apply bg-white/95 dark:bg-[#141620]/95 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm dark:shadow-2xl;
   }
   
   .apple-card {

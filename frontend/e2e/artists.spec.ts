@@ -6,7 +6,7 @@ import { test, expect } from '@playwright/test';
  * verified deterministically without model dependencies.
  */
 
-const API = 'http://localhost:8000';
+const API = 'http://127.0.0.1:8000';
 
 const now = '2026-08-29T12:00:00';
 

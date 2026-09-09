@@ -10,14 +10,28 @@ import {
     Settings,
     Upload,
     Image as ImageIcon,
-    Lightbulb
+    Lightbulb,
+    X
 } from 'lucide-react';
 
 import { api, voiceApi, coverApi, modelsApi, API_BASE_URL, type Job, type LLMConfig, type VoiceProfile, type Project, type ModelVariant } from '../api';
 import { Toggle } from './ui/primitives';
-import { LLMSettingsModal } from './LLMSettingsModal';
 import { VoiceStudioModal } from './voice/VoiceStudioModal';
 import { ModelsManagerModal } from './models/ModelsManagerModal';
+import { toast } from '../utils/toast';
+
+const PROVIDER_BADGES: Record<string, { icon: string; label: string }> = {
+    opencode: { icon: '🚀', label: 'OpenCode' },
+    omlx: { icon: '⚡', label: 'OMLX' },
+    ollama: { icon: '🦙', label: 'Ollama' },
+    deepseek: { icon: '🐳', label: 'DeepSeek' },
+    nvidia: { icon: '🟢', label: 'NVIDIA' },
+    openai: { icon: '🤖', label: 'OpenAI' },
+    gemini: { icon: '✨', label: 'Gemini' },
+    openrouter: { icon: '🌐', label: 'OpenRouter' },
+    lmstudio: { icon: '🧪', label: 'LMStudio' },
+    anthropic: { icon: '🟠', label: 'Claude' },
+};
 
 interface ComposerSidebarProps {
     onGenerate: (data: CompositionData) => void;
@@ -33,6 +47,10 @@ interface ComposerSidebarProps {
     activeProject?: Project | null;
     onClearActiveProject?: () => void;
     producerPreset?: Partial<CompositionData> | null;
+    onClose?: () => void;
+    llmConfig?: LLMConfig;
+    onRefreshConfig?: () => void;
+    onOpenSettings?: () => void;
 }
 
 export interface CompositionData {
@@ -53,6 +71,8 @@ export interface CompositionData {
     isInstrumental?: boolean;
     coverImagePath?: string;
     imagePrompt?: string;
+    autoGenerateCover?: boolean;
+    coverImageModelId?: string;
 }
 
 export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
@@ -66,7 +86,11 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     onRefreshModels,
     activeProject,
     onClearActiveProject,
-    producerPreset
+    producerPreset,
+    onClose,
+    llmConfig: propLlmConfig,
+    onRefreshConfig,
+    onOpenSettings
 }) => {
     // Accordion Expansion States
     const [openSections, setOpenSections] = useState<{ lyrics: boolean; sound: boolean; details: boolean }>({
@@ -87,6 +111,8 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     // Cover Artwork State
     const [coverImagePath, setCoverImagePath] = useState<string>('');
     const [coverImagePrompt, setCoverImagePrompt] = useState<string>('');
+    const [coverPromptOffline, setCoverPromptOffline] = useState(false);
+    const [autoGenerateCover, setAutoGenerateCover] = useState<boolean>(true);
     const [isUploadingCover, setIsUploadingCover] = useState(false);
     const [isGeneratingCover, setIsGeneratingCover] = useState(false);
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -107,9 +133,9 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     const [vocalDetails, setVocalDetails] = useState('Lead Vocals: Clear, Expressive, Dynamic');
     const [arrangement, setArrangement] = useState('Instrumentation: Drums, Bass, Electric Guitar, Synth Leads');
 
-    // Settings Modals
-    const [isSettingsOpen, setIsSettingsOpen] = useState(false);
-    const [llmConfig, setLlmConfig] = useState<LLMConfig>({});
+    // Settings Modals & LLM Configuration (Unified Single Source of Truth)
+    const [localLlmConfig, setLocalLlmConfig] = useState<LLMConfig>({});
+    const llmConfig = propLlmConfig || localLlmConfig;
 
     const loadVoiceProfiles = async () => {
         try {
@@ -122,7 +148,8 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
 
     const loadModels = async () => {
         try {
-            const tree = await modelsApi.getModelTree();
+            const rawTree = await modelsApi.getModelTree();
+            const tree = Array.isArray(rawTree) ? rawTree : [];
             const audioVariants = tree.filter(m => (m.category || 'audio') === 'audio' || (m as any).is_custom);
             const imageVariants = tree.filter(m => m.category === 'image');
             setAudioModelVariants(audioVariants);
@@ -158,8 +185,11 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
 
     const loadLlmConfig = async () => {
         try {
+            if (onRefreshConfig) {
+                onRefreshConfig();
+            }
             const cfg = await api.getLLMConfig();
-            setLlmConfig(cfg);
+            setLocalLlmConfig(cfg);
             const activeProvider = cfg.provider || 'opencode';
             const activeModel = (cfg as any)[activeProvider]?.model;
             if (activeModel) {
@@ -198,12 +228,16 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
 
     useEffect(() => {
         if (lyricsModels.length > 0) {
+            // Single-selection rule: the Settings active provider+model is
+            // authoritative. Stored values are a cache, never an override —
+            // a stale stored model must not silently diverge from Settings.
             const activeProvider = llmConfig.provider || 'opencode';
             const configuredModel = (llmConfig as any)[activeProvider]?.model;
-            if (configuredModel && lyricsModels.includes(configuredModel)) {
+            if (configuredModel) {
                 setLyricsModel(configuredModel);
+                localStorage.setItem('milimo_lyrics_model', configuredModel);
             } else if (!lyricsModel || !lyricsModels.includes(lyricsModel)) {
-                setLyricsModel(configuredModel || lyricsModels[0]);
+                setLyricsModel(lyricsModels[0]);
             }
         }
     }, [lyricsModels, llmConfig]);
@@ -263,8 +297,9 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
             const genLyrics = await onGenerateLyrics(topic || title, lyricsModel, lyrics.trim(), style);
             setLyrics(genLyrics);
             setIsInstrumental(false);
+            toast('AI Co-Writer completed lyrics', 'success');
         } catch (e: any) {
-            alert("Lyrics Generation Failed: " + (e.message || "Unknown error"));
+            toast("Lyrics Generation Failed: " + (e.message || "Unknown error"), "error");
         }
     };
 
@@ -274,6 +309,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
             const res = await coverApi.uploadCoverImage(file);
             const fullUrl = res.url.startsWith('http') ? res.url : `${API_BASE_URL}${res.url}`;
             setCoverImagePath(fullUrl);
+            setCoverPromptOffline(false);
         } catch (e) {
             console.error("Failed to upload cover image", e);
         } finally {
@@ -284,13 +320,19 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     const handleGenerateCoverArtwork = async () => {
         try {
             setIsGeneratingCover(true);
+            setCoverPromptOffline(false);
             const promptRes = await coverApi.generateCoverPrompt({
                 title: title || topic || 'Studio Track',
-                tags: style
+                tags: style,
+                lyrics: isInstrumental ? undefined : (lyrics.trim() || undefined)
             });
+            // llm_used=false means the deterministic fallback fired: the prompt
+            // never saw the lyrics, so the artwork will be generic. Say so.
+            setCoverPromptOffline(promptRes.llm_used === false);
             const imgRes = await coverApi.generateCoverImage({
                 prompt: promptRes.prompt,
-                model_id: selectedImageModel || undefined
+                model_id: selectedImageModel || undefined,
+                title: (title || topic || '').trim() || undefined
             });
             const fullUrl = imgRes.url.startsWith('http') ? imgRes.url : `${API_BASE_URL}${imgRes.url}`;
             setCoverImagePath(fullUrl);
@@ -330,12 +372,14 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
             seed: finalSeed,
             isInstrumental,
             coverImagePath: coverImagePath || undefined,
-            imagePrompt: coverImagePrompt || undefined
+            imagePrompt: coverImagePrompt || undefined,
+            autoGenerateCover,
+            coverImageModelId: selectedImageModel || undefined
         });
     };
 
     return (
-        <div className="h-full flex flex-col bg-white/80 dark:bg-[#12141c]/90 backdrop-blur-2xl text-slate-800 dark:text-slate-200 select-none overflow-hidden w-full transition-colors duration-200">
+        <div className="h-full flex flex-col bg-white/95 dark:bg-[#12141c]/95 text-slate-800 dark:text-slate-200 select-none overflow-hidden w-full transition-colors duration-200">
             <input
                 type="file"
                 ref={fileInputRef}
@@ -383,12 +427,30 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                     <h2 className="text-sm font-bold text-slate-900 dark:text-white">Compose</h2>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 font-semibold border border-teal-500/20">Studio v2</span>
                 </div>
-                <button onClick={() => setIsSettingsOpen(true)} className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-500">
-                    <Settings size={15} />
-                </button>
+                <div className="flex items-center space-x-1">
+                    <button
+                        type="button"
+                        onClick={onOpenSettings}
+                        title="AI Model & Provider Settings"
+                        aria-label="AI Model & Provider Settings"
+                        className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors"
+                    >
+                        <Settings size={15} />
+                    </button>
+                    {onClose && (
+                        <button
+                            type="button"
+                            onClick={onClose}
+                            title="Collapse Composer Sidebar"
+                            aria-label="Collapse Composer Sidebar"
+                            className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors"
+                        >
+                            <X size={15} />
+                        </button>
+                    )}
+                </div>
             </div>
 
-            <LLMSettingsModal isOpen={isSettingsOpen} currentConfig={llmConfig} onConfigUpdate={loadLlmConfig} onClose={() => setIsSettingsOpen(false)} />
             <VoiceStudioModal isOpen={isVoiceStudioOpen} onClose={() => { setIsVoiceStudioOpen(false); loadVoiceProfiles(); }} />
             <ModelsManagerModal
                 isOpen={isModelsManagerOpen}
@@ -433,28 +495,47 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                                 <Sparkles size={13} />
                                                 <span>{isGeneratingLyrics ? 'Writing...' : 'AI Co-Writer: Write'}</span>
                                             </button>
-                                            <select 
-                                                value={lyricsModel} 
-                                                onChange={async (e) => { 
-                                                    const newModel = e.target.value;
-                                                    setLyricsModel(newModel); 
-                                                    localStorage.setItem('milimo_lyrics_model', newModel);
-                                                    const activeProvider = llmConfig.provider || 'opencode';
-                                                    try {
-                                                        await api.updateLLMConfig({
-                                                            [activeProvider]: { model: newModel }
-                                                        });
-                                                    } catch (err) {
-                                                        console.error("Failed to sync model with backend", err);
-                                                    }
-                                                }} 
-                                                className="apple-input py-1.5 px-2 text-[11px] font-mono max-w-[150px] truncate"
-                                            >
-                                                {lyricsModel && !lyricsModels.includes(lyricsModel) && (
-                                                    <option value={lyricsModel}>{lyricsModel}</option>
+                                            <div className="flex items-center gap-1.5 flex-shrink-0">
+                                                {onOpenSettings && (
+                                                    <button
+                                                        type="button"
+                                                        onClick={onOpenSettings}
+                                                        title={`Active Provider: ${(PROVIDER_BADGES[llmConfig.provider || 'opencode']?.label) || (llmConfig.provider || 'opencode')}. Click to change in Settings.`}
+                                                        className="px-2 py-1.5 rounded-lg bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-[10px] font-mono font-bold flex items-center gap-1 text-teal-600 dark:text-teal-400 transition-colors border border-black/[0.04] dark:border-white/5"
+                                                    >
+                                                        <span>{PROVIDER_BADGES[llmConfig.provider || 'opencode']?.icon || '⚡'}</span>
+                                                        <span className="uppercase">{PROVIDER_BADGES[llmConfig.provider || 'opencode']?.label || (llmConfig.provider || 'opencode')}</span>
+                                                    </button>
                                                 )}
-                                                {lyricsModels.map(m => <option key={m} value={m}>{m}</option>)}
-                                            </select>
+                                                <select 
+                                                    value={lyricsModel} 
+                                                    onChange={async (e) => { 
+                                                        const newModel = e.target.value;
+                                                        setLyricsModel(newModel); 
+                                                        localStorage.setItem('milimo_lyrics_model', newModel);
+                                                        const activeProvider = llmConfig.provider || 'opencode';
+                                                        try {
+                                                            await api.updateLLMConfig({
+                                                                provider: activeProvider,
+                                                                [activeProvider]: {
+                                                                    ...((llmConfig as any)[activeProvider] || {}),
+                                                                    model: newModel
+                                                                }
+                                                            });
+                                                            onRefreshConfig?.();
+                                                            onRefreshModels?.();
+                                                        } catch (err) {
+                                                            console.error("Failed to sync model with backend", err);
+                                                        }
+                                                    }} 
+                                                    className="apple-input py-1.5 px-2 text-[11px] font-mono max-w-[140px] truncate"
+                                                >
+                                                    {lyricsModel && !lyricsModels.includes(lyricsModel) && (
+                                                        <option value={lyricsModel}>{lyricsModel}</option>
+                                                    )}
+                                                    {lyricsModels.map(m => <option key={m} value={m}>{m}</option>)}
+                                                </select>
+                                            </div>
                                         </div>
                                         <textarea value={lyrics} onChange={(e) => setLyrics(e.target.value)} rows={6} placeholder="[Intro]..." className="w-full apple-input resize-none font-mono text-[11px] leading-relaxed p-2.5" />
                                     </>
@@ -525,7 +606,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                             <select value={selectedVoiceProfile} onChange={(e) => { if (e.target.value === '__add_new__') setIsVoiceStudioOpen(true); else setSelectedVoiceProfile(e.target.value); }} className="apple-input py-1.5 text-[11px] font-mono">
                                                 <option value="">Default AI Voice</option>
                                                 {voiceProfiles.map(p => <option key={p.id} value={p.id}>{p.name}</option>)}
-                                                <option value="__add_new__">+ Train Voice...</option>
+                                                <option value="__add_new__">+ Voice Studio (New Voice)...</option>
                                             </select>
                                         </div>
 
@@ -598,7 +679,16 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                                     </button>
                                                 ))}
                                             </div>
-                                            <input type="range" min={5} max={300} step={5} value={duration} onChange={(e) => setDuration(parseInt(e.target.value))} className="w-full accent-teal-500" />
+                                            <input
+                                                type="range"
+                                                min={5}
+                                                max={240}
+                                                step={5}
+                                                value={Math.min(duration, 240)}
+                                                onChange={(e) => setDuration(parseInt(e.target.value))}
+                                                aria-label="Track duration in seconds"
+                                                className="w-full accent-teal-500"
+                                            />
                                         </div>
 
                                         {/* Generation hyperparameters — real controls for
@@ -715,7 +805,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                 <div className="flex items-start gap-3">
                                     <div onClick={() => fileInputRef.current?.click()} className="w-20 h-20 rounded-xl bg-black/5 dark:bg-white/5 border border-dashed border-black/15 dark:border-white/15 flex items-center justify-center cursor-pointer overflow-hidden relative group">
                                         {coverImagePath ? (
-                                            <img src={coverImagePath.startsWith('http') ? coverImagePath : `${API_BASE_URL}${coverImagePath}`} alt="Cover" className="w-full h-full object-cover rounded-xl" />
+                                            <img src={coverApi.getCoverUrl(coverImagePath)} alt="Cover" className="w-full h-full object-cover rounded-xl" />
                                         ) : isUploadingCover || isGeneratingCover ? (
                                             <div className="w-5 h-5 rounded-full border-2 border-teal-500 border-t-transparent animate-spin" />
                                         ) : (
@@ -741,8 +831,31 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                             <Sparkles size={12} />
                                             <span>{isGeneratingCover ? 'Generating...' : 'Prompt image'}</span>
                                         </button>
+                                        {coverPromptOffline && coverImagePath && !isGeneratingCover && (
+                                            <p className="text-[10px] leading-snug text-amber-600 dark:text-amber-400/90">
+                                                Offline prompt — artwork won't reflect lyrics.
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
+
+                                <label className="flex items-start gap-2.5 pt-2.5 border-t border-black/[0.06] dark:border-white/[0.06] cursor-pointer select-none group">
+                                    <input
+                                        id="auto-cover-checkbox"
+                                        type="checkbox"
+                                        checked={autoGenerateCover}
+                                        onChange={(e) => setAutoGenerateCover(e.target.checked)}
+                                        className="mt-0.5 w-4 h-4 rounded text-teal-600 bg-black/5 dark:bg-white/5 border-black/20 dark:border-white/20 focus:ring-teal-500 focus:ring-offset-0 cursor-pointer"
+                                    />
+                                    <div className="flex flex-col">
+                                        <span className="text-[11px] font-semibold text-slate-800 dark:text-slate-200 group-hover:text-teal-600 dark:group-hover:text-teal-400 transition-colors">
+                                            Auto-generate cover artwork
+                                        </span>
+                                        <span className="text-[10px] text-slate-500 dark:text-slate-400 leading-snug">
+                                            Synthesize matching studio artwork if no manual image is provided
+                                        </span>
+                                    </div>
+                                </label>
                             </motion.div>
                         )}
                     </AnimatePresence>

@@ -1,15 +1,13 @@
-import React, { createContext, useContext, useState, useRef, useEffect, useCallback } from 'react';
+import React, { createContext, useContext, useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import type { Job } from '../api';
-import { API_BASE_URL } from '../api';
-import { getAudioContext } from '../utils/audioContext';
+import { api } from '../api';
+import { getAudioContext, unlockAudioContext } from '../utils/audioContext';
 import { consumeHotkey, isTextEntryTarget, hasModifier } from '../utils/hotkeyScope';
 import { toast } from '../utils/toast';
 
-export interface AudioEngineContextValue {
+export interface AudioControlsContextValue {
     currentTrack: Job | null;
     isPlaying: boolean;
-    currentTime: number;
-    duration: number;
     volume: number;
     isMuted: boolean;
     playbackRate: number;
@@ -39,12 +37,21 @@ export interface AudioEngineContextValue {
     reorderQueue: (fromIndex: number, toIndex: number) => void;
     playbackError: string | null;
     clearPlaybackError: () => void;
-    isBuffering: boolean;
     /** Replace current track + queue metadata without touching the element
      *  (used to hydrate an optimistically started track in place). */
     swapCurrentTrack: (track: Job, queue?: Job[]) => void;
 }
 
+export interface AudioTimeContextValue {
+    currentTime: number;
+    duration: number;
+    isBuffering: boolean;
+}
+
+export type AudioEngineContextValue = AudioControlsContextValue & AudioTimeContextValue;
+
+const AudioControlsContext = createContext<AudioControlsContextValue | null>(null);
+const AudioTimeContext = createContext<AudioTimeContextValue | null>(null);
 const AudioEngineContext = createContext<AudioEngineContextValue | null>(null);
 
 export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ children }) => {
@@ -77,9 +84,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
     // Full absolute URL resolver
     const getAudioUrl = useCallback((path?: string | null): string => {
-        if (!path) return '';
-        if (path.startsWith('http://') || path.startsWith('https://')) return path;
-        return `${API_BASE_URL}${path}`;
+        return api.getAudioUrl(path);
     }, []);
 
     // Connect WebAudio graph for AnalyserNode
@@ -103,13 +108,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     }, []);
 
-    // Set Volume
+    // Set Volume (Perceptually mapped via quadratic curve for smooth audio taper)
     const setVolume = useCallback((val: number) => {
         const clamped = Math.max(0, Math.min(1, val));
         setVolumeState(clamped);
         localStorage.setItem('milimo_volume', clamped.toString());
         if (audioRef.current) {
-            audioRef.current.volume = isMuted ? 0 : clamped;
+            audioRef.current.volume = isMuted ? 0 : Math.pow(clamped, 2);
         }
     }, [isMuted]);
 
@@ -118,7 +123,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         setIsMuted((prev) => {
             const next = !prev;
             if (audioRef.current) {
-                audioRef.current.volume = next ? 0 : volume;
+                audioRef.current.volume = next ? 0 : Math.pow(volume, 2);
             }
             return next;
         });
@@ -170,6 +175,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             });
         }
 
+        const prevTrack = currentTrackRef.current;
         setCurrentTrack(track);
         currentTrackRef.current = track;
         setCurrentTime(0);
@@ -178,9 +184,13 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             : null;
 
         if (audioRef.current) {
+            await unlockAudioContext();
             ensureAudioGraph();
             const fullUrl = getAudioUrl(track.audio_path);
-            const isReload = audioRef.current.src !== fullUrl;
+            const currentSrc = audioRef.current.src || '';
+            const isReload = !currentSrc || prevTrack?.id !== track.id || (
+                currentSrc !== fullUrl && !currentSrc.endsWith(track.audio_path)
+            );
             if (isReload) {
                 audioRef.current.src = fullUrl;
                 audioRef.current.load();
@@ -224,6 +234,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
     // Resume
     const resume = useCallback(async () => {
         if (audioRef.current) {
+            await unlockAudioContext();
             ensureAudioGraph();
             try {
                 await audioRef.current.play();
@@ -399,18 +410,26 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     }, [repeatMode, nextTrack, playlist, currentTrack?.id]);
 
-    // Playhead tracking for karaoke & visualizer sync. Runs at ~30fps (every
-    // other frame): a 60fps setState here re-rendered EVERY context consumer
-    // — effectively the whole app tree — twice as often as needed.
+    // Playhead tracking for karaoke & visualizer sync. Runs at strictly ~30fps (33ms cap):
+    // Prevents 120Hz/144Hz high-refresh displays from triggering 120 setState calls/sec,
+    // which would re-render every context consumer twice or four times as often.
     useEffect(() => {
         if (!isPlaying) return;
 
         let animFrameId: number;
-        let frame = 0;
-        const tick = () => {
-            frame++;
-            if (frame % 2 === 0 && audioRef.current && !audioRef.current.paused) {
-                setCurrentTime(audioRef.current.currentTime);
+        let lastTime = 0;
+        const PLAYHEAD_INTERVAL_MS = 33;
+
+        const tick = (now: number) => {
+            if (document.hidden) {
+                animFrameId = requestAnimationFrame(tick);
+                return;
+            }
+            if (now - lastTime >= PLAYHEAD_INTERVAL_MS) {
+                lastTime = now;
+                if (audioRef.current && !audioRef.current.paused) {
+                    setCurrentTime(audioRef.current.currentTime);
+                }
             }
             animFrameId = requestAnimationFrame(tick);
         };
@@ -440,19 +459,28 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
         }
     }, []);
 
-    // OS MediaSession API Integration
+    const currentTimeRef = useRef(currentTime);
+    useEffect(() => { currentTimeRef.current = currentTime; }, [currentTime]);
+
+    const durationRef = useRef(duration);
+    useEffect(() => { durationRef.current = duration; }, [duration]);
+
+    const volumeRef = useRef(volume);
+    useEffect(() => { volumeRef.current = volume; }, [volume]);
+
+    useEffect(() => { currentTrackRef.current = currentTrack; }, [currentTrack]);
+
+    // MediaSession API Integration (Hardware keys, Lockscreen, Control Center)
     useEffect(() => {
         if (!('mediaSession' in navigator) || !currentTrack) return;
 
         const artworkUrl = currentTrack.cover_image_path
-            ? currentTrack.cover_image_path.startsWith('http')
-                ? currentTrack.cover_image_path
-                : `${API_BASE_URL}${currentTrack.cover_image_path}`
+            ? api.getAudioUrl(currentTrack.cover_image_path)
             : `${window.location.origin}/milimo_logo.png`;
 
         navigator.mediaSession.metadata = new MediaMetadata({
-            title: currentTrack.title || 'Milimo Track',
-            artist: currentTrack.prompt ? currentTrack.prompt.slice(0, 40) : 'Milimo Music AI',
+            title: currentTrack.title || 'Untitled Generation',
+            artist: currentTrack.tags || 'Milimo Music AI',
             album: 'Milimo Studio Productions',
             artwork: [
                 { src: artworkUrl, sizes: '96x96', type: 'image/png' },
@@ -471,10 +499,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             if (details.seekTime !== undefined) seek(details.seekTime);
         });
         navigator.mediaSession.setActionHandler('seekbackward', (details) => {
-            seek(Math.max(0, currentTime - (details.seekOffset || 10)));
+            seek(Math.max(0, currentTimeRef.current - (details.seekOffset || 10)));
         });
         navigator.mediaSession.setActionHandler('seekforward', (details) => {
-            seek(Math.min(duration, currentTime + (details.seekOffset || 10)));
+            seek(Math.min(durationRef.current, currentTimeRef.current + (details.seekOffset || 10)));
         });
 
         return () => {
@@ -488,39 +516,27 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 navigator.mediaSession.setActionHandler('seekforward', null);
             }
         };
-    }, [currentTrack, isPlaying, currentTime, duration, resume, pause, prevTrackOrRestart, nextTrack, seek]);
+    }, [currentTrack, isPlaying, resume, pause, prevTrackOrRestart, nextTrack, seek]);
 
     // Global Keyboard Hotkeys Listener
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
-            // Never swallow OS/browser shortcuts (Cmd+Left = Back, Ctrl+Home, etc).
             if (hasModifier(e)) return;
-
-            // Ignore keystrokes when typing into text inputs, textarea, or content editable
             const target = e.target as HTMLElement | null;
             if (isTextEntryTarget(target)) return;
-
-            // Space on a focused button must activate that button (native
-            // behavior) — hijacking it broke every focused control app-wide.
             if ((e.code === 'Space' || e.code === 'Enter') && target?.tagName === 'BUTTON') return;
-
-            // A mounted surface (e.g. the DAW workspace) owns transport keys
-            // while it is active; if it consumed this keystroke, stand down so
-            // two audio streams can never play simultaneously.
             if (consumeHotkey(e)) return;
-
-            // No music loaded → nothing to control → don't hijack page keys.
-            if (!currentTrack) return;
+            if (!currentTrackRef.current) return;
 
             if (e.code === 'Space' || e.code === 'KeyK') {
                 e.preventDefault();
                 togglePlay();
             } else if (e.code === 'ArrowLeft' || e.code === 'KeyJ') {
                 e.preventDefault();
-                seek(Math.max(0, currentTime - (e.shiftKey ? 10 : 5)));
+                seek(Math.max(0, currentTimeRef.current - (e.shiftKey ? 10 : 5)));
             } else if (e.code === 'ArrowRight' || e.code === 'KeyL') {
                 e.preventDefault();
-                seek(Math.min(duration, currentTime + (e.shiftKey ? 10 : 5)));
+                seek(Math.min(durationRef.current, currentTimeRef.current + (e.shiftKey ? 10 : 5)));
             } else if (e.code === 'Home' || e.code === 'Digit0') {
                 e.preventDefault();
                 returnToStart();
@@ -532,10 +548,10 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
                 nextTrack();
             } else if (e.code === 'ArrowUp') {
                 e.preventDefault();
-                setVolume(volume + 0.05);
+                setVolume(volumeRef.current + 0.05);
             } else if (e.code === 'ArrowDown') {
                 e.preventDefault();
-                setVolume(volume - 0.05);
+                setVolume(volumeRef.current - 0.05);
             } else if (e.code === 'KeyM') {
                 e.preventDefault();
                 toggleMute();
@@ -544,65 +560,126 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
 
         window.addEventListener('keydown', handleKeyDown);
         return () => window.removeEventListener('keydown', handleKeyDown);
-    }, [togglePlay, seek, currentTime, duration, returnToStart, prevTrackOrRestart, nextTrack, setVolume, volume, toggleMute, currentTrack]);
+    }, [togglePlay, seek, returnToStart, prevTrackOrRestart, nextTrack, setVolume, toggleMute]);
+
+    const controlsValue = useMemo<AudioControlsContextValue>(() => ({
+        currentTrack,
+        isPlaying,
+        volume,
+        isMuted,
+        playbackRate,
+        repeatMode,
+        isShuffle,
+        playlist,
+        analyserNode,
+        playTrack,
+        resume,
+        pause,
+        togglePlay,
+        seek,
+        returnToStart,
+        prevTrackOrRestart,
+        setVolume,
+        toggleMute,
+        setPlaybackRate,
+        setRepeatMode,
+        toggleShuffle,
+        nextTrack,
+        prevTrack,
+        stop,
+        setPlaylist,
+        addToQueue,
+        removeFromQueue,
+        clearQueue,
+        reorderQueue,
+        playbackError,
+        clearPlaybackError,
+        swapCurrentTrack,
+    }), [
+        currentTrack,
+        isPlaying,
+        volume,
+        isMuted,
+        playbackRate,
+        repeatMode,
+        isShuffle,
+        playlist,
+        analyserNode,
+        playTrack,
+        resume,
+        pause,
+        togglePlay,
+        seek,
+        returnToStart,
+        prevTrackOrRestart,
+        setVolume,
+        toggleMute,
+        setPlaybackRate,
+        setRepeatMode,
+        toggleShuffle,
+        nextTrack,
+        prevTrack,
+        stop,
+        setPlaylist,
+        addToQueue,
+        removeFromQueue,
+        clearQueue,
+        reorderQueue,
+        playbackError,
+        clearPlaybackError,
+        swapCurrentTrack,
+    ]);
+
+    const timeValue = useMemo<AudioTimeContextValue>(() => ({
+        currentTime,
+        duration,
+        isBuffering
+    }), [currentTime, duration, isBuffering]);
+
+    const engineValue = useMemo<AudioEngineContextValue>(() => ({
+        ...controlsValue,
+        ...timeValue
+    }), [controlsValue, timeValue]);
 
     return (
-        <AudioEngineContext.Provider
-            value={{
-                currentTrack,
-                isPlaying,
-                currentTime,
-                duration,
-                volume,
-                isMuted,
-                playbackRate,
-                repeatMode,
-                isShuffle,
-                playlist,
-                analyserNode,
-                playTrack,
-                resume,
-                pause,
-                togglePlay,
-                seek,
-                returnToStart,
-                prevTrackOrRestart,
-                setVolume,
-                toggleMute,
-                setPlaybackRate,
-                setRepeatMode,
-                toggleShuffle,
-                nextTrack,
-                prevTrack,
-                stop,
-                setPlaylist,
-                addToQueue,
-                removeFromQueue,
-                clearQueue,
-                reorderQueue,
-                playbackError,
-                clearPlaybackError,
-                swapCurrentTrack,
-                isBuffering
-            }}
-        >
-            {/* Single Root Master <audio> element */}
-            <audio
-                ref={audioRef}
-                crossOrigin="anonymous"
-                onTimeUpdate={handleTimeUpdate}
-                onLoadedMetadata={handleLoadedMetadata}
-                onEnded={handleEnded}
-                onError={handleMediaError}
-                onStalled={handleStalled}
-                onWaiting={handleWaiting}
-                onPlaying={handlePlaying}
-                onCanPlay={handleCanPlay}
-                preload="auto"
-            />
-            {children}
-        </AudioEngineContext.Provider>
+        <AudioControlsContext.Provider value={controlsValue}>
+            <AudioTimeContext.Provider value={timeValue}>
+                <AudioEngineContext.Provider value={engineValue}>
+                    {/* Single Root Master <audio> element */}
+                    <audio
+                        ref={audioRef}
+                        crossOrigin="anonymous"
+                        onTimeUpdate={handleTimeUpdate}
+                        onLoadedMetadata={handleLoadedMetadata}
+                        onEnded={handleEnded}
+                        onError={handleMediaError}
+                        onStalled={handleStalled}
+                        onWaiting={handleWaiting}
+                        onPlaying={handlePlaying}
+                        onCanPlay={handleCanPlay}
+                        preload="auto"
+                    />
+                    {children}
+                </AudioEngineContext.Provider>
+            </AudioTimeContext.Provider>
+        </AudioControlsContext.Provider>
     );
+};
+
+export const useAudioControls = () => {
+    const ctx = useContext(AudioControlsContext);
+    if (!ctx) {
+        throw new Error('useAudioControls must be used within an AudioEngineProvider');
+    }
+    return ctx;
+};
+
+export const useAudioTime = () => {
+    const ctx = useContext(AudioTimeContext);
+    if (!ctx) {
+        throw new Error('useAudioTime must be used within an AudioEngineProvider');
+    }
+    return ctx;
 };
 
 export const useAudioEngine = () => {

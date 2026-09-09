@@ -1,21 +1,26 @@
 import React, { useState, useEffect } from 'react';
 import { type Job, playlistApi, type DbPlaylist } from '../../api';
-import { Plus, ListMusic, Play, Music2, FolderPlus, Trash2, X, Loader2 } from 'lucide-react';
+import { Plus, ListMusic, Play, Pause, Music2, FolderPlus, Trash2, X, Loader2 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { AppFooter } from '../ui/AppFooter';
+import { toast } from '../../utils/toast';
 
 interface PlaylistsViewProps {
     songs: Job[];
     onPlaySong: (job: Job) => void;
     onOpenWorkspace: (job: Job) => void;
     onSelectTrack?: (job: Job) => void;
+    currentSongId?: string;
+    isPlaying?: boolean;
 }
 
 export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
     songs,
     onPlaySong,
     onOpenWorkspace,
-    onSelectTrack
+    onSelectTrack,
+    currentSongId,
+    isPlaying = false
 }) => {
     const [playlists, setPlaylists] = useState<DbPlaylist[]>([]);
     const [loading, setLoading] = useState(true);
@@ -130,6 +135,8 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
     };
 
     const handleDeletePlaylist = async (id: string) => {
+        const pl = playlists.find(p => p.id === id);
+        if (!window.confirm(`Permanently delete playlist "${pl?.name || 'Untitled'}"?`)) return;
         try {
             await playlistApi.delete(id);
             const updated = playlists.filter(p => p.id !== id);
@@ -137,8 +144,10 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
             if (selectedPlaylistId === id) {
                 setSelectedPlaylistId(updated[0]?.id || null);
             }
+            toast('Playlist deleted', 'info');
         } catch (err) {
             console.error('Failed to delete playlist:', err);
+            toast('Failed to delete playlist', 'error');
         }
     };
 
@@ -152,8 +161,10 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                 }
                 return p;
             }));
+            toast('Track removed from playlist', 'info');
         } catch (err) {
             console.error('Failed to remove track from playlist:', err);
+            toast('Failed to remove track', 'error');
         }
     };
 
@@ -341,7 +352,10 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                                 </div>
                             ) : (
                                 <div className="space-y-1 divide-y divide-black/[0.04] dark:divide-white/5">
-                                    {activePlaylistSongs.map((song, idx) => (
+                                    {activePlaylistSongs.map((song, idx) => {
+                                        const isCurrent = currentSongId === song.id;
+                                        const isCurrentPlaying = isCurrent && Boolean(isPlaying);
+                                        return (
                                         <div
                                             key={song.id}
                                             className="pt-2 pb-2 flex items-center justify-between hover:bg-black/[0.02] dark:hover:bg-white/[0.03] px-3 rounded-xl transition-colors group"
@@ -352,9 +366,15 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                                                 </span>
                                                 <button
                                                     onClick={() => onPlaySong(song)}
-                                                    className="w-7 h-7 rounded-full bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950 flex items-center justify-center transition-all flex-shrink-0"
+                                                    className={`w-7 h-7 rounded-full flex items-center justify-center transition-all flex-shrink-0 ${
+                                                        isCurrentPlaying
+                                                            ? 'bg-teal-500 text-slate-950 shadow-md shadow-teal-500/30'
+                                                            : 'bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950'
+                                                    }`}
+                                                    title={isCurrentPlaying ? 'Pause' : 'Play track'}
+                                                    aria-label={isCurrentPlaying ? 'Pause track' : 'Play track'}
                                                 >
-                                                    <Play size={11} className="ml-0.5" />
+                                                    {isCurrentPlaying ? <Pause size={11} /> : <Play size={11} className="ml-0.5" />}
                                                 </button>
                                                 <div
                                                     onClick={() => onSelectTrack?.(song)}
@@ -397,7 +417,8 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                                                 </button>
                                             </div>
                                         </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             )}
                         </div>

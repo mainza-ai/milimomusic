@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Play, Pause, Download, Wand2 } from 'lucide-react';
 import { useAudioEngine } from '../context/AudioEngineContext';
-import { API_BASE_URL } from '../api';
+import { api } from '../api';
 import { StaticWaveform } from './ui/StaticWaveform';
 import { InpaintModal } from './InpaintModal';
 import type { Job } from '../api';
@@ -66,7 +66,7 @@ export const TrackRowPlayer: React.FC<TrackRowPlayerProps> = ({ job }) => {
 
     const downloadAudio = () => {
         if (!job.audio_path) return;
-        const fullUrl = job.audio_path.startsWith('http') ? job.audio_path : `${API_BASE_URL}${job.audio_path}`;
+        const fullUrl = api.getAudioUrl(job.audio_path);
         const a = document.createElement('a');
         a.href = fullUrl;
         a.download = `milimo-track-${job.id}.wav`;

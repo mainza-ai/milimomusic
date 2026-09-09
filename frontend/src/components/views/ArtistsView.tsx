@@ -22,7 +22,7 @@ const ROLE_LABELS: Record<string, string> = {
     world_builder: 'World Builder', experiencer: 'Experiencer',
     songwriter: 'Songwriter', producer: 'Producer', stylist: 'Stylist', critic: 'Critic',
 };
-const LLM_PROVIDERS = ['opencode', 'nvidia', 'deepseek', 'openai', 'gemini', 'openrouter', 'omlx', 'ollama', 'lmstudio'];
+const LLM_PROVIDERS = ['opencode', 'nvidia', 'deepseek', 'openai', 'gemini', 'openrouter', 'omlx', 'ollama', 'lmstudio', 'anthropic'];
 
 type RunPhase = 'idle' | 'running' | 'done' | 'error';
 
@@ -219,30 +219,50 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
         }
     };
 
-    // A4: cover art generation from lore/tags — procedural covers endpoint.
+    // Cover art generation: lyrics-aware LLM visual prompt (pure imagery) +
+    // Pillow title overlay. Profile = artist name only; release = title + byline.
     const [coverGenBusy, setCoverGenBusy] = useState<'profile' | string | null>(null);
     const generateCover = async (target: 'profile' | string) => {
         if (!detail) return;
         setCoverGenBusy(target);
         try {
-            let prompt: string;
+            let promptRes: { prompt: string };
+            let overlayTitle: string | undefined;
+            let overlayArtist: string | undefined;
             if (target === 'profile') {
                 let loreBits = '';
                 try {
                     const lore = JSON.parse(detail.profile.lore_json || '{}');
                     loreBits = [lore.era_setting, lore.appearance].filter(Boolean).join(', ');
                 } catch { /* raw/freeform lore — not usable as a structured prompt */ }
-                prompt = `High-end artistic album cover art for the artist '${detail.profile.name}'`
-                    + (loreBits ? `, ${loreBits}` : '')
-                    + (detail.profile.tags ? `, style: ${detail.profile.tags}` : '')
-                    + ', minimalist, cinematic lighting, modern abstract aesthetics, award-winning graphic design';
+                const description = [detail.profile.bio, loreBits].filter(Boolean).join(' — ') || undefined;
+                promptRes = await coverApi.generateCoverPrompt({
+                    title: detail.profile.name,
+                    description,
+                    tags: detail.profile.tags || undefined,
+                });
+                overlayTitle = detail.profile.name;
             } else {
                 const rel = detail.releases.find(r => r.id === target);
-                prompt = `High-end artistic album cover art for the release '${rel?.title || 'Untitled'}', by ${detail.profile.name}`
-                    + (detail.profile.tags ? `, style: ${detail.profile.tags}` : '')
-                    + ', minimalist, cinematic lighting, modern abstract aesthetics, award-winning graphic design';
+                let loreBits = '';
+                try {
+                    const lore = JSON.parse(detail.profile.lore_json || '{}');
+                    loreBits = [lore.era_setting, lore.appearance].filter(Boolean).join(', ');
+                } catch { /* raw/freeform lore — not usable as a structured prompt */ }
+                const description = [rel?.description, detail.profile.bio, loreBits].filter(Boolean).join(' — ') || undefined;
+                promptRes = await coverApi.generateCoverPrompt({
+                    title: rel?.title || 'Untitled',
+                    description,
+                    tags: detail.profile.tags || undefined,
+                });
+                overlayTitle = rel?.title || undefined;
+                overlayArtist = detail.profile.name;
             }
-            const { url } = await coverApi.generateCoverImage({ prompt });
+            const { url } = await coverApi.generateCoverImage({
+                prompt: promptRes.prompt,
+                title: overlayTitle,
+                artist: overlayArtist,
+            });
             if (target === 'profile') {
                 const updated = await profilesApi.setCover(detail.profile.id, url);
                 setDetail({ ...detail, profile: updated });
@@ -866,11 +886,11 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                         role="listitem"
                                         aria-label={`Open artist ${p.name}`}
                                         onClick={() => openProfile(p.id)}
-                                        className="text-left p-5 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm hover:shadow-apple-md backdrop-blur-xl transition-all hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-teal-500/60 outline-none"
+                                        className="text-left p-5 rounded-2xl bg-white/95 dark:bg-[#141620]/95 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm hover:shadow-apple-md transition-all hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-teal-500/60 outline-none"
                                     >
                                         <div className="flex items-center gap-3">
                                             {p.cover_image_path ? (
-                                                <img src={`${API_BASE_URL}${p.cover_image_path}`} alt="" className="w-10 h-10 rounded-xl object-cover border border-black/10 dark:border-white/10" />
+                                                <img src={coverApi.getCoverUrl(p.cover_image_path)} alt="" className="w-10 h-10 rounded-xl object-cover border border-black/10 dark:border-white/10" />
                                             ) : (
                                                 <div className="w-10 h-10 rounded-xl bg-gradient-to-br from-teal-400/40 to-fuchsia-500/40 flex items-center justify-center"><UserCog size={16} className="text-slate-500" /></div>
                                             )}
@@ -1096,7 +1116,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
             </div>
 
             {/* Identity editor */}
-            <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 sm:p-6 mb-6 space-y-5">
+            <section className="rounded-2xl bg-white/95 dark:bg-[#141620]/95 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm p-5 sm:p-6 mb-6 space-y-5">
                 {/* Section Header with Title and Aligned Save Button */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-4 border-b border-black/[0.05] dark:border-white/[0.06]">
                     <div className="flex items-center gap-2.5">
@@ -1151,7 +1171,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                     <div className="relative group shrink-0">
                         {detail.profile.cover_image_path ? (
                             <img
-                                src={`${API_BASE_URL}${detail.profile.cover_image_path}`}
+                                src={coverApi.getCoverUrl(detail.profile.cover_image_path)}
                                 alt={detail.profile.name}
                                 className="w-16 h-16 sm:w-20 sm:h-20 rounded-2xl object-cover border border-black/10 dark:border-white/10 shadow-sm"
                             />
@@ -1328,7 +1348,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
             </section>
 
             {/* AI Crew */}
-            <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 sm:p-6 mb-6 space-y-5">
+            <section className="rounded-2xl bg-white/95 dark:bg-[#141620]/95 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm p-5 sm:p-6 mb-6 space-y-5">
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-black/[0.05] dark:border-white/[0.06]">
                     <div className="flex items-center gap-2.5">
@@ -1474,7 +1494,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
             </section>
 
             {/* Experiencer Studio */}
-            <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 sm:p-6 mb-6 space-y-5">
+            <section className="rounded-2xl bg-white/95 dark:bg-[#141620]/95 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm p-5 sm:p-6 mb-6 space-y-5">
                 {/* Header */}
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-black/[0.05] dark:border-white/[0.06]">
                     <div className="flex items-center gap-2.5">
@@ -1580,7 +1600,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
 
             {/* Vision artifact */}
             {vision && (
-                <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-teal-500/30 shadow-apple-lg backdrop-blur-xl p-6 space-y-5 relative overflow-hidden">
+                <section className="rounded-2xl bg-white/95 dark:bg-[#141620]/95 border border-teal-500/30 shadow-apple-lg p-6 space-y-5 relative overflow-hidden">
                     <div className="absolute top-0 left-0 right-0 h-1 bg-gradient-to-r from-teal-500 via-cyan-400 to-sky-500" />
                     <div className="flex items-start justify-between gap-3">
                         <div>
@@ -1668,7 +1688,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
             )}
 
             {/* Releases */}
-            <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 sm:p-6 mb-6 space-y-5">
+            <section className="rounded-2xl bg-white/95 dark:bg-[#141620]/95 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm p-5 sm:p-6 mb-6 space-y-5">
                 <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 pb-4 border-b border-black/[0.05] dark:border-white/[0.06]">
                     <div className="flex items-center gap-2.5">
                         <div className="w-8 h-8 rounded-xl bg-teal-500/10 dark:bg-teal-500/20 border border-teal-500/20 flex items-center justify-center text-teal-600 dark:text-teal-400 shrink-0">
@@ -1775,7 +1795,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                             <>
                                 <div className="flex items-center gap-2 min-w-0">
                                     {r.cover_image_path && (
-                                        <img src={`${API_BASE_URL}${r.cover_image_path}`} alt="" className="w-8 h-8 rounded-lg object-cover border border-black/10 dark:border-white/10" />
+                                        <img src={coverApi.getCoverUrl(r.cover_image_path)} alt="" className="w-8 h-8 rounded-lg object-cover border border-black/10 dark:border-white/10" />
                                     )}
                                     <div className="min-w-0">
                                         <span className="text-xs font-bold text-slate-800 dark:text-slate-100 truncate">{r.title}</span>
@@ -1948,7 +1968,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
             </section>
 
             {/* Run history (C5): this artist's agent ledger — newest first. */}
-            <section className="rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm backdrop-blur-xl p-5 sm:p-6 mb-6">
+            <section className="rounded-2xl bg-white/95 dark:bg-[#141620]/95 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm p-5 sm:p-6 mb-6">
                 <details className="group">
                     <summary className="flex items-center justify-between cursor-pointer select-none">
                         <div className="flex items-center gap-2.5">

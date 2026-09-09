@@ -2,6 +2,8 @@ import React, { useState, useEffect } from 'react';
 import { Sliders, RefreshCw, Wand2, CheckCircle2, AlertTriangle } from 'lucide-react';
 import { workspaceApi, type Job } from '../../api';
 import type { StemChannel } from './SessionWorkspace';
+import { RotaryKnob } from '../ui/RotaryKnob';
+import { SpectralVisualizer } from '../ui/SpectralVisualizer';
 
 interface MultitrackMixerProps {
     job: Job;
@@ -58,7 +60,8 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
 
         const buf = new Float32Array(512);
         let raf = 0;
-        let frame = 0;
+        let lastTime = 0;
+        const METER_INTERVAL_MS = 33; // Strictly 30Hz max, regardless of 60/120/144Hz screen refresh rate
 
         const readPeak = (analyser: AnalyserNode): number => {
             analyser.getFloatTimeDomainData(buf);
@@ -72,9 +75,13 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
             return Math.min(100, peak * 140);
         };
 
-        const tick = () => {
-            frame++;
-            if (frame % 2 === 0) { // ~30Hz is plenty for LED meters
+        const tick = (now: number) => {
+            if (document.hidden) {
+                raf = requestAnimationFrame(tick);
+                return;
+            }
+            if (now - lastTime >= METER_INTERVAL_MS) {
+                lastTime = now;
                 const next: Record<string, number> = {};
                 stemChannels.forEach(stem => {
                     const an = stemAnalysersRef.current[stem.id];
@@ -128,7 +135,7 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
     return (
         <div className="flex flex-col h-full bg-[#f5f5f7] dark:bg-[#0d0f15] text-slate-900 dark:text-slate-200 select-none overflow-hidden transition-colors duration-200">
             {/* Mixer Header */}
-            <div className="flex items-center justify-between px-6 py-4 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/70 dark:bg-[#12141c]/80 backdrop-blur-xl">
+            <div className="flex items-center justify-between px-6 py-4 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/95 dark:bg-[#12141c]/95">
                 <div className="flex items-center space-x-3">
                     <Sliders size={18} className="text-teal-600 dark:text-teal-400" />
                     <div>
@@ -177,7 +184,7 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
                     return (
                         <div
                             key={channel.id}
-                            className="w-32 bg-white/80 dark:bg-[#161824]/90 border border-black/[0.06] dark:border-white/10 rounded-3xl p-4 flex flex-col items-center justify-between h-[420px] shadow-apple-md backdrop-blur-xl relative group transition-all"
+                            className="w-32 bg-white/95 dark:bg-[#161824]/95 border border-black/[0.06] dark:border-white/10 rounded-3xl p-4 flex flex-col items-center justify-between h-[420px] shadow-apple-md relative group transition-all"
                         >
                             {/* Channel Title & Color Indicator */}
                             <div className="w-full text-center space-y-1">
@@ -196,19 +203,17 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
                             </div>
 
                             {/* Stereo Pan Control */}
-                            <div className="w-full space-y-1 text-center">
-                                <span className="text-[10px] font-mono text-slate-400 block font-bold">
-                                    PAN: {channel.pan === 0 ? 'C' : channel.pan < 0 ? `L${Math.abs(channel.pan)}` : `R${channel.pan}`}
-                                </span>
-                                <input
-                                    type="range"
-                                    min="-50"
-                                    max="50"
+                            <div className="w-full flex justify-center py-1">
+                                <RotaryKnob
+                                    label="PAN"
                                     value={channel.pan}
-                                    onChange={(e) => onPanChange(channel.id, parseInt(e.target.value))}
-                                    title={`${channel.name} Stereo Pan: ${channel.pan === 0 ? 'Center' : channel.pan < 0 ? `Left ${Math.abs(channel.pan)}%` : `Right ${channel.pan}%`}`}
-                                    aria-label={`${channel.name} Pan Slider`}
-                                    className="w-full h-1 bg-slate-200 dark:bg-slate-700 rounded-lg appearance-none cursor-pointer accent-teal-500"
+                                    min={-50}
+                                    max={50}
+                                    defaultValue={0}
+                                    bipolar={true}
+                                    size={42}
+                                    ariaLabel={`${channel.name} Stereo Pan`}
+                                    onChange={(val) => onPanChange(channel.id, val)}
                                 />
                             </div>
 
@@ -263,7 +268,7 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
                                     className="w-2.5 h-36 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden flex flex-col justify-end p-0.5 border border-black/10 dark:border-white/5"
                                 >
                                     <div
-                                        className="w-full rounded-full transition-all duration-75 bg-gradient-to-t from-emerald-500 via-teal-400 to-amber-500"
+                                        className="w-full rounded-full will-change-[height] bg-gradient-to-t from-emerald-500 via-teal-400 to-amber-500"
                                         style={{ height: `${meter}%` }}
                                     />
                                 </div>
@@ -282,7 +287,7 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
                 })}
 
                 {/* Master Bus Channel Strip */}
-                <div className="w-36 bg-white dark:bg-[#1a1c2a] border-2 border-teal-500/40 rounded-3xl p-4 flex flex-col items-center justify-between h-[420px] shadow-apple-lg backdrop-blur-xl relative">
+                <div className="w-36 bg-white dark:bg-[#1a1c2a] border-2 border-teal-500/40 rounded-3xl p-4 flex flex-col items-center justify-between h-[420px] shadow-apple-lg relative">
                     <div className="w-full text-center space-y-1">
                         <div className="h-1.5 w-12 mx-auto rounded-full bg-gradient-to-r from-teal-500 to-cyan-500" />
                         <span className="text-xs font-black text-teal-600 dark:text-teal-400 uppercase tracking-wider block">
@@ -327,6 +332,17 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
                         )}
                     </div>
 
+                    {/* Master Real-Time Spectral Visualizer */}
+                    <div className="w-full px-1 py-1 bg-black/20 rounded-lg border border-black/5 dark:border-white/5">
+                        <SpectralVisualizer
+                            analyser={masterAnalyserRef.current}
+                            isPlaying={isPlaying}
+                            height={32}
+                            barCount={20}
+                            variant="bars"
+                        />
+                    </div>
+
                     {/* Master Fader & Meter */}
                     <div className="flex items-center space-x-3 h-48 py-2">
                         <input
@@ -348,7 +364,7 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
                             className="w-3.5 h-40 bg-slate-200 dark:bg-slate-800 rounded-full overflow-hidden flex flex-col justify-end p-0.5 border border-black/10 dark:border-white/5"
                         >
                             <div
-                                className="w-full rounded-full transition-all duration-75 bg-gradient-to-t from-teal-500 via-cyan-400 to-amber-500"
+                                className="w-full rounded-full will-change-[height] bg-gradient-to-t from-teal-500 via-cyan-400 to-amber-500"
                                 style={{ height: `${meterLevels['master'] || 0}%` }}
                             />
                         </div>

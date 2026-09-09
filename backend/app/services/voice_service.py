@@ -22,9 +22,14 @@ import numpy as np
 
 logger = logging.getLogger(__name__)
 
-VOICE_DIR = "data/voice_profiles"
-PREVIEWS_DIR = "generated_audio/voice_previews"
-CONVERTED_DIR = "generated_audio/converted_vocals"
+from app.core.paths import get_data_dir, get_generated_audio_dir
+
+VOICE_DIR = str(get_data_dir() / "voice_profiles")
+PREVIEWS_DIR = str(get_generated_audio_dir() / "voice_previews")
+CONVERTED_DIR = str(get_generated_audio_dir() / "converted_vocals")
+os.makedirs(VOICE_DIR, exist_ok=True)
+os.makedirs(PREVIEWS_DIR, exist_ok=True)
+os.makedirs(CONVERTED_DIR, exist_ok=True)
 
 
 def _load_audio_tensor(file_path: str):
@@ -483,7 +488,7 @@ class VoiceService:
         if not output_filename.endswith(".wav"):
             output_filename = f"{os.path.splitext(output_filename)[0]}.wav"
 
-        out_dest = os.path.join("generated_audio", output_filename)
+        out_dest = str(get_generated_audio_dir() / output_filename)
         resolved_converted = self.resolve_audio_file(converted_vocal_path)
         if not resolved_converted:
             raise FileNotFoundError(f"Converted vocal audio not found: {converted_vocal_path}")
@@ -568,6 +573,15 @@ class VoiceService:
 
         # If all else fails, save the converted vocal directly as output
         shutil.copyfile(resolved_converted, out_dest)
+
+        # Mirror to backend/generated_audio for backwards compatibility
+        backend_out = os.path.abspath(os.path.join("generated_audio", output_filename))
+        if os.path.abspath(out_dest) != backend_out and os.path.exists(out_dest):
+            try:
+                shutil.copy2(out_dest, backend_out)
+            except Exception:
+                pass
+
         return f"/audio/{output_filename}"
 
 

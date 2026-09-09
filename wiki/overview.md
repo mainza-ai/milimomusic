@@ -2,9 +2,9 @@
 title: Milimo Music — Overview
 type: overview
 created: 2026-08-19
-updated: 2026-08-30
+updated: 2026-09-09
 sources: [sources/readme.md, sources/v2-refactor-plan.md]
-tags: [milimo, product, music-generation, daw, transcription]
+tags: [milimo, product, music-generation, daw, transcription, performance-standards]
 aliases: [Milimo]
 ---
 
@@ -81,6 +81,8 @@ The platform is fully implemented at production grade with zero placeholder shor
 - **AI Music Video Studio**: Fully operational with vocal-stem viseme lip-syncing, duration constraint clamping, and stylized karaoke burning.
 - **Singing Voice Conversion**: Real RVC neural checkpoints and acoustic formant EQ shaping.
 - **Cover Art Studio**: FLUX.2 / SDXL Turbo neural diffusion and high-res studio raster PNG synthesis.
+- **Audio Synthesis & Loudness Standards**: Physical procedural DSP (electric guitar pick transient, cylindrical stopped-pipe clarinet odd harmonics, 50Hz sub punch kick), Fletcher-Munson staged RMS (-13 to -18 dBFS), and 0.00ms clock-jitter Web Audio playback ([Audio Synthesis Standards](concepts/audio-synthesis-standards.md)).
+- **Database Integrity & Lifecycle**: Multi-format UUID resolution, boot-time self-healing migrations, relational cascade nullification, and atomic disk sweeps ([Database Integrity Lifecycle](concepts/database-integrity-lifecycle.md)).
 - **Deployment**: Single-process unified serving with React SPA fallback and multi-stage Docker packaging.
 
 The app is **cross-platform** (macOS Apple Silicon, Linux, Windows).

@@ -17,7 +17,7 @@ from __future__ import annotations
 import mimetypes
 import os
 from email.utils import formatdate
-from typing import AsyncIterator, Optional, Tuple
+from typing import AsyncIterator, Optional, Tuple, List, Sequence
 
 import anyio
 import anyio.to_thread
@@ -90,6 +90,7 @@ class RangedFileResponse(Response):
             "accept-ranges": "bytes",
             "content-length": str(end - start + 1),
             "last-modified": formatdate(stat_result.st_mtime, usegmt=True),
+            "cache-control": "no-cache, must-revalidate",
         }
         super().__init__(
             content=b"",
@@ -111,7 +112,44 @@ class RangedFileResponse(Response):
 
 
 class RangedStaticFiles(StaticFiles):
-    """StaticFiles + single-range support + always-on Accept-Ranges."""
+    """StaticFiles + multi-directory fallback + single-range support + always-on Accept-Ranges."""
+
+    def __init__(
+        self,
+        *,
+        directory: Optional[os.PathLike] = None,
+        directories: Optional[List[os.PathLike]] = None,
+        packages: Optional[list[str | tuple[str, str]]] = None,
+        html: bool = False,
+        check_dir: bool = True,
+        follow_symlink: bool = False,
+    ) -> None:
+        primary_dir = directories[0] if (directories and len(directories) > 0) else directory
+        super().__init__(
+            directory=primary_dir,
+            packages=packages,
+            html=html,
+            check_dir=False,
+            follow_symlink=follow_symlink,
+        )
+        candidate_dirs: List[str] = []
+        if directories:
+            for d in directories:
+                if d is not None:
+                    p = os.path.abspath(str(d))
+                    if p not in candidate_dirs:
+                        candidate_dirs.append(p)
+        if primary_dir is not None:
+            p = os.path.abspath(str(primary_dir))
+            if p not in candidate_dirs:
+                candidate_dirs.insert(0, p)
+
+        if candidate_dirs:
+            self.all_directories = candidate_dirs
+
+        if check_dir and self.all_directories:
+            if not any(os.path.isdir(d) for d in self.all_directories):
+                raise RuntimeError(f"None of the static directories exist: {self.all_directories}")
 
     def file_response(self, full_path, stat_result, scope, status_code: int = 200):  # type: ignore[override]
         # NB: sync by contract — StaticFiles.__call__ invokes this without await.
@@ -133,6 +171,7 @@ class RangedStaticFiles(StaticFiles):
             return RangedFileResponse(str(full_path), start, end, size, stat_result)
         response = FileResponse(full_path, status_code=status_code, stat_result=stat_result)
         response.headers["accept-ranges"] = "bytes"
+        response.headers["cache-control"] = "no-cache, must-revalidate"
         if self.is_not_modified(response.headers, request_headers):
             from starlette.staticfiles import NotModifiedResponse
 

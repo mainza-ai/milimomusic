@@ -59,6 +59,7 @@ class Job(SQLModel, table=True):
     cover_image_path: Optional[str] = Field(default=None)
     image_prompt: Optional[str] = Field(default=None)
     video_path: Optional[str] = Field(default=None)
+    video_config_json: Optional[str] = Field(default=None)  # render config snapshot for faithful re-render
 
     # v2 Multitrack & MuScriptor Transcription Assets
     midi_path: Optional[str] = Field(default=None)
@@ -183,6 +184,7 @@ class CoverPromptRequest(SQLModel):
     description: Optional[str] = None
     tags: Optional[str] = None
     genre: Optional[str] = None
+    lyrics: Optional[str] = None
 
 
 class CoverImageRequest(SQLModel):
@@ -190,6 +192,17 @@ class CoverImageRequest(SQLModel):
     aspect_ratio: Optional[str] = "1:1"
     style: Optional[str] = "cinematic album cover"
     model_id: Optional[str] = None
+    title: Optional[str] = None
+    artist: Optional[str] = None
+
+
+class JobCoverGenerateRequest(SQLModel):
+    model_config = {"protected_namespaces": ()}
+    prompt: Optional[str] = None
+    aspect_ratio: Optional[str] = "1:1"
+    style: Optional[str] = None
+    model_id: Optional[str] = None
+    artist: Optional[str] = None
 
 
 class VideoPlanRequest(SQLModel):
@@ -233,6 +246,8 @@ class GenerationRequest(SQLModel):
     is_instrumental: Optional[bool] = False
     structured_caption: Optional[Dict[str, str]] = None
     voice_profile_id: Optional[str] = None
+    auto_generate_cover: Optional[bool] = True
+    cover_image_model_id: Optional[str] = None
 
     @field_validator('tags', mode='before')
     @classmethod
@@ -320,6 +335,7 @@ class LLMConfigUpdate(SQLModel):
     deepseek: Optional[ProviderConfig] = None
     opencode: Optional[ProviderConfig] = None
     omlx: Optional[ProviderConfig] = None
+    anthropic: Optional[ProviderConfig] = None
 
 
 class VoiceProfileCreate(SQLModel):

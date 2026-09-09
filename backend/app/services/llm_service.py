@@ -22,6 +22,11 @@ try:
 except ImportError:
     genai = None
 
+try:
+    import anthropic as _anthropic
+except ImportError:
+    _anthropic = None
+
 from .config_manager import ConfigManager
 from .lyrics_schemas import LyricsResponse
 from .lyrics_engine import StructuredLyricsEngine
@@ -231,10 +236,22 @@ class OllamaProvider(LLMProvider):
             raise classify_llm_error("ollama", e) from e
 
 class OpenAIProvider(LLMProvider):
-    def __init__(self, api_key: str, base_url: Optional[str] = None, timeout: float = 30.0):
+    def __init__(
+        self,
+        api_key: str,
+        base_url: Optional[str] = None,
+        timeout: float = 30.0,
+        default_headers: Optional[Dict[str, str]] = None,
+    ):
         if OpenAI is None:
             raise ImportError("OpenAI library is not installed. Please run `pip install openai`.")
-        self.client = OpenAI(api_key=api_key or "no-key", base_url=base_url, timeout=timeout, max_retries=2)
+        self.client = OpenAI(
+            api_key=api_key or "no-key",
+            base_url=base_url,
+            timeout=timeout,
+            max_retries=2,
+            default_headers=default_headers or {},
+        )
 
     def get_models(self) -> List[str]:
         try:
@@ -475,6 +492,119 @@ class GeminiProvider(LLMProvider):
         except Exception as e:
             raise classify_llm_error("gemini", e) from e
 
+class AnthropicProvider(LLMProvider):
+    """Native Anthropic (Claude) provider via the `anthropic` SDK.
+
+    Uses the Messages API (system prompt as a top-level param, roles mapped
+    user/assistant). Implemented to the full LLMProvider contract so the agent
+    runtime's generate_chat path works unchanged.
+    """
+    _DEFAULT_MODEL = "claude-sonnet-4-5"
+
+    def __init__(self, api_key: str, base_url: Optional[str] = None):
+        if _anthropic is None:
+            raise ImportError("Anthropic library is not installed. Please run `pip install anthropic`.")
+        kwargs = {"api_key": api_key or "no-key"}
+        if base_url:
+            kwargs["base_url"] = base_url
+        self.client = _anthropic.Anthropic(**kwargs)
+
+    def get_models(self) -> List[str]:
+        try:
+            return [m.id for m in self.client.models.list()]
+        except Exception as e:
+            logger.warning(f"Failed to fetch Anthropic models: {e}")
+            return []
+
+    def _extract_text(self, message) -> str:
+        parts = []
+        for block in getattr(message, "content", []) or []:
+            if getattr(block, "type", "") == "text":
+                parts.append(getattr(block, "text", ""))
+        return "".join(parts)
+
+    @staticmethod
+    def _max_tokens(kwargs: Dict[str, Any]) -> int:
+        opts = kwargs.get("options") or {}
+        return int(opts.get("max_tokens") or 4096)
+
+    def generate_text(self, prompt: str, model: str, **kwargs) -> str:
+        try:
+            msg = self.client.messages.create(
+                model=model or self._DEFAULT_MODEL,
+                max_tokens=self._max_tokens(kwargs),
+                messages=[{"role": "user", "content": prompt}],
+                temperature=kwargs.get("options", {}).get("temperature", 0.7),
+            )
+            return _strip_thinking(self._extract_text(msg))
+        except Exception as e:
+            raise classify_llm_error("anthropic", e) from e
+
+    def generate_json(self, prompt: str, model: str, **kwargs) -> Dict:
+        try:
+            msg = self.client.messages.create(
+                model=model or self._DEFAULT_MODEL,
+                max_tokens=self._max_tokens(kwargs),
+                messages=[{"role": "user", "content": prompt}],
+                temperature=kwargs.get("options", {}).get("temperature", 0.7),
+            )
+            content = _strip_thinking(self._extract_text(msg))
+            start = content.find("{")
+            end = content.rfind("}")
+            if start != -1 and end != -1 and end > start:
+                content = content[start:end + 1]
+            return json.loads(content)
+        except Exception as e:
+            logger.error(f"Anthropic JSON generation failed: {e}")
+            raise classify_llm_error("anthropic", e) from e
+
+    def generate_structured(self, prompt: str, model: str, response_format: Type[BaseModel], **kwargs) -> BaseModel:
+        json_data = self.generate_json(prompt, model, **kwargs)
+        return response_format.model_validate(json_data)
+
+    def generate_chat(self, messages: List[Dict[str, str]], model: str, **kwargs) -> LLMResult:
+        """Native Anthropic chat: system role → top-level `system` param."""
+        started = time.monotonic()
+        try:
+            system_parts: List[str] = []
+            contents: List[Dict[str, str]] = []
+            for m in messages:
+                role = m.get("role", "user")
+                text = m.get("content", "")
+                if role == "system":
+                    system_parts.append(text)
+                else:
+                    contents.append({"role": "assistant" if role == "assistant" else "user", "content": text})
+            if not contents:
+                raise ValueError("Anthropic requires at least one non-system message.")
+
+            create_kwargs: Dict[str, Any] = dict(
+                model=model or self._DEFAULT_MODEL,
+                max_tokens=self._max_tokens(kwargs),
+                messages=contents,
+                temperature=kwargs.get("options", {}).get("temperature", 0.7),
+            )
+            if system_parts:
+                create_kwargs["system"] = "\n\n".join(system_parts)
+            msg = self.client.messages.create(**create_kwargs)
+            usage: Dict[str, int] = {}
+            u = getattr(msg, "usage", None)
+            if u:
+                usage = {
+                    "prompt_tokens": getattr(u, "input_tokens", 0) or 0,
+                    "completion_tokens": getattr(u, "output_tokens", 0) or 0,
+                    "total_tokens": (getattr(u, "input_tokens", 0) or 0) + (getattr(u, "output_tokens", 0) or 0),
+                }
+            return LLMResult(
+                content=_strip_thinking(self._extract_text(msg)),
+                provider="anthropic",
+                model=model or self._DEFAULT_MODEL,
+                latency_ms=int((time.monotonic() - started) * 1000),
+                usage=usage,
+            )
+        except Exception as e:
+            raise classify_llm_error("anthropic", e) from e
+
 # ---------------------------------------------------------------------------
 # MiniMax Music 3 caption rewriter — official music-caption-rewriter port.
 #
@@ -608,6 +738,36 @@ def _build_caption_rewrite_prompt(concept: str, lyrics: Optional[str], tags: Opt
     return "\n\n".join(parts)
 
 
+_OPCODE_SESSION_HEADER = "x-opencode-session"
+_USER_AGENT = "milimo-music/2.0"
+
+
+def _resolve_opencode_session_id() -> str:
+    """Return the stable opencode session id (env override, else persisted, else generated).
+
+    The opencode gateway routes chat/completions on this header and rejects
+    session-less calls with HTTP 400 MissingSessionID. The value is stable per
+    install so routing + prompt caching behave; env override allows rotation.
+    Persisted under opencode.session_id (non-secret, survives save scrubbing).
+    """
+    env_id = os.environ.get("OPENCODE_SESSION_ID", "").strip()
+    if env_id:
+        return env_id
+    import uuid as _uuid
+    try:
+        from app.services.config_manager import ConfigManager
+        cfg = ConfigManager().get_config()
+        existing = ((cfg.get("opencode") or {}).get("session_id") or "").strip()
+        if existing:
+            return existing
+        new_id = str(_uuid.uuid4())
+        ConfigManager().update_config({"opencode": {"session_id": new_id}})
+        return new_id
+    except Exception as e:
+        logger.warning(f"Could not persist opencode session id, using ephemeral: {e}")
+        return str(_uuid.uuid4())
+
+
 def _normalize_llm_url(url: str) -> str:
     """If running inside a Docker container, rewrite localhost/127.0.0.1 to host.docker.internal
 
@@ -673,12 +833,20 @@ class LLMService:
         elif provider_name == "gemini":
             api_key = config.get("gemini", {}).get("api_key", "")
             return GeminiProvider(api_key=api_key)
+        elif provider_name == "anthropic":
+            api_key = config.get("anthropic", {}).get("api_key", "") or os.environ.get("ANTHROPIC_API_KEY", "")
+            base_url = _normalize_llm_url(config.get("anthropic", {}).get("base_url", ""))
+            return AnthropicProvider(api_key=api_key, base_url=base_url or None)
         elif provider_name == "opencode":
             api_key = config.get("opencode", {}).get("api_key", "") or os.environ.get("OPENCODE_API_KEY", "")
             base_url = _normalize_llm_url(config.get("opencode", {}).get("base_url", "https://opencode.ai/zen/go/v1"))
             return OpenAIProvider(
                 api_key=api_key,
-                base_url=base_url
+                base_url=base_url,
+                default_headers={
+                    _OPCODE_SESSION_HEADER: _resolve_opencode_session_id(),
+                    "User-Agent": _USER_AGENT,
+                },
             )
         elif provider_name == "omlx":
             base_url = _normalize_llm_url(config.get("omlx", {}).get("base_url", "http://localhost:8787/v1"))
@@ -715,6 +883,8 @@ class LLMService:
                 temp_config["lmstudio"] = {"base_url": eff_url or _normalize_llm_url("http://localhost:1234/v1")}
             elif provider_name == "gemini":
                 temp_config["gemini"] = {"api_key": eff_key}
+            elif provider_name == "anthropic":
+                temp_config["anthropic"] = {"api_key": eff_key, "base_url": eff_url or ""}
             elif provider_name == "opencode":
                 temp_config["opencode"] = {
                     "api_key": eff_key or os.environ.get("OPENCODE_API_KEY", ""),
@@ -1397,6 +1567,155 @@ class LLMService:
             return random.sample(all_styles, min(12, len(all_styles)))
         except Exception:
             return OFFICIAL_STYLES[:12]
+
+    #: Single-attempt ceiling for active-provider text calls. The provider is
+    #: chosen by the user in LLM Settings; a stall must not eat the endpoint's
+    #: whole budget — but we never wander to other providers behind their back.
+    ACTIVE_ATTEMPT_TIMEOUT = 30.0
+
+    @staticmethod
+    def generate_text_via_active(
+        prompt: str,
+        options: Optional[Dict[str, Any]] = None,
+    ) -> tuple[Optional[str], Optional[str], Optional[str]]:
+        """One attempt through the active LLM Settings provider, nothing else.
+
+        Provider AND model resolve from the Settings selection at call time —
+        no hardcoded fallbacks anywhere on this path. Returns (text,
+        provider_name, model). All-None when unselected or failed — the caller
+        owns the fallback and says so honestly.
+        """
+        import time as _time
+
+        config = ConfigManager().get_config()
+        provider_name = (config.get("provider") or "").strip() or "unknown"
+        settings_model = ((config.get(provider_name, {}) or {}).get("model") or "").strip()
+        if not settings_model:
+            logger.warning("LLM text skipped: no model selected in Settings.")
+            return None, None, None
+        started = _time.monotonic()
+        try:
+            provider = LLMService._get_provider()
+            model = settings_model
+            # Bound the attempt: fresh client copy, no SDK retry loops.
+            if hasattr(provider, "client") and hasattr(provider.client, "with_options"):
+                provider.client = provider.client.with_options(
+                    timeout=LLMService.ACTIVE_ATTEMPT_TIMEOUT,
+                    max_retries=0,
+                )
+            kwargs: Dict[str, Any] = dict(options=options or {})
+            if provider.__class__.__name__ == "OllamaProvider":
+                kwargs["timeout"] = (3.0, LLMService.ACTIVE_ATTEMPT_TIMEOUT)
+            text = provider.generate_text(prompt, model, **kwargs)
+            latency_ms = int((_time.monotonic() - started) * 1000)
+            if text and text.strip():
+                logger.info(
+                    f"LLM text success via {provider_name}/{model} in {latency_ms}ms."
+                )
+                return text.strip(), provider_name, model
+            logger.warning(
+                f"LLM text attempt via {provider_name} returned empty "
+                f"after {latency_ms}ms."
+            )
+        except Exception as e:
+            latency_ms = int((_time.monotonic() - started) * 1000)
+            logger.warning(
+                f"LLM text attempt via {provider_name} failed "
+                f"after {latency_ms}ms: {e}"
+            )
+        return None, None, None
+
+    @staticmethod
+    def generate_cover_prompt(
+        title: Optional[str] = None,
+        description: Optional[str] = None,
+        tags: Optional[str] = None,
+        genre: Optional[str] = None,
+        lyrics: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate an evocative visual prompt for album cover art using the LLM.
+
+        Draws visual inspiration from lyrics when available — translating lyrical
+        metaphors, themes, and emotions into compelling visual imagery. Walks the
+        resilience provider chain before falling back to a deterministic template.
+
+        Returns {"prompt", "llm_used", "provider"} — llm_used is False exactly
+        when the template fired, so callers (and the UI) can tell a lyrics-blind
+        generic prompt from a real one instead of shipping it silently.
+        """
+        import time as _time
+        # ── Build metadata context ──────────────────────────────────
+        parts: list[str] = []
+        if title:
+            parts.append(f"Song title: {title}")
+        if description:
+            parts.append(f"Description/mood: {description}")
+        if tags:
+            parts.append(f"Tags/style: {tags}")
+        if genre:
+            parts.append(f"Genre: {genre}")
+        if lyrics:
+            truncated = lyrics[:2000] + ("…" if len(lyrics) > 2000 else "")
+            parts.append(f"Lyrics:\n{truncated}")
+
+        meta = "\n".join(parts) if parts else "ambient electronic track"
+
+        system = (
+            "You are an album artwork director. Given song metadata and optionally "
+            "the song's lyrics, produce a single evocative visual prompt (1-3 sentences) "
+            "describing an image that would make compelling album cover art. "
+            "Draw visual inspiration from the imagery, themes, emotions, and narrative "
+            "in the lyrics — translate lyrical metaphors into visual elements. "
+            "Do NOT include any text or typography instructions — only visual imagery. "
+            "Never repeat the song title, never quote lyrics, never describe words, "
+            "letters, or typography of any kind. "
+            "Output ONLY the prompt, nothing else."
+        )
+        user_msg = f"Create a visual prompt for this song's cover art:\n{meta}"
+        full_prompt = f"{system}\n\n{user_msg}"
+
+        started = _time.monotonic()
+        text, provider_name, model_name = LLMService.generate_text_via_active(
+            full_prompt, options={"temperature": 0.85}
+        )
+        latency_ms = int((_time.monotonic() - started) * 1000)
+        if text:
+            logger.info(
+                f"LLM cover prompt via {provider_name}/{model_name} in {latency_ms}ms "
+                f"(lyrics {'included' if lyrics else 'absent'})."
+            )
+            return {"prompt": text, "llm_used": True, "provider": provider_name}
+
+        logger.warning(
+            f"LLM cover prompt unavailable after {latency_ms}ms — deterministic "
+            f"fallback (lyrics-blind generic scene)."
+        )
+
+        # ── Deterministic fallback ──────────────────────────────────
+        import hashlib as _hashlib
+        safe_title = title or "Untitled Master"
+        safe_desc = description or ""
+        safe_genre = genre or tags or "Modern Music Production"
+
+        h = _hashlib.md5((safe_title + safe_desc).encode()).hexdigest()
+        palettes = [
+            "deep crimson and midnight blue", "neon cyan and electric violet",
+            "warm amber and burnt sienna", "forest green and gold",
+            "monochrome silver and charcoal", "rose pink and pearl white",
+        ]
+        scenes = [
+            "an abstract landscape with layered mountain silhouettes",
+            "a lone figure standing in a vast field under dramatic clouds",
+            "geometric crystal formations reflecting prismatic light",
+            "an ocean horizon with bioluminescent waves",
+            "a dense forest path with shafts of light breaking through",
+            "an urban skyline at twilight with rain-slicked streets",
+        ]
+        pal = palettes[int(h[:4], 16) % len(palettes)]
+        scene = scenes[int(h[4:8], 16) % len(scenes)]
+        mood = safe_desc or safe_genre or "cinematic and atmospheric"
+        fallback = f"{scene} in a palette of {pal}, evoking a {mood} mood, professional album artwork, 4K detail"
+        return {"prompt": fallback, "llm_used": False, "provider": None}
 
     @staticmethod
     def update_config(provider_name: str, config_data: Dict[str, Any]):

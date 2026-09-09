@@ -23,6 +23,7 @@ import {
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { AppFooter } from '../ui/AppFooter';
+import { toast } from '../../utils/toast';
 
 interface ProjectsViewProps {
   allJobs: Job[];
@@ -55,6 +56,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   // Image Upload / AI Cover State
   const [isUploadingCover, setIsUploadingCover] = useState(false);
   const [isGeneratingCover, setIsGeneratingCover] = useState(false);
+  const [coverPromptOffline, setCoverPromptOffline] = useState(false);
   const [coverTarget, setCoverTarget] = useState<'create' | 'edit'>('create');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
@@ -84,6 +86,8 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
     key_signature: 'C Major',
     color: 'teal'
   });
+  const [isDuplicatingProject, setIsDuplicatingProject] = useState(false);
+  const [isDeletingProject, setIsDeletingProject] = useState(false);
 
   const loadProjects = async () => {
     try {
@@ -125,13 +129,18 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   const handlePromptCover = async () => {
     try {
       setIsGeneratingCover(true);
+      setCoverPromptOffline(false);
       const targetData = coverTarget === 'create' ? newProject : editProjectData;
       const promptRes = await coverApi.generateCoverPrompt({
         title: targetData.name || 'Studio Project',
         description: targetData.description,
         tags: targetData.tags
       });
-      const imgRes = await coverApi.generateCoverImage({ prompt: promptRes.prompt });
+      setCoverPromptOffline(promptRes.llm_used === false);
+      const imgRes = await coverApi.generateCoverImage({
+        prompt: promptRes.prompt,
+        title: (targetData.name || '').trim() || undefined
+      });
       const fullUrl = imgRes.url.startsWith('http') ? imgRes.url : `${API_BASE_URL}${imgRes.url}`;
       if (coverTarget === 'create') {
         setNewProject(prev => ({
@@ -155,14 +164,20 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
 
   const handleDuplicateProject = async (projectId: string, e?: React.MouseEvent) => {
     e?.stopPropagation();
+    if (isDuplicatingProject) return;
+    setIsDuplicatingProject(true);
     try {
       const duplicated = await projectApi.duplicateProject(projectId);
       setProjects(prev => [duplicated, ...prev]);
       if (activeProject?.id === projectId) {
         setActiveProject(duplicated);
       }
+      toast('Project folder duplicated', 'success');
     } catch (err) {
       console.error('Failed to duplicate project:', err);
+      toast('Failed to duplicate project', 'error');
+    } finally {
+      setIsDuplicatingProject(false);
     }
   };
 
@@ -218,16 +233,21 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   };
 
   const handleDeleteProject = async (projectId: string) => {
-    if (!confirm('Are you sure you want to delete this project folder? (Sessions will be kept in your general library)')) return;
-
+    if (!window.confirm('Are you sure you want to delete this project folder? (Sessions will be kept in your general library)')) return;
+    if (isDeletingProject) return;
+    setIsDeletingProject(true);
     try {
       await projectApi.deleteProject(projectId);
       setProjects(projects.filter((p) => p.id !== projectId));
       if (activeProject?.id === projectId) {
         setActiveProject(null);
       }
+      toast('Project folder deleted', 'info');
     } catch (err) {
       console.error('Failed to delete project:', err);
+      toast('Failed to delete project', 'error');
+    } finally {
+      setIsDeletingProject(false);
     }
   };
 
@@ -330,12 +350,13 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
 
             <button
               onClick={(e) => handleDuplicateProject(activeProject.id, e)}
+              disabled={isDuplicatingProject}
               title="Duplicate this project and its settings"
               aria-label="Duplicate Project Folder"
-              className="p-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 text-xs font-bold transition-colors flex items-center gap-1.5"
+              className="p-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
             >
               <Copy size={13} />
-              <span>Duplicate</span>
+              <span>{isDuplicatingProject ? 'Duplicating...' : 'Duplicate'}</span>
             </button>
 
             <button
@@ -362,12 +383,13 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
 
             <button
               onClick={() => handleDeleteProject(activeProject.id)}
+              disabled={isDeletingProject}
               title="Delete this project folder"
               aria-label="Delete Project Folder"
-              className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-bold transition-colors flex items-center gap-1.5"
+              className="p-2 rounded-xl bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 text-xs font-bold transition-colors flex items-center gap-1.5 disabled:opacity-50"
             >
               <Trash2 size={13} />
-              <span>Delete Folder</span>
+              <span>{isDeletingProject ? 'Deleting...' : 'Delete Folder'}</span>
             </button>
           </div>
         </div>
@@ -738,6 +760,11 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                         <span>{isGeneratingCover && coverTarget === 'edit' ? 'Generating...' : 'AI Cover'}</span>
                       </button>
                     </div>
+                    {coverPromptOffline && coverTarget === 'edit' && !isGeneratingCover && (
+                      <p className="text-[10px] leading-snug text-amber-600 dark:text-amber-400/90 mt-1">
+                        Offline prompt — artwork won't reflect the project description.
+                      </p>
+                    )}
                   </div>
                 </div>
 
@@ -1206,6 +1233,11 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                       <span>{isGeneratingCover && coverTarget === 'create' ? 'Generating...' : 'Prompt'}</span>
                     </button>
                   </div>
+                  {coverPromptOffline && coverTarget === 'create' && !isGeneratingCover && (
+                    <p className="text-[10px] leading-snug text-amber-600 dark:text-amber-400/90 mt-1">
+                      Offline prompt — artwork won't reflect the project description.
+                    </p>
+                  )}
                 </div>
 
                 {/* Right Column: Project Metadata */}

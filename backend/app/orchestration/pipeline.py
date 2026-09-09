@@ -295,7 +295,7 @@ class GenerateAndTranscribePipeline:
 
             # If voice conversion occurred, remix final master track audio with converted vocals
             final_master_path = gen_result.audio_path
-            if final_vocal_path:
+            if req.voice_profile_id and final_vocal_path:
                 try:
                     final_master_path = voice_service.remix_master_with_vocal(
                         original_audio_path=gen_result.audio_path,
@@ -306,12 +306,45 @@ class GenerateAndTranscribePipeline:
                 except Exception as e:
                     logger.warning(f"Master track remix with converted vocal failed: {e}. Keeping gen_result.audio_path.")
 
+            # Auto-generate album artwork if enabled and no manual cover is set
+            should_auto_cover = getattr(req, "auto_generate_cover", True)
+            final_cover_path = getattr(req, "cover_image_path", None)
+            if should_auto_cover and not final_cover_path:
+                try:
+                    from app.services.image_service import image_service
+                    from app.services.llm_service import LLMService
+                    # generate_cover_prompt never raises: worst case is a flagged
+                    # fallback, and the cover must never fail the music job.
+                    cover_prompt_res = LLMService.generate_cover_prompt(
+                        title=getattr(req, "title", None),
+                        tags=getattr(req, "tags", None),
+                        lyrics=getattr(req, "lyrics", None),
+                    )
+                    cover_prompt = cover_prompt_res["prompt"]
+                    if not cover_prompt_res["llm_used"]:
+                        logger.warning(f"Job {job_id_str} auto-cover uses generic prompt (LLM unavailable).")
+                    cover_style = req.tags or "cinematic album cover"
+                    cover_model_id = getattr(req, "cover_image_model_id", None) or image_service.get_default_image_model()
+                    cover_res = image_service.generate_cover(
+                        prompt=cover_prompt,
+                        style=cover_style,
+                        aspect_ratio="1:1",
+                        model_id=cover_model_id,
+                        title=(getattr(req, "title", None) or "").strip() or None,
+                    )
+                    final_cover_path = cover_res.get("url")
+                    logger.info(f"Auto-generated album cover for job {job_id_str}: {final_cover_path}")
+                except Exception as e:
+                    logger.warning(f"Auto-cover generation skipped for {job_id_str}: {e}")
+
             # Finalize DB Record
             with Session(engine) as session:
                 job = session.get(Job, job_id)
                 if job:
                     job.status = JobStatus.COMPLETED
                     job.audio_path = final_master_path
+                    if final_cover_path and not job.cover_image_path:
+                        job.cover_image_path = final_cover_path
                     job.midi_path = transcription_result.midi_path
                     job.musicxml_path = transcription_result.musicxml_path
                     job.notes_json = json.dumps(transcription_result.notes)
@@ -324,7 +357,7 @@ class GenerateAndTranscribePipeline:
                         "instrumental_parts": instrument_parts,
                         "instrument_programs": instrument_programs,
                         "sources_available": [stems_source_id, "muscriptor"],
-                        "default_source": "muscriptor",
+                        "default_source": stems_source_id if real_stems else "muscriptor",
                     }
                     # Merge all real neural stems dynamically (vocals, drums, bass, guitar, piano, other, etc.)
                     for stem_k, stem_v in real_stems.items():
@@ -343,7 +376,8 @@ class GenerateAndTranscribePipeline:
                 "job_id": job_id_str,
                 "status": "completed",
                 "audio_path": final_master_path,
-                "title": getattr(gen_result, 'title', None) or req.prompt
+                "title": getattr(gen_result, 'title', None) or req.prompt,
+                "cover_image_path": final_cover_path or getattr(req, "cover_image_path", None)
             })
             event_manager.publish("job_progress", {
                 "job_id": job_id_str,

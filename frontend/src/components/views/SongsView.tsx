@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { type Job, type Project, projectApi } from '../../api';
+import { type Job, type Project, projectApi, coverApi } from '../../api';
 import { Play, Pause, Heart, Sliders, Search, Music, Disc, Sparkles, Trash2, Mic2, Copy, Check, X, Layers, Info, Video, FolderKanban } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { AppFooter } from '../ui/AppFooter';
@@ -7,6 +7,7 @@ import { AppFooter } from '../ui/AppFooter';
 interface SongsViewProps {
     songs: Job[];
     currentJobId?: string | null;
+    isPlaying?: boolean;
     onPlay: (job: Job) => void;
     onOpenWorkspace: (job: Job) => void;
     onToggleFavorite: (jobId: string) => void;
@@ -19,6 +20,7 @@ interface SongsViewProps {
 export const SongsView: React.FC<SongsViewProps> = ({
     songs,
     currentJobId,
+    isPlaying = false,
     onPlay,
     onOpenWorkspace,
     onToggleFavorite,
@@ -44,7 +46,10 @@ export const SongsView: React.FC<SongsViewProps> = ({
         return map;
     }, [projects]);
 
-    const completedSongs = songs.filter(s => s.status === 'completed' && s.audio_path);
+    const completedSongs = useMemo(() => {
+        const unique = Array.from(new Map(songs.map(s => [s.id, s])).values());
+        return unique.filter(s => (s.status || '').toLowerCase() === 'completed' && s.audio_path);
+    }, [songs]);
 
     const allTags = Array.from(
         new Set(
@@ -163,7 +168,7 @@ export const SongsView: React.FC<SongsViewProps> = ({
                         <p className="text-xs text-slate-500 dark:text-slate-400">Generate a song or adjust your search filter.</p>
                     </div>
                 ) : viewMode === 'table' ? (
-                    <div className="bg-white/80 dark:bg-[#141620]/90 rounded-2xl border border-black/[0.06] dark:border-white/10 shadow-apple-sm overflow-hidden backdrop-blur-2xl">
+                    <div className="bg-white/95 dark:bg-[#141620]/95 rounded-2xl border border-black/[0.06] dark:border-white/10 shadow-apple-sm overflow-hidden">
                         <div className="overflow-x-auto">
                             <table className="w-full text-left text-xs min-w-[760px]">
                                 <thead>
@@ -179,6 +184,7 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                 <tbody className="divide-y divide-black/[0.04] dark:divide-white/5">
                                     {filtered.map(song => {
                                         const isCurrent = currentJobId === song.id;
+                                        const isCurrentPlaying = isCurrent && Boolean(isPlaying);
                                         const tagsList = song.tags ? song.tags.split(',').map(t => t.trim()).filter(Boolean) : [];
                                         return (
                                             <tr
@@ -191,10 +197,15 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                                 <td className="py-3 px-4 text-center text-slate-400 font-mono w-12">
                                                     <button
                                                         onClick={() => onPlay(song)}
-                                                        className="w-8 h-8 mx-auto rounded-xl bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950 flex items-center justify-center transition-all shadow-sm active:scale-95"
-                                                        title={isCurrent ? "Pause Playback" : "Play Track"}
+                                                        className={`w-8 h-8 mx-auto rounded-xl flex items-center justify-center transition-all shadow-sm active:scale-95 ${
+                                                            isCurrentPlaying
+                                                                ? 'bg-teal-500 text-slate-950 font-bold shadow-teal-500/25'
+                                                                : 'bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950'
+                                                        }`}
+                                                        title={isCurrentPlaying ? "Pause Playback" : "Play Track"}
+                                                        aria-label={isCurrentPlaying ? `Pause ${song.title || 'track'}` : `Play ${song.title || 'track'}`}
                                                     >
-                                                        {isCurrent ? <Pause size={13} /> : <Play size={13} className="ml-0.5" />}
+                                                        {isCurrentPlaying ? <Pause size={13} /> : <Play size={13} className="ml-0.5" />}
                                                     </button>
                                                 </td>
 
@@ -208,7 +219,7 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                                             title="Inspect Track Studio"
                                                         >
                                                             <img
-                                                                src={song.cover_image_path ? (song.cover_image_path.startsWith('http') ? song.cover_image_path : song.cover_image_path) : '/milimo_logo.png'}
+                                                                src={coverApi.getCoverUrl(song.cover_image_path)}
                                                                 alt="Track"
                                                                 className="w-full h-full object-cover rounded-lg"
                                                                 onError={(e) => {
@@ -355,9 +366,13 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                                         </button>
                                                         {onDelete && (
                                                             <button
-                                                                onClick={() => onDelete(song.id)}
+                                                                onClick={(e) => {
+                                                                    e.stopPropagation();
+                                                                    onDelete(song.id);
+                                                                }}
                                                                 className="p-1.5 rounded-xl hover:bg-rose-500/10 text-slate-400 hover:text-rose-500 transition-colors"
                                                                 title="Delete Track"
+                                                                aria-label={`Delete track ${song.title || 'Untitled'}`}
                                                             >
                                                                 <Trash2 size={14} />
                                                             </button>
@@ -373,19 +388,33 @@ export const SongsView: React.FC<SongsViewProps> = ({
                     </div>
                 ) : (
                     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
-                        {filtered.map(song => (
+                        {filtered.map(song => {
+                            const isCurrent = currentJobId === song.id;
+                            const isCurrentPlaying = isCurrent && Boolean(isPlaying);
+                            return (
                             <GlassCard key={song.id} className="p-4 space-y-3 group hover:border-teal-500/40 transition-all flex flex-col justify-between">
                                 <div className="space-y-3">
                                     <div className="relative aspect-video rounded-xl bg-gradient-to-br from-teal-500/20 to-cyan-500/20 flex items-center justify-center overflow-hidden border border-black/[0.06] dark:border-white/10">
-                                        <Disc size={32} className="text-teal-500 group-hover:scale-110 transition-transform" />
+                                        {song.cover_image_path ? (
+                                            <img
+                                                src={coverApi.getCoverUrl(song.cover_image_path)}
+                                                alt={song.title || "Track Cover"}
+                                                className="w-full h-full object-cover group-hover:scale-105 transition-transform"
+                                                onError={(e) => {
+                                                    (e.target as HTMLImageElement).src = '/milimo_logo.png';
+                                                }}
+                                            />
+                                        ) : (
+                                            <Disc size={32} className="text-teal-500 group-hover:scale-110 transition-transform" />
+                                        )}
                                         <button
                                             onClick={() => onPlay(song)}
-                                            title={`Play ${song.title || 'track'}`}
-                                            aria-label={`Play ${song.title || 'track'}`}
-                                            className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity"
+                                            title={isCurrentPlaying ? `Pause ${song.title || 'track'}` : `Play ${song.title || 'track'}`}
+                                            aria-label={isCurrentPlaying ? `Pause ${song.title || 'track'}` : `Play ${song.title || 'track'}`}
+                                            className={`absolute inset-0 bg-black/40 ${isCurrentPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} flex items-center justify-center transition-opacity`}
                                         >
                                             <div className="w-10 h-10 rounded-full bg-teal-500 text-slate-950 flex items-center justify-center shadow-lg font-bold">
-                                                <Play size={16} className="ml-0.5" />
+                                                {isCurrentPlaying ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
                                             </div>
                                         </button>
                                     </div>
@@ -464,7 +493,8 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                     </div>
                                 </div>
                             </GlassCard>
-                        ))}
+                        );
+                    })}
                     </div>
                 )}
             </div>

@@ -2,7 +2,7 @@
 title: Milimo Music Wiki — Index
 type: index
 created: 2026-08-19
-updated: 2026-09-07
+updated: 2026-09-09
 ---
 
 # Milimo Music Wiki — Index
@@ -47,7 +47,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Artist Crew Agents](entities/artist-crew-agents.md) — the four registered agents (Experiencer, World Builder, Stylist, Critic) and how they hook into the album pipeline.
 - [Durable Task Queue](entities/task-queue.md) — Phase 4 design (locked): SQLite-backed `TaskRecord` queue, GPU/IO lanes, 202 + SSE endpoint conversions, re-enqueue-on-restart.
 - [Repair Segment / Inpainting Service](entities/inpainting.md) — regenerate a time-range or glitch region.
-- [LLM Service & Providers](entities/llm-service.md) — OpenCode, OMLX, Ollama, OpenAI, Gemini, OpenRouter, DeepSeek, LM Studio.
+- [LLM Service & Providers](entities/llm-service.md) — OpenCode, Anthropic Claude, OMLX, Ollama, OpenAI, Gemini, OpenRouter, DeepSeek, LM Studio, NVIDIA NIM.
 - [Backend & API](entities/backend-api.md) — FastAPI/SQLModel backend, Job/Project models, endpoints, SSE.
 - [Docker Deployment](entities/docker-deployment.md) — multi-stage container build, GPU/CPU compose profiles, volume persistence, and single-process web serving.
 - [Frontend](entities/frontend.md) — React 19 + Vite + Tailwind; Suno-class IA + DAW workspace.
@@ -77,6 +77,9 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Artist Domain](concepts/artist-domain.md) — current state: data model, album pipeline with crew hooks, endpoints, frontend surface.
 - [Naming Contract](concepts/naming-contract.md) — Session/Job/Project titles are independent; rename validation, auto-rename guard. `tags: [naming, sessions, projects]`
 - [Modality Taxonomy](concepts/modality-taxonomy.md) — canonical audio|image|video decision chain, H3 misrouting case study, relocate/delete/guard rules. `tags: [modality, taxonomy, model-manager]`
+- [Audio Synthesis & Performance Standards](concepts/audio-synthesis-standards.md) — Fletcher-Munson loudness calibration (-13 to -18 dBFS), physical acoustic modeling (electric guitar pick transient, clarinet stopped pipe odd harmonics, drum sub sweeps), crest factor / spectral centroid metrics, and Web Audio transport performance standards. `tags: [dsp, synthesis, loudness, lufs, crest-factor, web-audio, performance-standards]`
+- [Database Integrity Lifecycle](concepts/database-integrity-lifecycle.md) — SQLite text vs SQLAlchemy GUID 32-hex dialect contract, universal multi-format lookup (`get_job_by_id`), boot-time self-healing migrations, relational cascade nullification, and comprehensive filesystem sweeps. `tags: [database, sqlite, sqlalchemy, sqlmodel, uuid, lifecycle, cascade-delete, data-integrity]`
+- [Artwork & Static Media Architecture](concepts/artwork-and-static-media-architecture.md) — multi-directory fallback static file serving (`RangedStaticFiles`), bidirectional disk mirroring, auto-cover generation lifecycle, and on-demand manual artwork generation/regeneration. `tags: [media, covers, static-files, ranged-static, pipeline, storage]`
 
 ## Reports
 

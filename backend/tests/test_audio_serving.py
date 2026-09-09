@@ -15,6 +15,7 @@ import httpx
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.main import app
+from app.core.paths import get_generated_audio_dir
 
 
 @pytest.fixture()
@@ -25,8 +26,7 @@ def client():
 
 @pytest.fixture()
 def probe_wav():
-    # Served from backend/generated_audio (CWD-relative mount target).
-    path = Path(__file__).parent.parent / "generated_audio" / ".test_range_probe.wav"
+    path = get_generated_audio_dir() / ".test_range_probe.wav"
     path.write_bytes(os.urandom(256 * 1024))
     try:
         yield "/audio/.test_range_probe.wav"

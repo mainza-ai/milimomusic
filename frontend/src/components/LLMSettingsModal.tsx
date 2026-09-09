@@ -155,6 +155,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
         { id: 'gemini', name: 'Google Gemini', icon: '✨', desc: 'Gemini 1.5 & Flash' },
         { id: 'openrouter', name: 'OpenRouter', icon: '🌐', desc: 'Universal AI Gateway' },
         { id: 'lmstudio', name: 'LM Studio', icon: '🧪', desc: 'Local Inference Server' },
+        { id: 'anthropic', name: 'Anthropic Claude', icon: '🟠', desc: 'Claude (Sonnet & Opus)' },
     ];
 
     return createPortal(
@@ -185,6 +186,8 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                             </div>
                             <button
                                 onClick={onClose}
+                                aria-label="Close modal"
+                                title="Close"
                                 className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
                             >
                                 <X className="w-5 h-5" />
@@ -575,6 +578,52 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                                 isLoading={isLoadingModels}
                                                 placeholder="local-model"
                                             />
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Anthropic Claude Panel */}
+                                {activeTab === 'anthropic' && (
+                                    <div className="space-y-4">
+                                        <div className="space-y-1">
+                                            <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                                                <Key size={12} />
+                                                Anthropic API Key
+                                            </label>
+                                            <input
+                                                type="password"
+                                                value={config.anthropic?.api_key || ''}
+                                                onChange={(e) => handleChange('anthropic', 'api_key', e.target.value)}
+                                                className="w-full apple-input font-mono text-xs"
+                                                placeholder={config.anthropic?.has_key ? '•••••••• (configured on backend)' : 'sk-ant-...'}
+                                            />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <div className="flex items-center justify-between">
+                                                <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+                                                    <Cpu size={12} />
+                                                    Active Model ({availableModels.length} available)
+                                                </label>
+                                                <button
+                                                    onClick={handleFetchModels}
+                                                    disabled={isLoadingModels}
+                                                    className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
+                                                >
+                                                    <RefreshCw size={11} className={isLoadingModels ? 'animate-spin' : ''} />
+                                                    <span>Refresh Models</span>
+                                                </button>
+                                            </div>
+                                            <Combobox
+                                                value={config.anthropic?.model || 'claude-sonnet-4-5'}
+                                                onChange={(val) => handleChange('anthropic', 'model', val)}
+                                                options={availableModels}
+                                                onRefresh={handleFetchModels}
+                                                isLoading={isLoadingModels}
+                                                placeholder="claude-sonnet-4-5"
+                                            />
+                                        </div>
+                                        <div className="bg-orange-500/10 text-orange-800 dark:text-orange-300 p-3 rounded-2xl text-xs border border-orange-500/20">
+                                            Native <strong>Anthropic Claude</strong> via the Messages API. No special headers required.
                                         </div>
                                     </div>
                                 )}

@@ -18,9 +18,14 @@ generation. It is provider-agnostic and configurable in-app.
 - **Prompt Enhancement** — expands simple concepts into detailed musical descriptors.
 - **Auto-Titling** — generates creative titles from song content.
 - **Inspiration Mode** — brainstorms unique song concepts and style combinations.
+- **Cover-art prompt** — cover visuals resolve the same Settings-selected provider/model.
 
 ## Supported providers
-- **OpenCode Go API** — cloud (OpenAI-compatible `https://opencode.ai/zen/go/v1`).
+- **OpenCode Go API** — cloud (OpenAI-compatible `https://opencode.ai/zen/go/v1`). Requires the
+  `x-opencode-session` header on chat/completions (added 2026-09-09) — stable per install, persisted
+  under `opencode.session_id`, env-overridable via `OPENCODE_SESSION_ID`.
+- **Anthropic Claude** — native Messages API via the `anthropic` SDK (added 2026-09-09). No special
+  headers; key from `ANTHROPIC_API_KEY`; default model `claude-sonnet-4-5`.
 - **OMLX** — **local Apple Silicon** server at `http://localhost:8787/v1` (the Qwen MLX
   vision/chat server).
 - **Ollama** (Local) — via `ollama serve` (e.g. Llama 3.2).
@@ -29,6 +34,7 @@ generation. It is provider-agnostic and configurable in-app.
 - **OpenRouter** — Claude, Mistral, Llama via a unified API (API key).
 - **DeepSeek** — DeepSeek API.
 - **LM Studio** — local inference servers compatible with the OpenAI API.
+- **NVIDIA NIM** — hosted DeepSeek/Nemotron via an OpenAI-compatible endpoint.
 
 > [!NOTE] The codebase hardcodes default API keys/base URLs for `opencode` and `omlx` in
 > `llm_service.py` (e.g. a default OpenCode key and `api_key="omlx"`). Treat those as

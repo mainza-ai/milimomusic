@@ -571,9 +571,12 @@ class MiniMaxMusic3Provider(GenerationProvider):
         if not self._is_loaded:
             await self.initialize()
 
+        from app.core.paths import get_generated_audio_dir
+        gen_dir = get_generated_audio_dir()
+        gen_dir.mkdir(parents=True, exist_ok=True)
         os.makedirs("generated_audio", exist_ok=True)
         filename = f"{job_id}.mp3"
-        output_path = os.path.join("generated_audio", filename)
+        output_path = str(gen_dir / filename)
 
         # --- Producer enhancement (production-grade, never silently fake) ----
         # If the user handed us a weak prompt and/or no lyrics, the real LLM
@@ -699,6 +702,14 @@ class MiniMaxMusic3Provider(GenerationProvider):
             # Heavy CPU synthesis offloaded to a worker thread so the event loop is not blocked.
             await loop.run_in_executor(None, synthesize_dynamic_audio_waveform, duration_sec, seed, output_path, prompt, lyrics, tags)
             wav_path = output_path.replace(".mp3", ".wav")
+
+        # Mirror wav_path to backend/generated_audio for backwards compatibility
+        backend_wav = os.path.abspath(os.path.join("generated_audio", os.path.basename(wav_path)))
+        if os.path.abspath(wav_path) != backend_wav and os.path.exists(wav_path):
+            try:
+                shutil.copy2(wav_path, backend_wav)
+            except Exception:
+                pass
 
         return GeneratedAudioResult(
             audio_path=f"/audio/{os.path.basename(wav_path)}",

@@ -63,6 +63,11 @@ DEFAULT_CONFIG = {
         "base_url": "https://opencode.ai/zen/go/v1",
         "model": "deepseek-v4-flash"
     },
+    "anthropic": {
+        "api_key": "",
+        "base_url": "https://api.anthropic.com",
+        "model": "claude-sonnet-4-5"
+    },
     "omlx": {
         "base_url": "http://localhost:8787/v1",
         "api_key": "omlx",
@@ -81,6 +86,7 @@ DEFAULT_CONFIG = {
 _ENV_MAP = {
     "nvidia": {"api_key": ("NVIDIA_API_KEY", ""), "base_url": ("NVIDIA_BASE_URL", "https://integrate.api.nvidia.com/v1"), "model": ("NVIDIA_MODEL", "deepseek-ai/deepseek-v4-flash-0731")},
     "opencode": {"api_key": ("OPENCODE_API_KEY", ""), "base_url": ("OPENCODE_BASE_URL", "https://opencode.ai/zen/go/v1"), "model": ("OPENCODE_MODEL", "deepseek-v4-flash")},
+    "anthropic": {"api_key": ("ANTHROPIC_API_KEY", ""), "base_url": ("ANTHROPIC_BASE_URL", "https://api.anthropic.com"), "model": ("ANTHROPIC_MODEL", "claude-sonnet-4-5")},
     "deepseek": {"api_key": ("DEEPSEEK_API_KEY", ""), "base_url": ("DEEPSEEK_BASE_URL", "https://api.deepseek.com"), "model": ("DEEPSEEK_MODEL", "deepseek-chat")},
     "openrouter": {"api_key": ("OPENROUTER_API_KEY", ""), "base_url": ("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"), "model": ("OPENROUTER_MODEL", "openai/gpt-3.5-turbo")},
     "openai": {"api_key": ("OPENAI_API_KEY", ""), "model": ("OPENAI_MODEL", "gpt-4o")},
@@ -99,14 +105,26 @@ def _apply_env_overrides(config: Dict[str, Any]) -> Dict[str, Any]:
         provider_cfg = config.setdefault(provider, {})
         for field, (env_var, default) in fields.items():
             env_val = os.environ.get(env_var)
-            if env_val:
-                provider_cfg[field] = env_val
+            if field == "model":
+                # User explicit selection in config wins; fallback to env or default
+                current_model = provider_cfg.get(field)
+                if not current_model:
+                    provider_cfg[field] = env_val or default
+            elif field == "api_key":
+                # Secrets: env_val supplies credentials if config has empty api_key
+                if env_val and not provider_cfg.get(field):
+                    provider_cfg[field] = env_val
+                elif not provider_cfg.get(field):
+                    provider_cfg[field] = default
             else:
-                provider_cfg[field] = provider_cfg.get(field, default)
-    # Active provider from env if provided
-    env_provider = os.environ.get("LLM_PROVIDER")
-    if env_provider:
-        config["provider"] = env_provider
+                # Other settings (base_url): file config wins if present, else env/default
+                if not provider_cfg.get(field):
+                    provider_cfg[field] = env_val or default
+
+    # Active provider: user-selected provider in config wins; env is initial default
+    if not config.get("provider"):
+        env_provider = os.environ.get("LLM_PROVIDER")
+        config["provider"] = env_provider or DEFAULT_CONFIG["provider"]
     # Paths
     paths = config.setdefault("paths", {})
 

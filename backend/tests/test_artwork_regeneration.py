@@ -19,8 +19,9 @@ def client():
 @pytest.mark.asyncio
 async def test_artwork_regeneration_uses_active_model(client):
     """Verify that regenerating artwork via POST /jobs/{job_id}/generate-cover works without MLX stream errors."""
+    pytest.importorskip("mflux", reason="Requires mflux MLX diffusion (Apple Silicon local test)")
     test_job = Job(
-        id=str(uuid.uuid4()),
+        id=uuid.uuid4(),
         title="Regeneration Neural Track",
         prompt="Cyberpunk night alley with neon reflections and glowing synths",
         tags="synthwave, electronic, cyberpunk",

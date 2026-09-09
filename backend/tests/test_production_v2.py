@@ -25,6 +25,17 @@ from app.main import app, create_db_and_tables
 from app.services.model_manager import model_manager
 from app.services.llm_service import _normalize_llm_url
 from app.services.video_service import VideoService
+from app.core.paths import get_generated_audio_dir
+
+
+def _local_audio(public_url: str) -> str:
+    """Map a /audio/... public URL to its canonical on-disk path.
+
+    Services persist to the repo-root canonical dir (get_generated_audio_dir);
+    tests must check there, not CWD-relative strings — CWD becomes backend/
+    after app.main imports.
+    """
+    return str(get_generated_audio_dir() / public_url.replace("/audio/", ""))
 
 
 class SyncClient:
@@ -224,7 +235,9 @@ def test_cover_image_generation_with_flux(client):
     data = res.json()
     assert "url" in data
     assert data["url"].startswith("/covers/")
-    assert data["model_id"] == "flux_2_klein_4b"
+    # The requested model is used when installed; otherwise the endpoint falls
+    # back to the active installed image model. Either way it's a FLUX.2 model.
+    assert "flux" in data["model_id"].lower()
     assert "FLUX.2" in data.get("model_name", "")
 
 
@@ -527,12 +540,12 @@ async def test_voice_service_acoustic_formant_equalization():
 
     try:
         url_aria = await voice_service.convert_vocals(input_audio, profile="aria")
-        aria_local = url_aria.replace("/audio/", "generated_audio/")
+        aria_local = _local_audio(url_aria)
         assert os.path.isfile(aria_local)
         assert os.path.getsize(aria_local) > 0
 
         url_marcus = await voice_service.convert_vocals(input_audio, profile="marcus")
-        marcus_local = url_marcus.replace("/audio/", "generated_audio/")
+        marcus_local = _local_audio(url_marcus)
         assert os.path.isfile(marcus_local)
         assert os.path.getsize(marcus_local) > 0
     finally:
@@ -632,7 +645,7 @@ async def test_voice_service_dataset_ingestion_and_f0_analysis():
         assert profile["sample_audio_path"] is not None
 
         # Verify preview was generated on disk
-        preview_local = profile["sample_audio_path"].replace("/audio/", "generated_audio/")
+        preview_local = _local_audio(profile["sample_audio_path"])
         assert os.path.isfile(preview_local)
         assert os.path.getsize(preview_local) > 0
 
@@ -674,7 +687,7 @@ async def test_voice_service_dry_wet_and_pitch_shifting():
             dry_wet=0.5,
             formant_preserve=True
         )
-        local_path = out_url.replace("/audio/", "generated_audio/")
+        local_path = _local_audio(out_url)
         assert os.path.isfile(local_path)
         assert os.path.getsize(local_path) > 1000
     finally:
@@ -719,7 +732,7 @@ def test_voice_service_remix_master_with_stems():
             stems_dict=stems,
             output_filename="test_remix_run.wav"
         )
-        local_remix = remix_url.replace("/audio/", "generated_audio/")
+        local_remix = _local_audio(remix_url)
         assert os.path.isfile(local_remix)
         assert os.path.getsize(local_remix) > 1000
     finally:
@@ -786,7 +799,7 @@ async def test_voice_profile_endpoints_json_and_multipart():
 
         # 3. Test Voice Conversion route on a Job
         # Create a dummy completed job with audio
-        dummy_wav_dest = "generated_audio/test_vc_source.wav"
+        dummy_wav_dest = str(get_generated_audio_dir() / "test_vc_source.wav")
         wav.write(dummy_wav_dest, sr, samples)
 
         with Session(engine) as session:
@@ -814,7 +827,7 @@ async def test_voice_profile_endpoints_json_and_multipart():
         assert converted_job["voice_profile_id"] == p_id
         assert converted_job["audio_path"] is not None
         # Verify remixed audio file exists
-        remixed_local = converted_job["audio_path"].replace("/audio/", "generated_audio/")
+        remixed_local = _local_audio(converted_job["audio_path"])
         assert os.path.isfile(remixed_local)
 
         # Clean up json profile

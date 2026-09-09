@@ -18,15 +18,31 @@ def client():
 
 @pytest.mark.asyncio
 async def test_audio_file_serving(client):
-    """Verify that the remixed master audio file for 6b5f64a5-7768-42f6-8bfb-6da1a6dbd961 is served (200/206)."""
-    response = await client.get("/audio/6b5f64a5-7768-42f6-8bfb-6da1a6dbd961_remixed_master.wav")
-    assert response.status_code in [200, 206], f"Failed to serve audio: {response.status_code}"
-    assert len(response.content) > 0
+    """Verify a real file in the canonical audio dir is served (200/206)."""
+    from app.core.paths import get_generated_audio_dir
+    probe = get_generated_audio_dir() / ".dual_mount_probe.wav"
+    probe.write_bytes(os.urandom(128 * 1024))
+    try:
+        response = await client.get("/audio/.dual_mount_probe.wav")
+        assert response.status_code in [200, 206], f"Failed to serve audio: {response.status_code}"
+        assert len(response.content) > 0
+    finally:
+        try:
+            probe.unlink()
+        except OSError:
+            pass
 
 @pytest.mark.asyncio
 async def test_cover_image_serving(client):
-    """Verify that cover artwork is served from /covers/ without 404."""
-    response = await client.get("/covers/ai_cover_5c4e826616.png")
+    """Verify generated cover artwork is served from /covers/ without 404."""
+    from app.services.image_service import image_service
+    result = image_service.generate_cover(
+        prompt="dual mount cover probe",
+        style="test style",
+        model_id="nonexistent-ci-model",  # forces raster fallback in CI
+    )
+    assert result.get("url", "").startswith("/covers/")
+    response = await client.get(result["url"])
     assert response.status_code == 200, f"Failed to serve cover: {response.status_code}"
     assert response.headers.get("content-type", "").startswith("image/")
     assert len(response.content) > 0
@@ -35,7 +51,7 @@ async def test_cover_image_serving(client):
 async def test_generate_cover_endpoint(client):
     """Verify that POST /jobs/{job_id}/generate-cover generates artwork and updates the job."""
     test_job = Job(
-        id=str(uuid.uuid4()),
+        id=uuid.uuid4(),
         title="Test Cover Track",
         prompt="A cosmic synthwave journey across nebulae",
         status="completed",

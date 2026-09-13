@@ -39,14 +39,17 @@ interface MusicVideosViewProps {
     onUpdateSong?: (job: Job) => void;
 }
 
-export type VideoModelKey = 'hailuo_h3' | 'hunyuan' | 'cogvideox' | 'wan2.1' | 'audioreactive';
+export type VideoModelKey = 'wan_14b' | 'wan_1.3b' | 'ltx_video' | 'cogvideox' | 'hailuo_h3' | 'hunyuan' | 'audioreactive' | 'wan2.1';
 
-export const MODEL_CONSTRAINTS: Record<VideoModelKey, { label: string; minSec: number; maxSec: number; defaultSec: number; desc: string }> = {
-    'hailuo_h3': { label: 'MiniMax Hailuo H3', minSec: 5.0, maxSec: 15.0, defaultSec: 15.0, desc: 'MiniMax Hailuo H3 flagship DiT — up to 15.0s maximum duration per generation' },
+export const MODEL_CONSTRAINTS: Record<string, { label: string; minSec: number; maxSec: number; defaultSec: number; desc: string }> = {
+    'wan_14b': { label: 'Wan 2.1 14B Flagship', minSec: 2.0, maxSec: 5.0, defaultSec: 5.0, desc: 'Alibaba Wan 2.1 14B DiT with 3D temporal diffusion and keyframe I2V' },
+    'wan_1.3b': { label: 'Wan 2.1 1.3B Fast', minSec: 2.0, maxSec: 5.0, defaultSec: 5.0, desc: 'Lightweight text-to-video diffusion for rapid local preview' },
+    'ltx_video': { label: 'LTX-Video 0.9B Realtime', minSec: 3.0, maxSec: 10.0, defaultSec: 5.0, desc: 'Lightricks 0.9B real-time DiT (24 fps) for quick scene rendering' },
+    'cogvideox': { label: 'CogVideoX 1.5 Engine', minSec: 3.0, maxSec: 10.0, defaultSec: 10.0, desc: 'THUDM CogVideoX 1.5 — 5B 3D causal VAE model' },
+    'hailuo_h3': { label: 'MiniMax Hailuo H3', minSec: 5.0, maxSec: 15.0, defaultSec: 15.0, desc: 'MiniMax Hailuo H3 flagship DiT — up to 15.0s maximum duration' },
     'hunyuan': { label: 'Tencent HunyuanVideo', minSec: 4.0, maxSec: 15.0, defaultSec: 15.0, desc: 'Tencent HunyuanVideo 13B DiT — up to 15.0s extended visual takes' },
-    'cogvideox': { label: 'CogVideoX 1.5 Engine', minSec: 3.0, maxSec: 10.0, defaultSec: 10.0, desc: 'THUDM CogVideoX 1.5 — up to 10.0s clip generation (161 frames at 16fps)' },
-    'wan2.1': { label: 'Wan 2.1 Engine', minSec: 2.0, maxSec: 5.0, defaultSec: 5.0, desc: 'Alibaba Wan 2.1 — 5.0s standard limit (81 frames at 16fps) with musical cuts' },
     'audioreactive': { label: 'Audio-Reactive Full', minSec: 5.0, maxSec: 120.0, defaultSec: 120.0, desc: 'Continuous full-timeline audio reactive spectrum & waveform visualizer' },
+    'wan2.1': { label: 'Wan 2.1 14B Flagship', minSec: 2.0, maxSec: 5.0, defaultSec: 5.0, desc: 'Alibaba Wan 2.1 — 5.0s limit with musical cuts' },
 };
 
 export const isValidVideoEngine = (e: string): e is VideoModelKey => e in MODEL_CONSTRAINTS;
@@ -85,19 +88,23 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     }, [completedSongs, selectedSongId]);
 
     // Style & Model Engine settings
-    const [videoModel, setVideoModel] = useState<VideoModelKey>('hailuo_h3');
+    const [videoModel, setVideoModel] = useState<VideoModelKey>('wan_14b');
+    const [videoProvider, setVideoProvider] = useState<'local' | 'cloud_fal' | 'cloud_replicate'>('local');
+    const [lipSyncEngine, setLipSyncEngine] = useState<'live_portrait' | 'fallback'>('live_portrait');
+    const [keyframes, setKeyframes] = useState<Record<number, string>>({});
+    const [isGeneratingKeyframes, setIsGeneratingKeyframes] = useState(false);
     // Engine the user marked active in Models & HW — the page follows it by
     // default and on activation changes; manual override is still allowed.
     const [activeVideoEngine, setActiveVideoEngine] = useState<VideoModelKey | null>(null);
     const [modelRegistry, setModelRegistry] = useState<Record<string, any>>({});
     const [clipDuration, setClipDuration] = useState<number>(() => {
-        const saved = localStorage.getItem('milimo_video_clip_len_hailuo_h3');
-        return saved ? Math.min(15.0, Math.max(5.0, parseFloat(saved))) : 15.0;
+        const saved = localStorage.getItem('milimo_video_clip_len_wan_14b') || localStorage.getItem('milimo_video_clip_len_hailuo_h3');
+        return saved ? Math.min(5.0, Math.max(2.0, parseFloat(saved))) : 5.0;
     });
 
     const selectEngine = useCallback((model: VideoModelKey) => {
         setVideoModel(model);
-        const conf = MODEL_CONSTRAINTS[model];
+        const conf = MODEL_CONSTRAINTS[model] || MODEL_CONSTRAINTS['wan_14b'];
         const saved = localStorage.getItem(`milimo_video_clip_len_${model}`);
         const resolved = saved ? Math.min(conf.maxSec, Math.max(conf.minSec, parseFloat(saved))) : conf.defaultSec;
         setClipDuration(resolved);
@@ -238,7 +245,8 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 model_name: videoModel,
                 max_clip_duration: clipDuration,
                 bpm: 120,
-                visual_style: videoStyle
+                visual_style: videoStyle,
+                provider: videoProvider
             };
             const plan = await videoApi.planVideo(activeSong.id, params);
             setPlanResult(plan);
@@ -251,6 +259,30 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         }
     };
 
+    // Pre-Render Scene Keyframes for Storyboard Preview
+    const handleGenerateKeyframes = async () => {
+        if (!activeSong) return;
+        try {
+            setIsGeneratingKeyframes(true);
+            const res = await videoApi.generateKeyframes(activeSong.id, videoStyle, resolution);
+            if (res && res.keyframes) {
+                const kfMap: Record<number, string> = {};
+                for (const kf of res.keyframes) {
+                    if (kf.keyframe_url) {
+                        kfMap[kf.clip_index] = kf.keyframe_url;
+                    }
+                }
+                setKeyframes(kfMap);
+                toast(`Generated ${res.keyframes.length} scene keyframes for review.`, 'success');
+            }
+        } catch (err: any) {
+            console.error('Failed to generate keyframes:', err);
+            toast('Failed to generate scene keyframes.', 'error');
+        } finally {
+            setIsGeneratingKeyframes(false);
+        }
+    };
+
     // Render Advanced Production Video
     const handleRenderAdvancedVideo = async () => {
         if (!activeSong) return;
@@ -260,9 +292,12 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 model_name: videoModel,
                 visual_style: videoStyle,
                 resolution,
+                provider: videoProvider,
+                lip_sync_engine: lipSyncEngine,
                 enable_lip_sync: enableLipSync,
                 burn_lyrics: burnSubtitles,
                 subtitle_style: subtitleStyle,
+                transition_style: 'beat_cut',
                 max_clip_duration: clipDuration,
                 mode: 'production_multiclip'
             };
@@ -454,6 +489,50 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             )}
                         </GlassCard>
 
+                        {/* Execution Provider Selection */}
+                        <GlassCard className="p-4 space-y-3">
+                            <div className="flex items-center justify-between">
+                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
+                                    Execution Provider
+                                </label>
+                                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 font-bold">
+                                    {videoProvider === 'local' ? 'Local M3 Max' : 'Cloud GPU'}
+                                </span>
+                            </div>
+
+                            <div className="space-y-2">
+                                <button
+                                    onClick={() => setVideoProvider('local')}
+                                    className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all ${
+                                        videoProvider === 'local'
+                                            ? 'bg-teal-500/10 border-teal-500/30 text-teal-700 dark:text-teal-300 font-bold shadow-sm'
+                                            : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-600 dark:text-slate-400 hover:bg-black/[0.04]'
+                                    }`}
+                                >
+                                    <div className="flex items-center justify-between">
+                                        <span>🖥️ Local Apple Silicon (M3 Max 128GB)</span>
+                                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-700 dark:text-teal-300 font-bold">Offline Free</span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 font-normal mt-0.5">Wan 2.1 14B / 1.3B + LivePortrait neural avatar via PyTorch MPS</div>
+                                </button>
+
+                                <button
+                                    onClick={() => setVideoProvider('cloud_fal')}
+                                    className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all ${
+                                        videoProvider === 'cloud_fal'
+                                            ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-700 dark:text-cyan-300 font-bold shadow-sm'
+                                            : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-600 dark:text-slate-400 hover:bg-black/[0.04]'
+                                    }`}
+                                >
+                                    <div className="flex items-center justify-between">
+                                        <span>⚡ Cloud Studio (Fal.ai GPU)</span>
+                                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 font-bold">Parallel Fast</span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 font-normal mt-0.5">Parallel cloud video generation across high-end H100 GPUs</div>
+                                </button>
+                            </div>
+                        </GlassCard>
+
                         {/* Model Duration Constraint & Custom Length Setting */}
                         <GlassCard className="p-4 space-y-3">
                             <div className="flex items-center justify-between">
@@ -571,9 +650,40 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             </div>
 
                             {enableLipSync && (
-                                <p className="text-[11px] text-slate-500 dark:text-slate-400 pt-1">
-                                    Singing movements are mapped strictly to the isolated vocal stem (<code className="text-teal-400 font-mono">vocals.mp3 / vocals.wav</code>) to prevent mouth distortion from heavy percussion or bass.
-                                </p>
+                                <div className="space-y-2.5 pt-1">
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-[11px] font-bold text-slate-400">Lip-Sync Engine</span>
+                                        <div className="flex gap-1">
+                                            <button
+                                                type="button"
+                                                onClick={() => setLipSyncEngine('live_portrait')}
+                                                className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
+                                                    lipSyncEngine === 'live_portrait'
+                                                        ? 'bg-teal-500/20 text-teal-400 border border-teal-500/40'
+                                                        : 'text-slate-400 hover:text-white border border-transparent'
+                                                }`}
+                                            >
+                                                LivePortrait (Neural)
+                                            </button>
+                                            <button
+                                                type="button"
+                                                onClick={() => setLipSyncEngine('fallback')}
+                                                className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
+                                                    lipSyncEngine === 'fallback'
+                                                        ? 'bg-teal-500/20 text-teal-400 border border-teal-500/40'
+                                                        : 'text-slate-400 hover:text-white border border-transparent'
+                                                }`}
+                                            >
+                                                Viseme Mesh (Fast)
+                                            </button>
+                                        </div>
+                                    </div>
+                                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
+                                        {lipSyncEngine === 'live_portrait'
+                                            ? 'Singing avatar animation driven by isolated vocals stem with natural eye blinks and pitch sway.'
+                                            : 'Bilinear mouth mesh deformation with volume-reactive visemes and rhythmic head motion.'}
+                                    </p>
+                                </div>
                             )}
                         </GlassCard>
 
@@ -732,6 +842,15 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                                 <span>{isPlanning ? 'Planning…' : 'Plan Scene Breakdown'}</span>
                                             </button>
                                             <button
+                                                onClick={handleGenerateKeyframes}
+                                                disabled={isGeneratingKeyframes || isRendering || !activeSong}
+                                                className="px-4 py-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 font-bold text-xs rounded-xl flex items-center space-x-1.5 border border-purple-500/30 backdrop-blur-md transition-all disabled:opacity-50"
+                                                title="Pre-render visual keyframe stills for each planned scene before video diffusion"
+                                            >
+                                                {isGeneratingKeyframes ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                                                <span>{isGeneratingKeyframes ? 'Generating Stills…' : 'Pre-Render Keyframes'}</span>
+                                            </button>
+                                            <button
                                                 onClick={handleRenderAdvancedVideo}
                                                 disabled={isRendering || !activeSong}
                                                 className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md transition-all disabled:opacity-50"
@@ -803,7 +922,19 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                                 key={scene.clip_index}
                                                 className="p-3 bg-black/[0.02] dark:bg-white/[0.02] rounded-xl border border-black/[0.04] dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
                                             >
-                                                <div className="space-y-1">
+                                                {keyframes[scene.clip_index] && (
+                                                    <div className="w-24 h-16 rounded-lg overflow-hidden flex-shrink-0 border border-white/10 relative group bg-black/40">
+                                                        <img
+                                                            src={api.getAudioUrl(keyframes[scene.clip_index])}
+                                                            alt={`Scene ${scene.clip_index}`}
+                                                            className="w-full h-full object-cover"
+                                                        />
+                                                        <span className="absolute bottom-1 right-1 text-[8px] bg-black/70 text-teal-300 px-1 py-0.5 rounded font-mono font-bold">
+                                                            KF #{scene.clip_index}
+                                                        </span>
+                                                    </div>
+                                                )}
+                                                <div className="space-y-1 flex-1">
                                                     <div className="flex items-center space-x-2">
                                                         <span className="font-mono text-[11px] font-bold text-teal-600 dark:text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded-md flex-shrink-0">
                                                             {scene.time_str} ({scene.duration.toFixed(1)}s)

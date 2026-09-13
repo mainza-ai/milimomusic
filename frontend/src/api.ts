@@ -1234,8 +1234,10 @@ export interface VideoTaskStatus {
     progress: number;
     total_clips: number;
     current_clip: number;
+    current_clip_type?: string | null;
     video_url?: string | null;
     error?: string | null;
+    clips?: VideoClipSegment[];
 }
 
 export interface VideoPlanParams {
@@ -1243,6 +1245,7 @@ export interface VideoPlanParams {
     bpm?: number;
     visual_style?: string;
     model_name?: string;
+    provider?: string;
 }
 
 export interface VideoRenderParams {
@@ -1250,12 +1253,28 @@ export interface VideoRenderParams {
     visual_style?: string;
     resolution?: '720p' | '1080p';
     aspect_ratio?: '16:9' | '9:16';
+    provider?: 'local' | 'cloud_fal' | 'cloud_replicate';
+    lip_sync_engine?: 'live_portrait' | 'echomimic' | 'fallback';
     enable_lip_sync?: boolean;
     burn_lyrics?: boolean;
     subtitle_style?: string;
+    transition_style?: 'beat_cut' | 'crossfade' | 'flash';
     max_clip_duration?: number;
     mode?: 'production_multiclip' | 'fast_preview';
     face_image_path?: string | null;
+    character_image_path?: string | null;
+}
+
+export interface VideoProvider {
+    id: string;
+    name: string;
+    provider_type: 'local' | 'cloud_fal' | 'cloud_replicate';
+    description: string;
+    is_available: boolean;
+    supported_models: string[];
+    has_api_key?: boolean;
+    requires_api_key?: boolean;
+    default_for_tier?: boolean;
 }
 
 export const videoApi = {
@@ -1293,6 +1312,14 @@ export const videoApi = {
     },
     getActiveVideoEngine: async (): Promise<{ engine: string; model_id: string | null; name: string | null; weights_present: boolean }> => {
         const res = await axios.get(`${API_BASE_URL}/videos/active-engine`);
+        return res.data;
+    },
+    getVideoProviders: async (): Promise<VideoProvider[]> => {
+        const res = await axios.get(`${API_BASE_URL}/videos/providers`);
+        return res.data;
+    },
+    generateKeyframes: async (jobId: string, visualStyle: string = 'neon-cyberpunk', resolution: string = '720p'): Promise<{ status: string; keyframes: any[] }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/keyframes/${jobId}`, { visual_style: visualStyle, resolution });
         return res.data;
     }
 };

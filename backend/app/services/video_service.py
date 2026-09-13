@@ -207,8 +207,20 @@ class VideoService:
         }
 
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
+        from app.services.video.video_orchestrator import video_orchestrator
+        t = video_orchestrator.get_task(task_id)
+        if t:
+            return t
         with self._lock:
             return self._tasks.get(task_id)
+
+    def get_video_providers(self) -> List[Dict[str, Any]]:
+        from app.services.video.video_orchestrator import video_orchestrator
+        return video_orchestrator.get_video_providers()
+
+    async def generate_scene_keyframes(self, job: Job, visual_style: str = "neon-cyberpunk", width: int = 1280, height: int = 720) -> List[Dict[str, Any]]:
+        from app.services.video.video_orchestrator import video_orchestrator
+        return await video_orchestrator.generate_scene_keyframes(job=job, visual_style=visual_style, width=width, height=height)
 
     @classmethod
     def get_active_video_engine(cls) -> Dict[str, Any]:
@@ -815,212 +827,20 @@ class VideoService:
         config: Dict[str, Any]
     ) -> str:
         """
-        Orchestrate multi-scene music video production:
-        1. Segment track to match duration constraints
-        2. Render lip-synced vocal performance and cinematic B-roll clips
-        3. Assemble clips with beat-synchronized transitions
-        4. Burn synchronized lyric / karaoke subtitles
-        5. Remux master stereo audio with sample-accurate sync
+        Orchestrate multi-scene music video production via VideoOrchestrator:
+        1. Segment track to match duration constraints & musical beats
+        2. Render lip-synced singing avatar clips (LivePortrait / Cloud / Smooth Viseme)
+        3. Diffuse cinematic B-roll scenes (Wan 2.1 14B / 1.3B / LTX-Video / Cloud)
+        4. Assemble clips with beat-synchronized transitions
+        5. Burn synchronized lyric / karaoke subtitles
+        6. Remux master stereo audio with sample-accurate sync
         """
-        self._tasks[task_id] = {
-            "id": task_id,
-            "job_id": str(job.id),
-            "status": "processing",
-            "step": "Analyzing Track & Ingesting Stems",
-            "progress": 5,
-            "total_clips": 0,
-            "current_clip": 0,
-            "video_url": None,
-            "error": None
-        }
-
-        try:
-            resolved_master = self.resolve_audio_path(job.audio_path)
-            if not resolved_master:
-                raise FileNotFoundError(f"Master audio not found for job: {job.audio_path}")
-
-            style = config.get("visual_style", "neon-cyberpunk")
-            resolution = config.get("resolution", "720p")
-            aspect_ratio = config.get("aspect_ratio", "16:9")
-            model_name = config.get("model_name", "wan2.1")
-            model_max = self.get_model_max_duration(model_name)
-            raw_dur = config.get("max_clip_duration")
-            if raw_dur is not None and float(raw_dur) > 0:
-                max_duration = max(1.0, min(float(raw_dur), model_max))
-            else:
-                max_duration = model_max
-            enable_lip_sync = config.get("enable_lip_sync", True)
-            burn_lyrics = config.get("burn_lyrics", True)
-
-            w, h = (1920, 1080) if resolution == "1080p" else (1280, 720)
-            if aspect_ratio == "9:16":
-                w, h = h, w
-
-            vocal_stem = self.resolve_vocals_stem(job)
-            face_image = self.resolve_face_image(job, config.get("face_image_path"))
-
-            # Step 1: Song Segmentation
-            self._update_task(task_id, step="Segmenting Song to Model Duration Constraints", progress=15)
-            clips = self.segment_song_for_video(
-                job=job,
-                max_clip_duration=max_duration,
-                model_name=model_name,
-                bpm=config.get("bpm"),
-                visual_style=style
-            )
-            self._update_task(task_id, total_clips=len(clips))
-
-            # Step 2: Render individual scene clips
-            self._update_task(task_id, step="Rendering Lip-Sync & Scene Clips", progress=25)
-            rendered_clips: List[str] = []
-            total_clips = len(clips)
-
-            if model_name == "audioreactive":
-                self._update_task(task_id, step="Rendering Audio-Reactive Visualizer Video", progress=50)
-                video_url = await self.render_audio_reactive_video(
-                    job=job,
-                    visual_style=style,
-                    resolution=resolution
-                )
-                self._update_task(task_id, status="completed", progress=100, step="Completed", video_url=video_url)
-                return video_url
-
-            for idx, clip in enumerate(clips):
-                clip_file = os.path.join(TEMP_DIR, f"clip_{task_id}_{idx:03d}.mp4")
-                self._update_task(
-                    task_id,
-                    current_clip=idx + 1,
-                    step=f"Rendering Clip {idx + 1}/{total_clips} ({clip['scene_type']})",
-                    progress=25 + int(50 * (idx / total_clips))
-                )
-
-                if clip["is_vocal"] and enable_lip_sync and face_image and vocal_stem:
-                    await self.render_lip_sync_clip(
-                        face_image_path=face_image,
-                        vocal_audio_path=vocal_stem,
-                        start_time=clip["start_time"],
-                        duration=clip["duration"],
-                        out_path=clip_file,
-                        width=w, height=h
-                    )
-                else:
-                    scene_bg = None
-                    try:
-                        from app.services.image_service import image_service
-                        scene_prompt = clip.get("prompt") or f"{style} music video, {clip.get('scene_type', 'cinematic')} shot"
-                        scene_descriptor = SCENE_STYLE_DESCRIPTORS.get(style, style)
-                        bg = image_service.generate_scene_background(
-                            prompt=scene_prompt,
-                            style=scene_descriptor,
-                            width=w,
-                            height=h,
-                        )
-                        if bg.get("ok") and bg.get("dest_path") and os.path.isfile(bg["dest_path"]):
-                            scene_bg = bg["dest_path"]
-                            logger.info(f"Scene background still for clip {idx + 1}: {scene_bg}")
-                    except Exception as e:
-                        logger.warning(f"Failed to generate unique scene visual ({e}), falling back.")
-                        scene_bg = face_image
-
-                    await self.render_broll_clip(
-                        style=style,
-                        duration=clip["duration"],
-                        out_path=clip_file,
-                        width=w, height=h,
-                        bg_image=scene_bg,
-                        prompt=clip.get("prompt"),
-                        model_name=model_name
-                    )
-
-                if os.path.isfile(clip_file) and os.path.getsize(clip_file) > 0:
-                    rendered_clips.append(clip_file)
-
-            if not rendered_clips:
-                raise RuntimeError("No video scenes were successfully rendered.")
-
-            # Step 3: Video Assembly
-            self._update_task(task_id, step="Assembling & Stitching Video Scenes", progress=80)
-            concat_list_path = os.path.join(TEMP_DIR, f"concat_{task_id}.txt")
-            with open(concat_list_path, "w") as f:
-                for cf in rendered_clips:
-                    f.write(f"file '{os.path.abspath(cf)}'\n")
-
-            stitched_video = os.path.join(TEMP_DIR, f"stitched_{task_id}.mp4")
-            cmd_concat = [
-                "ffmpeg", "-y",
-                "-f", "concat", "-safe", "0",
-                "-i", concat_list_path,
-                "-c", "copy",
-                stitched_video
-            ]
-            proc = await asyncio.create_subprocess_exec(*cmd_concat, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            _, err_concat = await proc.communicate()
-            if proc.returncode != 0 or not os.path.isfile(stitched_video) or os.path.getsize(stitched_video) == 0:
-                logger.warning(f"Fast stream copy concat failed ({err_concat.decode('utf-8', errors='ignore')[:150]}), falling back to re-encode concat.")
-                cmd_concat_fallback = [
-                    "ffmpeg", "-y",
-                    "-f", "concat", "-safe", "0",
-                    "-i", concat_list_path,
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
-                    "-c:a", "aac", "-b:a", "192k",
-                    stitched_video
-                ]
-                proc_fb = await asyncio.create_subprocess_exec(*cmd_concat_fallback, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                await proc_fb.communicate()
-
-            if not os.path.isfile(stitched_video) or os.path.getsize(stitched_video) == 0:
-                raise RuntimeError(f"Video scene stitching failed: {err_concat.decode('utf-8', errors='ignore')[:200]}")
-
-            # Step 4: Synchronized Lyric Subtitles & Master Audio Remuxing
-            self._update_task(task_id, step="Burning Synchronized Lyrics & Remuxing Audio", progress=90)
-            out_filename = f"{job.id}_master_mv.mp4"
-            out_path = os.path.join(VIDEO_DIR, out_filename)
-
-            # Master Remuxing
-            cmd_final = [
-                "ffmpeg", "-y",
-                "-i", stitched_video,
-                "-i", resolved_master,
-                "-map", "0:v:0", "-map", "1:a:0",
-                "-c:v", "copy",
-                "-c:a", "aac", "-b:a", "256k",
-                "-shortest",
-                out_path
-            ]
-            proc_final = await asyncio.create_subprocess_exec(*cmd_final, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            _, err_final = await proc_final.communicate()
-            if proc_final.returncode != 0 or not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
-                logger.warning("Stream copy remux failed, falling back to re-encode remux.")
-                cmd_final_re = [
-                    "ffmpeg", "-y",
-                    "-i", stitched_video,
-                    "-i", resolved_master,
-                    "-map", "0:v:0", "-map", "1:a:0",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
-                    "-c:a", "aac", "-b:a", "256k",
-                    "-shortest",
-                    out_path
-                ]
-                proc_re = await asyncio.create_subprocess_exec(*cmd_final_re, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                await proc_re.communicate()
-
-            if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
-                raise RuntimeError("Failed to generate master music video output file.")
-
-            video_url = f"/audio/videos/{out_filename}"
-            self._update_task(task_id, status="completed", progress=100, step="Completed", video_url=video_url)
-            return video_url
-
-        except Exception as e:
-            logger.error(f"Advanced video generation failed: {e}", exc_info=True)
-            self._update_task(task_id, status="error", error=str(e), step=f"Error: {str(e)[:100]}")
-            raise e
-        finally:
-            # Clean up temp clips
-            for cf in rendered_clips:
-                if os.path.isfile(cf):
-                    try: os.remove(cf)
-                    except: pass
+        from app.services.video.video_orchestrator import video_orchestrator
+        return await video_orchestrator.render_advanced_music_video(
+            job=job,
+            task_id=task_id,
+            config=config
+        )
 
 
 video_service = VideoService()

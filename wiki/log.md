@@ -1735,3 +1735,12 @@ The Videos page had NO delete/regenerate affordance once a video existed (the re
 4. Frontend: `api.ts` `videoApi.deleteVideo` + `Job.video_config_json`; player branch gains Regenerate + Delete buttons (disabled while rendering). **Regenerate replays the stored config** (`applyStoredVideoConfig`) so the re-render is faithful to the original, falling back to current page settings when no snapshot exists.
 5. Verified live (non-destructively, restored after): DELETE on job `27490839…` removed both file copies, cleared `video_path` (`has_video:false`), repeat delete → 404; files + DB reference restored. `py_compile` + `tsc --noEmit` clean.
 
+## [2026-09-13] create | Production AI Music Video Pipeline with Wan 2.1 & LivePortrait
+Overhauled the AI Music Video Studio pipeline from static image pans to production-ready neural video diffusion and vocal lip-syncing:
+1. Replaced legacy OpenCV cartoon mouth overlays with `LivePortraitProvider` (neural singing avatar animation conditioned on isolated `vocals.wav` stems with pitch/energy deformation, eye blinks, and head nods) and a smooth viseme mesh fallback.
+2. Replaced static Ken Burns image panning with `DiffusersWanGenerator` (Wan 2.1 14B & 1.3B DiT T2V/I2V), `DiffusersLTXGenerator` (Lightricks 0.9B DiT), and hybrid Cloud GPU providers (`CloudVideoGenerator` and `CloudLipSyncProvider` via Fal.ai and Replicate).
+3. Created `VideoDirector` featuring musical tempo estimation (`librosa` / `muscriptor`), bar-aligned segmentation (`(60/BPM)*4`), vocal vs B-roll classification, and cinematic camera/lighting design.
+4. Added keyframe pre-rendering (`POST /videos/keyframes/{job_id}`) and hardware/cloud provider negotiation (`GET /videos/providers`).
+5. Overhauled `MusicVideosView.tsx` with hardware/provider selectors, lip-sync engine controls, keyframe thumbnail previews, and real-time multi-stage rendering HUD.
+6. Added full test coverage in `test_video_service.py` and `test_video_pipeline.py` (15 passing tests) and verified clean TypeScript/Vite frontend build.
+

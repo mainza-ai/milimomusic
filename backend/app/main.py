@@ -96,7 +96,9 @@ from app.models import (
     StudioUserProfile,
     StudioUserProfileUpdate,
     VideoPlanRequest,
-    VideoRenderRequest
+    VideoRenderRequest,
+    KeyframesRequest,
+    SceneRegenerateRequest
 )
 from app.agents.registry import AGENTS, get_agent, list_agents
 from app.agents.runtime.context import RunContext
@@ -3982,6 +3984,13 @@ def get_active_video_engine():
     return video_service.get_active_video_engine()
 
 
+@app.get("/videos/providers")
+def get_video_providers():
+    """Return available video generation and lip-sync providers (Local M3 Max, Fal.ai, Replicate)."""
+    from app.services.video_service import video_service
+    return video_service.get_video_providers()
+
+
 @app.get("/videos/{job_id}")
 def get_music_video(job_id: str):
     with Session(engine) as session:
@@ -4076,6 +4085,29 @@ def get_video_task_status(task_id: str):
     if not task:
         raise HTTPException(status_code=404, detail="Video task not found.")
     return task
+
+
+@app.post("/videos/keyframes/{job_id}")
+async def generate_video_keyframes(job_id: str, req: KeyframesRequest = Body(default=KeyframesRequest())):
+    """Generate visual keyframe stills for each scene in the storyboard breakdown."""
+    from app.services.video_service import video_service
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        w, h = (1920, 1080) if req.resolution == "1080p" else (1280, 720)
+        keyframes = await video_service.generate_scene_keyframes(
+            job=job,
+            visual_style=req.visual_style or "neon-cyberpunk",
+            width=w, height=h
+        )
+        return {
+            "status": "ok",
+            "job_id": job_id,
+            "visual_style": req.visual_style,
+            "keyframes": keyframes
+        }
 
 
 # ==========================================

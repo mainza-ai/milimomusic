@@ -146,3 +146,98 @@ async def test_render_endpoint_validation(client):
             if existing:
                 session.delete(existing)
                 session.commit()
+
+
+@pytest.mark.asyncio
+async def test_get_video_providers_endpoint(client):
+    """Test GET /videos/providers returns supported hardware and providers."""
+    response = await client.get("/videos/providers")
+    assert response.status_code == 200
+    data = response.json()
+    assert isinstance(data, list)
+    assert len(data) >= 3
+    provider_ids = [p["id"] for p in data]
+    assert "local_wan_14b" in provider_ids
+    assert "cloud_fal" in provider_ids
+    assert "cloud_replicate" in provider_ids
+
+
+@pytest.mark.asyncio
+async def test_video_director_segment_song(sample_job):
+    """Test VideoDirector segments song into musical beats with vocal/b-roll balance."""
+    from app.services.video.video_director import video_director
+    plan = video_director.segment_song(
+        job=sample_job,
+        max_clip_duration=5.0,
+        bpm=120.0,
+        visual_style="neon-cyberpunk",
+        character_desc="Cyberpunk pop star"
+    )
+    assert plan.total_clips > 0
+    assert len(plan.clips) == plan.total_clips
+    assert plan.vocal_clips_count >= 1
+    for clip in plan.clips:
+        assert clip.duration > 0
+        assert clip.prompt
+        assert clip.camera
+        assert clip.lighting
+
+
+@pytest.mark.asyncio
+async def test_plan_video_endpoint(client, sample_job):
+    """Test POST /videos/plan/{job_id} generates production scene plan."""
+    response = await client.post(
+        f"/videos/plan/{sample_job.id}",
+        json={
+            "model_name": "wan_14b",
+            "max_clip_duration": 5.0,
+            "bpm": 120.0,
+            "visual_style": "neon-cyberpunk"
+        }
+    )
+    assert response.status_code == 200
+    data = response.json()
+    assert data["job_id"] == str(sample_job.id)
+    assert data["total_clips"] > 0
+    assert "clips" in data
+    assert len(data["clips"]) == data["total_clips"]
+
+
+@pytest.mark.asyncio
+async def test_generate_keyframes_endpoint(client, sample_job):
+    """Test POST /videos/keyframes/{job_id} returns keyframe list."""
+    with patch("app.services.image_service.image_service.generate_scene_background", return_value={"ok": False, "dest_path": None}):
+        response = await client.post(
+            f"/videos/keyframes/{sample_job.id}",
+            json={
+                "visual_style": "neon-cyberpunk",
+                "resolution": "720p"
+            }
+        )
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "ok"
+        assert "keyframes" in data
+        assert len(data["keyframes"]) > 0
+        assert "clip_index" in data["keyframes"][0]
+
+
+@pytest.mark.asyncio
+async def test_ass_karaoke_subtitle_generation(sample_job, tmp_path):
+    """Test video_orchestrator creates valid Advanced SubStation Alpha script."""
+    from app.services.video.video_orchestrator import video_orchestrator
+    from app.services.video.video_director import video_director
+
+    plan = video_director.segment_song(sample_job, max_clip_duration=5.0, bpm=120.0)
+    timed_lines = [{"start": 0.0, "end": 4.0, "text": "Driving through the neon night"}]
+    ass_content = video_orchestrator.generate_karaoke_ass(
+        timed_lines=timed_lines,
+        width=1280,
+        height=720,
+        style="neon-cyberpunk",
+        subtitle_style="neon"
+    )
+    assert "[Script Info]" in ass_content
+    assert "Format: Layer, Start, End, Style" in ass_content
+    assert "Driving through the neon night" in ass_content
+

@@ -207,22 +207,39 @@ class JobCoverGenerateRequest(SQLModel):
 
 class VideoPlanRequest(SQLModel):
     max_clip_duration: Optional[float] = None
-    model_name: Optional[str] = "wan2.1"
+    model_name: Optional[str] = "wan_14b"
     visual_style: Optional[str] = "neon-cyberpunk"
     bpm: Optional[float] = None
+    provider: Optional[str] = "local"
 
 
 class VideoRenderRequest(SQLModel):
-    model_name: Optional[str] = "wan2.1"
+    model_name: Optional[str] = "wan_14b"
     visual_style: Optional[str] = "neon-cyberpunk"
     resolution: Optional[str] = "720p"
     aspect_ratio: Optional[str] = "16:9"
+    provider: Optional[str] = "local"
+    lip_sync_engine: Optional[str] = "live_portrait"
     enable_lip_sync: Optional[bool] = True
     burn_lyrics: Optional[bool] = True
-    subtitle_style: Optional[str] = "neon-cyan"
+    subtitle_style: Optional[str] = "neon"
+    transition_style: Optional[str] = "beat_cut"
     max_clip_duration: Optional[float] = None
     mode: Optional[str] = "production_multiclip"
     face_image_path: Optional[str] = None
+    character_image_path: Optional[str] = None
+
+
+class KeyframesRequest(SQLModel):
+    visual_style: Optional[str] = "neon-cyberpunk"
+    resolution: Optional[str] = "720p"
+
+
+class SceneRegenerateRequest(SQLModel):
+    prompt: Optional[str] = None
+    camera: Optional[str] = None
+    lighting: Optional[str] = None
+    visual_style: Optional[str] = "neon-cyberpunk"
 
 
 class GenerationRequest(SQLModel):

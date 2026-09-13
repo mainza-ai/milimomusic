@@ -45,6 +45,7 @@ graph LR
     E --> F["🎹 Neural Transcription<br/>(MIDI + MusicXML 3.1)"]
     F --> G["🎤 Neural Acoustic Lyric Sync<br/>(TorchAudio MMS_FA • LRC/SRT)"]
     G --> H["💻 6-Mode Web Audio DAW<br/>(Listen • Arrange • Piano Roll • Notation • Mix • Lyrics)"]
+    H --> I["🎬 AI Music Video Studio<br/>(Wan 2.1 14B • LivePortrait • Keyframes • Burned Karaoke)"]
 ```
 
 ---
@@ -171,11 +172,13 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 - **RVC Neural Checkpoint Loader & Acoustic Formant EQ**: Supports real `.pth` model weights and profile-specific acoustic formant/presence equalization chains (`Aria` ethereal presence, `Marcus` warm soul resonance).
 - **Consent-Enforced Governance**: Cryptographic audio consent gating to ensure ethical vocal profile creation.
 
-### 🎬 AI Music Video Studio & Viseme Lip-Sync Pipeline
-- **Generative Model Duration Constraints ("Locomotives")**: Bar-aligned musical segmentation respecting physical limits across frontier video models: **MiniMax Hailuo H3** (up to 15.0s), **Tencent HunyuanVideo** (up to 15.0s), **CogVideoX 1.5** (up to 10.0s), and **Wan 2.1** (up to 5.0s).
-- **Isolated Vocal Stem Lip-Syncing**: Real RMS vocal energy envelope extraction with asymmetric ballistic smoothing, OpenCV Haar cascade facial landmark tracking, and frame-by-frame viseme mouth aperture deformation.
-- **Animated Karaoke Subtitles**: Advanced SubStation Alpha (`.ass`) karaoke subtitle generation with luminous highlight tags (`\k<duration>`) and studio typography.
-- **Procedural B-Roll Visual Synthesizer**: Dynamic multi-axis Ken Burns motion with orbital sweep, style-matched color grading LUTs, and generative chromatic plasma.
+### 🎬 Production AI Music Video Studio (Wan 2.1 14B & LivePortrait)
+- **Wan 2.1 14B Flagship & LTX-Video Diffusion**: True spatio-temporal video diffusion via `diffusers` (`WanPipeline`, `WanImageToVideoPipeline`, `LTXPipeline`), generating broadcast-quality clips directly from prompt concepts and character keyframes.
+- **LivePortrait Neural Singing Avatar**: Vocal lip-syncing driven strictly by isolated vocal stems (`vocals.wav`), animating facial landmark deformation, expressive eye blinks, and pitch-synced micro-motion without audio-bleed distortions.
+- **Autonomous Musical Video Director**: Tempo estimation (`librosa` / `muscriptor`) and bar-aligned scene segmentation snapping cuts to musical bars (`(60/BPM) * 4`), with automated vocal vs. B-roll classification, cinematic camera dynamics (dolly zoom, orbital steadycam, crane tilt), and volumetric lighting designs.
+- **Pre-Rendered Keyframe Stills**: On-demand scene keyframe pre-rendering (`POST /videos/keyframes/{job_id}`) enabling visual preview and storyboard approval before launching full video diffusion.
+- **Hybrid Local & Cloud GPU Offloading**: Native Apple Silicon MPS / unified memory execution alongside turnkey cloud GPU offloading via Fal.ai and Replicate serverless endpoints.
+- **Burned Karaoke Subtitles & Master Remux**: Real-time Advanced SubStation Alpha (`.ass`) karaoke scripts burned directly into the video stream via FFmpeg `-filter_complex "[0:v]subtitles=..."` with zero A/V drift master remuxing.
 
 ### 📦 Multi-Modal Model Hub & Hugging Face Search
 - **23-Model Multi-Modal Catalog**: Comprehensive support across Audio (MiniMax Music 3 MLX/CUDA/GGUF as primary, HeartMuLa as legacy fallback), Image (Black Forest Labs FLUX.2 klein/dev, FLUX.1 schnell, SDXL Turbo), and Video (MiniMax Hailuo H3, Wan 2.1, CogVideoX 1.5, HunyuanVideo).
@@ -232,7 +235,7 @@ Milimo Music is a high-performance neural workstation designed to scale from loc
 | **MuScriptor Neural MIDI & Sheet Music** | ⚡ **Accelerated** | ⚡ **Accelerated** | ⚡ **Real-time CPU execution** |
 | **TorchAudio MMS_FA Forced Lyric Sync** | ⚡ **Accelerated** | ⚡ **Accelerated** | ⚡ **Real-time CPU execution** |
 | **Cover Art Studio (FLUX.2 / SDXL Turbo)** | ⚡ **Native MPS fp16** | ⚡ **Native CUDA fp16** | ⚠️ *Procedural Vector / Canvas Art* |
-| **AI Music Video Studio & Lip-Sync** | ⚡ **Hardware Video Tooling** | ⚡ **NVENC & CUDA Accelerated** | ⏱️ *Standard FFmpeg Processing* |
+| **AI Music Video Studio & Lip-Sync** | ⚡ **Native MPS / Diffusers + LivePortrait** | ⚡ **Native CUDA + NVENC / Diffusers** | ⏱️ **Smooth Viseme Mesh Fallback** |
 | **6-Mode DAW, Timeline & Matchering DSP** | ⚡ **Real-time (Web Audio)** | ⚡ **Real-time (Web Audio)** | ⚡ **Real-time (Web Audio)** |
 
 > 💡 **Apple Silicon Advantage**: On Apple M-series Macs, Milimo Music leverages unified memory architecture via Apple MLX (`mlx-community/MiniMax-Music3-bf16`), enabling true 44.1kHz stereo full-track neural generation without requiring a discrete server GPU.
@@ -386,7 +389,7 @@ Milimo Music maintains a comprehensive, LLM-curated **Technical Encyclopedia and
 | 📖 [**Wiki Catalog (`wiki/index.md`)**](wiki/index.md) | Central table of contents and content-oriented navigation index |
 | 🌐 [**Overview & Scope (`wiki/overview.md`)**](wiki/overview.md) | High-level synthesis, product philosophy, and technical boundaries |
 | 🏗️ [**System Architecture (`wiki/architecture.md`)**](wiki/architecture.md) | Data flow pipelines, provider abstraction layer, and system topology |
-| 🎬 [**AI Music Video Studio (`wiki/entities/video-studio.md`)**](wiki/entities/video-studio.md) | Duration constraints, viseme lip-syncing, ASS karaoke, and B-roll |
+| 🎬 [**AI Music Video Studio (`wiki/entities/video-studio.md`)**](wiki/entities/video-studio.md) | Wan 2.1 14B & LTX-Video diffusion, LivePortrait neural singing avatar, autonomous director, pre-rendered keyframes, ASS karaoke |
 | 📦 [**Model Manager (`wiki/entities/model-manager.md`)**](wiki/entities/model-manager.md) | Multi-modal tree, Hugging Face Hub search, and download policies |
 | 🎼 [**MiniMax Music 3 Engine (`wiki/entities/minimax-music3.md`)**](wiki/entities/minimax-music3.md) | Sampling parameters, structured captions, and MLX/DiT hooks |
 | 🎙️ [**Voice Studio & SVC (`wiki/entities/voice-service.md`)**](wiki/entities/voice-service.md) | Offline singing voice conversion (SVC) and acoustic formant chains |

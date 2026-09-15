@@ -55,6 +55,15 @@ class Job(SQLModel, table=True):
     cfg_scale: Optional[float] = Field(default=None)
     topk: Optional[int] = Field(default=None)
 
+    # Cover & Remix Conditioning (MuLaCover)
+    is_cover: bool = Field(default=False)
+    cover_mode: Optional[str] = Field(default=None) # "audio_reference" | "symbolic_midi"
+    ref_audio_path: Optional[str] = Field(default=None)
+    melody_midi_path: Optional[str] = Field(default=None)
+    chord_midi_path: Optional[str] = Field(default=None)
+    drum_midi_path: Optional[str] = Field(default=None)
+    bpm: Optional[float] = Field(default=None)
+
     # Visual Artwork Assets
     cover_image_path: Optional[str] = Field(default=None)
     image_prompt: Optional[str] = Field(default=None)
@@ -266,6 +275,15 @@ class GenerationRequest(SQLModel):
     auto_generate_cover: Optional[bool] = True
     cover_image_model_id: Optional[str] = None
 
+    # Cover conditioning options
+    is_cover: Optional[bool] = False
+    ref_audio_path: Optional[str] = None
+    melody_midi_path: Optional[str] = None
+    chord_midi_path: Optional[str] = None
+    drum_midi_path: Optional[str] = None
+    bpm: Optional[float] = None
+    transcription_engine: Optional[str] = "milimo_neural"
+
     @field_validator('tags', mode='before')
     @classmethod
     def normalize_tags(cls, v: Any) -> Optional[str]:
@@ -274,6 +292,44 @@ class GenerationRequest(SQLModel):
         if isinstance(v, list):
             return ", ".join(str(t) for t in v)
         return str(v)
+
+
+class CoverGenerationRequest(SQLModel):
+    model_config = {"protected_namespaces": ()}
+    title: Optional[str] = None
+    ref_audio_path: Optional[str] = None
+    melody_midi_path: Optional[str] = None
+    chord_midi_path: Optional[str] = None
+    drum_midi_path: Optional[str] = None
+    bpm: Optional[float] = None
+    lyrics: Optional[str] = None
+    prompt: Optional[str] = None
+    tags: Optional[Any] = None
+    duration_ms: int = 120000
+    temperature: float = 1.0
+    cfg_scale: float = 1.5
+    topk: int = 250
+    model_provider: Optional[str] = "mulacover"
+    transcription_engine: str = "milimo_neural"
+    project_id: Optional[str] = None
+    session_id: Optional[str] = None
+    voice_profile_id: Optional[str] = None
+
+    @field_validator('tags', mode='before')
+    @classmethod
+    def normalize_tags(cls, v: Any) -> Optional[str]:
+        if v is None:
+            return None
+        if isinstance(v, list):
+            return ", ".join(str(t) for t in v)
+        return str(v)
+
+
+class LeadSheetExtractRequest(SQLModel):
+    model_config = {"protected_namespaces": ()}
+    audio_path: str
+    bpm: Optional[float] = None
+    transcription_engine: str = "milimo_neural"
 
 
 class LyricsRequest(SQLModel):

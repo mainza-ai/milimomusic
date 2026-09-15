@@ -14,6 +14,7 @@ import {
 import { ComposerSidebar, type CompositionData } from './components/ComposerSidebar';
 import { HistoryFeed } from './components/HistoryFeed';
 import { VoiceStudioModal } from './components/voice/VoiceStudioModal';
+import { CoverStudioModal } from './components/cover/CoverStudioModal';
 import { ModelsManagerModal } from './components/models/ModelsManagerModal';
 import { LLMSettingsModal } from './components/LLMSettingsModal';
 import { SessionWorkspace } from './components/workspace/SessionWorkspace';
@@ -158,10 +159,19 @@ function App() {
 
   // Modals
   const [isVoiceStudioOpen, setIsVoiceStudioOpen] = useState(false);
+  const [isCoverStudioOpen, setIsCoverStudioOpen] = useState(false);
+  const [coverStudioTrack, setCoverStudioTrack] = useState<Job | null>(null);
+  const [coverStudioMode, setCoverStudioMode] = useState<'audio' | 'midi'>('audio');
   const [isModelsManagerOpen, setIsModelsManagerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
+
+  const handleOpenCoverStudio = useCallback((track?: Job | null, mode: 'audio' | 'midi' = 'audio') => {
+    setCoverStudioTrack(track || null);
+    setCoverStudioMode(mode);
+    setIsCoverStudioOpen(true);
+  }, []);
 
   // Chat-first Producer landing input
   const [producerInput, setProducerInput] = useState('');
@@ -408,6 +418,15 @@ function App() {
         icon: Mic,
         shortcut: 'V',
         action: () => setIsVoiceStudioOpen(true),
+      },
+      {
+        id: 'act-cover-studio',
+        title: 'Cover & Remix Studio (MuLaCover)',
+        subtitle: 'Lead sheet conditioning, stem separation, and MIDI style transfer',
+        category: 'Actions',
+        icon: Sparkles,
+        shortcut: 'R',
+        action: () => handleOpenCoverStudio(),
       },
       {
         id: 'act-models-manager',
@@ -1384,6 +1403,7 @@ function App() {
 
             {[
               { label: 'Voice Studio', icon: Mic, color: 'text-teal-500 dark:text-teal-400', onClick: () => setIsVoiceStudioOpen(true) },
+              { label: 'Cover & Remix', icon: Sparkles, color: 'text-purple-500 dark:text-purple-400', badge: 'MuLaCover', onClick: () => handleOpenCoverStudio() },
               { label: 'Models & HW', icon: Cpu, color: 'text-cyan-500 dark:text-cyan-400', onClick: () => setIsModelsManagerOpen(true) }
             ].map((engine, idx) => {
               const Icon = engine.icon;
@@ -2200,6 +2220,17 @@ function App() {
       <VoiceStudioModal
         isOpen={isVoiceStudioOpen}
         onClose={() => setIsVoiceStudioOpen(false)}
+      />
+
+      <CoverStudioModal
+        isOpen={isCoverStudioOpen}
+        onClose={() => setIsCoverStudioOpen(false)}
+        initialTrack={coverStudioTrack}
+        initialMode={coverStudioMode}
+        onCoverStarted={(jobId) => {
+          loadHistory(0, historyFilter, searchQuery, true);
+          setCurrentJobId(jobId);
+        }}
       />
 
       <ModelsManagerModal

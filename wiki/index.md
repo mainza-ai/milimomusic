@@ -2,7 +2,7 @@
 title: Milimo Music Wiki — Index
 type: index
 created: 2026-08-19
-updated: 2026-09-09
+updated: 2026-09-15
 ---
 
 # Milimo Music Wiki — Index
@@ -20,6 +20,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 
 - [Generation Provider Abstraction](entities/generation-provider.md) — pluggable `GenerationProvider` interface + registry + capability manifests.
 - [MiniMax Music 3](entities/minimax-music3.md) — the default generation model (structured captions, up to 5 min; fallback-to-synth now surfaced to the UI).
+- [MuLaCover](entities/mulacover.md) — 3B controllable music cover & remix engine (symbolic cross-attention, dual transcription, composite downloader).
 - [HeartMuLa](entities/heartmula.md) — the 3B music language model; now a legacy/local provider.
 - [Heartlib](entities/heartlib.md) — the local audio-generation framework wrapping HeartMuLa + HeartCodec.
 - [HeartCodec](entities/heartcodec.md) — the 12.5 Hz 8-codebook neural audio codec.

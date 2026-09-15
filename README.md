@@ -133,6 +133,15 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 - **Strict Production Inference**: Configured with `MILIMO_STRICT_INFERENCE=1` to guarantee authentic neural generation on local hardware, eliminating silent procedural fallbacks.
   > **Platform note:** Real neural generation runs natively on Apple Silicon (MLX). On Windows/Linux the studio (DAW, transcription, mastering, agents) operates fully — with generation utilizing clearly-labeled placeholder synthesis when MLX is absent.
 
+### 🎚️ MuLaCover AI Cover & Remix Studio
+- **Controllable Cover & Remix Engine**: Synthesizes professional remixes and covers conditioned on reference audio or direct symbolic MIDI lead sheets (Melody, Chords, Drums) via `HeartMuLa/MuLaCover` (3B autoregressive cross-attention LM + HeartCodec-oss).
+- **Dual-Engine Symbolic Transcription Hub**:
+  - *Milimo Neural (SOTA)*: BS-Roformer stem separation + MuScriptor note-tracking + neural pitch & chord estimation.
+  - *Upstream Classic*: Direct YourMT3 multi-instrument transcription + 5-fold ChordNet ensemble inference.
+- **Unified Composite Bundle Downloader**: Built-in sequential downloader acquiring all 4 upstream model components (`MuLaCover` 3B safetensors, `Qwen3-Embedding-0.6B`, `YourMT3` Space + ChordNet checkpoints, and `HeartCodec-oss`) with resumption, integrity checks, and real-time UI progress bars.
+- **Interactive First-Run Onboarding & Export**: Contextual dependency check in `CoverStudioModal`, real-time progress HUD, and multi-track MIDI downloads (Melody, Chords, Drums, and Full Lead Sheet) with one-click **Edit in PianoRoll** navigation.
+- **Deep DAW & Library Integration**: Direct "MuLaCover Remix" action buttons on every track in Track Studio, Songs View (Table & Grid), and Composer Sidebar.
+
 ### 🤖 AI Co-Writer, Prompt Enhancer & Creative Squad
 - **Autonomous AI Artist Crew**: Complete virtual artist lifecycle managed by specialized agents:
   - **World-Builder**: Establishes immutable canon lore, narrative themes, and aesthetic guards.
@@ -203,9 +212,8 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 |---|---|---|
 | **Frontend** | React 19, Vite, Tailwind CSS, Web Audio API | Apple-inspired interface, 6-mode DAW, floating dock player, interactive notation |
 | **Backend** | FastAPI, SQLModel, SQLite, PyTorch, Librosa | REST API, async task execution, SSE progress streaming, audio pipeline |
-| **Generative ML** | MLX (Apple Silicon), PyTorch (CUDA/CPU) | MiniMax Music 3 (Primary), HeartMuLa-3B (Legacy fallback), HeartCodec |
-| **Separation** | BS-Roformer, MelBand-Roformer, audio-separator | 6-stem neural source separation (Vocals, Drums, Bass, Guitar, Piano, Other) |
-| **Transcription** | MuScriptor, MuseScore 4, Mido, MusicXML 3.1 | Note-level neural transcription, score engraving, MIDI generation |
+| **Generative ML** | MLX (Apple Silicon), PyTorch (CUDA/CPU) | MiniMax Music 3 (Primary), MuLaCover-3B (Cover & Remix), HeartMuLa-3B (Legacy fallback), HeartCodec |
+| **Separation & Transcription** | BS-Roformer, MelBand-Roformer, MuScriptor, YourMT3, ChordNet, MusicXML 3.1 | 6-stem neural source separation, dual symbolic transcription, MIDI lead sheets |
 | **Lyric Sync** | TorchAudio MMS_FA, Adaptive VAD, LRC/SRT Generator | Acoustic forced alignment, progressive word timing |
 | **LLM & Co-Writer** | OpenCode Zen (DeepSeek v4 Flash), NVIDIA NIM, Gemini, OpenAI | Structured caption rewriter, multi-agent lyricist crew, style tagging |
 

@@ -2,9 +2,9 @@
 title: Milimo Music — Architecture
 type: overview
 created: 2026-08-19
-updated: 2026-09-09
+updated: 2026-09-15
 sources: [sources/heartlib-bible.md, sources/readme.md, sources/v2-refactor-plan.md]
-tags: [architecture, system, backend, frontend, minimax, muscriptor, daw]
+tags: [architecture, system, backend, frontend, minimax, mulacover, muscriptor, daw]
 ---
 
 # Milimo Music — Architecture (v2 AI Production DAW)
@@ -18,22 +18,22 @@ Milimo Music is a full-featured open-source AI music generation and production D
 │  FRONTEND (React 19 / Vite / Tailwind)  :5173                          │
 │  Explore & Producer Landing · 5-Mode Session Workspace (Listen,       │
 │  Arrange, Piano Roll, Notation, Mix) · Voice Identity Studio · Model   │
-│  Manager · Floating Task Monitor · LoRA Training Studio                │
+│  Manager · Floating Task Monitor · MuLaCover Remix Studio              │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │ HTTP + SSE + Audio Streaming
 ┌───────────────────────────────────┴────────────────────────────────────┐
 │  BACKEND (FastAPI / SQLModel / SQLite WAL)  :8000                      │
 │  ProviderRegistry · GenerateAndTranscribePipeline · MuScriptorProvider │
-│  StemSeparator · MatcheringEngine · LyricSyncEngine · VoiceService     │
-│ AgentRuntime (4 crew agents) · Album Orchestrator · Release Lifecycle  │
+│  MuLaCoverEngine · SymbolicHub · StemSeparator · MatcheringEngine      │
+│  LyricSyncEngine · VoiceService · AgentRuntime (4 crew agents)         │
 └─────────────┬───────────────────────────┬──────────────────────────────┘
               │                           │
   ┌───────────▼────────────┐  ┌───────────▼────────────┐  ┌──────────────▼────────────┐
   │  GENERATION PROVIDERS  │  │  TRANSCRIPTION ENGINE  │  │  LLM PROVIDERS            │
   │  MiniMax Music 3 (Def) │  │  MuScriptor (MT3)      │  │  Ollama / OpenAI / Gemini │
-  │  HeartMuLa-3B (Legacy) │  │  MIDI + MusicXML +     │  │  DeepSeek / Claude        │
-  │  Capability manifests  │  │  Note events + Stems   │  │  (Lyrics, Co-Writer graph,│
-│   artist crew + critic)   │
+  │  MuLaCover-3B (Remix)  │  │  Dual SymbolicHub      │  │  DeepSeek / Claude        │
+  │  HeartMuLa-3B (Legacy) │  │  MIDI + MusicXML +     │  │  (Lyrics, Co-Writer graph,│
+  │  Capability manifests  │  │  Note events + Stems   │  │   artist crew + critic)   │
   └────────────────────────┘  └────────────────────────┘  └───────────────────────────┘
 ```
 
@@ -82,5 +82,5 @@ Milimo Music enforces measurable production performance benchmarks across the st
 - [Overview](overview.md) | [Backend & API](entities/backend-api.md) | [Frontend](entities/frontend.md)
 - [Audio Synthesis Standards](concepts/audio-synthesis-standards.md) | [Database Integrity Lifecycle](concepts/database-integrity-lifecycle.md)
 - [Generation Provider](entities/generation-provider.md) | [Model Manager](entities/model-manager.md)
-- [MiniMax Music 3](entities/minimax-music3.md) | [MuScriptor](entities/muscriptor.md)
+- [MiniMax Music 3](entities/minimax-music3.md) | [MuLaCover](entities/mulacover.md) | [MuScriptor](entities/muscriptor.md)
 - [Session Workspace](entities/session-workspace.md) | [Index](index.md)

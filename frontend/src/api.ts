@@ -145,6 +145,15 @@ export interface Job {
     project_id?: string;
     session_id?: string;
     mastered_path?: string;
+
+    // MuLaCover Remix & Cover Assets
+    is_cover?: boolean;
+    cover_mode?: 'audio_reference' | 'symbolic_midi';
+    ref_audio_path?: string;
+    melody_midi_path?: string;
+    chord_midi_path?: string;
+    drum_midi_path?: string;
+    bpm?: number;
 }
 
 export interface Project {
@@ -809,6 +818,53 @@ export const coverApi = {
     },
     generateJobCover: async (jobId: string, params?: { prompt?: string; style?: string; model_id?: string; aspect_ratio?: string; artist?: string }): Promise<Job> => {
         const res = await axios.post(`${API_BASE_URL}/jobs/${jobId}/generate-cover`, params || {}, { timeout: 180000 });
+        return res.data;
+    }
+};
+
+export interface CoverSongParams {
+    title?: string;
+    ref_audio_path?: string;
+    melody_midi_path?: string;
+    chord_midi_path?: string;
+    drum_midi_path?: string;
+    bpm?: number;
+    lyrics?: string;
+    prompt?: string;
+    tags?: string;
+    duration_ms?: number;
+    temperature?: number;
+    cfg_scale?: number;
+    topk?: number;
+    model_provider?: string;
+    transcription_engine?: 'milimo_neural' | 'upstream';
+    project_id?: string;
+    session_id?: string;
+    voice_profile_id?: string;
+}
+
+export interface LeadSheetResult {
+    export_id: string;
+    bpm: number;
+    paths: Record<string, string>;
+    symbolic_length_16th: number;
+}
+
+export const remixApi = {
+    generateCover: async (params: CoverSongParams): Promise<{ job_id: string; status: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/generate/cover`, params);
+        return res.data;
+    },
+    transcribeLeadSheet: async (audioPath: string, bpm?: number, engine: 'milimo_neural' | 'upstream' = 'milimo_neural'): Promise<LeadSheetResult> => {
+        const res = await axios.post(`${API_BASE_URL}/transcribe/lead-sheet`, {
+            audio_path: audioPath,
+            bpm,
+            transcription_engine: engine
+        });
+        return res.data;
+    },
+    getJobSymbolic: async (jobId: string): Promise<{ job_id: string; bpm: number | null; files: Record<string, string> }> => {
+        const res = await axios.get(`${API_BASE_URL}/jobs/${jobId}/symbolic`);
         return res.data;
     }
 };

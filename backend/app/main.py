@@ -98,7 +98,9 @@ from app.models import (
     VideoPlanRequest,
     VideoRenderRequest,
     KeyframesRequest,
-    SceneRegenerateRequest
+    SceneRegenerateRequest,
+    CoverGenerationRequest,
+    LeadSheetExtractRequest
 )
 from app.agents.registry import AGENTS, get_agent, list_agents
 from app.agents.runtime.context import RunContext
@@ -1328,6 +1330,48 @@ async def start_model_download(payload: ModelDownloadRequest, background_tasks: 
 
     if not target_repo or not _REPO_ID_RE.match(target_repo):
         raise HTTPException(status_code=400, detail={"error": {"code": "bad_repo_id", "message": "repo_id must look like 'org/model'."}})
+
+    # Special composite bundle handler for MuLaCover
+    if payload.model_id == "mulacover" or target_repo == "HeartMuLa/MuLaCover":
+        from app.services.mulacover.bundle_downloader import (
+            download_mulacover_bundle,
+            get_bundle_manifest,
+            resolve_mulacover_dir
+        )
+        local_dir = str(resolve_mulacover_dir())
+        
+        # Concurrency guard
+        for existing in _model_downloads.values():
+            if existing.get("status") in ("queued", "downloading") and os.path.abspath(
+                existing.get("local_dir", "")
+            ) == os.path.abspath(local_dir):
+                raise HTTPException(status_code=409, detail={
+                    "error": {"code": "download_in_progress",
+                              "message": f"'MuLaCover Bundle' is already downloading (id {existing.get('id')})."}})
+
+        bundle_info = await asyncio.to_thread(lambda: get_bundle_manifest(Path(local_dir)))
+        total_bytes = bundle_info["total_bytes"]
+        total_files = bundle_info["total_files"]
+
+        disk = shutil.disk_usage(os.path.dirname(local_dir))
+        if total_bytes and disk.free < int(total_bytes * 1.1):
+            raise HTTPException(status_code=507, detail={
+                "error": {"code": "insufficient_disk",
+                          "message": f"MuLaCover bundle needs ~{total_bytes / 1e9:.1f} GB; only {disk.free / 1e9:.1f} GB free."}})
+
+        download_id = str(uuid.uuid4())
+        rec = {
+            "id": download_id, "repo_id": "HeartMuLa/MuLaCover", "status": "queued",
+            "total_files": total_files, "files_done": 0, "current_file": "",
+            "received_bytes": 0, "total_bytes": total_bytes,
+            "local_dir": os.path.abspath(local_dir), "category": "audio",
+            "category_source": "catalog", "error": "",
+        }
+        _model_downloads[download_id] = rec
+        cancel_event = threading.Event()
+        _download_cancels[download_id] = cancel_event
+        background_tasks.add_task(download_mulacover_bundle, download_id, rec, cancel_event, Path(local_dir))
+        return _snapshot_download(download_id)
 
     try:
         info = await asyncio.to_thread(
@@ -3035,6 +3079,31 @@ async def producer_compose(req: ProducerComposeRequest):
 
 @app.post("/generate/music")
 async def generate_music(req: GenerationRequest, background_tasks: BackgroundTasks):
+    # Upfront validation for MuLaCover
+    is_cover_job = getattr(req, "is_cover", False) or (req.model_provider == "mulacover")
+    if is_cover_job:
+        from app.services.mulacover.bundle_downloader import is_mulacover_installed
+        if not is_mulacover_installed():
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": "model_not_installed",
+                        "message": "MuLaCover checkpoints (~8.3 GB) are not installed. Please download the bundle via Model Manager or Cover Studio."
+                    }
+                }
+            )
+        if not (getattr(req, "ref_audio_path", None) or (getattr(req, "melody_midi_path", None) and getattr(req, "chord_midi_path", None))):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": "missing_symbolic_input",
+                        "message": "MuLaCover requires reference audio or both melody_midi_path and chord_midi_path."
+                    }
+                }
+            )
+
     import random
     seed_val = req.seed if req.seed is not None else random.randint(0, 2**32 - 1)
 
@@ -3057,7 +3126,14 @@ async def generate_music(req: GenerationRequest, background_tasks: BackgroundTas
         temperature=req.temperature,
         cfg_scale=req.cfg_scale,
         topk=req.topk,
-        voice_profile_id=req.voice_profile_id
+        voice_profile_id=req.voice_profile_id,
+        is_cover=getattr(req, "is_cover", False) or False,
+        cover_mode="audio_reference" if getattr(req, "ref_audio_path", None) else ("symbolic_midi" if getattr(req, "melody_midi_path", None) else None),
+        ref_audio_path=getattr(req, "ref_audio_path", None),
+        melody_midi_path=getattr(req, "melody_midi_path", None),
+        chord_midi_path=getattr(req, "chord_midi_path", None),
+        drum_midi_path=getattr(req, "drum_midi_path", None),
+        bpm=getattr(req, "bpm", None),
     )
 
     with Session(engine) as session:
@@ -3102,6 +3178,117 @@ async def generate_music(req: GenerationRequest, background_tasks: BackgroundTas
         "model_provider": job_provider,
         "title": job_title,
         "cover_image_path": job_cover
+    }
+
+
+@app.post("/generate/cover")
+async def generate_cover(req: CoverGenerationRequest, background_tasks: BackgroundTasks):
+    """Generate a cover song or music remix via MuLaCover."""
+    from app.services.mulacover.bundle_downloader import is_mulacover_installed
+    if not is_mulacover_installed():
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": "model_not_installed",
+                    "message": "MuLaCover checkpoints (~8.3 GB) are not installed. Please download the bundle via Model Manager or Cover Studio."
+                }
+            }
+        )
+    if not (req.ref_audio_path or (req.melody_midi_path and req.chord_midi_path)):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": "missing_symbolic_input",
+                    "message": "MuLaCover requires reference audio or both melody_midi_path and chord_midi_path."
+                }
+            }
+        )
+
+    gen_req = GenerationRequest(
+        title=req.title or "MuLaCover Remix",
+        prompt=req.prompt or "",
+        lyrics=req.lyrics,
+        tags=req.tags,
+        duration_ms=req.duration_ms,
+        temperature=req.temperature,
+        cfg_scale=req.cfg_scale,
+        topk=req.topk,
+        model_provider=req.model_provider or "mulacover",
+        project_id=req.project_id,
+        session_id=req.session_id,
+        voice_profile_id=req.voice_profile_id,
+        is_cover=True,
+        ref_audio_path=req.ref_audio_path,
+        melody_midi_path=req.melody_midi_path,
+        chord_midi_path=req.chord_midi_path,
+        drum_midi_path=req.drum_midi_path,
+        bpm=req.bpm,
+        transcription_engine=req.transcription_engine or "milimo_neural",
+    )
+    return await generate_music(gen_req, background_tasks)
+
+
+@app.post("/transcribe/lead-sheet")
+async def transcribe_lead_sheet(req: LeadSheetExtractRequest):
+    """Extract lead sheet (melody, chords, drums) from reference audio for PianoRoll inspection."""
+    from app.services.mulacover.symbolic_hub import symbolic_hub, detect_tempo
+    import uuid
+
+    audio_path = req.audio_path
+    if not os.path.isfile(audio_path):
+        local_candidate = audio_path.lstrip("/")
+        if os.path.isfile(local_candidate):
+            audio_path = local_candidate
+        elif os.path.isfile(os.path.join("generated_audio", local_candidate)):
+            audio_path = os.path.join("generated_audio", local_candidate)
+        else:
+            raise HTTPException(status_code=404, detail=f"Audio file not found: {req.audio_path}")
+
+    export_id = str(uuid.uuid4())
+    output_dir = Path("generated_audio/symbolic") / export_id
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    try:
+        resolved_bpm = detect_tempo(audio_path, user_bpm=req.bpm)
+        if req.transcription_engine == "upstream":
+            condition = symbolic_hub.transcribe_upstream(audio_path, bpm=resolved_bpm)
+        else:
+            condition = await symbolic_hub.transcribe_milimo_neural(audio_path, job_id=export_id, bpm=resolved_bpm)
+
+        exported_paths = symbolic_hub.export_lead_sheet(condition, output_dir)
+        return {
+            "export_id": export_id,
+            "bpm": condition.bpm or resolved_bpm,
+            "paths": exported_paths,
+            "symbolic_length_16th": condition.symbolic_length,
+        }
+    except Exception as e:
+        logger.error(f"Lead sheet transcription failed: {e}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Transcription failed: {str(e)}")
+
+
+@app.get("/jobs/{job_id}/symbolic")
+async def get_job_symbolic(job_id: UUID):
+    """Get the exported symbolic lead sheet MIDI paths for a job."""
+    symbolic_dir = Path("generated_audio/symbolic") / str(job_id)
+    if not symbolic_dir.is_dir():
+        raise HTTPException(status_code=404, detail="No symbolic lead sheet found for this job")
+
+    midis = {}
+    for name in ("melody", "chord", "drums"):
+        p = symbolic_dir / f"{name}.mid"
+        if p.is_file():
+            midis[name] = f"/audio/symbolic/{job_id}/{name}.mid"
+
+    bpm_file = symbolic_dir / "bpm.txt"
+    bpm = float(bpm_file.read_text().strip()) if bpm_file.is_file() else None
+
+    return {
+        "job_id": str(job_id),
+        "bpm": bpm,
+        "files": midis,
     }
 
 

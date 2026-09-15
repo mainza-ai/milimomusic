@@ -33,7 +33,14 @@ def migrate():
             "topk": "INTEGER",
             "used_fallback_synth": "BOOLEAN DEFAULT 0",
             "fallback_reason": "TEXT",
-            "updated_at": "TIMESTAMP"
+            "updated_at": "TIMESTAMP",
+            "is_cover": "BOOLEAN DEFAULT 0",
+            "cover_mode": "TEXT",
+            "ref_audio_path": "TEXT",
+            "melody_midi_path": "TEXT",
+            "chord_midi_path": "TEXT",
+            "drum_midi_path": "TEXT",
+            "bpm": "FLOAT"
         }
 
         for col_name, col_type in new_columns.items():

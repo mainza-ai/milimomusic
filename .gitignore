@@ -89,6 +89,7 @@ devs/**
 
 # runtime artifacts
 backend/.milimo.lock
+.milimo/
 
 # local scratch/verification scripts
 scratch/

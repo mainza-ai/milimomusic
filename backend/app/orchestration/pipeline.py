@@ -120,6 +120,17 @@ class GenerateAndTranscribePipeline:
                     "message": msg
                 })
 
+            extra_gen_kwargs = {}
+            if getattr(req, "is_cover", False):
+                extra_gen_kwargs.update({
+                    "ref_audio_path": req.ref_audio_path,
+                    "melody_midi_path": req.melody_midi_path,
+                    "chord_midi_path": req.chord_midi_path,
+                    "drum_midi_path": req.drum_midi_path,
+                    "bpm": req.bpm,
+                    "transcription_engine": getattr(req, "transcription_engine", "milimo_neural"),
+                })
+
             gen_result = await provider.generate(
                 job_id=job_id_str,
                 prompt=req.prompt,
@@ -133,7 +144,8 @@ class GenerateAndTranscribePipeline:
                 llm_model=req.llm_model,
                 progress_callback=_gen_progress,
                 cancel_event=cancel_event,
-                structured_caption=req.structured_caption or None
+                structured_caption=req.structured_caption or None,
+                **extra_gen_kwargs
             )
 
             # Orphan-work guard: the blocking inference thread cannot be
@@ -153,6 +165,17 @@ class GenerateAndTranscribePipeline:
                     job.used_fallback_synth = gen_result.used_fallback_synth
                     job.fallback_reason = gen_result.fallback_reason
                     meta = gen_result.metadata or {}
+                    if meta.get("symbolic_midi"):
+                        sym = meta["symbolic_midi"]
+                        if isinstance(sym, dict):
+                            job.melody_midi_path = sym.get("melody")
+                            job.chord_midi_path = sym.get("chord")
+                            job.drum_midi_path = sym.get("drums")
+                    if meta.get("bpm"):
+                        job.bpm = meta["bpm"]
+                    if getattr(req, "is_cover", False):
+                        job.is_cover = True
+                        job.cover_mode = "audio_reference" if req.ref_audio_path else "symbolic_midi"
                     # The producer may have enhanced a weak prompt / written real
                     # lyrics; surface those on the Job so the UI shows what was
                     # actually generated (the user's own inputs are preserved).

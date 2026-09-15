@@ -152,7 +152,7 @@ cmd_start() {
         cmd_build
     fi
 
-    export PYTHONPATH="$DIR/backend:$DIR/muscriptor:${PYTHONPATH:-}"
+    export PYTHONPATH="$DIR/backend:$DIR/muscriptor:$DIR/heartlib:$DIR/mulacover:${PYTHONPATH:-}"
 
     # Start Backend
     nohup "$PY_BIN" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 > "$LOG_DIR/backend.log" 2>&1 &
@@ -186,6 +186,7 @@ cmd_install() {
     echo "1. Installing backend Python requirements..."
     "$PY_BIN" -m pip install --upgrade pip
     "$PY_BIN" -m pip install -r "$DIR/backend/requirements.txt"
+    "$PY_BIN" -m pip install -e "$DIR/mulacover"
 
     echo "2. Installing frontend npm dependencies..."
     cd "$DIR/frontend"
@@ -203,6 +204,8 @@ cmd_models() {
 import sys
 sys.path.insert(0, "backend")
 sys.path.insert(0, "muscriptor")
+sys.path.insert(0, "heartlib")
+sys.path.insert(0, "mulacover")
 from app.services.model_manager import model_manager
 active = model_manager.get_active_model()
 act_name = active.get("name") if active else "None"

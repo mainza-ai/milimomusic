@@ -38,7 +38,7 @@ jobs:
           OPENCODE_API_KEY: "mock-ci-key"
           NVIDIA_API_KEY: "mock-ci-key"
         run: |
-          PYTHONPATH=backend:muscriptor pytest backend/tests/ -v
+          PYTHONPATH=backend:muscriptor:mulacover/src pytest backend/tests/ -v
 
   frontend-build:
     name: Frontend Build & Typecheck

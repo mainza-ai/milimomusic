@@ -9,9 +9,14 @@ import numpy as np
 from pathlib import Path
 import pretty_midi
 
-# Add backend directory to sys.path
+# Add backend and mulacover/src directory to sys.path
 import sys
-sys.path.insert(0, str(Path(__file__).parent.parent))
+backend_dir = Path(__file__).parent.parent
+mulacover_dir = backend_dir.parent / "mulacover" / "src"
+if str(backend_dir) not in sys.path:
+    sys.path.insert(0, str(backend_dir))
+if str(mulacover_dir) not in sys.path:
+    sys.path.insert(0, str(mulacover_dir))
 
 import asyncio
 import httpx
@@ -170,7 +175,7 @@ def test_transcribe_lead_sheet_endpoint_validation():
     assert response.status_code == 404
 
 
-def test_generate_cover_endpoint_validation():
+def test_generate_cover_endpoint_validation(monkeypatch):
     """Verify /generate/cover validates missing symbolic inputs and enqueues valid requests."""
     client = SyncTestClient(app)
     
@@ -189,7 +194,8 @@ def test_generate_cover_endpoint_validation():
     code = detail.get("error", {}).get("code") or detail.get("code")
     assert code == "missing_symbolic_input"
 
-    # 2. Enqueue valid request with ref_audio_path
+    # 2. Enqueue valid request with ref_audio_path (mock installed state for CI environments)
+    monkeypatch.setattr("app.services.mulacover.bundle_downloader.is_mulacover_installed", lambda *args, **kwargs: True)
     valid_payload = {
         "title": "Neon Dreams (Remix)",
         "ref_audio_path": "/audio/test_reference.wav",

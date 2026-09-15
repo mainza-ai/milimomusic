@@ -32,8 +32,8 @@ class DiffusersWanGenerator(BaseVideoGenerator):
         try:
             import torch
             import diffusers
-            return hasattr(diffusers, "WanPipeline") or hasattr(diffusers, "WanImageToVideoPipeline")
-        except ImportError:
+            return bool(getattr(diffusers, "WanPipeline", None) or getattr(diffusers, "WanImageToVideoPipeline", None))
+        except Exception:
             return False
 
     def _resolve_model_path(self, mode: str = "t2v") -> str:

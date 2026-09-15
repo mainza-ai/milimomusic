@@ -13,18 +13,25 @@ import math
 import logging
 import asyncio
 from contextlib import nullcontext
+import sys
 from pathlib import Path
-from typing import Optional, Dict, Any, Callable, Union, Tuple
+from typing import Optional, Dict, Any, Callable, Union, Tuple, TYPE_CHECKING
+
+_repo_root = Path(__file__).resolve().parents[4]
+_mulacover_src = _repo_root / "mulacover" / "src"
+if _mulacover_src.exists() and str(_mulacover_src) not in sys.path:
+    sys.path.insert(0, str(_mulacover_src))
 
 import torch
 import soundfile as sf
 from tokenizers import Tokenizer
 
-from mulacover.configuration import MuLaCoverConfig
-from mulacover.modeling import MuLaCover
-from mulacover.symbolic import SymbolicCondition
-from mulacover._codec.modeling import HeartCodec
-from mulacover.pipeline import MuLaCoverGenConfig, _resolve_paths
+if TYPE_CHECKING:
+    from mulacover.configuration import MuLaCoverConfig
+    from mulacover.modeling import MuLaCover
+    from mulacover.symbolic import SymbolicCondition
+    from mulacover._codec.modeling import HeartCodec
+    from mulacover.pipeline import MuLaCoverGenConfig
 
 from app.services.mulacover.formatters import format_style_tags, sanitize_lyrics_for_mulacover
 from app.core.paths import get_models_dir, get_generated_audio_dir
@@ -86,6 +93,8 @@ class MuLaCoverEngine:
 
     def _init_metadata(self):
         if self._paths is None:
+            from mulacover.pipeline import MuLaCoverGenConfig, _resolve_paths
+            from mulacover.configuration import MuLaCoverConfig
             self._paths = _resolve_paths(str(self.model_root))
             self._text_tokenizer = Tokenizer.from_file(str(self._paths["tokenizer"]))
             self._text_tokenizer.no_truncation()
@@ -95,9 +104,10 @@ class MuLaCoverEngine:
             )
 
     @property
-    def mulacover(self) -> MuLaCover:
+    def mulacover(self) -> Any:
         self._init_metadata()
         if self._mulacover is None:
+            from mulacover.modeling import MuLaCover
             logger.info(f"Loading MuLaCover backbone onto {self.device} ({self.dtypes['mulacover']})...")
             model, loading_info = MuLaCover.from_pretrained(
                 self._paths["mulacover"],
@@ -110,9 +120,10 @@ class MuLaCoverEngine:
         return self._mulacover
 
     @property
-    def codec(self) -> HeartCodec:
+    def codec(self) -> Any:
         self._init_metadata()
         if self._codec is None:
+            from mulacover._codec.modeling import HeartCodec
             logger.info(f"Loading HeartCodec onto {self.device}...")
             self._codec = HeartCodec.from_pretrained(
                 self._paths["codec"],
@@ -195,7 +206,7 @@ class MuLaCoverEngine:
 
     async def generate_cover(
         self,
-        condition: SymbolicCondition,
+        condition: Any,
         lyrics: str,
         tags: str,
         output_path: Union[str, Path],

@@ -1,4 +1,5 @@
 import React, { useState, useRef } from 'react';
+import axios from 'axios';
 import {
     X,
     Sparkles,
@@ -160,11 +161,10 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
         try {
             const formData = new FormData();
             formData.append('file', file);
-            const res = await fetch(`${API_BASE_URL}/upload/audio`, {
-                method: 'POST',
-                body: formData
+            const res = await axios.post<{ url?: string; path?: string; filename?: string }>(`${API_BASE_URL}/upload/audio`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
             });
-            const data = await res.json();
+            const data = res.data;
             const uploadedPath = data.path || data.url || `/audio/${data.filename}`;
             setRefAudioPath(uploadedPath);
             toast('Reference audio uploaded successfully!', 'success');

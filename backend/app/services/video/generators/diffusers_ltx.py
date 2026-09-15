@@ -27,8 +27,8 @@ class DiffusersLTXGenerator(BaseVideoGenerator):
         try:
             import torch
             import diffusers
-            return hasattr(diffusers, "LTXPipeline")
-        except ImportError:
+            return bool(getattr(diffusers, "LTXPipeline", None))
+        except Exception:
             return False
 
     async def generate_clip(

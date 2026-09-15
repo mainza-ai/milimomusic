@@ -7,6 +7,16 @@ os.environ["PYTORCH_ENABLE_MPS_FALLBACK"] = "1"
 # /audio static mount + exports work regardless of where uvicorn was launched from.
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import sys
+from pathlib import Path
+_repo_root = Path(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))).parent
+_muscriptor_path = str(_repo_root / "muscriptor")
+_mulacover_path = str(_repo_root / "mulacover" / "src")
+if _muscriptor_path not in sys.path:
+    sys.path.insert(0, _muscriptor_path)
+if _mulacover_path not in sys.path:
+    sys.path.insert(0, _mulacover_path)
+
 import logging
 logger = logging.getLogger("milimo.main")
 import io
@@ -2655,6 +2665,21 @@ async def upload_cover_image(file: UploadFile = File(...)):
     }
 
 
+@app.post("/upload/audio")
+async def upload_audio_file(file: UploadFile = File(...)):
+    """Upload reference audio file for cover / remix conditioning or stem separation."""
+    from app.core.uploads import save_upload
+    dest_path, filename = await save_upload(
+        file, "generated_audio", kind="audio"
+    )
+    return {
+        "url": f"/audio/{filename}",
+        "filename": filename,
+        "path": dest_path,
+        "content_type": file.content_type,
+    }
+
+
 @app.post("/generate/cover-image")
 def generate_cover_image(req: CoverImageRequest):
     """Generate or synthesize visual artwork for project/song cover using FLUX.2/FLUX.1/SDXL image studio."""
@@ -3082,6 +3107,16 @@ async def generate_music(req: GenerationRequest, background_tasks: BackgroundTas
     # Upfront validation for MuLaCover
     is_cover_job = getattr(req, "is_cover", False) or (req.model_provider == "mulacover")
     if is_cover_job:
+        if not (getattr(req, "ref_audio_path", None) or (getattr(req, "melody_midi_path", None) and getattr(req, "chord_midi_path", None))):
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "error": {
+                        "code": "missing_symbolic_input",
+                        "message": "MuLaCover requires reference audio or both melody_midi_path and chord_midi_path."
+                    }
+                }
+            )
         from app.services.mulacover.bundle_downloader import is_mulacover_installed
         if not is_mulacover_installed():
             raise HTTPException(
@@ -3090,16 +3125,6 @@ async def generate_music(req: GenerationRequest, background_tasks: BackgroundTas
                     "error": {
                         "code": "model_not_installed",
                         "message": "MuLaCover checkpoints (~8.3 GB) are not installed. Please download the bundle via Model Manager or Cover Studio."
-                    }
-                }
-            )
-        if not (getattr(req, "ref_audio_path", None) or (getattr(req, "melody_midi_path", None) and getattr(req, "chord_midi_path", None))):
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "error": {
-                        "code": "missing_symbolic_input",
-                        "message": "MuLaCover requires reference audio or both melody_midi_path and chord_midi_path."
                     }
                 }
             )
@@ -3184,6 +3209,16 @@ async def generate_music(req: GenerationRequest, background_tasks: BackgroundTas
 @app.post("/generate/cover")
 async def generate_cover(req: CoverGenerationRequest, background_tasks: BackgroundTasks):
     """Generate a cover song or music remix via MuLaCover."""
+    if not (req.ref_audio_path or (req.melody_midi_path and req.chord_midi_path)):
+        raise HTTPException(
+            status_code=400,
+            detail={
+                "error": {
+                    "code": "missing_symbolic_input",
+                    "message": "MuLaCover requires reference audio or both melody_midi_path and chord_midi_path."
+                }
+            }
+        )
     from app.services.mulacover.bundle_downloader import is_mulacover_installed
     if not is_mulacover_installed():
         raise HTTPException(
@@ -3192,16 +3227,6 @@ async def generate_cover(req: CoverGenerationRequest, background_tasks: Backgrou
                 "error": {
                     "code": "model_not_installed",
                     "message": "MuLaCover checkpoints (~8.3 GB) are not installed. Please download the bundle via Model Manager or Cover Studio."
-                }
-            }
-        )
-    if not (req.ref_audio_path or (req.melody_midi_path and req.chord_midi_path)):
-        raise HTTPException(
-            status_code=400,
-            detail={
-                "error": {
-                    "code": "missing_symbolic_input",
-                    "message": "MuLaCover requires reference audio or both melody_midi_path and chord_midi_path."
                 }
             }
         )

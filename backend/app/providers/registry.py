@@ -26,6 +26,12 @@ class ProviderRegistry:
         minimax = MiniMaxMusic3Provider()
         self.register_provider("minimax_music3", minimax)
         try:
+            import sys
+            from pathlib import Path
+            repo_root = Path(__file__).resolve().parents[3]
+            mulacover_src = repo_root / "mulacover" / "src"
+            if mulacover_src.exists() and str(mulacover_src) not in sys.path:
+                sys.path.insert(0, str(mulacover_src))
             from app.providers.mulacover_provider import mulacover_provider
             self.register_provider("mulacover", mulacover_provider)
         except Exception as e:

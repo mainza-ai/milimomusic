@@ -3,13 +3,16 @@ import sys
 from pathlib import Path
 import pytest
 
-# Ensure backend and muscriptor are in python path
+# Ensure backend, muscriptor, and mulacover are in python path
 backend_dir = Path(__file__).parent.parent
 muscriptor_dir = backend_dir.parent / "muscriptor"
+mulacover_dir = backend_dir.parent / "mulacover" / "src"
 if str(backend_dir) not in sys.path:
     sys.path.insert(0, str(backend_dir))
 if str(muscriptor_dir) not in sys.path:
     sys.path.insert(0, str(muscriptor_dir))
+if str(mulacover_dir) not in sys.path:
+    sys.path.insert(0, str(mulacover_dir))
 
 
 # Test Database Isolation: ensure tests NEVER pollute the production jobs.db!

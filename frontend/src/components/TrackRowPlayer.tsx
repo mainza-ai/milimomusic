@@ -1,9 +1,10 @@
 import React, { useState } from 'react';
-import { Play, Pause, Download, Wand2 } from 'lucide-react';
+import { Play, Pause, Download, Wand2, Sparkles } from 'lucide-react';
 import { useAudioEngine } from '../context/AudioEngineContext';
 import { api } from '../api';
 import { StaticWaveform } from './ui/StaticWaveform';
 import { InpaintModal } from './InpaintModal';
+import { CoverStudioModal } from './cover/CoverStudioModal';
 import type { Job } from '../api';
 
 interface TrackRowPlayerProps {
@@ -39,6 +40,7 @@ export const TrackRowPlayer: React.FC<TrackRowPlayerProps> = ({ job }) => {
         seek
     } = useAudioEngine();
     const [isInpaintOpen, setIsInpaintOpen] = useState(false);
+    const [isCoverOpen, setIsCoverOpen] = useState(false);
 
     const isActive = currentTrack?.id === job.id;
     const durationSec = job.duration_ms ? job.duration_ms / 1000 : 0;
@@ -108,6 +110,16 @@ export const TrackRowPlayer: React.FC<TrackRowPlayerProps> = ({ job }) => {
             {/* Row tools */}
             <div className="flex items-center justify-end gap-1.5 pt-0.5 border-t border-black/[0.04] dark:border-white/5">
                 <button
+                    onClick={() => setIsCoverOpen(true)}
+                    disabled={!job.audio_path}
+                    className="p-1.5 rounded-lg bg-purple-500/10 hover:bg-purple-500 text-purple-700 dark:text-purple-300 hover:text-white transition-colors disabled:opacity-40 disabled:pointer-events-none"
+                    title="Remix with MuLaCover"
+                    aria-label="Remix with MuLaCover"
+                >
+                    <Sparkles className="w-3.5 h-3.5" />
+                </button>
+
+                <button
                     onClick={() => setIsInpaintOpen(true)}
                     disabled={!job.audio_path}
                     className="p-1.5 rounded-lg bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950 transition-colors disabled:opacity-40 disabled:pointer-events-none"
@@ -132,6 +144,12 @@ export const TrackRowPlayer: React.FC<TrackRowPlayerProps> = ({ job }) => {
                 jobId={job.id}
                 duration={durationSec}
                 title={job.title || undefined}
+            />
+
+            <CoverStudioModal
+                isOpen={isCoverOpen}
+                onClose={() => setIsCoverOpen(false)}
+                initialTrack={job}
             />
         </div>
     );

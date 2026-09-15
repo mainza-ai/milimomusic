@@ -22,9 +22,14 @@ class ProviderRegistry:
         return cls._instance
 
     def _register_defaults(self):
-        """Register MiniMax Music 3 as primary generation engine."""
+        """Register default generation engines."""
         minimax = MiniMaxMusic3Provider()
         self.register_provider("minimax_music3", minimax)
+        try:
+            from app.providers.mulacover_provider import mulacover_provider
+            self.register_provider("mulacover", mulacover_provider)
+        except Exception as e:
+            logger.warning(f"MuLaCoverProvider registration deferred: {e}")
 
     def register_provider(self, provider_id: str, provider: GenerationProvider):
         self.providers[provider_id] = provider
@@ -90,3 +95,11 @@ class ProviderRegistry:
 
 
 provider_registry = ProviderRegistry()
+
+
+def get_provider(provider_id: Optional[str] = None) -> GenerationProvider:
+    return ProviderRegistry.get_provider(provider_id)
+
+
+def list_providers() -> List[str]:
+    return list(provider_registry.providers.keys())

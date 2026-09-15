@@ -349,6 +349,18 @@ class ModelManager:
                 "repo_id": None,
                 "is_default": False
             },
+            {
+                "id": "mulacover",
+                "name": "MuLaCover-3B (Cover & Remix Engine)",
+                "architecture": "Autoregressive LM + Symbolic Cross-Attention",
+                "quantization": "FP16 / BF16",
+                "size_gb": 8.3,
+                "license": "CC BY-NC 4.0",
+                "recommended_hardware": "Apple Silicon / 12GB+ VRAM",
+                "category": "audio",
+                "repo_id": "HeartMuLa/MuLaCover",
+                "is_default": False
+            },
 
             # -------------------------------------------------------------
             # IMAGE MODELS: FLUX.2, FLUX.1 & SDXL Turbo (Visual Studio)
@@ -554,6 +566,17 @@ class ModelManager:
             if item["id"] == "heartmula_3b":
                 is_installed = heartmula_installed
                 local_path = heartlib_ckpt_dir if heartmula_installed else None
+            elif item["id"] == "mulacover":
+                try:
+                    from app.services.mulacover.bundle_downloader import is_mulacover_installed, resolve_mulacover_dir
+                    mulacover_dir = str(resolve_mulacover_dir())
+                    is_installed = is_mulacover_installed(mulacover_dir)
+                    local_path = mulacover_dir if is_installed else None
+                except Exception as e:
+                    logger.warning(f"Error checking mulacover installation: {e}")
+                    mulacover_dir = str(get_models_dir("audio") / "HeartMuLa__MuLaCover")
+                    is_installed = os.path.isdir(mulacover_dir) and os.path.isdir(os.path.join(mulacover_dir, "MuLaCover"))
+                    local_path = mulacover_dir if is_installed else None
             else:
                 # First check if this matches DEFAULT_MINIMAX_SNAPSHOT
                 if DEFAULT_MINIMAX_SNAPSHOT and os.path.isdir(DEFAULT_MINIMAX_SNAPSHOT):

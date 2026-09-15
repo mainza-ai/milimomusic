@@ -3,6 +3,7 @@ import { type Job, type Project, projectApi, coverApi } from '../../api';
 import { Play, Pause, Heart, Sliders, Search, Music, Disc, Sparkles, Trash2, Mic2, Copy, Check, X, Layers, Info, Video, FolderKanban } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { AppFooter } from '../ui/AppFooter';
+import { CoverStudioModal } from '../cover/CoverStudioModal';
 
 interface SongsViewProps {
     songs: Job[];
@@ -35,6 +36,8 @@ export const SongsView: React.FC<SongsViewProps> = ({
     const [selectedLyricsSong, setSelectedLyricsSong] = useState<Job | null>(null);
     const [copied, setCopied] = useState(false);
     const [projects, setProjects] = useState<Project[]>([]);
+    const [coverTrack, setCoverTrack] = useState<Job | null>(null);
+    const [isCoverModalOpen, setIsCoverModalOpen] = useState(false);
 
     useEffect(() => {
         projectApi.listProjects().then(setProjects).catch(console.error);
@@ -239,6 +242,15 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                                                 {song.is_favorite && (
                                                                     <Heart size={12} className="fill-rose-500 text-rose-500 flex-shrink-0" />
                                                                 )}
+                                                                {song.is_cover && (
+                                                                    <span
+                                                                        className="px-1.5 py-0.5 rounded-md bg-teal-500/20 text-[9px] font-mono text-teal-700 dark:text-teal-300 font-bold border border-teal-500/30 inline-flex items-center gap-1 flex-shrink-0"
+                                                                        title="MuLaCover Remix"
+                                                                    >
+                                                                        <Disc size={9} className="text-teal-400" />
+                                                                        <span>Cover</span>
+                                                                    </span>
+                                                                )}
                                                                 {song.project_id && projectMap.get(song.project_id) && (
                                                                     <span
                                                                         className="px-1.5 py-0.5 rounded-md bg-teal-500/10 text-[9px] font-mono text-teal-700 dark:text-teal-300 font-bold border border-teal-500/20 inline-flex items-center gap-1 flex-shrink-0"
@@ -323,6 +335,17 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                                                 <span>Details</span>
                                                             </button>
                                                         )}
+                                                        <button
+                                                            onClick={() => {
+                                                                setCoverTrack(song);
+                                                                setIsCoverModalOpen(true);
+                                                            }}
+                                                            className="px-2.5 py-1 bg-teal-500/10 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300 font-bold rounded-xl text-[11px] transition-all flex items-center gap-1 border border-teal-500/20 active:scale-95"
+                                                            title="Create MuLaCover Remix / Cover"
+                                                        >
+                                                            <Disc size={11} className="text-teal-400" />
+                                                            <span>Remix</span>
+                                                        </button>
                                                         {song.lyrics && (
                                                             <button
                                                                 onClick={() => setSelectedLyricsSong(song)}
@@ -427,6 +450,15 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                             <h4 className="text-xs font-bold text-slate-900 dark:text-slate-100 group-hover/title:text-teal-600 dark:group-hover/title:text-teal-400 transition-colors truncate flex-1">
                                                 {song.title || song.prompt.slice(0, 35)}
                                             </h4>
+                                            {song.is_cover && (
+                                                <span
+                                                    className="px-1.5 py-0.5 rounded-md bg-teal-500/20 text-[9px] font-mono text-teal-700 dark:text-teal-300 font-bold border border-teal-500/30 inline-flex items-center gap-1 flex-shrink-0"
+                                                    title="MuLaCover Remix"
+                                                >
+                                                    <Disc size={9} className="text-teal-400" />
+                                                    <span>Cover</span>
+                                                </span>
+                                            )}
                                             {song.project_id && projectMap.get(song.project_id) && (
                                                 <span
                                                     className="px-1.5 py-0.5 rounded-md bg-teal-500/10 text-[9px] font-mono text-teal-700 dark:text-teal-300 font-bold border border-teal-500/20 inline-flex items-center gap-1 flex-shrink-0"
@@ -454,6 +486,17 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                             className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-bold rounded-xl text-[10px] transition-all"
                                         >
                                             Details
+                                        </button>
+                                        <button
+                                            onClick={() => {
+                                                setCoverTrack(song);
+                                                setIsCoverModalOpen(true);
+                                            }}
+                                            className="px-2 py-1 bg-teal-500/10 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300 font-bold rounded-xl text-[10px] transition-all flex items-center gap-1 border border-teal-500/20"
+                                            title="MuLaCover Remix"
+                                        >
+                                            <Disc size={10} className="text-teal-400" />
+                                            <span>Remix</span>
                                         </button>
                                         <div className="flex items-center gap-1">
                                             {song.lyrics && (
@@ -558,6 +601,18 @@ export const SongsView: React.FC<SongsViewProps> = ({
                     </div>
                 </div>
             )}
+
+            {/* MuLaCover Studio Modal */}
+            <CoverStudioModal
+                isOpen={isCoverModalOpen}
+                onClose={() => {
+                    setIsCoverModalOpen(false);
+                    setCoverTrack(null);
+                }}
+                initialTrack={coverTrack}
+                initialMode="audio"
+                onOpenPianoRoll={coverTrack ? () => onOpenWorkspace(coverTrack) : undefined}
+            />
         </div>
     );
 };

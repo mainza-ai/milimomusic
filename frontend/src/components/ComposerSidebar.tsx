@@ -11,12 +11,14 @@ import {
     Upload,
     Image as ImageIcon,
     Lightbulb,
+    Disc,
     X
 } from 'lucide-react';
 
 import { api, voiceApi, coverApi, modelsApi, API_BASE_URL, type Job, type LLMConfig, type VoiceProfile, type Project, type ModelVariant } from '../api';
 import { Toggle } from './ui/primitives';
 import { VoiceStudioModal } from './voice/VoiceStudioModal';
+import { CoverStudioModal } from './cover/CoverStudioModal';
 import { ModelsManagerModal } from './models/ModelsManagerModal';
 import { toast } from '../utils/toast';
 
@@ -125,6 +127,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     const [imageModelVariants, setImageModelVariants] = useState<ModelVariant[]>([]);
     const [selectedImageModel, setSelectedImageModel] = useState<string>('');
     const [isVoiceStudioOpen, setIsVoiceStudioOpen] = useState(false);
+    const [isCoverStudioOpen, setIsCoverStudioOpen] = useState(false);
     const [isModelsManagerOpen, setIsModelsManagerOpen] = useState(false);
     const [isInspiring, setIsInspiring] = useState(false);
 
@@ -430,6 +433,16 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                 <div className="flex items-center space-x-1">
                     <button
                         type="button"
+                        onClick={() => setIsCoverStudioOpen(true)}
+                        title="Open Cover & Remix Studio (MuLaCover)"
+                        aria-label="Open Cover & Remix Studio"
+                        className="px-2 py-1 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400 text-[11px] font-semibold flex items-center gap-1 transition-colors border border-purple-500/20"
+                    >
+                        <Sparkles size={12} />
+                        <span>Remix Studio</span>
+                    </button>
+                    <button
+                        type="button"
                         onClick={onOpenSettings}
                         title="AI Model & Provider Settings"
                         aria-label="AI Model & Provider Settings"
@@ -452,6 +465,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
             </div>
 
             <VoiceStudioModal isOpen={isVoiceStudioOpen} onClose={() => { setIsVoiceStudioOpen(false); loadVoiceProfiles(); }} />
+            <CoverStudioModal isOpen={isCoverStudioOpen} onClose={() => setIsCoverStudioOpen(false)} />
             <ModelsManagerModal
                 isOpen={isModelsManagerOpen}
                 onClose={() => {
@@ -609,6 +623,27 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                                 <option value="__add_new__">+ Voice Studio (New Voice)...</option>
                                             </select>
                                         </div>
+
+                                        {modelProvider === 'mulacover' && (
+                                            <div className="p-2.5 rounded-xl bg-teal-500/10 border border-teal-500/25 text-teal-300 text-[11px] space-y-1.5">
+                                                <div className="flex items-center justify-between font-bold text-teal-400">
+                                                    <span className="flex items-center gap-1.5">
+                                                        <Disc size={13} />
+                                                        MuLaCover Conditioning
+                                                    </span>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => setIsCoverStudioOpen(true)}
+                                                        className="px-2 py-0.5 rounded bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-[10px] cursor-pointer"
+                                                    >
+                                                        Open Studio
+                                                    </button>
+                                                </div>
+                                                <p className="text-[10px] text-teal-200/80 leading-relaxed">
+                                                    MuLaCover generates covers conditioned on reference audio or symbolic MIDI lead sheets. Open Cover Studio to load reference audio or transcribe lead sheets.
+                                                </p>
+                                            </div>
+                                        )}
 
                                         {/* Structured Caption Breakdown (MiniMax) */}
                                         <div className="p-2.5 rounded-xl bg-black/[0.02] dark:bg-white/[0.02] border border-black/[0.05] dark:border-white/5 space-y-2">

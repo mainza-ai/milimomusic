@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
     Download, Trash2, Volume2, Maximize2, Check, RefreshCw, Music, Drum,
-    Undo2, Redo2, Magnet, Crosshair, ZoomIn, ZoomOut, Save, AlertTriangle
+    Undo2, Redo2, Magnet, Crosshair, ZoomIn, ZoomOut, Save, AlertTriangle, Sparkles
 } from 'lucide-react';
 import { API_BASE_URL, trackApi } from '../../api';
 import type { Job, NoteEvent } from '../../api';
 import { pushHotkeyScope, isTextEntryTarget } from '../../utils/hotkeyScope';
 import { safeJsonParse } from '../../utils/safeJsonParse';
+import { CoverStudioModal } from '../cover/CoverStudioModal';
 
 interface PianoRollProps {
     job: Job;
@@ -114,6 +115,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
         if (onTrackFilterChange) onTrackFilterChange(t);
     };
     const [isMidiSynthEnabled, setIsMidiSynthEnabled] = useState(true);
+    const [isCoverModalOpen, setIsCoverModalOpen] = useState(false);
     // Notes already handed to the audio clock this pass (object identity).
     const scheduledRef = useRef<Set<NoteEvent>>(new Set());
     const lastSchedulePosRef = useRef(0);
@@ -1768,6 +1770,16 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                         <Download size={13} />
                         <span>MIDI</span>
                     </button>
+
+                    <button
+                        onClick={() => setIsCoverModalOpen(true)}
+                        title="Remix or generate a cover using this track's score in MuLaCover"
+                        aria-label="Remix with MuLaCover"
+                        className="px-3.5 py-1.5 bg-gradient-to-r from-purple-600 to-indigo-600 hover:from-purple-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-sm active:scale-95 transition-all"
+                    >
+                        <Sparkles size={13} />
+                        <span>Remix (MuLaCover)</span>
+                    </button>
                 </div>
             </div>
 
@@ -1898,6 +1910,13 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                     <span>Follow</span>
                 </button>
             </div>
+
+            <CoverStudioModal
+                isOpen={isCoverModalOpen}
+                onClose={() => setIsCoverModalOpen(false)}
+                initialTrack={job}
+                initialMode="midi"
+            />
         </div>
     );
 };

@@ -48,8 +48,10 @@ import {
     FolderPlus,
     Maximize2,
     ExternalLink,
+    Disc,
     X
 } from 'lucide-react';
+import { CoverStudioModal } from '../cover/CoverStudioModal';
 
 interface TrackDetailViewProps {
     track: Job;
@@ -117,6 +119,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
     const [stemSourceMode, setStemSourceMode] = useState<'muscriptor' | 'neural'>('muscriptor');
     const [isGeneratingCover, setIsGeneratingCover] = useState(false);
     const [isArtworkModalOpen, setIsArtworkModalOpen] = useState(false);
+    const [isCoverStudioOpen, setIsCoverStudioOpen] = useState(false);
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -708,6 +711,12 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-400 border border-black/[0.06] dark:border-white/5">
                                 🎛️ {track.model_provider || 'MiniMax Music 3'}
                             </span>
+                            {track.is_cover && (
+                                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/20 text-teal-300 font-bold border border-teal-500/30 flex items-center gap-1">
+                                    <Disc size={11} className="text-teal-400" />
+                                    Cover Song
+                                </span>
+                            )}
                             {/* Project Folder Chip */}
                             <button
                                 onClick={() => setIsProjectModalOpen(true)}
@@ -740,6 +749,15 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                             >
                                 {isCurrentPlaying ? <Pause size={14} /> : <Play size={14} className="ml-0.5" />}
                                 <span>{isCurrentPlaying ? 'Pause Master' : 'Play Master Audio'}</span>
+                            </button>
+
+                            <button
+                                onClick={() => setIsCoverStudioOpen(true)}
+                                className="px-3.5 py-2 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 font-bold text-xs flex items-center gap-1.5 transition-colors border border-teal-500/20 shadow-sm cursor-pointer"
+                                title="Create a MuLaCover Remix from this track"
+                            >
+                                <Disc size={13} className="text-teal-400" />
+                                <span>MuLaCover Remix</span>
                             </button>
 
                             <button
@@ -1313,6 +1331,65 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                     </button>
                                 )}
                             </div>
+
+                            {(track.melody_midi_path || track.chord_midi_path || track.drum_midi_path) && (
+                                <div className="pt-3 mt-3 border-t border-black/[0.06] dark:border-white/5 space-y-2">
+                                    <div className="text-[11px] font-bold uppercase tracking-wider text-teal-600 dark:text-teal-400 flex items-center gap-1.5">
+                                        <Disc size={13} />
+                                        <span>MuLaCover Symbolic Lead Sheet Tracks</span>
+                                    </div>
+                                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                                        {track.melody_midi_path && (
+                                            <a
+                                                href={track.melody_midi_path.startsWith('http') ? track.melody_midi_path : `${API_BASE_URL}${track.melody_midi_path}`}
+                                                download={`${track.title || 'track'}_melody.mid`}
+                                                className="p-3 rounded-xl bg-teal-500/5 hover:bg-teal-500/10 border border-teal-500/20 flex items-center justify-between group transition-colors"
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <Music size={16} className="text-teal-500" />
+                                                    <div>
+                                                        <div className="text-xs font-bold text-slate-900 dark:text-white">Melody Lead MIDI</div>
+                                                        <div className="text-[10px] text-slate-400 font-mono">Vocal / lead line</div>
+                                                    </div>
+                                                </div>
+                                                <Download size={13} className="text-slate-400 group-hover:text-teal-500" />
+                                            </a>
+                                        )}
+                                        {track.chord_midi_path && (
+                                            <a
+                                                href={track.chord_midi_path.startsWith('http') ? track.chord_midi_path : `${API_BASE_URL}${track.chord_midi_path}`}
+                                                download={`${track.title || 'track'}_chords.mid`}
+                                                className="p-3 rounded-xl bg-teal-500/5 hover:bg-teal-500/10 border border-teal-500/20 flex items-center justify-between group transition-colors"
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <Music size={16} className="text-cyan-500" />
+                                                    <div>
+                                                        <div className="text-xs font-bold text-slate-900 dark:text-white">Harmonic Chords MIDI</div>
+                                                        <div className="text-[10px] text-slate-400 font-mono">Chord progression</div>
+                                                    </div>
+                                                </div>
+                                                <Download size={13} className="text-slate-400 group-hover:text-cyan-500" />
+                                            </a>
+                                        )}
+                                        {track.drum_midi_path && (
+                                            <a
+                                                href={track.drum_midi_path.startsWith('http') ? track.drum_midi_path : `${API_BASE_URL}${track.drum_midi_path}`}
+                                                download={`${track.title || 'track'}_drums.mid`}
+                                                className="p-3 rounded-xl bg-teal-500/5 hover:bg-teal-500/10 border border-teal-500/20 flex items-center justify-between group transition-colors"
+                                            >
+                                                <div className="flex items-center gap-2">
+                                                    <Music size={16} className="text-amber-500" />
+                                                    <div>
+                                                        <div className="text-xs font-bold text-slate-900 dark:text-white">Drum Track MIDI</div>
+                                                        <div className="text-[10px] text-slate-400 font-mono">Percussion pattern</div>
+                                                    </div>
+                                                </div>
+                                                <Download size={13} className="text-slate-400 group-hover:text-amber-500" />
+                                            </a>
+                                        )}
+                                    </div>
+                                </div>
+                            )}
                         </div>
                     </div>
                 )}
@@ -1881,6 +1958,18 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                     </div>
                 </div>
             )}
+
+            {/* MuLaCover Studio Modal */}
+            <CoverStudioModal
+                isOpen={isCoverStudioOpen}
+                onClose={() => setIsCoverStudioOpen(false)}
+                initialTrack={track}
+                initialMode="audio"
+                onOpenPianoRoll={() => {
+                    setIsCoverStudioOpen(false);
+                    onOpenWorkspace(track);
+                }}
+            />
         </div>
     );
 };

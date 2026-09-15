@@ -12,7 +12,7 @@ FROM python:3.11-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     MILIMO_IN_DOCKER=1 \
-    PYTHONPATH=/app/backend:/app/muscriptor
+    PYTHONPATH=/app/backend:/app/muscriptor:/app/heartlib:/app/mulacover
 
 WORKDIR /app
 
@@ -33,10 +33,14 @@ COPY backend/requirements.txt /app/backend/requirements.txt
 RUN pip install --no-cache-dir --upgrade pip uv && \
     uv pip install --system --no-cache -r /app/backend/requirements.txt
 
-# Copy backend, neural transcription, legacy heartlib
+# Copy backend, neural engines: muscriptor, heartlib, mulacover
 COPY backend /app/backend
 COPY muscriptor /app/muscriptor
 COPY heartlib /app/heartlib
+COPY mulacover /app/mulacover
+
+# Install vendored neural packages in editable mode
+RUN uv pip install --system --no-cache -e /app/mulacover
 
 # Copy compiled frontend from Stage 1 into /app/frontend/dist
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist

@@ -1744,3 +1744,12 @@ Overhauled the AI Music Video Studio pipeline from static image pans to producti
 5. Overhauled `MusicVideosView.tsx` with hardware/provider selectors, lip-sync engine controls, keyframe thumbnail previews, and real-time multi-stage rendering HUD.
 6. Added full test coverage in `test_video_service.py` and `test_video_pipeline.py` (15 passing tests) and verified clean TypeScript/Vite frontend build.
 
+## [2026-09-15] create | MuLaCover Production Integration & Onboarding Audit
+Integrated HeartMuLa/MuLaCover into Milimo Music as a production-grade AI cover generation, neural transcription, and symbolic remix engine:
+1. Vendored and packaged `mulacover` at repo root with `pyproject.toml`, updating `Dockerfile` Stage 2, `./milimo` CLI runner, and `backend/requirements.txt` (`pretty_midi>=0.2.10`).
+2. Implemented `bundle_downloader.py` handling composite downloads of all 4 upstream model sources (`MuLaCover` 3B safetensors, `Qwen3-Embedding-0.6B`, `YourMT3` Space + 5 ChordNet checkpoints, and `HeartCodec-oss`).
+3. Added upfront validation on `POST /generate/cover` and `POST /generate` (`model_not_installed`, `missing_symbolic_input`) and integrated with `model_manager.py` and `GET /models/check/mulacover`.
+4. First-run onboarding UX in `CoverStudioModal.tsx`: automated dependency checking on open, warning card with component breakdown, one-click bundle downloader with live progress bar, disabled synthesis gate, and lead sheet MIDI download chips.
+5. Full UI/UX touchpoints across `TrackDetailView.tsx` (Remix button, Cover badge, lead sheet MIDI downloads), `SongsView.tsx` (Remix button and Cover badge across Table and Grid views), and `ComposerSidebar.tsx` (conditioning guidance).
+6. Automated backend test suite expanded (9/9 tests passing) and frontend production build verified (`npm run build`, 0 errors).
+

@@ -18,6 +18,7 @@ from app.providers.base import (
 from app.services.mulacover.mulacover_engine import mulacover_engine
 from app.services.mulacover.symbolic_hub import symbolic_hub
 from app.services.mulacover.formatters import format_style_tags, sanitize_lyrics_for_mulacover
+from app.core.hardware_lock import GlobalHardwareCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -154,6 +155,8 @@ class MuLaCoverProvider(GenerationProvider):
                     job_id=job_id,
                     bpm=bpm,
                 )
+            # Evict transcription / separator cache from accelerator memory
+            GlobalHardwareCoordinator.flush_memory()
         else:
             raise ValueError("MuLaCover requires either ref_audio_path or both melody_midi_path and chord_midi_path")
 

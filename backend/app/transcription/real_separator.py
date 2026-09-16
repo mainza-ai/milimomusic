@@ -79,6 +79,14 @@ def unload_model():
             import gc
             _separator_instance = None
             gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available() and hasattr(torch.mps, "empty_cache"):
+                    torch.mps.empty_cache()
+            except Exception:
+                pass
             logger.info("real_separator: neural separation model released from memory.")
 
 

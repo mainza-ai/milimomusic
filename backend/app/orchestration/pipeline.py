@@ -249,6 +249,7 @@ class GenerateAndTranscribePipeline:
             # Release the separation model from memory
             try:
                 unload_model()
+                GlobalHardwareCoordinator.flush_memory()
             except Exception as _u:
                 logger.debug(f"Separation unload skipped: {_u}")
 
@@ -286,6 +287,7 @@ class GenerateAndTranscribePipeline:
                     "job_id": job_id_str, "step": 4, "total_steps": 4, "phase": "transcription", "progress": 90, "message": m
                 })
             )
+            GlobalHardwareCoordinator.flush_memory()
 
             # Generate Acoustic Lyric Sync / Karaoke
             effective_lyrics = ""

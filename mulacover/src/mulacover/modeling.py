@@ -61,7 +61,10 @@ def _create_causal_mask(seq_len: int, device: torch.device) -> torch.Tensor:
 
 
 def _index_causal_mask(mask: torch.Tensor, input_pos: torch.Tensor) -> torch.Tensor:
-    return mask[input_pos, :]
+    indexed = mask[input_pos, :]
+    if indexed.dim() == 2:
+        return indexed.unsqueeze(0)
+    return indexed
 
 
 def _build_attention_mask(
@@ -435,6 +438,7 @@ class MuLaCover(PreTrainedModel):
             persistent=False,
         )
 
+    @torch.inference_mode()
     def generate_frame(
         self,
         tokens: torch.Tensor,

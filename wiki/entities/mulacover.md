@@ -107,6 +107,24 @@ MuLaCover accepts both reference audio files and direct MIDI lead sheets. When p
   - `drum_midi_path: str`
   - `bpm: float`
 
+---
+
+## 6. Hardware Memory Management & Apple Silicon MPS Optimization
+
+MuLaCover's 3B autoregressive parameter scale and multi-component pipeline require strict unified memory isolation:
+
+1. **Autoregressive Activation Freeing (`@torch.inference_mode()`)**:
+   - Autoregressive token generation runs strictly under `@torch.inference_mode()`. Without explicit inference mode, PyTorch's autograd engine builds dynamic computational graphs across all 28 backbone layers, cross-attention projections, and codebook heads, leaking **~10.85 GB of activation tensors per step** (triggering MPS OOM at step 14 / 163.2 GB).
+   - Under `torch.inference_mode()`, activation memory is 100% flat (exact 0.0 MB leaked per step, constant 13.9 GB footprint).
+2. **Torchtune Causal Mask Rank Preservation**:
+   - `_index_causal_mask(self.backbone_causal_mask, input_pos)` ensures indexed slice shapes preserve the 3D tensor contract expected by Torchtune's `TransformerDecoder` (`[batch, s_q, s_kv]`), preventing Metal Performance Shaders graph dynamic broadcasting failures.
+3. **HeartCodec Vocoder Metal Dimension Guardrail**:
+   - In `HeartCodec.detokenize()`, the final `scalar_model` 1D convolution decode stage (operating on full-length waveform audio > 65,536 samples) routes through CPU execution on MPS devices. This bypasses Apple Silicon Metal's 16-bit 65,536 spatial sample grid dispatch limit (`NotImplementedError: Output channels > 65536 not supported at the MPS device`), completing in 280 ms with zero VRAM pressure.
+4. **Inter-Stage Cache Flushing**:
+   - Pre-synthesis and post-synthesis pipeline boundaries invoke `GlobalHardwareCoordinator.flush_memory()` to evict BS-Roformer, MuScriptor, and vocoder caches before subsequent heavy operations.
+
+---
+
 ## Related Pages
 
 - [Generation Provider](generation-provider.md)
@@ -114,3 +132,4 @@ MuLaCover accepts both reference audio files and direct MIDI lead sheets. When p
 - [MuScriptor](muscriptor.md)
 - [Global Hardware Coordinator](hardware-coordinator.md)
 - [Modal Store Architecture](../concepts/modal-store-architecture.md)
+

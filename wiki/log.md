@@ -1766,3 +1766,12 @@ Conducted comprehensive production architecture audit and executed the system en
 9. Universal Audio Path & URL Resolution: Enhanced `_resolve_audio_file` to resolve static mount aliases (`/audio/`, `/stems/`), full HTTP localhost URLs, and upload paths across `/transcribe/lead-sheet` and MuLaCover pipelines.
 10. Full Validation: Verified 243/243 backend pytest tests (100% pass), 130/130 API/UI parity, and clean Vite production build.
 
+## [2026-09-15] create | MuLaCover Apple Silicon MPS Memory Leak Fix & HeartCodec Guardrails
+Diagnosed and eliminated the 163.2 GB runaway memory explosion during MuLaCover cover synthesis:
+1. Root Cause Analysis: Isolated the 10.85 GB/step memory leak to autograd graph accumulation inside `MuLaCoverEngine._forward_cancellable` and `generate_frame`. Forward passes computed through 28 layers of the 3B model retained backprop activations, reaching 163.13 GB by step 14.
+2. Inference Isolation: Decorated `_forward_cancellable`, `_detokenize`, and `generate_frame` with `@torch.inference_mode()`, flattening per-step memory growth from 10.85 GB/step to an exact 0.0 MB/step (stable 13.9 GB peak).
+3. HeartCodec Vocoder MPS Safe Dispatch: Resolved `ValueError: invalid type: 'torch.mps.FloatTensor'` in `transformer.py` by switching to modern `.to(dtype=timesteps.dtype)` and routed `scalar_model.decode` through CPU execution on MPS, bypassing Apple Metal's 16-bit 65,536 spatial sample grid constraint without performance penalty (280 ms CPU decode).
+4. Inter-Stage Coordination: Integrated `GlobalHardwareCoordinator.flush_memory()` across `pipeline.py` (post-separation and post-transcription) and `mulacover_provider.py` (post-reference transcription).
+5. Comprehensive Validation: Verified end-to-end cover generation with real audio synthesis and 244/244 backend unit tests passing (100% pass rate).
+
+

@@ -3423,18 +3423,58 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
         if not parent_job.audio_path:
             raise HTTPException(status_code=400, detail="Parent track has no generated audio to extend")
 
+        # Resolve parent audio path on disk
+        from app.transcription.karaoke import _resolve_audio_file
+        from app.providers.minimax_provider import (
+            extract_audio_musical_attributes,
+            build_locked_continuation_caption,
+        )
+
+        parent_audio_path = parent_job.audio_path
+        resolved_parent_path = _resolve_audio_file(parent_audio_path)
+        musical_profile = extract_audio_musical_attributes(
+            audio_path=resolved_parent_path,
+            notes_json=parent_job.notes_json,
+            beat_grid_json=parent_job.beat_grid_json,
+            stored_bpm=parent_job.bpm,
+        )
+        parent_bpm = musical_profile["bpm"]
+
+        # Parse parent beat grid
+        parent_bg = None
+        if parent_job.beat_grid_json:
+            try:
+                parent_bg = json.loads(parent_job.beat_grid_json)
+            except Exception:
+                pass
+        if not parent_bg:
+            parent_bg = {"bpm": parent_bpm, "beats_per_bar": 4, "first_downbeat": 0.0}
+
         # Resolve parent cut point
         parent_dur_sec = float(parent_job.duration_ms) / 1000.0 if parent_job.duration_ms else 60.0
         extend_from = req.extend_from_sec if req.extend_from_sec is not None else parent_dur_sec
         extend_from = max(5.0, min(extend_from, parent_dur_sec))
 
+        # Beat-grid snap: align cut point to nearest musical downbeat (measure start)
+        if parent_bg and parent_bg.get("bpm", 0.0) > 40.0:
+            bg_bpm = float(parent_bg["bpm"])
+            bpb = int(parent_bg.get("beats_per_bar", 4))
+            f_down = float(parent_bg.get("first_downbeat", 0.0))
+            bar_dur = bpb * (60.0 / bg_bpm)
+            k = round((extend_from - f_down) / bar_dur)
+            snapped = f_down + k * bar_dur
+            if 5.0 <= snapped <= parent_dur_sec and abs(snapped - extend_from) <= 1.5:
+                logger.info(f"Beat-grid snap on extend: cut point shifted from {extend_from:.2f}s to {snapped:.2f}s")
+                extend_from = snapped
+
         if req.target_duration_sec <= extend_from:
             raise HTTPException(
                 status_code=400,
-                detail=f"Target duration ({req.target_duration_sec}s) must be greater than extension start ({extend_from}s)"
+                detail=f"Target duration ({req.target_duration_sec}s) must be greater than extension start ({extend_from:.2f}s)"
             )
 
-        delta_sec = req.target_duration_sec - extend_from
+        crossfade_sec = req.crossfade_sec or 1.5
+        delta_sec = max(5.0, req.target_duration_sec - extend_from + crossfade_sec)
         delta_ms = int(delta_sec * 1000)
 
         # Snapshot parent fields locally inside session to avoid DetachedInstanceError
@@ -3444,22 +3484,12 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
         parent_tags = parent_job.tags or ""
         parent_seed = parent_job.seed
         parent_provider = parent_job.model_provider or "minimax_music3"
-        parent_audio_path = parent_job.audio_path
         parent_temp = parent_job.temperature or 1.0
         parent_cfg = parent_job.cfg_scale or 1.5
         parent_topk = parent_job.topk or 50
         parent_project_id = parent_job.project_id
         parent_session_id = parent_job.session_id
         parent_cover_image = parent_job.cover_image_path
-        parent_bpm = parent_job.bpm
-
-        # Merge lyrics
-        full_lyrics = parent_lyrics
-        if req.additional_lyrics and req.additional_lyrics.strip():
-            if full_lyrics:
-                full_lyrics = f"{full_lyrics}\n\n{req.additional_lyrics.strip()}"
-            else:
-                full_lyrics = req.additional_lyrics.strip()
 
         # Parse structured caption if present
         structured_meta = None
@@ -3468,6 +3498,31 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
                 structured_meta = json.loads(parent_job.structured_caption_json)
             except Exception:
                 pass
+
+        # Build locked structured caption for continuation (locking BPM, Key, Scale, and Instruments)
+        locked_structured_meta = build_locked_continuation_caption(
+            parent_prompt=parent_prompt,
+            parent_tags=parent_tags,
+            parent_structured_caption=structured_meta,
+            musical_profile=musical_profile,
+        )
+
+        # Continuation lyrics: for the continuation segment generation
+        if req.additional_lyrics and req.additional_lyrics.strip():
+            c_lyrics = req.additional_lyrics.strip()
+            if not re.search(r'\[(.*?)\]', c_lyrics):
+                c_lyrics = f"[Verse]\n{c_lyrics}"
+            continuation_lyrics = c_lyrics
+        else:
+            continuation_lyrics = "[Solo]\n[Outro]"
+
+        # Full lyrics: complete track lyrics from beginning to end
+        full_lyrics = parent_lyrics
+        if req.additional_lyrics and req.additional_lyrics.strip():
+            if full_lyrics:
+                full_lyrics = f"{full_lyrics}\n\n{req.additional_lyrics.strip()}"
+            else:
+                full_lyrics = req.additional_lyrics.strip()
 
         child_job = Job(
             title=f"{parent_title} (Extended)",
@@ -3487,6 +3542,8 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
             session_id=parent_session_id,
             cover_image_path=parent_cover_image,
             bpm=parent_bpm,
+            structured_caption_json=json.dumps(locked_structured_meta),
+            beat_grid_json=json.dumps(parent_bg),
         )
         session.add(child_job)
         session.commit()
@@ -3520,28 +3577,30 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
         "parent_job_id": str(job_id)
     })
 
-    gen_lyrics = full_lyrics
     gen_prompt = req.prompt.strip() if (req.prompt and req.prompt.strip()) else parent_prompt
 
     gen_req = GenerationRequest(
         title=child_title,
         prompt=gen_prompt,
-        lyrics=gen_lyrics,
-        duration_ms=int(req.target_duration_sec * 1000),
+        lyrics=continuation_lyrics,
+        duration_ms=delta_ms,
         tags=parent_tags,
         seed=parent_seed,
         model_provider=child_provider,
         parent_job_id=str(job_id),
         is_extension=True,
         extend_from_sec=extend_from,
-        crossfade_sec=req.crossfade_sec or 1.5,
+        target_duration_sec=req.target_duration_sec,
+        crossfade_sec=crossfade_sec,
         parent_audio_path=parent_audio_path,
         project_id=parent_project_id,
         session_id=parent_session_id,
         temperature=parent_temp,
         cfg_scale=parent_cfg,
         topk=parent_topk,
-        structured_caption=structured_meta,
+        structured_caption=locked_structured_meta,
+        beat_grid=parent_bg,
+        bpm=parent_bpm,
     )
 
     background_tasks.add_task(music_service.generate_task, child_job_id, gen_req, engine)

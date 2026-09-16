@@ -2,7 +2,7 @@
 title: Voice Studio (SVC)
 type: entity
 created: 2026-08-20
-updated: 2026-09-07
+updated: 2026-09-15
 tags: [voice, svc, rvc, cloning, consent, singing, acoustic-dsp]
 aliases: [VoiceService, Voice Training Studio, SVC]
 ---
@@ -30,12 +30,10 @@ voice in the Composer or Track Detail view.
 
 ## Conversion & Formant Shaping
 - `convert_vocals(vocal_stem_path, profile_id, job_id, pitch_shift=0, dry_wet=1.0, formant_preserve=True)`:
-  - **Neural Inference**: When an RVC v2 `.pth` model checkpoint exists in `data/voice_profiles/{id}.pth`,
-    loads the model onto MPS/CUDA/CPU and runs neural voice conversion.
-  - **Adaptive Acoustic & Formant DSP Shaping**: Dynamically applies biquad equalizer and formant filters
-    matching the target vocal identity profile (e.g. ethereal pop high-presence for bright timbres,
-    warm chest resonance for rich timbres, or adaptive frequency shaping matching the profile's extracted $F_0$ and centroid).
-  - **Formant Preservation**: Compensates upward/downward shifts when pitch-shifting to preserve vocal identity character.
+  - **Neural SVC Inference Engine**: Leverages [Neural SVC](neural-svc.md) (`NeuralSVCService` in `backend/app/services/voice/neural_svc.py`) for zero-shot vocal timbre transfer, formant morphing, pitch transposition, and cross-fade dry/wet mixing.
+  - **Neural RVC Checkpoint Support**: When an RVC v2 `.pth` model checkpoint exists in `data/voice_profiles/{id}.pth`, loads the weights onto MPS/CUDA/CPU under the management of the [Hardware Coordinator](hardware-coordinator.md).
+  - **Adaptive Acoustic & Formant DSP Shaping**: Dynamically morphs the vocal tract transfer function and formant spectral envelope to match the target vocal identity profile (e.g. ethereal pop high-presence for bright timbres, warm chest resonance for rich timbres).
+  - **Formant Preservation**: Phase-locked formant tracking compensates upward/downward shifts when pitch-shifting to preserve vocal identity character.
   - **Wet / Dry Blending**: Studio blend control ($0\%$ to $100\%$) blending original dry vocals with transformed vocals.
 
 ## Master Track Remixing Engine
@@ -47,7 +45,8 @@ voice in the Composer or Track Detail view.
 ## Related pages
 - [Session workspace](session-workspace.md) | [Orchestration pipeline](../concepts/generation-pipeline.md)
 - [Backend & API](backend-api.md) | [Stem separator](stem-separator.md) | [Roadmap (v2)](../roadmap.md)
-- [Singing Voice Conversion](../concepts/singing-voice-conversion.md)
+- [Singing Voice Conversion](../concepts/singing-voice-conversion.md) | [Neural SVC](neural-svc.md)
+- [Global Hardware Coordinator](hardware-coordinator.md)
 
 ---
 

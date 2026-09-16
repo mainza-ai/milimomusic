@@ -2,7 +2,7 @@
 title: Singing Voice Conversion (RVC v2 & Acoustic DSP)
 type: concept
 created: 2026-09-03
-updated: 2026-09-07
+updated: 2026-09-15
 tags: [rvc, svc, rmvpe, hubert, voice, acoustic-dsp]
 aliases: [RVC, SVC, voice conversion]
 sources: [production-readiness-plan.md]
@@ -28,17 +28,19 @@ When a user trains a new voice identity in the **Voice Training Studio**:
 ## 2. Neural RVC v2 Checkpoint Inference
 
 If a user imports or places an RVC v2 `.pth` model checkpoint in `data/voice_profiles/{profile_id}.pth`:
+- Acquires exclusive hardware access via [Global Hardware Coordinator](../entities/hardware-coordinator.md).
 - Loads model weights (`net_g`, `params`, `weight`) onto hardware (`mps`, `cuda`, or `cpu`).
 - Extracts pitch curve and applies semitone pitch shifting via `torchaudio.functional.pitch_shift`.
 - Generates converted vocal waveform and applies wet/dry ratio blending.
 
-## 3. High-Fidelity Acoustic & Formant DSP Shaping Engine
+## 3. High-Fidelity Neural SVC & Formant DSP Shaping Engine
 
-When running without a pre-trained `.pth` checkpoint, the pipeline executes acoustic timbre shaping:
+When running without a pre-trained `.pth` checkpoint, the pipeline executes acoustic timbre transfer through the [Neural SVC](../entities/neural-svc.md) engine (`backend/app/services/voice/neural_svc.py`):
+- **Phase-Locked Pitch Shifting**: Shifts pitch semitones using phase vocoder preservation.
 - **Formant & Equalization Tuning**:
   - `aria` (Ethereal Pop): Highpass filter at 120 Hz, presence boost at 3.2 kHz (+3.0 dB), air brilliance shelf at 8.5 kHz (+2.5 dB).
   - `marcus` (Warm Soul/R&B): Chest resonance boost at 350 Hz (+3.5 dB), warmth at 1.2 kHz (+1.5 dB), top-end taming at 6.5 kHz (-1.5 dB).
-  - Custom profiles: Adaptive formant filtering based on extracted $F_0$ and spectral centroid.
+  - Custom profiles: Adaptive spectral envelope warping based on target profile reference recordings.
 - **Formant Preservation Compensation**: Adjusts resonance bands opposite to pitch shifts (+/- 12 semitones) to preserve natural vocal tract character.
 - **Wet / Dry Blend**: Seamless blending between original dry vocal and transformed vocal ($0\%$ to $100\%$).
 
@@ -51,5 +53,6 @@ To avoid acapella-overwrite bugs where backing instruments are lost during voice
 
 ## Related pages
 
-- [Voice Studio (SVC)](../entities/voice-service.md) · [Task Queue](../entities/task-queue.md)
+- [Voice Studio (SVC)](../entities/voice-service.md) · [Neural SVC](../entities/neural-svc.md)
+- [Global Hardware Coordinator](../entities/hardware-coordinator.md) · [Task Queue](../entities/task-queue.md)
 - [Track extension](track-extension.md) · [Orchestration pipeline](generation-pipeline.md)

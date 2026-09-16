@@ -2,7 +2,7 @@
 title: AI Music Video Studio
 type: entity
 created: 2026-09-07
-updated: 2026-09-13
+updated: 2026-09-15
 tags: [video, studio, wan, liveportrait, ltx-video, diffusers, lipsync, karaoke, ass]
 aliases: [VideoStudio, MusicVideosView, VideoService, VideoOrchestrator]
 ---
@@ -33,9 +33,12 @@ To eliminate unnatural mouth twitching and deliver broadcast-quality vocal perfo
 2. **LivePortrait Neural Avatar**:
    - Uses implicit keypoint representations and landmark deformation driven by audio pitch and amplitude.
    - Synthesizes organic eye blinks, micro-expressions, head nods, and realistic phonetic viseme transitions.
+   - Executed under [Global Hardware Coordinator](hardware-coordinator.md) device locks to prevent VRAM exhaustion with audio pipelines.
    - Supports local Apple Silicon PyTorch MPS execution as well as cloud GPU offloading.
 3. **Smooth Viseme Mesh Fallback**:
    - For low-resource environments without neural weights, a bilinear jaw mesh warp engine smoothly translates the mouth cavity and lips based on vocal power envelopes, avoiding static OpenCV ellipse overlays.
+4. **Stem Audio-Reactive Modulation**:
+   - Powered by [Stem Audio-Reactive Video](../concepts/stem-audio-reactive-video.md) (`stem_audio_reactive.py`), extracting clean vocal envelopes for lip-sync and percussive downbeat transients from drums/bass to drive Wan 2.1 camera zooms, pulses, and shakes.
 
 ## 3. Autonomous Video Director
 
@@ -49,3 +52,4 @@ To eliminate unnatural mouth twitching and deliver broadcast-quality vocal perfo
 
 ## Related pages
 - [Overview](../overview.md) | [Architecture](../architecture.md) | [Stem Separator](stem-separator.md) | [Karaoke & Lyric Sync](karaoke-lyricsync.md)
+- [Global Hardware Coordinator](hardware-coordinator.md) | [Sidecar Engine Manager](sidecar-engine-manager.md) | [Stem Audio-Reactive Video](../concepts/stem-audio-reactive-video.md)

@@ -11,7 +11,7 @@ aliases: [crew agents, the crew, artist agents]
 # Artist Crew Agents
 
 The artist section's registered LLM agents — every one runs through
-[ResiliencePolicy](agent-foundation.md) (provider failover, typed errors, usage
+[ResiliencePolicy](../concepts/agent-foundation.md) (provider failover, typed errors, usage
 capture), so per-artist model overrides (assignment → profile default → global)
 apply uniformly. See [Artist Domain](../concepts/artist-domain.md) for how they
 fit together.

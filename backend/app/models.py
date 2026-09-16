@@ -51,6 +51,8 @@ class Job(SQLModel, table=True):
     model_provider: Optional[str] = Field(default="minimax_music3")
     llm_model: Optional[str] = Field(default=None) # Track which LLM was used for lyrics
     parent_job_id: Optional[str] = Field(default=None) # For extensions
+    is_extension: bool = Field(default=False)
+    extend_from_sec: Optional[float] = Field(default=None)
     temperature: Optional[float] = Field(default=None)
     cfg_scale: Optional[float] = Field(default=None)
     topk: Optional[int] = Field(default=None)
@@ -284,6 +286,12 @@ class GenerationRequest(SQLModel):
     bpm: Optional[float] = None
     transcription_engine: Optional[str] = "milimo_neural"
 
+    # Track Extension options
+    is_extension: Optional[bool] = False
+    extend_from_sec: Optional[float] = None
+    crossfade_sec: Optional[float] = 1.5
+    parent_audio_path: Optional[str] = None
+
     @field_validator('tags', mode='before')
     @classmethod
     def normalize_tags(cls, v: Any) -> Optional[str]:
@@ -292,6 +300,15 @@ class GenerationRequest(SQLModel):
         if isinstance(v, list):
             return ", ".join(str(t) for t in v)
         return str(v)
+
+
+class TrackExtendRequest(SQLModel):
+    model_config = {"protected_namespaces": ()}
+    target_duration_sec: float = Field(..., ge=15.0, le=600.0)
+    extend_from_sec: Optional[float] = None
+    additional_lyrics: Optional[str] = None
+    prompt: Optional[str] = None
+    crossfade_sec: float = Field(default=1.5, ge=0.1, le=5.0)
 
 
 class CoverGenerationRequest(SQLModel):

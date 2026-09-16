@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Layers, ZoomIn, ZoomOut, Sparkles, Mic } from 'lucide-react';
+import { Layers, ZoomIn, ZoomOut, Sparkles, Mic, FastForward } from 'lucide-react';
 import type { Job, NoteEvent } from '../../api';
 import type { StemChannel } from './SessionWorkspace';
 import { useModalStore } from '../../stores/useModalStore';
@@ -30,6 +30,29 @@ export interface SongSection {
     color: string;
 }
 
+function getSectionColor(name: string): string {
+    const lower = name.toLowerCase();
+    if (lower.includes('intro')) {
+        return 'bg-indigo-500/15 dark:bg-indigo-500/25 text-indigo-950 dark:text-indigo-200 border-indigo-500/30 dark:border-indigo-500/50 hover:bg-indigo-500/25';
+    }
+    if (lower.includes('verse')) {
+        return 'bg-sky-500/15 dark:bg-sky-500/25 text-sky-950 dark:text-sky-200 border-sky-500/30 dark:border-sky-500/50 hover:bg-sky-500/25';
+    }
+    if (lower.includes('chorus') || lower.includes('hook')) {
+        return 'bg-amber-500/20 dark:bg-amber-500/30 text-amber-950 dark:text-amber-200 border-amber-500/40 dark:border-amber-500/60 hover:bg-amber-500/30 font-bold';
+    }
+    if (lower.includes('bridge')) {
+        return 'bg-emerald-500/15 dark:bg-emerald-500/25 text-emerald-950 dark:text-emerald-200 border-emerald-500/30 dark:border-emerald-500/50 hover:bg-emerald-500/25';
+    }
+    if (lower.includes('outro')) {
+        return 'bg-purple-500/15 dark:bg-purple-500/25 text-purple-950 dark:text-purple-200 border-purple-500/30 dark:border-purple-500/50 hover:bg-purple-500/25';
+    }
+    if (lower.includes('solo') || lower.includes('inst')) {
+        return 'bg-rose-500/15 dark:bg-rose-500/25 text-rose-950 dark:text-rose-200 border-rose-500/30 dark:border-rose-500/50 hover:bg-rose-500/25';
+    }
+    return 'bg-teal-500/15 dark:bg-teal-500/20 text-teal-950 dark:text-teal-200 border-teal-500/30 dark:border-teal-500/40 hover:bg-teal-500/25';
+}
+
 function parseSongSections(job: Job, totalDuration: number): SongSection[] {
     const sections: SongSection[] = [];
     try {
@@ -45,19 +68,7 @@ function parseSongSections(job: Job, totalDuration: number): SongSection[] {
                     const start = Math.max(0, Number(item.start) || 0);
                     const nextStart = i < markerItems.length - 1 ? Math.max(start, Number(markerItems[i + 1].start) || 0) : totalDuration;
                     const end = Math.max(start + 0.5, Math.min(totalDuration, nextStart));
-                    const lower = cleanName.toLowerCase();
-                    let color = 'bg-teal-500/20 text-teal-400 border-teal-500/40 hover:bg-teal-500/30';
-                    if (lower.includes('intro')) {
-                        color = 'bg-indigo-500/25 text-indigo-300 border-indigo-500/50 hover:bg-indigo-500/35';
-                    } else if (lower.includes('verse')) {
-                        color = 'bg-sky-500/25 text-sky-300 border-sky-500/50 hover:bg-sky-500/35';
-                    } else if (lower.includes('chorus') || lower.includes('hook')) {
-                        color = 'bg-amber-500/30 text-amber-300 border-amber-500/60 hover:bg-amber-500/40 font-bold';
-                    } else if (lower.includes('bridge')) {
-                        color = 'bg-emerald-500/25 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/35';
-                    } else if (lower.includes('outro')) {
-                        color = 'bg-purple-500/25 text-purple-300 border-purple-500/50 hover:bg-purple-500/35';
-                    }
+                    const color = getSectionColor(cleanName);
                     sections.push({
                         id: `sec-${i}-${cleanName}`,
                         name: cleanName,
@@ -78,13 +89,7 @@ function parseSongSections(job: Job, totalDuration: number): SongSection[] {
                 const cleanName = m[1].trim();
                 const start = i * step;
                 const end = (i + 1) * step;
-                const lower = cleanName.toLowerCase();
-                let color = 'bg-teal-500/20 text-teal-400 border-teal-500/40 hover:bg-teal-500/30';
-                if (lower.includes('intro')) color = 'bg-indigo-500/25 text-indigo-300 border-indigo-500/50 hover:bg-indigo-500/35';
-                else if (lower.includes('verse')) color = 'bg-sky-500/25 text-sky-300 border-sky-500/50 hover:bg-sky-500/35';
-                else if (lower.includes('chorus') || lower.includes('hook')) color = 'bg-amber-500/30 text-amber-300 border-amber-500/60 hover:bg-amber-500/40 font-bold';
-                else if (lower.includes('bridge')) color = 'bg-emerald-500/25 text-emerald-300 border-emerald-500/50 hover:bg-emerald-500/35';
-                else if (lower.includes('outro')) color = 'bg-purple-500/25 text-purple-300 border-purple-500/50 hover:bg-purple-500/35';
+                const color = getSectionColor(cleanName);
                 sections.push({
                     id: `sec-${i}-${cleanName}`,
                     name: cleanName,
@@ -563,6 +568,15 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
                         </button>
                     </div>
                     <span className="tabular-nums">Playhead: {currentTime.toFixed(1)}s / {totalDuration.toFixed(1)}s</span>
+                    <button
+                        type="button"
+                        onClick={() => useModalStore.getState().openExtendTrack(job)}
+                        className="flex items-center gap-1.5 px-2.5 py-1 text-xs font-semibold rounded-lg bg-teal-500/10 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/30 transition-colors cursor-pointer ml-1"
+                        title="Extend this track past its current length with AI musical continuity"
+                    >
+                        <FastForward size={12} />
+                        <span>Extend Song</span>
+                    </button>
                 </div>
             </div>
 

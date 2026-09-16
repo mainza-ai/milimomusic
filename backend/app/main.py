@@ -110,7 +110,8 @@ from app.models import (
     KeyframesRequest,
     SceneRegenerateRequest,
     CoverGenerationRequest,
-    LeadSheetExtractRequest
+    LeadSheetExtractRequest,
+    TrackExtendRequest
 )
 from app.agents.registry import AGENTS, get_agent, list_agents
 from app.agents.runtime.context import RunContext
@@ -189,6 +190,15 @@ def create_db_and_tables():
             "artist_profile_id": "VARCHAR",
             "release_id": "VARCHAR",
             "mastered_path": "TEXT",
+            "is_cover": "BOOLEAN DEFAULT 0",
+            "cover_mode": "VARCHAR",
+            "ref_audio_path": "VARCHAR",
+            "melody_midi_path": "VARCHAR",
+            "chord_midi_path": "VARCHAR",
+            "drum_midi_path": "VARCHAR",
+            "bpm": "FLOAT",
+            "is_extension": "BOOLEAN DEFAULT 0",
+            "extend_from_sec": "FLOAT",
             "video_path": "VARCHAR",
             "video_config_json": "TEXT"
         }
@@ -2694,6 +2704,22 @@ async def upload_audio_file(file: UploadFile = File(...)):
     }
 
 
+@app.post("/upload/midi")
+async def upload_midi_file(file: UploadFile = File(...)):
+    """Upload MIDI file for symbolic lead sheet conditioning (melody, chords, drums)."""
+    from app.core.uploads import save_upload
+    dest_path, filename = await save_upload(
+        file, "generated_audio/symbolic/uploads", kind="midi"
+    )
+    return {
+        "url": f"/audio/symbolic/uploads/{filename}",
+        "filename": filename,
+        "path": dest_path,
+        "content_type": file.content_type,
+    }
+
+
+
 @app.post("/generate/cover-image")
 def generate_cover_image(req: CoverImageRequest):
     """Generate or synthesize visual artwork for project/song cover using FLUX.2/FLUX.1/SDXL image studio."""
@@ -3331,6 +3357,130 @@ async def get_job_symbolic(job_id: UUID):
         "job_id": str(job_id),
         "bpm": bpm,
         "files": midis,
+    }
+
+
+@app.post("/tracks/{job_id}/extend")
+async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: BackgroundTasks):
+    """Extend an existing track past its duration while preserving musical and acoustic continuity."""
+    with Session(engine) as session:
+        parent_job = session.get(Job, job_id)
+        if not parent_job:
+            raise HTTPException(status_code=404, detail="Parent track not found")
+        if not parent_job.audio_path:
+            raise HTTPException(status_code=400, detail="Parent track has no generated audio to extend")
+
+        # Resolve parent cut point
+        parent_dur_sec = float(parent_job.duration_ms) / 1000.0 if parent_job.duration_ms else 60.0
+        extend_from = req.extend_from_sec if req.extend_from_sec is not None else parent_dur_sec
+        extend_from = max(5.0, min(extend_from, parent_dur_sec))
+
+        if req.target_duration_sec <= extend_from:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Target duration ({req.target_duration_sec}s) must be greater than extension start ({extend_from}s)"
+            )
+
+        delta_sec = req.target_duration_sec - extend_from
+        delta_ms = int(delta_sec * 1000)
+
+        # Merge lyrics
+        full_lyrics = parent_job.lyrics or ""
+        if req.additional_lyrics and req.additional_lyrics.strip():
+            if full_lyrics:
+                full_lyrics = f"{full_lyrics}\n\n{req.additional_lyrics.strip()}"
+            else:
+                full_lyrics = req.additional_lyrics.strip()
+
+        # Parse structured caption if present
+        structured_meta = None
+        if parent_job.structured_caption_json:
+            try:
+                structured_meta = json.loads(parent_job.structured_caption_json)
+            except Exception:
+                pass
+
+        child_job = Job(
+            title=f"{parent_job.title or 'Track'} (Extended)",
+            prompt=req.prompt or parent_job.prompt,
+            lyrics=full_lyrics,
+            duration_ms=int(req.target_duration_sec * 1000),
+            tags=parent_job.tags,
+            seed=parent_job.seed,
+            model_provider=parent_job.model_provider or "minimax_music3",
+            parent_job_id=str(parent_job.id),
+            is_extension=True,
+            extend_from_sec=extend_from,
+            temperature=parent_job.temperature,
+            cfg_scale=parent_job.cfg_scale,
+            topk=parent_job.topk,
+            project_id=parent_job.project_id,
+            session_id=parent_job.session_id,
+            cover_image_path=parent_job.cover_image_path,
+            bpm=parent_job.bpm,
+        )
+        session.add(child_job)
+        session.commit()
+        session.refresh(child_job)
+
+        child_job_id = child_job.id
+        child_job_id_str = str(child_job.id)
+        child_title = child_job.title
+        child_provider = child_job.model_provider
+
+        # Link to session if parent was in one
+        if parent_job.session_id:
+            try:
+                studio_session = session.get(StudioSession, UUID(str(parent_job.session_id)))
+                if studio_session:
+                    studio_session.active_job_id = child_job_id_str
+                    studio_session.updated_at = datetime.now(timezone.utc)
+                    session.add(studio_session)
+                    session.commit()
+            except Exception as e:
+                logger.debug("Session update notice during extend: %s", e)
+
+    # Publish SSE queued event
+    event_manager.publish("job_update", {
+        "job_id": child_job_id_str,
+        "status": "queued",
+        "prompt": child_job.prompt,
+        "model_provider": child_provider,
+        "is_extension": True,
+        "parent_job_id": str(job_id)
+    })
+
+    gen_req = GenerationRequest(
+        title=child_title,
+        prompt=req.prompt or parent_job.prompt,
+        lyrics=req.additional_lyrics or parent_job.lyrics,
+        duration_ms=delta_ms,
+        tags=parent_job.tags,
+        seed=parent_job.seed,
+        model_provider=child_provider,
+        parent_job_id=str(job_id),
+        is_extension=True,
+        extend_from_sec=extend_from,
+        crossfade_sec=req.crossfade_sec,
+        parent_audio_path=parent_job.audio_path,
+        project_id=parent_job.project_id,
+        session_id=parent_job.session_id,
+        temperature=parent_job.temperature or 1.0,
+        cfg_scale=parent_job.cfg_scale or 1.5,
+        topk=parent_job.topk or 50,
+        structured_caption=structured_meta,
+    )
+
+    background_tasks.add_task(music_service.generate_task, child_job_id, gen_req, engine)
+
+    return {
+        "job_id": str(child_job_id),
+        "status": "queued",
+        "title": child_title,
+        "parent_job_id": str(job_id),
+        "extend_from_sec": extend_from,
+        "target_duration_sec": req.target_duration_sec,
+        "model_provider": child_provider,
     }
 
 

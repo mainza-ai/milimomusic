@@ -357,12 +357,19 @@ def concatenate_and_crossfade_audio(
     parent_wav_path: str,
     extension_wav_path: str,
     output_wav_path: str,
-    crossfade_sec: float = 1.0
+    crossfade_sec: float = 1.5,
+    extend_from_sec: Optional[float] = None,
 ) -> float:
     """Concatenate parent audio with extension audio using an equal-power sine/cosine crossfade."""
     import numpy as np
     sr_p, data_p = _read_wav_float(parent_wav_path)
     sr_e, data_e = _read_wav_float(extension_wav_path)
+
+    # Slice parent audio to extend_from_sec cut point if requested
+    if extend_from_sec is not None and extend_from_sec > 0:
+        cut_samples = int(extend_from_sec * sr_p)
+        if 0 < cut_samples < len(data_p):
+            data_p = data_p[:cut_samples]
 
     if data_p.ndim == 1:
         data_p = data_p[:, np.newaxis]
@@ -390,6 +397,7 @@ def concatenate_and_crossfade_audio(
 
     _write_wav_float(output_wav_path, sr_p, combined)
     return float(len(combined) / sr_p)
+
 
 
 class MiniMaxMusic3Provider(GenerationProvider):
@@ -741,19 +749,26 @@ class MiniMaxMusic3Provider(GenerationProvider):
         extend_ms: int,
         lyrics: Optional[str] = None,
         prompt: Optional[str] = None,
+        extend_from_sec: Optional[float] = None,
+        crossfade_sec: float = 1.5,
+        seed: Optional[int] = None,
+        tags: Optional[str] = None,
+        structured_caption: Optional[Dict[str, Any]] = None,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         cancel_event: Optional[Any] = None,
         **kwargs
     ) -> GeneratedAudioResult:
         """
         Extend parent audio with continuation segment and equal-power crossfade.
+        Preserves the parent audio bit-for-bit, anchored to the parent seed and style.
         """
         # 1. Resolve parent audio path on disk
         candidates = [
             parent_audio_path,
             parent_audio_path.lstrip("/"),
             parent_audio_path.replace("/audio/", "generated_audio/"),
-            os.path.join("generated_audio", os.path.basename(parent_audio_path))
+            os.path.join("generated_audio", os.path.basename(parent_audio_path)),
+            os.path.join("generated_audio", f"song_{os.path.basename(parent_audio_path)}"),
         ]
         resolved_parent = None
         for c in candidates:
@@ -768,17 +783,21 @@ class MiniMaxMusic3Provider(GenerationProvider):
             prompt=prompt or "",
             lyrics=lyrics,
             duration_ms=extend_ms,
+            seed=seed,
+            tags=tags,
+            structured_caption=structured_caption,
             progress_callback=progress_callback,
             cancel_event=cancel_event,
             **kwargs
         )
 
         if not resolved_parent:
+            logger.warning(f"Parent audio {parent_audio_path} not found on disk; returning continuation directly.")
             return ext_result
 
         # 3. Concatenate and crossfade
         ext_local_path = ext_result.audio_path.replace("/audio/", "generated_audio/")
-        out_wav_path = os.path.join("generated_audio", f"{job_id}.wav")
+        out_wav_path = os.path.join("generated_audio", f"song_{job_id}.wav")
 
         loop = asyncio.get_event_loop()
         total_duration = await loop.run_in_executor(
@@ -787,11 +806,20 @@ class MiniMaxMusic3Provider(GenerationProvider):
             resolved_parent,
             ext_local_path,
             out_wav_path,
-            1.0
+            crossfade_sec,
+            extend_from_sec,
         )
 
+        # Mirror to {job_id}.wav for route versatility
+        alt_wav = os.path.join("generated_audio", f"{job_id}.wav")
+        try:
+            if os.path.abspath(out_wav_path) != os.path.abspath(alt_wav):
+                shutil.copy2(out_wav_path, alt_wav)
+        except Exception:
+            pass
+
         return GeneratedAudioResult(
-            audio_path=f"/audio/{job_id}.wav",
+            audio_path=f"/audio/song_{job_id}.wav",
             duration_sec=total_duration,
             sample_rate=44100,
             structured_caption=ext_result.structured_caption,
@@ -800,8 +828,10 @@ class MiniMaxMusic3Provider(GenerationProvider):
             metadata={
                 **ext_result.metadata,
                 "extended_from": parent_audio_path,
+                "extend_from_sec": extend_from_sec,
+                "crossfade_sec": crossfade_sec,
                 "extended_duration_sec": extend_ms / 1000.0,
-                "total_duration_sec": total_duration
+                "total_duration_sec": total_duration,
             }
         )
 

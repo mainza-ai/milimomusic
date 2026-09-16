@@ -118,12 +118,25 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                 if (initialTrack.chord_midi_path) setChordMidiPath(initialTrack.chord_midi_path);
                 if (initialTrack.drum_midi_path) setDrumMidiPath(initialTrack.drum_midi_path);
                 if (initialTrack.lyrics) setLyrics(initialTrack.lyrics);
+
+                // Auto-populate from symbolic lead sheet store if available
+                remixApi.getJobSymbolic(initialTrack.id).then(sym => {
+                    if (sym && sym.files) {
+                        if (sym.files.melody) setMelodyMidiPath(sym.files.melody);
+                        if (sym.files.chord) setChordMidiPath(sym.files.chord);
+                        if (sym.files.drums || sym.files.drum) setDrumMidiPath(sym.files.drums || sym.files.drum);
+                        if (sym.bpm) setBpm(Math.round(sym.bpm));
+                    }
+                }).catch(() => {
+                    // No existing symbolic export found, safe to ignore
+                });
             }
         }
     }, [isOpen, initialTrack, initialMode]);
 
     // Lead sheet extraction state
     const [isTranscribing, setIsTranscribing] = useState(false);
+    const [isUploadingMidi, setIsUploadingMidi] = useState<string | null>(null);
     const [leadSheet, setLeadSheet] = useState<LeadSheetResult | null>(null);
     const [transcriptionEngine, setTranscriptionEngine] = useState<'milimo_neural' | 'upstream'>('milimo_neural');
 
@@ -176,6 +189,31 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
         }
     };
 
+    const handleUploadMidi = async (e: React.ChangeEvent<HTMLInputElement>, target: 'melody' | 'chord' | 'drums') => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setIsUploadingMidi(target);
+        try {
+            const formData = new FormData();
+            formData.append('file', file);
+            const res = await axios.post<{ url?: string; path?: string; filename?: string }>(`${API_BASE_URL}/upload/midi`, formData, {
+                headers: { 'Content-Type': 'multipart/form-data' }
+            });
+            const data = res.data;
+            const uploadedPath = data.path || data.url || `/audio/symbolic/uploads/${data.filename}`;
+            if (target === 'melody') setMelodyMidiPath(uploadedPath);
+            else if (target === 'chord') setChordMidiPath(uploadedPath);
+            else if (target === 'drums') setDrumMidiPath(uploadedPath);
+            toast(`${target.toUpperCase()} MIDI uploaded successfully!`, 'success');
+        } catch (err: any) {
+            console.error(err);
+            toast(err?.response?.data?.detail?.error?.message || err?.response?.data?.detail || 'Failed to upload MIDI file', 'error');
+        } finally {
+            setIsUploadingMidi(null);
+            e.target.value = '';
+        }
+    };
+
     const handleTranscribeLeadSheet = async (e?: React.MouseEvent) => {
         if (e) {
             e.preventDefault();
@@ -190,6 +228,9 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
             const res = await remixApi.transcribeLeadSheet(refAudioPath, bpm, transcriptionEngine);
             setLeadSheet(res);
             if (res.bpm) setBpm(Math.round(res.bpm));
+            if (res.paths?.melody) setMelodyMidiPath(res.paths.melody);
+            if (res.paths?.chord) setChordMidiPath(res.paths.chord);
+            if (res.paths?.drums || res.paths?.drum) setDrumMidiPath(res.paths.drums || res.paths.drum);
             toast(`Lead sheet transcribed! Tempo: ${Math.round(res.bpm)} BPM`, 'success');
         } catch (err: any) {
             console.error(err);
@@ -590,29 +631,117 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                 </div>
                             ) : (
                                 <div className="p-4 rounded-xl bg-zinc-900/50 border border-zinc-800 space-y-3">
-                                    <span className="text-xs font-semibold text-teal-400 uppercase tracking-wider block">Symbolic MIDI Inputs</span>
+                                    <div className="flex items-center justify-between">
+                                        <span className="text-xs font-semibold text-teal-400 uppercase tracking-wider block">Symbolic MIDI Inputs</span>
+                                        {melodyMidiPath && chordMidiPath ? (
+                                            <span className="flex items-center gap-1 text-[10px] text-emerald-400 bg-emerald-500/10 px-2 py-0.5 rounded border border-emerald-500/20 font-mono">
+                                                <CheckCircle className="w-3 h-3" /> Ready for Synthesis
+                                            </span>
+                                        ) : (
+                                            <span className="text-[10px] text-amber-400 bg-amber-500/10 px-2 py-0.5 rounded border border-amber-500/20 font-mono">
+                                                Melody & Chords Required
+                                            </span>
+                                        )}
+                                    </div>
+
+                                    {refAudioPath && (
+                                        <div className="p-2.5 rounded-lg bg-teal-500/5 border border-teal-500/20 flex items-center justify-between gap-2">
+                                            <div className="text-[11px] text-zinc-300 truncate">
+                                                <span className="text-teal-400 font-semibold">Reference Audio:</span> {refAudioPath.split('/').pop()}
+                                            </div>
+                                            <button
+                                                type="button"
+                                                onClick={handleTranscribeLeadSheet}
+                                                disabled={isTranscribing}
+                                                className="px-2.5 py-1 text-[11px] font-semibold rounded bg-teal-600 hover:bg-teal-500 text-white flex items-center gap-1.5 transition-colors flex-shrink-0 disabled:opacity-50"
+                                            >
+                                                {isTranscribing ? (
+                                                    <>
+                                                        <Loader2 className="w-3 h-3 animate-spin" />
+                                                        <span>Extracting...</span>
+                                                    </>
+                                                ) : (
+                                                    <>
+                                                        <Sparkles className="w-3 h-3" />
+                                                        <span>Auto-Extract Lead Sheet</span>
+                                                    </>
+                                                )}
+                                            </button>
+                                        </div>
+                                    )}
+
                                     <div>
-                                        <label className="text-[11px] text-zinc-400 block mb-1">Melody MIDI (Vocal or Lead)</label>
+                                        <div className="flex items-center justify-between mb-1">
+                                            <label className="text-[11px] text-zinc-400">Melody MIDI (Vocal or Lead)</label>
+                                            <label className="text-[10px] text-teal-400 hover:text-teal-300 cursor-pointer flex items-center gap-1 font-mono">
+                                                {isUploadingMidi === 'melody' ? (
+                                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                                ) : (
+                                                    <Upload className="w-3 h-3" />
+                                                )}
+                                                <span>Upload .mid</span>
+                                                <input
+                                                    type="file"
+                                                    accept=".mid,.midi"
+                                                    className="hidden"
+                                                    onChange={e => handleUploadMidi(e, 'melody')}
+                                                />
+                                            </label>
+                                        </div>
                                         <input
                                             type="text"
                                             value={melodyMidiPath}
                                             onChange={e => setMelodyMidiPath(e.target.value)}
-                                            placeholder="/path/to/melody.mid"
+                                            placeholder="/path/to/melody.mid or click Upload"
                                             className="w-full px-3 py-1.5 text-xs rounded bg-zinc-800 border border-zinc-700 text-white font-mono"
                                         />
                                     </div>
+
                                     <div>
-                                        <label className="text-[11px] text-zinc-400 block mb-1">Chord MIDI (Harmonic Progression)</label>
+                                        <div className="flex items-center justify-between mb-1">
+                                            <label className="text-[11px] text-zinc-400">Chord MIDI (Harmonic Progression)</label>
+                                            <label className="text-[10px] text-teal-400 hover:text-teal-300 cursor-pointer flex items-center gap-1 font-mono">
+                                                {isUploadingMidi === 'chord' ? (
+                                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                                ) : (
+                                                    <Upload className="w-3 h-3" />
+                                                )}
+                                                <span>Upload .mid</span>
+                                                <input
+                                                    type="file"
+                                                    accept=".mid,.midi"
+                                                    className="hidden"
+                                                    onChange={e => handleUploadMidi(e, 'chord')}
+                                                />
+                                            </label>
+                                        </div>
                                         <input
                                             type="text"
                                             value={chordMidiPath}
                                             onChange={e => setChordMidiPath(e.target.value)}
-                                            placeholder="/path/to/chord.mid"
+                                            placeholder="/path/to/chord.mid or click Upload"
                                             className="w-full px-3 py-1.5 text-xs rounded bg-zinc-800 border border-zinc-700 text-white font-mono"
                                         />
                                     </div>
+
                                     <div>
-                                        <label className="text-[11px] text-zinc-400 block mb-1">Drum MIDI (Optional)</label>
+                                        <div className="flex items-center justify-between mb-1">
+                                            <label className="text-[11px] text-zinc-400">Drum MIDI (Optional Rhythmic Conditioning)</label>
+                                            <label className="text-[10px] text-teal-400 hover:text-teal-300 cursor-pointer flex items-center gap-1 font-mono">
+                                                {isUploadingMidi === 'drums' ? (
+                                                    <Loader2 className="w-3 h-3 animate-spin" />
+                                                ) : (
+                                                    <Upload className="w-3 h-3" />
+                                                )}
+                                                <span>Upload .mid</span>
+                                                <input
+                                                    type="file"
+                                                    accept=".mid,.midi"
+                                                    className="hidden"
+                                                    onChange={e => handleUploadMidi(e, 'drums')}
+                                                />
+                                            </label>
+                                        </div>
                                         <input
                                             type="text"
                                             value={drumMidiPath}

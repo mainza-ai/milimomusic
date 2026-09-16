@@ -876,9 +876,24 @@ export interface SheetScoreItem {
     url: string;
 }
 
+export interface TrackExtendParams {
+    target_duration_sec: number;
+    extend_from_sec?: number;
+    additional_lyrics?: string;
+    prompt?: string;
+    crossfade_sec?: number;
+}
+
 export const trackApi = {
     updateTrackMetadata: async (jobId: string, updates: Partial<Job>): Promise<Job> => {
         const res = await axios.patch(`${API_BASE_URL}/jobs/${jobId}`, updates);
+        return res.data;
+    },
+    extendTrack: async (
+        jobId: string,
+        params: TrackExtendParams
+    ): Promise<{ job_id: string; status: string; title: string; parent_job_id: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/tracks/${jobId}/extend`, params);
         return res.data;
     },
     getStudioPackUrl: (jobId: string): string => {

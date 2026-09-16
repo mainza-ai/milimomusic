@@ -136,22 +136,39 @@ class GenerateAndTranscribePipeline:
                     "transcription_engine": getattr(req, "transcription_engine", "milimo_neural"),
                 })
 
-            gen_result = await provider.generate(
-                job_id=job_id_str,
-                prompt=req.prompt,
-                lyrics=req.lyrics,
-                duration_ms=req.duration_ms,
-                tags=req.tags,
-                seed=req.seed,
-                temperature=req.temperature,
-                cfg_scale=req.cfg_scale,
-                topk=req.topk,
-                llm_model=req.llm_model,
-                progress_callback=_gen_progress,
-                cancel_event=cancel_event,
-                structured_caption=req.structured_caption or None,
-                **extra_gen_kwargs
-            )
+            if getattr(req, "is_extension", False) and hasattr(provider, "extend") and getattr(req, "parent_audio_path", None):
+                gen_result = await provider.extend(
+                    job_id=job_id_str,
+                    parent_audio_path=req.parent_audio_path,
+                    extend_ms=req.duration_ms,
+                    lyrics=req.lyrics,
+                    prompt=req.prompt,
+                    extend_from_sec=getattr(req, "extend_from_sec", None),
+                    crossfade_sec=getattr(req, "crossfade_sec", 1.5),
+                    seed=req.seed,
+                    tags=req.tags,
+                    structured_caption=req.structured_caption or None,
+                    progress_callback=_gen_progress,
+                    cancel_event=cancel_event,
+                    **extra_gen_kwargs
+                )
+            else:
+                gen_result = await provider.generate(
+                    job_id=job_id_str,
+                    prompt=req.prompt,
+                    lyrics=req.lyrics,
+                    duration_ms=req.duration_ms,
+                    tags=req.tags,
+                    seed=req.seed,
+                    temperature=req.temperature,
+                    cfg_scale=req.cfg_scale,
+                    topk=req.topk,
+                    llm_model=req.llm_model,
+                    progress_callback=_gen_progress,
+                    cancel_event=cancel_event,
+                    structured_caption=req.structured_caption or None,
+                    **extra_gen_kwargs
+                )
 
             # Orphan-work guard: the blocking inference thread cannot be
             # interrupted mid-call — discard its output if we woke up dead.
@@ -162,6 +179,8 @@ class GenerateAndTranscribePipeline:
                 job = session.get(Job, job_id)
                 if job:
                     job.audio_path = gen_result.audio_path
+                    if gen_result.duration_sec:
+                        job.duration_ms = int(gen_result.duration_sec * 1000)
                     if gen_result.structured_caption:
                         job.structured_caption_json = json.dumps(gen_result.structured_caption)
                     # Generation provenance: persist whether real MiniMax inference

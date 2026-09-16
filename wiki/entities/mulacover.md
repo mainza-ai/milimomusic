@@ -2,7 +2,7 @@
 title: MuLaCover
 type: entity
 created: 2026-09-15
-updated: 2026-09-15
+updated: 2026-09-16
 sources: [sources/v2-refactor-plan.md]
 tags: [mulacover, cover, remix, symbolic, midi, provider, model]
 aliases: [MuLaCover-3B, HeartMuLa-Cover, Remix Engine]
@@ -62,6 +62,7 @@ MuLaCover accepts both reference audio files and direct MIDI lead sheets. When p
   - Runs [Drum Tracker](drum-tracker.md) (`drum_tracker.py`) with spectral flux onset envelope detection and sub-band filtering (Kick Note 36, Snare Note 38, Hi-Hat Note 42) into `SymbolicCondition.drums`.
 - **Upstream Classic Mode**:
   - Direct YourMT3 multi-instrument transcription + 5-fold ChordNet ensemble inference directly on audio.
+  - **PyTorch 2.6 Checkpoint Compatibility**: In PyTorch 2.6+, legacy PyTorch Lightning checkpoints referencing `utils.classes` fail under `torch.serialization.safe_globals` due to strict callable verification on alias tuples. `mulacover.checkpoint._scoped_module_mocker()` dynamically provisions dummy module stubs during unpickling, safely loading all 655 model weights without global namespace pollution or unpickler `tuple` errors.
 
 ### Quantization & MIDI Interchange
 - Quantizes note onsets and durations to discrete 16th-note grids at the detected BPM.
@@ -70,6 +71,7 @@ MuLaCover accepts both reference audio files and direct MIDI lead sheets. When p
   - `chord.mid`: Quantized harmonic chord progression.
   - `drum.mid`: Percussion rhythm pattern from [Drum Tracker](drum-tracker.md).
   - `leadsheet_summary_midi`: Combined lead sheet for DAW and PianoRoll import.
+- **Auto-Population & Upload**: Lead sheet extraction automatically syncs `melodyMidiPath`, `chordMidiPath`, and `drumMidiPath` directly into Cover Studio state. Users can also directly upload individual `.mid` / `.midi` files via `POST /upload/midi` for custom lead sheets.
 
 ---
 
@@ -77,7 +79,7 @@ MuLaCover accepts both reference audio files and direct MIDI lead sheets. When p
 
 1. **Cover & Remix Studio (`CoverStudioModal.tsx`)**:
    - Dedicated modal accessible from the left navigation bar, Command Palette (`⌘K`), and composer header, unified under [Modal Store Architecture](../concepts/modal-store-architecture.md).
-   - Dual input modes: **Reference Audio Mode** (with real-time audio player, BPM detection, and lead sheet extraction) and **Symbolic MIDI Lead Sheet Mode**.
+   - Dual input modes: **Reference Audio Mode** (with real-time audio player, BPM detection, and lead sheet extraction) and **Symbolic MIDI Lead Sheet Mode** (with auto-population from audio extraction, existing track MIDIs query via `/jobs/{job_id}/symbolic`, in-tab lead sheet trigger, and standalone MIDI uploads).
    - First-run onboarding card with one-click bundle downloading and real-time progress bar when checkpoints are uninstalled.
    - MIDI lead sheet download chips with direct **Edit in PianoRoll** navigation.
 2. **Track Studio (`TrackDetailView.tsx`)**:
@@ -96,6 +98,7 @@ MuLaCover accepts both reference audio files and direct MIDI lead sheets. When p
 
 - `POST /generate/cover`: Enqueues cover song jobs with upfront validation of checkpoints and symbolic inputs.
 - `POST /transcribe/lead-sheet`: Extracts multi-track MIDI lead sheets from audio. Features robust audio path resolution (`_resolve_audio_file`), stripping dev server URLs (`http://localhost:5173/audio/...`) and resolving static mount aliases (`/audio/...` -> `generated_audio/...`) to prevent 404 extraction failures.
+- `POST /upload/midi`: Direct endpoint for uploading `.mid` and `.midi` files with standard `MThd` header magic-byte validation for custom lead sheets.
 - `GET /jobs/{job_id}/symbolic`: Fetches extracted MIDI paths for completed jobs.
 - `GET /models/check/mulacover`: Validates checkpoint integrity.
 - **Database Schema (`Job` model)**:

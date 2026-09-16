@@ -199,6 +199,7 @@ def create_db_and_tables():
             "drum_midi_path": "VARCHAR",
             "bpm": "FLOAT",
             "is_extension": "BOOLEAN DEFAULT 0",
+            "is_repair": "BOOLEAN DEFAULT 0",
             "extend_from_sec": "FLOAT",
             "video_path": "VARCHAR",
             "video_config_json": "TEXT"

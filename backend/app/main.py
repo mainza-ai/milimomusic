@@ -3291,10 +3291,19 @@ async def transcribe_lead_sheet(req: LeadSheetExtractRequest):
             condition = await symbolic_hub.transcribe_milimo_neural(audio_path, job_id=export_id, bpm=resolved_bpm)
 
         exported_paths = symbolic_hub.export_lead_sheet(condition, output_dir)
+        formatted_paths = {}
+        for k, v in exported_paths.items():
+            clean = str(v).replace("generated_audio/", "/audio/").replace("backend/generated_audio/", "/audio/")
+            if not clean.startswith("/"):
+                clean = f"/{clean}"
+            formatted_paths[k] = clean
+            if k == "drums":
+                formatted_paths["drum"] = clean
+
         return {
             "export_id": export_id,
             "bpm": condition.bpm or resolved_bpm,
-            "paths": exported_paths,
+            "paths": formatted_paths,
             "symbolic_length_16th": condition.symbolic_length,
         }
     except Exception as e:

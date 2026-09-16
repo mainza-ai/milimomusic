@@ -73,8 +73,10 @@ async def test_muscriptor_transcription():
         assert result.musicxml_path.endswith(".musicxml")
         assert len(result.notes) > 0
         assert "bpm" in result.beat_grid
-        assert os.path.exists("generated_audio/test_job_123.mid")
-        assert os.path.exists("generated_audio/test_job_123.musicxml")
+        from app.core.paths import get_generated_audio_dir
+        gen_dir = get_generated_audio_dir()
+        assert (gen_dir / "test_job_123.mid").exists() or os.path.exists("generated_audio/test_job_123.mid")
+        assert (gen_dir / "test_job_123.musicxml").exists() or os.path.exists("generated_audio/test_job_123.musicxml")
 
 
 def test_stem_separation():

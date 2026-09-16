@@ -10,6 +10,7 @@ import sys
 import json
 import logging
 import asyncio
+import shutil
 import numpy as np
 from pathlib import Path
 from typing import Optional, Callable, Dict, List, Any
@@ -210,14 +211,23 @@ class MuScriptorProvider:
             with open(musicxml_file, "w", encoding="utf-8") as f:
                 f.write(xml_content)
 
-            # Mirror MIDI and MusicXML to backend/generated_audio
-            try:
-                backend_dir = get_repo_root() / "backend" / "generated_audio"
-                backend_dir.mkdir(parents=True, exist_ok=True)
-                shutil.copy2(midi_file, str(backend_dir / f"{job_id}.mid"))
-                shutil.copy2(musicxml_file, str(backend_dir / f"{job_id}.musicxml"))
-            except Exception:
-                pass
+            # Mirror MIDI and MusicXML across canonical and relative directories
+            mirror_dirs = [
+                get_repo_root() / "backend" / "generated_audio",
+                get_repo_root() / "generated_audio",
+                Path("generated_audio"),
+            ]
+            for mdir in mirror_dirs:
+                try:
+                    mdir.resolve().mkdir(parents=True, exist_ok=True)
+                    tgt_mid = mdir / f"{job_id}.mid"
+                    tgt_xml = mdir / f"{job_id}.musicxml"
+                    if not tgt_mid.resolve().exists() or tgt_mid.resolve() != Path(midi_file).resolve():
+                        shutil.copy2(midi_file, str(tgt_mid))
+                    if not tgt_xml.resolve().exists() or tgt_xml.resolve() != Path(musicxml_file).resolve():
+                        shutil.copy2(musicxml_file, str(tgt_xml))
+                except Exception:
+                    pass
 
             # 5. Attempt MuseScore 4 PDF & Tab engraving if available
             sheets_dir = gen_dir / "sheets" / job_id
@@ -341,9 +351,12 @@ class MuScriptorProvider:
         job_id: str,
         progress_callback: Optional[Callable[[int, int, str], None]] = None
     ) -> TranscriptionResult:
-        """Harmonic transcription fallback with distinct multi-instrument parts."""
-        midi_file = f"generated_audio/{job_id}.mid"
-        musicxml_file = f"generated_audio/{job_id}.musicxml"
+        from app.core.paths import get_generated_audio_dir, get_repo_root
+
+        gen_dir = get_generated_audio_dir()
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        midi_file = str(gen_dir / f"{job_id}.mid")
+        musicxml_file = str(gen_dir / f"{job_id}.musicxml")
 
         notes = []
         progression = [
@@ -379,6 +392,47 @@ class MuScriptorProvider:
         xml_content = self._generate_musicxml(notes, bpm=124.0, title=f"Session {job_id[:8]}")
         with open(musicxml_file, "w", encoding="utf-8") as f:
             f.write(xml_content)
+
+        try:
+            import mido
+            mid = mido.MidiFile()
+            track = mido.MidiTrack()
+            mid.tracks.append(track)
+            tempo = round(60_000_000 / max(30.0, 124.0))
+            track.append(mido.MetaMessage('set_tempo', tempo=tempo, time=0))
+            track.append(mido.MetaMessage('track_name', name='Milimo Master Track', time=0))
+            current_tick = 0
+            for n in sorted(notes, key=lambda x: x.get('start_time', 0.0)):
+                p = int(n.get('pitch', 60))
+                vel = int(n.get('velocity', 85))
+                start_tick = int(float(n.get('start_time', 0.0)) * 480 * (124.0 / 60))
+                dur_tick = int(float(n.get('duration', 0.5)) * 480 * (124.0 / 60))
+                delta_on = max(0, start_tick - current_tick)
+                track.append(mido.Message('note_on', note=p, velocity=vel, time=delta_on))
+                current_tick = start_tick
+                track.append(mido.Message('note_off', note=p, velocity=0, time=dur_tick))
+                current_tick += dur_tick
+            mid.save(midi_file)
+        except Exception as e:
+            logger.warning(f"Fallback midi write failed: {e}")
+
+        # Mirror across canonical and relative directories
+        mirror_dirs = [
+            get_repo_root() / "backend" / "generated_audio",
+            get_repo_root() / "generated_audio",
+            Path("generated_audio"),
+        ]
+        for mdir in mirror_dirs:
+            try:
+                mdir.resolve().mkdir(parents=True, exist_ok=True)
+                tgt_mid = mdir / f"{job_id}.mid"
+                tgt_xml = mdir / f"{job_id}.musicxml"
+                if os.path.exists(midi_file) and (not tgt_mid.resolve().exists() or tgt_mid.resolve() != Path(midi_file).resolve()):
+                    shutil.copy2(midi_file, str(tgt_mid))
+                if os.path.exists(musicxml_file) and (not tgt_xml.resolve().exists() or tgt_xml.resolve() != Path(musicxml_file).resolve()):
+                    shutil.copy2(musicxml_file, str(tgt_xml))
+            except Exception:
+                pass
 
         return TranscriptionResult(
             midi_path=f"/audio/{job_id}.mid",

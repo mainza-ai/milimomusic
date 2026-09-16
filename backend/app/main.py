@@ -3923,7 +3923,7 @@ async def voice_convert_job(job_id: str, body: dict = Body(...)):
         return new_job
 
 
-@app.api_route("/download_track/{job_id}", methods=["GET", "HEAD"])
+@app.get("/download_track/{job_id}")
 def download_track(job_id: str):
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)

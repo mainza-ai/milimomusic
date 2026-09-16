@@ -31,7 +31,12 @@ allowing musicians and producers to build full-length songs (e.g. 60s -> 120s+)
    - Splicing joins the parent disk audio ($0 \to \text{cut}$) with the roll-forward continuation ($\text{cut} \to \text{target}$) using equal-power sine/cosine crossfading over $1.5\text{s}$:
      $$w_{\text{out}}(t) = \cos(\frac{\pi}{2} t), \quad w_{\text{in}}(t) = \sin(\frac{\pi}{2} t), \quad w_{\text{out}}^2 + w_{\text{in}}^2 = 1$$
    - A subtle 0.25s tail fade enforces exact `target_duration_sec`.
-5. **Full Pipeline Re-Finalization**:
+5. **Strict Lyrics Control & On-Demand AI Drafting**:
+   - **Lyrics are NEVER automatically added by default**: To prevent unintended vocal hallucination or phantom verses during extension, `auto_generate_lyrics` defaults to `False`. When empty, the child track retains the parent track's lyrics exactly as-is.
+   - **On-Demand AI Drafting**: In `ExtendTrackModal.tsx`, creators can trigger the lyricist engine on demand via *"✨ Draft with AI"* (`api.generateLyrics`), allowing inspection, editing, or clearing prior to queuing.
+   - **Opt-In Auto-Generation**: Users may alternatively toggle *"Auto-generate continuation lyrics with AI"* if they want the orchestrator to synthesize continuation verses automatically.
+
+6. **Full Pipeline Re-Finalization**:
    - The extended audio is automatically run through the entire production pipeline: BS-Roformer 4-stem separation, [MuScriptor](../entities/muscriptor.md) neural transcription (MIDI + MusicXML), and forced-alignment lyric sync.
 
 ---
@@ -49,7 +54,7 @@ Live verification on parent track `27490839` (136.0 BPM gospel piano ballad) ext
 ## 3. API, Database & Download Architecture
 
 - **Extension Endpoint**: `POST /tracks/{job_id}/extend`
-  - Body: `TrackExtendRequest` (`target_duration_sec`, `extend_from_sec`, `additional_lyrics`, `prompt`, `crossfade_sec`).
+  - Body: `TrackExtendRequest` (`target_duration_sec`, `extend_from_sec`, `additional_lyrics`, `auto_generate_lyrics`, `prompt`, `crossfade_sec`).
   - Response: `{ "job_id": UUID, "parent_job_id": UUID, "target_duration_sec": float, "extend_from_sec": float, "status": "queued" }`.
 - **Dedicated Download Endpoint**: `GET /download_track/{job_id}`
   - Resolves disk audio path via `_resolve_audio_file()`.

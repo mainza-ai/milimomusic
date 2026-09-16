@@ -51,7 +51,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Training Studio](entities/training-studio.md) — (Deprecated) decommissioned due to MiniMax Music 3 decoder-only architecture and VRAM constraints. `tags: [training, lora, deprecated]`
 - [Artist Crew Agents](entities/artist-crew-agents.md) — the four registered agents (Experiencer, World Builder, Stylist, Critic) and how they hook into the album pipeline.
 - [Durable Task Queue](entities/task-queue.md) — Phase 4 design (locked): SQLite-backed `TaskRecord` queue, GPU/IO lanes, 202 + SSE endpoint conversions, re-enqueue-on-restart.
-- [Repair Segment / Inpainting Service](entities/inpainting.md) — regenerate a time-range or glitch region.
+- [Repair Segment / Inpainting Service](entities/inpainting.md) — audio-domain infill regeneration, beat-grid downbeat snapping, equal-power crossfading, and post-repair separation/transcription cascade.
 - [LLM Service & Providers](entities/llm-service.md) — OpenCode, Anthropic Claude, OMLX, Ollama, OpenAI, Gemini, OpenRouter, DeepSeek, LM Studio, NVIDIA NIM.
 - [Backend & API](entities/backend-api.md) — FastAPI/SQLModel backend, Job/Project models, endpoints, SSE.
 - [Docker Deployment](entities/docker-deployment.md) — multi-stage container build, GPU/CPU compose profiles, volume persistence, and single-process web serving.
@@ -67,10 +67,10 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Structured Captions](concepts/structured-caption.md) — the MiniMax Global Metadata / Vocal Details / Arrangement format.
 - [Caption Rewriter](concepts/caption-rewriter.md) — official music-caption-rewriter port: brief → professional three-heading caption via the real LLM.
 - [Lyrics conditioning](concepts/lyrics-conditioning.md) — how audio is aligned to lyrics & prosody.
-- [Track extension](concepts/track-extension.md) — continuing generation from prior track; model-native MLX KV-cache roll-forward, token parity, early cutoff suppression, beat-grid snapping, and verified zero tempo drift ($\Delta = 0.0$ BPM).
+- [Track extension](concepts/track-extension.md) — continuing generation from prior track; model-native MLX KV-cache roll-forward, strict lyrics control (never auto-added by default), beat-grid snapping, and verified zero tempo drift ($\Delta = 0.0$ BPM).
 - [Singing Voice Conversion](concepts/singing-voice-conversion.md) — Phase 5 locked design: vendored RVC v2 inference (RMVPE + ContentVec), honest DSP fallback, voice-convert bug fixes.
 - [Playlists & Studio Profile](concepts/playlists-profiles.md) — Phase 6 locked design: Playlist/PlaylistTrack/StudioUserProfile tables, Alembic baseline, localStorage one-time import.
-- [LM-guided inpainting](concepts/lm-guided-inpainting.md) — the two-stage repair strategy.
+- [LM-guided inpainting](concepts/lm-guided-inpainting.md) — from legacy token masking to v2 audio-domain infill with beat-grid snapping and equal-power crossfading.
 - [LoRA fine-tuning](concepts/lora-finetuning.md) — low-rank adaptation in the Training Studio.
 - [AI Co-Writer graph](concepts/co-writer-graph.md) — the pydantic-graph workflow for lyrics editing.
 - [AI Agent Foundation](concepts/agent-foundation.md) — LLM layer investigation + AgentRuntime proposal for multi-agent support.

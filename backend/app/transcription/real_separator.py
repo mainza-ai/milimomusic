@@ -20,10 +20,11 @@ from typing import Dict, List, Optional, Any
 
 logger = logging.getLogger(__name__)
 
-from app.core.paths import get_generated_audio_dir
+from app.core.paths import get_generated_audio_dir, get_repo_root
 
 SAMPLE_RATE = 44100
 STEM_DIR = str(get_generated_audio_dir() / "stems")
+
 
 
 @dataclass
@@ -141,8 +142,8 @@ def separate_sources(
             dest_path = os.path.join(out_dir, dest_name)
             if out_file != dest_path and os.path.exists(out_file):
                 os.replace(out_file, dest_path)
-            backend_dest = os.path.abspath(os.path.join("generated_audio", "stems", dest_name))
-            if os.path.abspath(dest_path) != backend_dest and os.path.exists(dest_path):
+            backend_dest = str(get_repo_root() / "backend" / "generated_audio" / "stems" / dest_name)
+            if os.path.abspath(dest_path) != os.path.abspath(backend_dest) and os.path.exists(dest_path):
                 try:
                     os.makedirs(os.path.dirname(backend_dest), exist_ok=True)
                     shutil.copy2(dest_path, backend_dest)
@@ -189,8 +190,8 @@ def separate_sources(
         for i, name in enumerate(names):
             stem_file_path = f"{out_dir}/{job_id}_{name}.wav"
             torchaudio.save(stem_file_path, tensor_stems[i].cpu(), model.samplerate)
-            backend_dest = os.path.abspath(os.path.join("generated_audio", "stems", f"{job_id}_{name}.wav"))
-            if os.path.abspath(stem_file_path) != backend_dest and os.path.exists(stem_file_path):
+            backend_dest = str(get_repo_root() / "backend" / "generated_audio" / "stems" / f"{job_id}_{name}.wav")
+            if os.path.abspath(stem_file_path) != os.path.abspath(backend_dest) and os.path.exists(stem_file_path):
                 try:
                     os.makedirs(os.path.dirname(backend_dest), exist_ok=True)
                     shutil.copy2(stem_file_path, backend_dest)

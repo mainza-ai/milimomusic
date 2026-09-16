@@ -468,12 +468,12 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
                 <div
                     key={bar}
                     className={`absolute top-0 bottom-0 border-l ${
-                        showLabel ? 'border-slate-400 dark:border-slate-600' : 'border-slate-200/50 dark:border-slate-800/30'
+                        showLabel ? 'border-slate-500/40 dark:border-slate-600' : 'border-slate-300/40 dark:border-slate-800/30'
                     } pl-1 flex items-center overflow-visible pointer-events-none`}
                     style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                 >
                     {showLabel && (
-                        <span className="font-bold text-[10px] select-none text-slate-500 dark:text-slate-400 whitespace-nowrap">
+                        <span className="font-bold text-[10px] select-none text-slate-700 dark:text-slate-300 whitespace-nowrap">
                             {bar}
                         </span>
                     )}
@@ -627,7 +627,7 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
                         {/* Measure Ruler — clickable to seek, all bars rendered */}
                         <div
                             onClick={(e) => handleSeekFromX(e.clientX, e.currentTarget)}
-                            className="h-8 sticky top-0 z-20 bg-black/[0.02] dark:bg-black/40 border-b border-black/[0.06] dark:border-white/5 cursor-pointer text-[10px] font-mono text-slate-400 select-none"
+                            className="h-8 sticky top-0 z-20 bg-black/[0.03] dark:bg-black/40 border-b border-black/[0.08] dark:border-white/5 cursor-pointer text-[10px] font-mono text-slate-600 dark:text-slate-400 select-none"
                             title="Click to move the playhead"
                         >
                             <div className="relative w-full h-full">
@@ -638,7 +638,7 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
                         {/* Song Structure / Section Marker Track */}
                         {sections.length > 0 && (
                             <div
-                                className="h-7 sticky top-8 z-20 bg-black/[0.03] dark:bg-black/60 border-b border-black/[0.06] dark:border-white/5 cursor-pointer text-[10px] font-mono select-none overflow-hidden"
+                                className="h-7 sticky top-8 z-20 bg-black/[0.04] dark:bg-black/60 border-b border-black/[0.08] dark:border-white/5 cursor-pointer text-[10px] font-mono select-none overflow-hidden"
                                 title="Song structure sections — click any section to jump"
                             >
                                 <div className="relative w-full h-full">
@@ -650,14 +650,14 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
                                             <div
                                                 key={sec.id}
                                                 onClick={(e) => { e.stopPropagation(); onSeek(sec.start); }}
-                                                className={`absolute top-0.5 bottom-0.5 rounded-md px-2 flex items-center justify-between border text-[11px] font-bold truncate transition-all ${sec.color} ${
-                                                    isActive ? 'ring-1 ring-white/80 shadow-sm opacity-100' : 'opacity-85 hover:opacity-100'
+                                                className={`absolute top-0.5 bottom-0.5 rounded-md px-2 flex items-center justify-between border text-[11px] font-extrabold tracking-tight truncate transition-all ${sec.color} ${
+                                                    isActive ? 'ring-1 ring-white/90 shadow-sm opacity-100' : 'opacity-90 hover:opacity-100'
                                                 }`}
                                                 style={{ left: `${leftPct}%`, width: `${widthPct}%` }}
                                                 title={`${sec.name}: ${formatTime(sec.start)} - ${formatTime(sec.end)} (Click to jump)`}
                                             >
-                                                <span className="truncate">{sec.name}</span>
-                                                <span className="text-[9px] opacity-70 font-mono hidden md:inline ml-1">
+                                                <span className="truncate drop-shadow-sm">{sec.name}</span>
+                                                <span className="text-[9px] opacity-80 font-mono hidden md:inline ml-1 font-semibold">
                                                     {formatTime(sec.start)}
                                                 </span>
                                             </div>

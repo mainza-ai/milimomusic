@@ -12,6 +12,7 @@ import re
 import math
 import logging
 import threading
+from pathlib import Path
 from dataclasses import dataclass
 from typing import List, Dict, Optional, Any, Tuple
 
@@ -74,30 +75,80 @@ def _resolve_audio_file(path: Optional[str]) -> Optional[str]:
         from urllib.parse import urlparse
         cleaned_path = urlparse(cleaned_path).path
 
+    # If it's already an absolute path that exists, return it immediately
+    if os.path.isabs(cleaned_path) and os.path.isfile(cleaned_path) and os.path.getsize(cleaned_path) > 0:
+        return os.path.abspath(cleaned_path)
+
     basename = os.path.basename(cleaned_path)
     relative_no_slash = cleaned_path.lstrip("/")
+    after_audio = cleaned_path.split("/audio/")[-1].lstrip("/") if "/audio/" in cleaned_path else ""
+    after_stems = cleaned_path.split("/stems/")[-1].lstrip("/") if "/stems/" in cleaned_path else ""
+
+    try:
+        from app.core.paths import get_repo_root, get_generated_audio_dir, get_data_dir
+        repo_root = get_repo_root()
+        gen_dir = get_generated_audio_dir()
+        data_dir = get_data_dir()
+    except Exception:
+        repo_root = Path(__file__).resolve().parent.parent.parent
+        gen_dir = repo_root / "generated_audio"
+        data_dir = repo_root / "data"
+
+    search_dirs = [
+        gen_dir,
+        gen_dir / "stems",
+        gen_dir / "mastered",
+        gen_dir / "converted_vocals",
+        gen_dir / "videos",
+        repo_root / "generated_audio",
+        repo_root / "generated_audio" / "stems",
+        repo_root / "backend" / "generated_audio",
+        repo_root / "backend" / "generated_audio" / "stems",
+        repo_root / "backend" / "generated_audio" / "mastered",
+        repo_root / "backend" / "generated_audio" / "converted_vocals",
+        data_dir,
+        data_dir / "audio",
+        data_dir / "uploads",
+        repo_root / "data" / "uploads",
+        repo_root / "backend" / "data" / "uploads",
+        Path.cwd(),
+        Path.cwd() / "generated_audio",
+        Path.cwd() / "generated_audio" / "stems",
+        Path.cwd() / "backend" / "generated_audio",
+        Path.cwd().parent / "generated_audio",
+    ]
 
     candidates = [
         cleaned_path,
         os.path.abspath(cleaned_path),
-        cleaned_path.replace("/audio/", "generated_audio/"),
-        cleaned_path.replace("/audio/", "backend/generated_audio/"),
-        cleaned_path.replace("/stems/", "generated_audio/stems/"),
-        cleaned_path.replace("/stems/", "backend/generated_audio/stems/"),
-        os.path.join("generated_audio", basename),
-        os.path.join("backend/generated_audio", basename),
-        os.path.join("backend", relative_no_slash),
-        os.path.join("generated_audio", relative_no_slash),
-        os.path.join("backend/generated_audio", relative_no_slash),
-        os.path.join("data", "audio", basename),
-        os.path.join("data", "uploads", basename),
-        os.path.join("generated_audio/stems", basename),
-        os.path.join("backend/generated_audio/stems", basename),
     ]
-    for cand in candidates:
-        if os.path.exists(cand) and os.path.isfile(cand) and os.path.getsize(cand) > 0:
-            return os.path.abspath(cand)
+
+    for d in search_dirs:
+        candidates.append(str(d / basename))
+        if relative_no_slash:
+            candidates.append(str(d / relative_no_slash))
+        if after_audio:
+            candidates.append(str(d / after_audio))
+        if after_stems:
+            candidates.append(str(d / after_stems))
+            candidates.append(str(d / "stems" / after_stems))
+
+    # Also check with alternate common audio extensions
+    base_name_no_ext, ext = os.path.splitext(basename)
+    alt_exts = [".wav", ".mp3", ".flac", ".ogg", ".m4a"]
+    for cand in list(candidates):
+        cand_p = Path(cand)
+        if cand_p.is_file() and cand_p.stat().st_size > 0:
+            return str(cand_p.resolve())
+        # Try alternate extensions if base doesn't match
+        for alt in alt_exts:
+            if alt.lower() != ext.lower():
+                alt_cand = cand_p.with_suffix(alt)
+                if alt_cand.is_file() and alt_cand.stat().st_size > 0:
+                    return str(alt_cand.resolve())
+
     return None
+
 
 
 @dataclass

@@ -141,14 +141,16 @@ class MuLaCoverProvider(GenerationProvider):
                 drum_path=drum_midi_path,
             )
         elif ref_audio_path:
+            from app.transcription.karaoke import _resolve_audio_file
+            resolved_ref = _resolve_audio_file(ref_audio_path) or ref_audio_path
             if progress_callback:
                 progress_callback(5, 100, f"Transcribing reference audio ({transcription_engine})...")
 
             if transcription_engine == "upstream":
-                condition = self.symbolic_hub.transcribe_upstream(ref_audio_path, bpm=bpm)
+                condition = self.symbolic_hub.transcribe_upstream(resolved_ref, bpm=bpm)
             else:
                 condition = await self.symbolic_hub.transcribe_milimo_neural(
-                    audio_path=ref_audio_path,
+                    audio_path=resolved_ref,
                     job_id=job_id,
                     bpm=bpm,
                 )

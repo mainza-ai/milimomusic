@@ -175,6 +175,58 @@ def test_transcribe_lead_sheet_endpoint_validation():
     assert response.status_code == 404
 
 
+def test_transcribe_lead_sheet_audio_path_resolution(tmp_path, monkeypatch):
+    """Verify /transcribe/lead-sheet resolves /audio/ URLs and relative paths."""
+    from mulacover.symbolic import SymbolicCondition
+    from app.services.mulacover.symbolic_hub import symbolic_hub
+
+    # Create dummy audio file in generated_audio
+    test_audio = Path("generated_audio") / "test_resolve_lead_sheet.wav"
+    test_audio.parent.mkdir(parents=True, exist_ok=True)
+    
+    # Write a tiny valid wav file (440Hz sine wave, 0.25s)
+    import numpy as np
+    import soundfile as sf
+    sr = 22050
+    t = np.linspace(0, 0.25, int(sr * 0.25), endpoint=False)
+    sig = (0.3 * np.sin(2 * np.pi * 440 * t)).astype(np.float32)
+    sf.write(str(test_audio), sig, sr)
+
+    try:
+        # Mock neural transcription so we test the endpoint without running heavy weights
+        import torch
+        dummy_cond = SymbolicCondition(
+            melody=torch.tensor([[0, 60, 4]], dtype=torch.int64),
+            chords=torch.tensor([[0, 0, 4]], dtype=torch.int64),
+            drums=torch.empty((0, 3), dtype=torch.int64),
+            bpm=120.0
+        )
+        async def mock_neural(*args, **kwargs):
+            return dummy_cond
+
+        monkeypatch.setattr(symbolic_hub, "transcribe_milimo_neural", mock_neural)
+
+        client = SyncTestClient(app)
+        
+        # 1. Test resolution with /audio/ prefix
+        res1 = client.post("/transcribe/lead-sheet", json={
+            "audio_path": "/audio/test_resolve_lead_sheet.wav",
+            "bpm": 120.0
+        })
+        assert res1.status_code == 200, res1.text
+        assert res1.json()["bpm"] == 120.0
+
+        # 2. Test resolution with full localhost URL
+        res2 = client.post("/transcribe/lead-sheet", json={
+            "audio_path": "http://localhost:5173/audio/test_resolve_lead_sheet.wav",
+            "bpm": 120.0
+        })
+        assert res2.status_code == 200, res2.text
+    finally:
+        if test_audio.exists():
+            test_audio.unlink()
+
+
 def test_generate_cover_endpoint_validation(monkeypatch):
     """Verify /generate/cover validates missing symbolic inputs and enqueues valid requests."""
     client = SyncTestClient(app)

@@ -17,6 +17,9 @@ import { VoiceStudioModal } from './components/voice/VoiceStudioModal';
 import { CoverStudioModal } from './components/cover/CoverStudioModal';
 import { ModelsManagerModal } from './components/models/ModelsManagerModal';
 import { LLMSettingsModal } from './components/LLMSettingsModal';
+import { HardwareTelemetryBar } from './components/common/HardwareTelemetryBar';
+import { EngineSwitcherModal } from './components/modals/EngineSwitcherModal';
+import { useModalStore } from './stores/useModalStore';
 import { SessionWorkspace } from './components/workspace/SessionWorkspace';
 import { FloatingStatusWidget } from './components/ui/FloatingStatusWidget';
 import { MilimoLogo } from './components/ui/MilimoLogo';
@@ -159,19 +162,17 @@ function App() {
 
   // Modals
   const [isVoiceStudioOpen, setIsVoiceStudioOpen] = useState(false);
-  const [isCoverStudioOpen, setIsCoverStudioOpen] = useState(false);
-  const [coverStudioTrack, setCoverStudioTrack] = useState<Job | null>(null);
-  const [coverStudioMode, setCoverStudioMode] = useState<'audio' | 'midi'>('audio');
+  const {
+    isCoverStudioOpen,
+    coverStudioTrack,
+    coverStudioMode,
+    openCoverStudio: handleOpenCoverStudio,
+    closeCoverStudio: handleCloseCoverStudio,
+  } = useModalStore();
   const [isModelsManagerOpen, setIsModelsManagerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
   const [isCreatingSession, setIsCreatingSession] = useState(false);
   const [isCommandPaletteOpen, setIsCommandPaletteOpen] = useState(false);
-
-  const handleOpenCoverStudio = useCallback((track?: Job | null, mode: 'audio' | 'midi' = 'audio') => {
-    setCoverStudioTrack(track || null);
-    setCoverStudioMode(mode);
-    setIsCoverStudioOpen(true);
-  }, []);
 
   // Chat-first Producer landing input
   const [producerInput, setProducerInput] = useState('');
@@ -1640,6 +1641,8 @@ function App() {
             </div>
 
             <div className="flex items-center space-x-2 ml-auto">
+              <HardwareTelemetryBar />
+
               <button
                 onClick={() => setIsCommandPaletteOpen(true)}
                 className="px-3 py-1.5 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 border border-black/[0.06] dark:border-white/10 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-100 text-xs font-medium flex items-center gap-2 transition-all shadow-sm"
@@ -2224,14 +2227,21 @@ function App() {
 
       <CoverStudioModal
         isOpen={isCoverStudioOpen}
-        onClose={() => setIsCoverStudioOpen(false)}
+        onClose={handleCloseCoverStudio}
         initialTrack={coverStudioTrack}
         initialMode={coverStudioMode}
+        onOpenPianoRoll={coverStudioTrack ? () => {
+          handleCloseCoverStudio();
+          setActiveWorkspaceJob(coverStudioTrack);
+          setCurrentNav('workspace');
+        } : undefined}
         onCoverStarted={(jobId) => {
           loadHistory(0, historyFilter, searchQuery, true);
           setCurrentJobId(jobId);
         }}
       />
+
+      <EngineSwitcherModal />
 
       <ModelsManagerModal
         isOpen={isModelsManagerOpen}

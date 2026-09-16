@@ -25,8 +25,11 @@ def detect_tempo(audio_path: Union[str, Path], user_bpm: Optional[float] = None)
     if user_bpm is not None and user_bpm > 0 and math.isfinite(user_bpm):
         return float(user_bpm)
 
+    from app.transcription.karaoke import _resolve_audio_file
+    resolved_path = _resolve_audio_file(str(audio_path)) or str(audio_path)
+
     import librosa
-    audio, sr = librosa.load(str(audio_path), sr=None, mono=True)
+    audio, sr = librosa.load(str(resolved_path), sr=None, mono=True)
     if audio.size == 0:
         raise ValueError(f"Empty audio file: {audio_path}")
 
@@ -76,7 +79,10 @@ class SymbolicHub:
         if not transcriptor_dir.is_dir():
             raise FileNotFoundError(f"SymbolicTranscriptor checkpoint directory missing: {transcriptor_dir}")
 
-        resolved_bpm = detect_tempo(audio_path, user_bpm=bpm)
+        from app.transcription.karaoke import _resolve_audio_file
+        resolved_path = _resolve_audio_file(str(audio_path)) or str(audio_path)
+
+        resolved_bpm = detect_tempo(resolved_path, user_bpm=bpm)
         # YourMT3 and ChordNet require float32 on CPU / MPS
         dtype = torch.float32 if self.device.type in ("cpu", "mps") else torch.bfloat16
 
@@ -86,7 +92,7 @@ class SymbolicHub:
             dtype=dtype,
             lazy_load=True,
         )
-        return transcriber.transcribe(str(audio_path), bpm=resolved_bpm)
+        return transcriber.transcribe(str(resolved_path), bpm=resolved_bpm)
 
     async def transcribe_milimo_neural(
         self,
@@ -104,19 +110,22 @@ class SymbolicHub:
         from app.transcription.real_separator import separate_sources, unload_model
         from app.transcription.muscriptor_provider import muscriptor_provider
         from mulacover.symbolic import SymbolicCondition
+        from app.transcription.karaoke import _resolve_audio_file
 
-        resolved_bpm = detect_tempo(audio_path, user_bpm=bpm)
+        resolved_path = _resolve_audio_file(str(audio_path)) or str(audio_path)
+        resolved_bpm = detect_tempo(resolved_path, user_bpm=bpm)
         stems_dir = Path("generated_audio/stems") / job_id
         stems_dir.mkdir(parents=True, exist_ok=True)
 
         loop = asyncio.get_running_loop()
         sep_res = await loop.run_in_executor(
-            None, separate_sources, str(audio_path), str(stems_dir.parent), job_id, 1
+            None, separate_sources, str(resolved_path), str(stems_dir.parent), job_id, 1
         )
         stems = dict(sep_res.stems if hasattr(sep_res, "stems") else sep_res)
         unload_model()
 
-        vocal_path = stems.get("vocals") or str(audio_path)
+        vocal_path = stems.get("vocals") or str(resolved_path)
+        vocal_path = _resolve_audio_file(vocal_path) or vocal_path
         # MuScriptor transcription of isolated vocal stem for lead vocal melody
         transcription_res = await muscriptor_provider.transcribe(vocal_path, job_id=f"{job_id}_lead")
 
@@ -128,8 +137,8 @@ class SymbolicHub:
                 offset = n.get("end_time", n.get("end", n.get("offset", 0.0)))
                 pitch = n.get("pitch", 60)
             else:
-                onset = getattr(n, "start_time", getattr(n, "start", getattr(n, "onset", 0.0)))
-                offset = getattr(n, "end_time", getattr(n, "end", getattr(n, "offset", 0.0)))
+                onset = getattr(n, "start_time", getattr(n, "start", 0.0))
+                offset = getattr(n, "end_time", getattr(n, "end", 0.0))
                 pitch = getattr(n, "pitch", 60)
             lead_notes.append({
                 "onset": float(onset),
@@ -139,17 +148,29 @@ class SymbolicHub:
                 "is_drum": False
             })
 
+        # Extract rhythmic groove from isolated drum stem if present
+        drum_path = stems.get("drums")
+        drum_notes = []
+        if drum_path:
+            resolved_drum = _resolve_audio_file(drum_path) or drum_path
+            if Path(resolved_drum).is_file():
+                from app.transcription.drum_tracker import transcribe_drums_from_stem
+                drum_notes = await loop.run_in_executor(
+                    None, transcribe_drums_from_stem, str(resolved_drum), resolved_bpm
+                )
+
         # Run harmony transcription on the mixed audio / accompaniment
         transcriptor_dir = self.checkpoints_dir / "SymbolicTranscriptor"
         if (transcriptor_dir / "chord").is_dir():
             from mulacover._symbolic_transcription.harmony import ChordTranscriber
             chord_dtype = torch.float32 if self.device.type in ("cpu", "mps") else torch.bfloat16
             chord_transcriber = ChordTranscriber(transcriptor_dir / "chord", self.device, chord_dtype)
-            chord_events = chord_transcriber.transcribe(str(audio_path), resolved_bpm)
+            chord_events = chord_transcriber.transcribe(str(resolved_path), resolved_bpm)
         else:
             chord_events = []
 
-        return SymbolicCondition.from_transcription(lead_notes, chord_events, resolved_bpm)
+        all_notes = lead_notes + drum_notes
+        return SymbolicCondition.from_transcription(all_notes, chord_events, resolved_bpm)
 
     def export_lead_sheet(self, condition, output_dir: Union[str, Path]) -> Dict[str, str]:
         """Export SymbolicCondition as replayable/editable MIDI files for DAW inspection."""

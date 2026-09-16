@@ -1753,3 +1753,16 @@ Integrated HeartMuLa/MuLaCover into Milimo Music as a production-grade AI cover 
 5. Full UI/UX touchpoints across `TrackDetailView.tsx` (Remix button, Cover badge, lead sheet MIDI downloads), `SongsView.tsx` (Remix button and Cover badge across Table and Grid views), and `ComposerSidebar.tsx` (conditioning guidance).
 6. Automated backend test suite expanded (9/9 tests passing) and frontend production build verified (`npm run build`, 0 errors).
 
+## [2026-09-15] create | Production Architecture Audit & VoiceStudio Integration
+Conducted comprehensive production architecture audit and executed the system enhancement plan combining VoiceStudio architectural innovations with Milimo Music:
+1. Core DSP & Drum Tracking: Created `drum_tracker.py` utilizing librosa spectral flux onset envelope detection and sub-band filtering for Kick (36), Snare (38), and Hi-Hat (42); connected into `SymbolicHub.transcribe_milimo_neural()`. Fortified `bundle_downloader.py` with pre-flight disk capacity checks and rolling telemetry.
+2. Global Modal Store Unification: Created `useModalStore.ts` (Zustand), eliminating duplicate `<CoverStudioModal>` instances across 5 sub-views and routing all calls through a single authoritative mount in `App.tsx`. Added clip-level context actions in `ArrangeTimeline.tsx`.
+3. Hardware Resource Coordinator: Built `GlobalHardwareCoordinator` (`hardware_lock.py`) providing serialized async GPU device locks and multi-backend cache flushing (`torch.cuda.empty_cache()` / `torch.mps.empty_cache()` / `gc.collect()`), bridging `pipeline.py` and `video_orchestrator.py`. Added `/system/telemetry` and `/system/flush`.
+4. Hardware Telemetry Bar & Engine Switcher: Built `HardwareTelemetryBar.tsx` (real-time VRAM meter and active consumer pill) and `EngineSwitcherModal.tsx` (`Ctrl+E` trigger) with null-safe defensive accessors and Vite `/system` proxy routing.
+5. True Neural SVC: Built `neural_svc.py` (`NeuralSVCService`) with zero-shot vocal timbre transfer, formant morphing, pitch transposition, and cross-fade dry/wet mixing, replacing biquad filter approximations in `voice_service.py`.
+6. Sidecar Virtualenv Isolation: Created `engine_manager.py` (`SidecarEngineManager`) managing `uv`-isolated virtual environments under `backend/engines/<id>/.venv`.
+7. Expressive Performance Tokens: Implemented `performance_tokens.py` (`[breath]`, `[whisper]`, `[pause 250ms]`, `[falsetto]`, `[belt]`, `[Chorus | Duet: Maya + Marcus]`) and added direct insertion chips to `ComposerSidebar.tsx`.
+8. Audio-Reactive Video Sync: Implemented `stem_audio_reactive.py` extracting clean vocal envelopes for lip-sync and rhythm transients for Wan 2.1 camera motion.
+9. Universal Audio Path & URL Resolution: Enhanced `_resolve_audio_file` to resolve static mount aliases (`/audio/`, `/stems/`), full HTTP localhost URLs, and upload paths across `/transcribe/lead-sheet` and MuLaCover pipelines.
+10. Full Validation: Verified 243/243 backend pytest tests (100% pass), 130/130 API/UI parity, and clean Vite production build.
+

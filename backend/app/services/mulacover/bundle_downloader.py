@@ -13,7 +13,7 @@ import logging
 import threading
 import requests
 from pathlib import Path
-from typing import Dict, Any, List, Optional, Tuple
+from typing import Dict, Any, List, Optional, Tuple, Union
 from huggingface_hub import HfApi, hf_hub_download
 
 logger = logging.getLogger(__name__)
@@ -37,9 +37,9 @@ def resolve_mulacover_dir() -> Path:
     return get_models_dir("audio") / "HeartMuLa__MuLaCover"
 
 
-def is_mulacover_installed(base_dir: Optional[Path] = None) -> bool:
+def is_mulacover_installed(base_dir: Optional[Union[str, Path]] = None) -> bool:
     """Verify that all core components of the MuLaCover bundle are present on disk."""
-    root = base_dir or resolve_mulacover_dir()
+    root = Path(base_dir) if base_dir else resolve_mulacover_dir()
     if not root.is_dir():
         return False
 
@@ -72,9 +72,9 @@ def is_mulacover_installed(base_dir: Optional[Path] = None) -> bool:
     return True
 
 
-def get_bundle_manifest(base_dir: Optional[Path] = None) -> Dict[str, Any]:
+def get_bundle_manifest(base_dir: Optional[Union[str, Path]] = None) -> Dict[str, Any]:
     """Inspect and resolve all files needed across the composite bundle."""
-    root = base_dir or resolve_mulacover_dir()
+    root = Path(base_dir) if base_dir else resolve_mulacover_dir()
     api = HfApi()
 
     manifest: List[Dict[str, Any]] = []
@@ -203,14 +203,32 @@ def download_mulacover_bundle(
 
     rec["total_files"] = len(manifest)
     rec["total_bytes"] = total_bytes
+    rec["speed_mbps"] = 0.0
     rec["status"] = "downloading"
 
+    # Pre-flight disk space assertion (require total_bytes + 1GB safety margin)
+    try:
+        usage = shutil.disk_usage(root)
+        required_bytes = total_bytes + (1024 * 1024 * 1024)
+        if usage.free < required_bytes:
+            free_gb = usage.free / (1024**3)
+            req_gb = required_bytes / (1024**3)
+            err_msg = f"Insufficient disk space: {free_gb:.2f} GB available, {req_gb:.2f} GB required."
+            rec["status"] = "failed"
+            rec["error"] = err_msg
+            logger.error(err_msg)
+            return
+    except Exception as e:
+        logger.warning(f"Could not verify disk usage for {root}: {e}")
+
     # Pre-count already completed files for instant resume
+    completed_bytes = 0
     for item in manifest:
         t_file = item["target_file"]
         if os.path.isfile(t_file) and os.path.getsize(t_file) > 0:
             rec["files_done"] += 1
-            rec["received_bytes"] += item["size"]
+            completed_bytes += item["size"]
+    rec["received_bytes"] = completed_bytes
 
     try:
         for item in manifest:
@@ -227,10 +245,45 @@ def download_mulacover_bundle(
                 continue
 
             rec["current_file"] = item["label"]
+            base_done_bytes = completed_bytes
 
             # Download according to source kind
             kind = item["kind"]
             if kind in ("hf_model", "hf_space"):
+                stop_monitor = threading.Event()
+
+                def _monitor_progress():
+                    last_b = 0
+                    last_t = time.monotonic()
+                    while not stop_monitor.is_set():
+                        time.sleep(0.5)
+                        curr_size = 0
+                        if os.path.isfile(t_file):
+                            curr_size = os.path.getsize(t_file)
+                        else:
+                            # Check for active temporary files in download directory
+                            try:
+                                for root_dir, _, files in os.walk(t_dir):
+                                    for f_name in files:
+                                        if f_name.endswith(".incomplete") or ".huggingface" in root_dir:
+                                            p = os.path.join(root_dir, f_name)
+                                            if os.path.isfile(p):
+                                                curr_size += os.path.getsize(p)
+                            except Exception:
+                                pass
+                        
+                        now = time.monotonic()
+                        dt = max(0.1, now - last_t)
+                        delta_b = max(0, curr_size - last_b)
+                        speed = (delta_b / dt) / (1024 * 1024)
+                        rec["received_bytes"] = min(total_bytes, base_done_bytes + curr_size)
+                        rec["speed_mbps"] = round(speed, 2)
+                        last_b = curr_size
+                        last_t = now
+
+                mon_thread = threading.Thread(target=_monitor_progress, daemon=True)
+                mon_thread.start()
+
                 last_err = None
                 for attempt in range(3):
                     try:
@@ -250,25 +303,40 @@ def download_mulacover_bundle(
                     except Exception as e:
                         last_err = e
                         logger.warning(f"Download {item['label']} attempt {attempt+1}/3 failed: {e}")
-                        import time
                         time.sleep(2 ** attempt)
+
+                stop_monitor.set()
+                mon_thread.join(timeout=1.0)
+
                 if last_err is not None:
                     raise last_err
 
             elif kind == "http":
-                # Streamed direct HTTP download
+                # Streamed direct HTTP download with chunk byte accounting
                 resp = requests.get(item["url"], stream=True, timeout=30)
                 resp.raise_for_status()
                 with open(t_file, "wb") as f:
-                    for chunk in resp.iter_content(chunk_size=65536):
+                    last_t = time.monotonic()
+                    bytes_window = 0
+                    for chunk in resp.iter_content(chunk_size=1024 * 1024):
                         if cancel_event.is_set():
                             rec["status"] = "cancelled"
                             return
                         if chunk:
                             f.write(chunk)
+                            chunk_len = len(chunk)
+                            rec["received_bytes"] += chunk_len
+                            bytes_window += chunk_len
+                            now = time.monotonic()
+                            dt = now - last_t
+                            if dt >= 0.5:
+                                rec["speed_mbps"] = round((bytes_window / dt) / (1024 * 1024), 2)
+                                bytes_window = 0
+                                last_t = now
 
             rec["files_done"] += 1
-            rec["received_bytes"] += item["size"]
+            completed_bytes += item["size"]
+            rec["received_bytes"] = completed_bytes
 
         # Clean stray lock files
         for lock in glob.glob(str(root / "**" / "*.lock"), recursive=True):

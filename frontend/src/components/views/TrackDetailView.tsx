@@ -51,7 +51,7 @@ import {
     Disc,
     X
 } from 'lucide-react';
-import { CoverStudioModal } from '../cover/CoverStudioModal';
+import { useModalStore } from '../../stores/useModalStore';
 
 interface TrackDetailViewProps {
     track: Job;
@@ -119,7 +119,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
     const [stemSourceMode, setStemSourceMode] = useState<'muscriptor' | 'neural'>('muscriptor');
     const [isGeneratingCover, setIsGeneratingCover] = useState(false);
     const [isArtworkModalOpen, setIsArtworkModalOpen] = useState(false);
-    const [isCoverStudioOpen, setIsCoverStudioOpen] = useState(false);
+    const { openCoverStudio } = useModalStore();
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -752,7 +752,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                             </button>
 
                             <button
-                                onClick={() => setIsCoverStudioOpen(true)}
+                                onClick={() => openCoverStudio(track, 'audio')}
                                 className="px-3.5 py-2 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 font-bold text-xs flex items-center gap-1.5 transition-colors border border-teal-500/20 shadow-sm cursor-pointer"
                                 title="Create a MuLaCover Remix from this track"
                             >
@@ -1958,18 +1958,6 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                     </div>
                 </div>
             )}
-
-            {/* MuLaCover Studio Modal */}
-            <CoverStudioModal
-                isOpen={isCoverStudioOpen}
-                onClose={() => setIsCoverStudioOpen(false)}
-                initialTrack={track}
-                initialMode="audio"
-                onOpenPianoRoll={() => {
-                    setIsCoverStudioOpen(false);
-                    onOpenWorkspace(track);
-                }}
-            />
         </div>
     );
 };

@@ -65,23 +65,38 @@ def get_mms_fa_components():
 
 
 def _resolve_audio_file(path: Optional[str]) -> Optional[str]:
-    """Resolve any audio file candidate path to an existing local file."""
+    """Resolve any audio file candidate path or URL to an existing local file."""
     if not path or not isinstance(path, str):
         return None
+
+    cleaned_path = path.strip()
+    if "://" in cleaned_path:
+        from urllib.parse import urlparse
+        cleaned_path = urlparse(cleaned_path).path
+
+    basename = os.path.basename(cleaned_path)
+    relative_no_slash = cleaned_path.lstrip("/")
+
     candidates = [
-        path,
-        os.path.abspath(path),
-        os.path.join("backend", path.lstrip("/")),
-        path.replace("/audio/", "backend/generated_audio/"),
-        path.replace("/audio/", "generated_audio/"),
-        os.path.join("backend/generated_audio", os.path.basename(path)),
-        os.path.join("backend/generated_audio/stems", os.path.basename(path)),
-        os.path.join("generated_audio", os.path.basename(path)),
-        os.path.join("generated_audio/stems", os.path.basename(path)),
+        cleaned_path,
+        os.path.abspath(cleaned_path),
+        cleaned_path.replace("/audio/", "generated_audio/"),
+        cleaned_path.replace("/audio/", "backend/generated_audio/"),
+        cleaned_path.replace("/stems/", "generated_audio/stems/"),
+        cleaned_path.replace("/stems/", "backend/generated_audio/stems/"),
+        os.path.join("generated_audio", basename),
+        os.path.join("backend/generated_audio", basename),
+        os.path.join("backend", relative_no_slash),
+        os.path.join("generated_audio", relative_no_slash),
+        os.path.join("backend/generated_audio", relative_no_slash),
+        os.path.join("data", "audio", basename),
+        os.path.join("data", "uploads", basename),
+        os.path.join("generated_audio/stems", basename),
+        os.path.join("backend/generated_audio/stems", basename),
     ]
     for cand in candidates:
-        if os.path.exists(cand) and os.path.isfile(cand):
-            return cand
+        if os.path.exists(cand) and os.path.isfile(cand) and os.path.getsize(cand) > 0:
+            return os.path.abspath(cand)
     return None
 
 

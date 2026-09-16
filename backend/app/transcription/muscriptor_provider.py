@@ -99,13 +99,22 @@ class MuScriptorProvider:
         Transcribes audio into multi-instrument MIDI, MusicXML, and Note Events.
         """
         target_path = audio_file_path or audio_path or ""
-        os.makedirs("generated_audio", exist_ok=True)
-        midi_file = f"generated_audio/{job_id}.mid"
-        musicxml_file = f"generated_audio/{job_id}.musicxml"
+        from app.core.paths import get_generated_audio_dir, get_repo_root
+        from app.transcription.karaoke import _resolve_audio_file
 
-        local_audio_path = target_path.replace("/audio/", "generated_audio/")
-        if not os.path.exists(local_audio_path):
-            local_audio_path = target_path
+        gen_dir = get_generated_audio_dir()
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        midi_file = str(gen_dir / f"{job_id}.mid")
+        musicxml_file = str(gen_dir / f"{job_id}.musicxml")
+
+        local_audio_path = _resolve_audio_file(target_path)
+        if not local_audio_path or not os.path.exists(local_audio_path):
+            cand = str(gen_dir / os.path.basename(target_path))
+            if os.path.exists(cand):
+                local_audio_path = cand
+            else:
+                local_audio_path = target_path.replace("/audio/", "generated_audio/")
+
 
         if progress_callback:
             progress_callback(1, 4, "MuScriptor: Initializing transcription engine...")
@@ -201,8 +210,17 @@ class MuScriptorProvider:
             with open(musicxml_file, "w", encoding="utf-8") as f:
                 f.write(xml_content)
 
+            # Mirror MIDI and MusicXML to backend/generated_audio
+            try:
+                backend_dir = get_repo_root() / "backend" / "generated_audio"
+                backend_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(midi_file, str(backend_dir / f"{job_id}.mid"))
+                shutil.copy2(musicxml_file, str(backend_dir / f"{job_id}.musicxml"))
+            except Exception:
+                pass
+
             # 5. Attempt MuseScore 4 PDF & Tab engraving if available
-            sheets_dir = Path(f"generated_audio/sheets/{job_id}")
+            sheets_dir = gen_dir / "sheets" / job_id
             try:
                 from muscriptor.utils.sheets import write_sheets, find_musescore
                 find_musescore()

@@ -133,6 +133,9 @@ class MuLaCoverProvider(GenerationProvider):
         symbolic_dir = Path("generated_audio/symbolic") / job_id
         symbolic_dir.mkdir(parents=True, exist_ok=True)
 
+        if melody_midi_path and not chord_midi_path:
+            chord_midi_path = melody_midi_path
+
         if melody_midi_path and chord_midi_path:
             if progress_callback:
                 progress_callback(5, 100, "Loading symbolic MIDI lead sheet...")

@@ -37,11 +37,14 @@ def _find_default_snapshot() -> str:
     env_path = os.environ.get("MINIMAX_MODEL_PATH") or os.environ.get("MILIMO_MINIMAX_SNAPSHOT")
     if env_path and os.path.isdir(env_path):
         return env_path
-    hf_hub = Path.home() / ".cache" / "huggingface" / "hub" / "models--mlx-community--MiniMax-Music3-bf16" / "snapshots"
-    if hf_hub.exists():
-        snapshots = sorted([s for s in hf_hub.iterdir() if s.is_dir()])
-        if snapshots:
-            return str(snapshots[-1])
+    try:
+        hf_hub = Path.home() / ".cache" / "huggingface" / "hub" / "models--mlx-community--MiniMax-Music3-bf16" / "snapshots"
+        if hf_hub.exists():
+            snapshots = sorted([s for s in hf_hub.iterdir() if s.is_dir()])
+            if snapshots:
+                return str(snapshots[-1])
+    except Exception:
+        pass
     return env_path or ""
 
 DEFAULT_MINIMAX_SNAPSHOT = _find_default_snapshot()
@@ -291,16 +294,28 @@ def synthesize_dynamic_audio_waveform(duration_sec: float, seed: Optional[int], 
 
 
 def _read_wav_float(file_path: str):
+    """Read an audio file into float32 numpy array and sample rate.
+    Resolves paths across root and backend directories and supports WAV, MP3, FLAC, OGG.
+    """
     import numpy as np
+    from app.transcription.karaoke import _resolve_audio_file
+
+    resolved = _resolve_audio_file(file_path) or file_path
+    if not os.path.exists(resolved):
+        raise FileNotFoundError(f"Audio file '{file_path}' (resolved to '{resolved}') not found on disk.")
+
+    # 1. Try soundfile (WAV, FLAC, OGG, etc.)
     try:
         import soundfile as sf
-        data, sr = sf.read(file_path, dtype="float32")
+        data, sr = sf.read(resolved, dtype="float32")
         return sr, data
     except Exception:
         pass
+
+    # 2. Try scipy.io.wavfile (standard PCM WAV)
     try:
         from scipy.io import wavfile
-        sr, data = wavfile.read(file_path)
+        sr, data = wavfile.read(resolved)
         if data.dtype == np.int16:
             data = data.astype(np.float32) / 32768.0
         elif data.dtype == np.int32:
@@ -310,24 +325,44 @@ def _read_wav_float(file_path: str):
         return sr, data
     except Exception:
         pass
-    import wave
-    with wave.open(file_path, "rb") as wf:
-        sr = wf.getframerate()
-        n_ch = wf.getnchannels()
-        sampwidth = wf.getsampwidth()
-        frames = wf.readframes(wf.getnframes())
-        if sampwidth == 2:
-            data = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
-        elif sampwidth == 4:
-            data = np.frombuffer(frames, dtype=np.int32).astype(np.float32) / 2147483648.0
-        else:
-            data = (np.frombuffer(frames, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
-        if n_ch > 1:
-            data = data.reshape(-1, n_ch)
+
+    # 3. Try standard library wave module
+    try:
+        import wave
+        with wave.open(resolved, "rb") as wf:
+            sr = wf.getframerate()
+            n_ch = wf.getnchannels()
+            sampwidth = wf.getsampwidth()
+            frames = wf.readframes(wf.getnframes())
+            if sampwidth == 2:
+                data = np.frombuffer(frames, dtype=np.int16).astype(np.float32) / 32768.0
+            elif sampwidth == 4:
+                data = np.frombuffer(frames, dtype=np.int32).astype(np.float32) / 2147483648.0
+            else:
+                data = (np.frombuffer(frames, dtype=np.uint8).astype(np.float32) - 128.0) / 128.0
+            if n_ch > 1:
+                data = data.reshape(-1, n_ch)
+            return sr, data
+    except Exception:
+        pass
+
+    # 4. Try torchaudio (handles MP3, AAC, and exotic codecs)
+    try:
+        import torch
+        import torchaudio
+        waveform, sr = torchaudio.load(resolved)
+        data = waveform.cpu().numpy().T  # (channels, samples) -> (samples, channels)
+        if data.shape[1] == 1:
+            data = data.squeeze(-1)
         return sr, data
+    except Exception:
+        pass
+
+    raise RuntimeError(f"Failed to decode audio file '{resolved}' with soundfile, scipy, wave, or torchaudio.")
 
 
 def _write_wav_float(file_path: str, sr: int, data: Any):
+    """Write float32 numpy array to 16-bit PCM WAV."""
     import numpy as np
     os.makedirs(os.path.dirname(file_path) or ".", exist_ok=True)
     try:
@@ -362,8 +397,20 @@ def concatenate_and_crossfade_audio(
 ) -> float:
     """Concatenate parent audio with extension audio using an equal-power sine/cosine crossfade."""
     import numpy as np
+    from app.core.paths import get_generated_audio_dir, get_repo_root
+
     sr_p, data_p = _read_wav_float(parent_wav_path)
     sr_e, data_e = _read_wav_float(extension_wav_path)
+
+    # Resample extension audio if sample rates differ
+    if sr_p != sr_e:
+        try:
+            import scipy.signal
+            num_samples = int(len(data_e) * sr_p / sr_e)
+            data_e = scipy.signal.resample(data_e, num_samples)
+            sr_e = sr_p
+        except Exception as _resample_err:
+            logger.warning(f"Resampling failed ({_resample_err}); using extension audio as-is.")
 
     # Slice parent audio to extend_from_sec cut point if requested
     if extend_from_sec is not None and extend_from_sec > 0:
@@ -396,7 +443,19 @@ def concatenate_and_crossfade_audio(
         combined = np.vstack([pre, cross, post])
 
     _write_wav_float(output_wav_path, sr_p, combined)
+
+    # Mirror to backend/generated_audio as well
+    try:
+        backend_dir = get_repo_root() / "backend" / "generated_audio"
+        backend_dir.mkdir(parents=True, exist_ok=True)
+        backend_target = str(backend_dir / os.path.basename(output_wav_path))
+        if os.path.abspath(output_wav_path) != os.path.abspath(backend_target):
+            shutil.copy2(output_wav_path, backend_target)
+    except Exception:
+        pass
+
     return float(len(combined) / sr_p)
+
 
 
 
@@ -788,10 +847,18 @@ class MiniMaxMusic3Provider(GenerationProvider):
             return ext_result
 
         # 3. Concatenate and crossfade
-        ext_local_path = _resolve_audio_file(ext_result.audio_path) or ext_result.audio_path.replace("/audio/", "generated_audio/")
         gen_dir = get_generated_audio_dir()
         gen_dir.mkdir(parents=True, exist_ok=True)
-        out_wav_path = str(gen_dir / f"song_{job_id}.wav")
+        ext_local_path = _resolve_audio_file(ext_result.audio_path)
+        if not ext_local_path or not os.path.exists(ext_local_path):
+            candidate = str(gen_dir / f"{temp_ext_job_id}.wav")
+            if os.path.exists(candidate):
+                ext_local_path = candidate
+            else:
+                ext_local_path = ext_result.audio_path.replace("/audio/", "generated_audio/")
+
+        out_wav_path = str(gen_dir / f"{job_id}.wav")
+        alt_wav = str(gen_dir / f"song_{job_id}.wav")
 
         loop = asyncio.get_event_loop()
         total_duration = await loop.run_in_executor(
@@ -804,16 +871,32 @@ class MiniMaxMusic3Provider(GenerationProvider):
             extend_from_sec,
         )
 
-        # Mirror to {job_id}.wav for route versatility
-        alt_wav = str(gen_dir / f"{job_id}.wav")
+        # Mirror to song_{job_id}.wav for route versatility
         try:
             if os.path.abspath(out_wav_path) != os.path.abspath(alt_wav):
                 shutil.copy2(out_wav_path, alt_wav)
         except Exception:
             pass
 
+        # Also mirror to backend/generated_audio
+        try:
+            from app.core.paths import get_repo_root
+            backend_dir = get_repo_root() / "backend" / "generated_audio"
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(out_wav_path, str(backend_dir / f"{job_id}.wav"))
+            shutil.copy2(out_wav_path, str(backend_dir / f"song_{job_id}.wav"))
+        except Exception:
+            pass
+
+        # Cleanup intermediate extension segment to preserve disk space
+        if ext_local_path and os.path.exists(ext_local_path) and "_ext_segment" in ext_local_path:
+            try:
+                os.remove(ext_local_path)
+            except Exception:
+                pass
+
         return GeneratedAudioResult(
-            audio_path=f"/audio/song_{job_id}.wav",
+            audio_path=f"/audio/{job_id}.wav",
             duration_sec=total_duration,
             sample_rate=44100,
             structured_caption=ext_result.structured_caption,

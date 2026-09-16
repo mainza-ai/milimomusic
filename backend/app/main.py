@@ -411,17 +411,19 @@ if _cors_env:
     _cors_credentials = True
 else:
     _cors_origins = [
-        "http://localhost:5173", "http://localhost:4173",
-        "http://127.0.0.1:5173", "http://127.0.0.1:4173",
+        "http://localhost:5173", "http://localhost:4173", "http://localhost:3000",
+        "http://127.0.0.1:5173", "http://127.0.0.1:4173", "http://127.0.0.1:3000",
     ]
-    _cors_credentials = False
+    _cors_credentials = True
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=_cors_origins,
+    allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$",
     allow_credentials=_cors_credentials,
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["*"],
 )
 
 # Every route requires the bearer token when MILIMO_AUTH_TOKEN is set;
@@ -438,16 +440,24 @@ async def rate_limit_middleware(request: Request, call_next):
 
 # Global exception handler: uniform envelope, no internal leakage (G-class fix).
 
+def _build_cors_headers(origin: Optional[str]) -> dict:
+    if not origin:
+        return {}
+    if "*" in _cors_origins or origin in _cors_origins or re.match(r"^https?://(localhost|127\.0\.0\.1)(:[0-9]+)?$", origin):
+        return {
+            "Access-Control-Allow-Origin": origin,
+            "Access-Control-Allow-Credentials": "true",
+            "Access-Control-Allow-Methods": "*",
+            "Access-Control-Allow-Headers": "*",
+        }
+    return {}
+
+
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception(f"Unhandled error on {request.method} {request.url.path}: {exc}")
     origin = request.headers.get("origin")
-    headers = {}
-    if origin and ("*" in _cors_origins or origin in _cors_origins):
-        headers["Access-Control-Allow-Origin"] = origin
-        headers["Access-Control-Allow-Credentials"] = "true" if _cors_credentials else "false"
-        headers["Access-Control-Allow-Methods"] = "*"
-        headers["Access-Control-Allow-Headers"] = "*"
+    headers = _build_cors_headers(origin)
     return JSONResponse(
         status_code=500,
         content={"error": {"code": "internal_error", "message": "Unexpected server error."}},
@@ -463,7 +473,13 @@ from starlette.requests import Request
 @app.exception_handler(RequestValidationError)
 async def validation_exception_handler(request: Request, exc: RequestValidationError):
     logger.warning(f"Validation error on {request.method} {request.url.path}: {exc.errors()}")
-    return await request_validation_exception_handler(request, exc)
+    res = await request_validation_exception_handler(request, exc)
+    origin = request.headers.get("origin")
+    cors_hdrs = _build_cors_headers(origin)
+    for k, v in cors_hdrs.items():
+        res.headers[k] = v
+    return res
+
 
 
 # Static Files (Audio & Covers Serving) & Canonical Storage Initialization

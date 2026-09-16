@@ -114,8 +114,18 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
             if (initialTrack) {
                 setTitle(initialTrack.title ? `${initialTrack.title} (Remix)` : 'New Remix');
                 setRefAudioPath(initialTrack.audio_path || '');
-                if (initialTrack.melody_midi_path) setMelodyMidiPath(initialTrack.melody_midi_path);
-                if (initialTrack.chord_midi_path) setChordMidiPath(initialTrack.chord_midi_path);
+                if (initialTrack.melody_midi_path) {
+                    setMelodyMidiPath(initialTrack.melody_midi_path);
+                } else if (initialTrack.midi_path) {
+                    setMelodyMidiPath(initialTrack.midi_path);
+                }
+
+                if (initialTrack.chord_midi_path) {
+                    setChordMidiPath(initialTrack.chord_midi_path);
+                } else if (initialTrack.midi_path) {
+                    setChordMidiPath(initialTrack.midi_path);
+                }
+
                 if (initialTrack.drum_midi_path) setDrumMidiPath(initialTrack.drum_midi_path);
                 if (initialTrack.lyrics) setLyrics(initialTrack.lyrics);
 
@@ -249,9 +259,15 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
             toast('Reference audio is required for audio cover mode', 'error');
             return;
         }
-        if (mode === 'midi' && (!melodyMidiPath || !chordMidiPath)) {
-            toast('Both Melody MIDI and Chord MIDI are required for MIDI mode', 'error');
-            return;
+        let effectiveMelodyMidi = melodyMidiPath;
+        let effectiveChordMidi = chordMidiPath;
+        if (mode === 'midi') {
+            if (!effectiveMelodyMidi && effectiveChordMidi) effectiveMelodyMidi = effectiveChordMidi;
+            if (effectiveMelodyMidi && !effectiveChordMidi) effectiveChordMidi = effectiveMelodyMidi;
+            if (!effectiveMelodyMidi) {
+                toast('A MIDI lead sheet file is required for MIDI cover mode', 'error');
+                return;
+            }
         }
 
         const tagsString = `topic:[${topic}]; genre:[${genre}]; instrument:[${instrument}]; mood:[${mood}]`;
@@ -261,8 +277,8 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
             const res = await remixApi.generateCover({
                 title,
                 ref_audio_path: mode === 'audio' ? refAudioPath : undefined,
-                melody_midi_path: mode === 'midi' ? melodyMidiPath : undefined,
-                chord_midi_path: mode === 'midi' ? chordMidiPath : undefined,
+                melody_midi_path: mode === 'midi' ? effectiveMelodyMidi : undefined,
+                chord_midi_path: mode === 'midi' ? effectiveChordMidi : undefined,
                 drum_midi_path: mode === 'midi' ? (drumMidiPath || undefined) : undefined,
                 bpm,
                 lyrics,

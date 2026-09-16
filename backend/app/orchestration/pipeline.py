@@ -231,7 +231,11 @@ class GenerateAndTranscribePipeline:
             })
 
             from app.transcription.karaoke import _resolve_audio_file
-            local_master = _resolve_audio_file(gen_result.audio_path) or gen_result.audio_path.replace("/audio/", "generated_audio/")
+            from app.core.paths import get_generated_audio_dir
+
+            local_master = _resolve_audio_file(gen_result.audio_path)
+            if not local_master or not os.path.exists(local_master):
+                local_master = str(get_generated_audio_dir() / os.path.basename(gen_result.audio_path))
 
             # Run real neural separation off the event loop; if it ever fails
             # (heavy model load, missing weights, resource pressure) the job must
@@ -241,11 +245,13 @@ class GenerateAndTranscribePipeline:
             # single point of failure for the whole pipeline.
             real_stems: dict[str, str] = {}
             stems_source_id = "bs_roformer_6stem"
+            stems_dir = str(get_generated_audio_dir() / "stems")
+            os.makedirs(stems_dir, exist_ok=True)
             try:
                 loop = asyncio.get_running_loop()
                 separation_res = await loop.run_in_executor(
                     None, separate_sources, local_master,
-                    "generated_audio/stems", job_id_str, 1,
+                    stems_dir, job_id_str, 1,
                 )
                 if hasattr(separation_res, "stems"):
                     real_stems = dict(separation_res.stems)

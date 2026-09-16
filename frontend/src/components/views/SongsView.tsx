@@ -3,7 +3,7 @@ import { type Job, type Project, projectApi, coverApi } from '../../api';
 import { Play, Pause, Heart, Sliders, Search, Music, Disc, Sparkles, Trash2, Mic2, Copy, Check, X, Layers, Info, Video, FolderKanban } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { AppFooter } from '../ui/AppFooter';
-import { CoverStudioModal } from '../cover/CoverStudioModal';
+import { useModalStore } from '../../stores/useModalStore';
 
 interface SongsViewProps {
     songs: Job[];
@@ -34,10 +34,9 @@ export const SongsView: React.FC<SongsViewProps> = ({
     const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
     const [selectedTag, setSelectedTag] = useState<string>('all');
     const [selectedLyricsSong, setSelectedLyricsSong] = useState<Job | null>(null);
-    const [copied, setCopied] = useState(false);
+    const { openCoverStudio } = useModalStore();
+    const [copiedId, setCopiedId] = useState<string | null>(null);
     const [projects, setProjects] = useState<Project[]>([]);
-    const [coverTrack, setCoverTrack] = useState<Job | null>(null);
-    const [isCoverModalOpen, setIsCoverModalOpen] = useState(false);
 
     useEffect(() => {
         projectApi.listProjects().then(setProjects).catch(console.error);
@@ -336,10 +335,7 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                                             </button>
                                                         )}
                                                         <button
-                                                            onClick={() => {
-                                                                setCoverTrack(song);
-                                                                setIsCoverModalOpen(true);
-                                                            }}
+                                                            onClick={() => openCoverStudio(song, 'audio')}
                                                             className="px-2.5 py-1 bg-teal-500/10 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300 font-bold rounded-xl text-[11px] transition-all flex items-center gap-1 border border-teal-500/20 active:scale-95"
                                                             title="Create MuLaCover Remix / Cover"
                                                         >
@@ -488,10 +484,7 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                             Details
                                         </button>
                                         <button
-                                            onClick={() => {
-                                                setCoverTrack(song);
-                                                setIsCoverModalOpen(true);
-                                            }}
+                                            onClick={() => openCoverStudio(song, 'audio')}
                                             className="px-2 py-1 bg-teal-500/10 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300 font-bold rounded-xl text-[10px] transition-all flex items-center gap-1 border border-teal-500/20"
                                             title="MuLaCover Remix"
                                         >
@@ -527,11 +520,24 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                             )}
                                             <button
                                                 onClick={() => onToggleFavorite(song.id)}
-                                                className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-rose-500 transition-colors"
-                                                title="Favorite"
+                                                className={`p-1.5 rounded-lg transition-colors ${
+                                                    song.is_favorite
+                                                        ? 'text-rose-500 hover:text-rose-600 bg-rose-500/10'
+                                                        : 'text-slate-400 hover:text-slate-600 dark:hover:text-slate-200'
+                                                }`}
+                                                title={song.is_favorite ? 'Remove Favorite' : 'Mark as Favorite'}
                                             >
-                                                <Heart size={13} className={song.is_favorite ? 'fill-rose-500 text-rose-500' : ''} />
+                                                <Heart size={13} fill={song.is_favorite ? 'currentColor' : 'none'} />
                                             </button>
+                                            {onDelete && (
+                                                <button
+                                                    onClick={() => onDelete(song.id)}
+                                                    className="p-1.5 text-slate-400 hover:text-rose-500 transition-colors"
+                                                    title="Delete Song"
+                                                >
+                                                    <Trash2 size={13} />
+                                                </button>
+                                            )}
                                         </div>
                                     </div>
                                 </div>
@@ -545,53 +551,45 @@ export const SongsView: React.FC<SongsViewProps> = ({
             {/* Global Creator Footer */}
             <AppFooter />
 
-            {/* Apple Music Style Lyrics Sheet Modal */}
+            {/* Lyrics Modal View */}
             {selectedLyricsSong && (
-                <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-md flex items-center justify-center p-4 animate-fade-in">
-                    <div className="bg-white/95 dark:bg-[#12141c]/95 border border-black/[0.08] dark:border-white/10 rounded-3xl p-6 shadow-apple-2xl backdrop-blur-3xl w-full max-w-2xl max-h-[80vh] flex flex-col animate-scale-up">
-                        {/* Modal Header */}
-                        <div className="flex items-center justify-between border-b border-black/[0.06] dark:border-white/[0.08] pb-4 mb-4 flex-shrink-0">
-                            <div className="flex items-center space-x-3 min-w-0">
-                                <div className="p-2.5 rounded-2xl bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20">
-                                    <Mic2 size={18} />
-                                </div>
-                                <div className="min-w-0">
-                                    <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100 truncate">
-                                        {selectedLyricsSong.title || selectedLyricsSong.prompt}
-                                    </h3>
-                                    <p className="text-[11px] text-slate-500 dark:text-slate-400 font-mono mt-0.5">
-                                        {selectedLyricsSong.tags || 'Track Lyrics'}
-                                    </p>
-                                </div>
-                            </div>
-
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+                    <div
+                        className="w-full max-w-lg bg-white dark:bg-[#151722] rounded-2xl border border-black/10 dark:border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[85vh]"
+                        onClick={(e) => e.stopPropagation()}
+                    >
+                        <div className="px-5 py-4 border-b border-black/[0.06] dark:border-white/[0.06] flex items-center justify-between">
                             <div className="flex items-center space-x-2">
-                                <button
-                                    onClick={() => {
-                                        if (selectedLyricsSong.lyrics) {
-                                            navigator.clipboard.writeText(selectedLyricsSong.lyrics);
-                                            setCopied(true);
-                                            setTimeout(() => setCopied(false), 2000);
-                                        }
-                                    }}
-                                    className="px-3 py-1.5 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-                                >
-                                    {copied ? <Check size={13} className="text-teal-500" /> : <Copy size={13} />}
-                                    <span>{copied ? 'Copied' : 'Copy'}</span>
-                                </button>
+                                <Mic2 size={16} className="text-teal-500" />
+                                <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
+                                    {selectedLyricsSong.title || 'Lyrics View'}
+                                </h3>
+                            </div>
+                            <div className="flex items-center space-x-1">
+                                {selectedLyricsSong.lyrics && (
+                                    <button
+                                        onClick={() => {
+                                            navigator.clipboard.writeText(selectedLyricsSong.lyrics || '');
+                                            setCopiedId(selectedLyricsSong.id);
+                                            setTimeout(() => setCopiedId(null), 2000);
+                                        }}
+                                        className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                                        title="Copy Lyrics"
+                                    >
+                                        {copiedId === selectedLyricsSong.id ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                                    </button>
+                                )}
                                 <button
                                     onClick={() => setSelectedLyricsSong(null)}
-                                    className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                                    className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
                                 >
-                                    <X size={16} />
+                                    <X size={14} />
                                 </button>
                             </div>
                         </div>
-
-                        {/* Lyrics Body */}
-                        <div className="flex-1 overflow-y-auto pr-2 select-text font-sans space-y-3">
+                        <div className="p-5 overflow-y-auto flex-1 font-mono text-xs text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap selection:bg-teal-500/20">
                             {selectedLyricsSong.lyrics ? (
-                                <pre className="text-xs sm:text-sm font-sans leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
+                                <pre className="font-sans text-xs whitespace-pre-wrap">
                                     {selectedLyricsSong.lyrics}
                                 </pre>
                             ) : (
@@ -601,18 +599,6 @@ export const SongsView: React.FC<SongsViewProps> = ({
                     </div>
                 </div>
             )}
-
-            {/* MuLaCover Studio Modal */}
-            <CoverStudioModal
-                isOpen={isCoverModalOpen}
-                onClose={() => {
-                    setIsCoverModalOpen(false);
-                    setCoverTrack(null);
-                }}
-                initialTrack={coverTrack}
-                initialMode="audio"
-                onOpenPianoRoll={coverTrack ? () => onOpenWorkspace(coverTrack) : undefined}
-            />
         </div>
     );
 };

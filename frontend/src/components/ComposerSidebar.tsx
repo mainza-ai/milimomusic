@@ -18,7 +18,7 @@ import {
 import { api, voiceApi, coverApi, modelsApi, API_BASE_URL, type Job, type LLMConfig, type VoiceProfile, type Project, type ModelVariant } from '../api';
 import { Toggle } from './ui/primitives';
 import { VoiceStudioModal } from './voice/VoiceStudioModal';
-import { CoverStudioModal } from './cover/CoverStudioModal';
+import { useModalStore } from '../stores/useModalStore';
 import { ModelsManagerModal } from './models/ModelsManagerModal';
 import { toast } from '../utils/toast';
 
@@ -34,6 +34,20 @@ const PROVIDER_BADGES: Record<string, { icon: string; label: string }> = {
     lmstudio: { icon: '🧪', label: 'LMStudio' },
     anthropic: { icon: '🟠', label: 'Claude' },
 };
+
+const PERFORMANCE_TAGS = [
+    { label: '[breath]', hint: 'Audible breath before vocal line', tag: '[breath] ' },
+    { label: '[whisper]', hint: 'Intimate unvoiced vocalization', tag: '[whisper] ' },
+    { label: '[pause]', hint: 'Rhythmic breath pause (250ms)', tag: '[pause 250ms] ' },
+    { label: '[falsetto]', hint: 'Head-voice falsetto register', tag: '[falsetto] ' },
+    { label: '[belt]', hint: 'High-intensity chest resonance', tag: '[belt] ' },
+];
+
+const CASTING_PRESETS = [
+    { label: '+ Verse (Lead)', tag: '\n[Verse 1 | Lead: Lead Vocal]\n' },
+    { label: '+ Chorus (Duet)', tag: '\n[Chorus | Duet: Lead + Harmonies]\n' },
+    { label: '+ Bridge (Whisper)', tag: '\n[Bridge | Whispering Vocal]\n' },
+];
 
 interface ComposerSidebarProps {
     onGenerate: (data: CompositionData) => void;
@@ -127,7 +141,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
     const [imageModelVariants, setImageModelVariants] = useState<ModelVariant[]>([]);
     const [selectedImageModel, setSelectedImageModel] = useState<string>('');
     const [isVoiceStudioOpen, setIsVoiceStudioOpen] = useState(false);
-    const [isCoverStudioOpen, setIsCoverStudioOpen] = useState(false);
+    const { openCoverStudio } = useModalStore();
     const [isModelsManagerOpen, setIsModelsManagerOpen] = useState(false);
     const [isInspiring, setIsInspiring] = useState(false);
 
@@ -433,7 +447,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                 <div className="flex items-center space-x-1">
                     <button
                         type="button"
-                        onClick={() => setIsCoverStudioOpen(true)}
+                        onClick={() => openCoverStudio()}
                         title="Open Cover & Remix Studio (MuLaCover)"
                         aria-label="Open Cover & Remix Studio"
                         className="px-2 py-1 rounded-lg bg-purple-500/10 hover:bg-purple-500/20 text-purple-600 dark:text-purple-400 text-[11px] font-semibold flex items-center gap-1 transition-colors border border-purple-500/20"
@@ -465,7 +479,6 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
             </div>
 
             <VoiceStudioModal isOpen={isVoiceStudioOpen} onClose={() => { setIsVoiceStudioOpen(false); loadVoiceProfiles(); }} />
-            <CoverStudioModal isOpen={isCoverStudioOpen} onClose={() => setIsCoverStudioOpen(false)} />
             <ModelsManagerModal
                 isOpen={isModelsManagerOpen}
                 onClose={() => {
@@ -551,6 +564,39 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                                 </select>
                                             </div>
                                         </div>
+
+                                        {/* VoiceStudio Expressive Performance Tokens & Casting Toolbar */}
+                                        <div className="flex flex-col gap-1.5 pt-1">
+                                            <div className="flex items-center justify-between text-[10px] text-slate-500 font-medium">
+                                                <span>Expressive Performance & Casting</span>
+                                                <span className="text-teal-600 dark:text-teal-400 font-mono">VoiceStudio Direction</span>
+                                            </div>
+                                            <div className="flex flex-wrap gap-1">
+                                                {PERFORMANCE_TAGS.map((t) => (
+                                                    <button
+                                                        key={t.label}
+                                                        type="button"
+                                                        onClick={() => setLyrics((prev) => prev ? `${prev} ${t.tag}` : t.tag)}
+                                                        title={t.hint}
+                                                        className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-purple-500/10 hover:bg-purple-500/20 text-purple-700 dark:text-purple-300 border border-purple-500/20 transition-all cursor-pointer active:scale-95"
+                                                    >
+                                                        {t.label}
+                                                    </button>
+                                                ))}
+                                                {CASTING_PRESETS.map((c) => (
+                                                    <button
+                                                        key={c.label}
+                                                        type="button"
+                                                        onClick={() => setLyrics((prev) => prev ? `${prev}${c.tag}` : c.tag.trim())}
+                                                        title="Insert section casting header"
+                                                        className="px-1.5 py-0.5 rounded text-[10px] font-mono bg-teal-500/10 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/20 transition-all cursor-pointer active:scale-95"
+                                                    >
+                                                        {c.label}
+                                                    </button>
+                                                ))}
+                                            </div>
+                                        </div>
+
                                         <textarea value={lyrics} onChange={(e) => setLyrics(e.target.value)} rows={6} placeholder="[Intro]..." className="w-full apple-input resize-none font-mono text-[11px] leading-relaxed p-2.5" />
                                     </>
                                 )}
@@ -633,7 +679,7 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                                     </span>
                                                     <button
                                                         type="button"
-                                                        onClick={() => setIsCoverStudioOpen(true)}
+                                                        onClick={() => openCoverStudio()}
                                                         className="px-2 py-0.5 rounded bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-[10px] cursor-pointer"
                                                     >
                                                         Open Studio

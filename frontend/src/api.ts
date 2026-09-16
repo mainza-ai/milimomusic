@@ -1380,4 +1380,30 @@ export const videoApi = {
     }
 };
 
+export interface SystemTelemetry {
+    device_type: 'cuda' | 'mps' | 'cpu';
+    device_name: string;
+    active_consumer: string;
+    vram_allocated_mb: number;
+    vram_reserved_mb: number;
+    vram_total_mb: number;
+    usage_percent: number;
+    lock_held: boolean;
+}
+
+export const systemApi = {
+    getTelemetry: async (): Promise<SystemTelemetry> => {
+        const res = await axios.get(`${API_BASE_URL}/system/telemetry`);
+        if (typeof res.data === 'string' || !res.data || typeof res.data !== 'object' || !res.data.device_type) {
+            throw new Error('Invalid telemetry payload');
+        }
+        return res.data;
+    },
+    flushMemory: async (): Promise<{ reclaimed_mb: number; current_allocated_mb: number; status: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/system/flush`);
+        return res.data;
+    },
+};
+
+
 

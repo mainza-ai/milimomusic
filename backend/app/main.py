@@ -497,6 +497,20 @@ def health_check():
     }
 
 
+@app.get("/system/telemetry")
+def get_system_telemetry():
+    """Return real-time VRAM, RAM, and active neural engine accelerator metrics."""
+    from app.core.hardware_lock import GlobalHardwareCoordinator
+    return GlobalHardwareCoordinator.get_telemetry()
+
+
+@app.post("/system/flush")
+def flush_system_memory():
+    """Evict dormant tensors and empty GPU/MPS cache."""
+    from app.core.hardware_lock import GlobalHardwareCoordinator
+    return GlobalHardwareCoordinator.flush_memory()
+
+
 # --- Model Management & Tree Endpoints ---
 
 @app.get("/models/tree")
@@ -3261,15 +3275,9 @@ async def transcribe_lead_sheet(req: LeadSheetExtractRequest):
     from app.services.mulacover.symbolic_hub import symbolic_hub, detect_tempo
     import uuid
 
-    audio_path = req.audio_path
-    if not os.path.isfile(audio_path):
-        local_candidate = audio_path.lstrip("/")
-        if os.path.isfile(local_candidate):
-            audio_path = local_candidate
-        elif os.path.isfile(os.path.join("generated_audio", local_candidate)):
-            audio_path = os.path.join("generated_audio", local_candidate)
-        else:
-            raise HTTPException(status_code=404, detail=f"Audio file not found: {req.audio_path}")
+    audio_path = _resolve_audio_file(req.audio_path)
+    if not audio_path or not os.path.isfile(audio_path):
+        raise HTTPException(status_code=404, detail=f"Audio file not found: {req.audio_path}")
 
     export_id = str(uuid.uuid4())
     output_dir = Path("generated_audio/symbolic") / export_id

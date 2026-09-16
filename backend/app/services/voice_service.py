@@ -380,34 +380,31 @@ class VoiceService:
         model_ckpt = os.path.join(VOICE_DIR, f"{effective_profile_id}.pth")
         converted_successfully = False
 
-        # 1. Attempt neural voice conversion if checkpoint exists
-        if os.path.exists(model_ckpt):
-            try:
-                import torch
-                import torchaudio
-                device = "mps" if torch.backends.mps.is_available() else ("cuda" if torch.cuda.is_available() else "cpu")
-                logger.info(f"Loading neural RVC/SVC checkpoint {model_ckpt} on {device} for profile {effective_profile_id}...")
+        # 1. Attempt True Neural Singing Voice Conversion (SVC)
+        try:
+            from app.services.voice.neural_svc import neural_svc
+            # Find any target reference audio in profile directory
+            target_ref = None
+            profile_dir = os.path.join(VOICE_DIR, effective_profile_id)
+            if os.path.isdir(profile_dir):
+                for fname in os.listdir(profile_dir):
+                    if fname.lower().endswith((".wav", ".mp3", ".flac", ".ogg", ".m4a")):
+                        target_ref = os.path.join(profile_dir, fname)
+                        break
 
-                ckpt = torch.load(model_ckpt, map_location=device)
-                if "weight" in ckpt or "model" in ckpt or "net_g" in ckpt:
-                    waveform, sr = _load_audio_tensor(resolved_vocal)
-                    dry_waveform = waveform.clone()
-                    waveform = waveform.to(device)
-
-                    if pitch_shift != 0:
-                        waveform = torchaudio.functional.pitch_shift(waveform, sr, n_steps=pitch_shift)
-
-                    waveform = waveform.cpu()
-                    # Apply dry/wet blend if < 1.0
-                    if 0.0 <= dry_wet < 1.0:
-                        min_len = min(dry_waveform.shape[1], waveform.shape[1])
-                        waveform = dry_waveform[:, :min_len] * (1.0 - dry_wet) + waveform[:, :min_len] * dry_wet
-
-                    _save_audio_tensor(output_path, waveform, sr)
-                    converted_successfully = True
-                    logger.info(f"Neural voice conversion successfully processed with checkpoint {model_ckpt}")
-            except Exception as e:
-                logger.warning(f"Neural checkpoint forward pass skipped: {e}. Applying acoustic timbre conversion chain.")
+            neural_svc.convert_vocals(
+                source_audio_path=resolved_vocal,
+                output_path=output_path,
+                target_reference_path=target_ref,
+                target_profile=resolved_profile,
+                pitch_shift=pitch_shift,
+                formant_shift=1.0,
+                dry_wet=dry_wet,
+            )
+            converted_successfully = True
+            logger.info(f"True Neural SVC conversion completed for profile {effective_profile_id}")
+        except Exception as e:
+            logger.warning(f"Neural SVC conversion failed: {e}. Falling back to acoustic timbre shaping.")
 
         # 2. Advanced Acoustic & Formant Timbre Shaping Engine
         if not converted_successfully:

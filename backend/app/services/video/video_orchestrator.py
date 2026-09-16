@@ -31,6 +31,8 @@ from app.services.video.generators.diffusers_wan import DiffusersWanGenerator
 from app.services.video.generators.diffusers_ltx import DiffusersLTXGenerator
 from app.services.video.generators.cloud_video import CloudVideoGenerator
 from app.services.video.generators.procedural import ProceduralVideoGenerator
+from app.core.hardware_lock import GlobalHardwareCoordinator
+from app.services.video.stem_audio_reactive import extract_stem_reactive_modulation
 
 logger = logging.getLogger(__name__)
 
@@ -300,6 +302,7 @@ class VideoOrchestrator:
             self._tasks[task_id] = task_info
 
         rendered_clips: List[str] = []
+        hardware_acquired = False
         try:
             resolved_master = self.resolve_audio_path(job.audio_path)
             if not resolved_master:
@@ -324,6 +327,26 @@ class VideoOrchestrator:
 
             # Step 1: Song & Scene Planning
             self.update_task(task_id, step="Segmenting Song into Musical Scenes", progress=12)
+
+            # Extract stem audio reactive curves for lip-sync and dynamic camera pulse
+            stem_reactivity = None
+            try:
+                drums_stem = None
+                bass_stem = None
+                if hasattr(job, "stem_paths") and job.stem_paths:
+                    stems = json.loads(job.stem_paths) if isinstance(job.stem_paths, str) else job.stem_paths
+                    if isinstance(stems, dict):
+                        drums_stem = stems.get("drums")
+                        bass_stem = stems.get("bass")
+                stem_reactivity = extract_stem_reactive_modulation(
+                    vocal_stem_path=vocal_stem,
+                    drums_stem_path=drums_stem,
+                    bass_stem_path=bass_stem,
+                    fps=24
+                )
+                logger.info(f"Stem audio-reactivity analysis completed ({stem_reactivity.get('total_frames')} frames)")
+            except Exception as e:
+                logger.warning(f"Stem audio-reactivity analysis skipped: {e}")
             plan = video_director.segment_song(
                 job=job,
                 max_clip_duration=config.get("max_clip_duration"),
@@ -350,6 +373,10 @@ class VideoOrchestrator:
                     video_generator = self._local_ltx
                 else:
                     video_generator = self._local_wan_14b
+
+                # Acquire exclusive accelerator hardware lock for local video rendering
+                await GlobalHardwareCoordinator.acquire_device("Wan 2.1 Video Director")
+                hardware_acquired = True
 
             # Step 2: Render individual scene clips
             self.update_task(task_id, step="Rendering Video Scenes & Lip-Sync Performance", progress=20)
@@ -545,6 +572,8 @@ class VideoOrchestrator:
             self.update_task(task_id, status="error", error=str(e), step=f"Error: {str(e)[:120]}")
             raise e
         finally:
+            if hardware_acquired:
+                GlobalHardwareCoordinator.release_device("Wan 2.1 Video Director")
             # Clean up temp files
             for cf in rendered_clips:
                 if os.path.isfile(cf):

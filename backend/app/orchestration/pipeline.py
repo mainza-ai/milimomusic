@@ -21,6 +21,7 @@ from app.transcription.instrument_stems import render_instrument_parts
 from app.transcription.karaoke import lyric_sync_engine
 from app.services.producer_service import extract_final_lyrics
 from app.services.voice_service import voice_service
+from app.core.hardware_lock import GlobalHardwareCoordinator
 
 logger = logging.getLogger(__name__)
 
@@ -69,8 +70,12 @@ class GenerateAndTranscribePipeline:
         """
         job_id_str = str(job_id)
         logger.info(f"Starting orchestration pipeline for job {job_id_str}")
-        async with music_service.gpu_lock:
-            return await self._run_locked(job_id, req, engine, event_manager, cancel_event)
+        await GlobalHardwareCoordinator.acquire_device("Audio Pipeline")
+        try:
+            async with music_service.gpu_lock:
+                return await self._run_locked(job_id, req, engine, event_manager, cancel_event)
+        finally:
+            GlobalHardwareCoordinator.release_device("Audio Pipeline")
 
     async def _run_locked(
         self,

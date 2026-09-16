@@ -1,7 +1,8 @@
 import React, { useEffect, useMemo, useRef } from 'react';
-import { Layers, ZoomIn, ZoomOut } from 'lucide-react';
+import { Layers, ZoomIn, ZoomOut, Sparkles, Mic } from 'lucide-react';
 import type { Job, NoteEvent } from '../../api';
 import type { StemChannel } from './SessionWorkspace';
+import { useModalStore } from '../../stores/useModalStore';
 
 // Parse-once helpers: these blobs were re-JSON.parsed on EVERY render
 // (~12Hz during playback) on the main thread.
@@ -258,6 +259,7 @@ const TrackHeaderRow: React.FC<TrackHeaderRowProps> = React.memo(({
 });
 
 interface TrackLaneRowProps {
+    job: Job;
     track: StemChannel;
     trackNotes: NoteEvent[];
     peaks?: number[];
@@ -267,6 +269,7 @@ interface TrackLaneRowProps {
 }
 
 const TrackLaneRow: React.FC<TrackLaneRowProps> = React.memo(({
+    job,
     track,
     trackNotes,
     peaks,
@@ -276,9 +279,10 @@ const TrackLaneRow: React.FC<TrackLaneRowProps> = React.memo(({
 }) => {
     const effectiveDur = stemDur && stemDur > 0 ? Math.min(stemDur, totalDuration) : totalDuration;
     const widthPct = Math.min(100, (effectiveDur / totalDuration) * 100);
+    const isVocal = track.name.toLowerCase().includes('vocal');
 
     return (
-        <div className="h-20 border-b border-black/[0.04] dark:border-white/5 p-2 flex items-center relative">
+        <div className="h-20 border-b border-black/[0.04] dark:border-white/5 p-2 flex items-center relative group">
             <div
                 className={`h-16 rounded-xl bg-gradient-to-r ${track.color} p-2 flex items-center justify-between shadow-sm relative overflow-hidden transition-opacity duration-150 ${
                     track.isMuted ? 'opacity-30' : 'opacity-90'
@@ -299,9 +303,40 @@ const TrackLaneRow: React.FC<TrackLaneRowProps> = React.memo(({
                 <span className="text-xs font-bold text-white relative z-10 drop-shadow-sm truncate">
                     {track.name} {trackNotes.length > 0 ? `(${trackNotes.length} notes)` : ''}
                 </span>
-                <span className="text-[10px] font-mono text-white/80 relative z-10 tabular-nums pr-1">
-                    {formatTime(effectiveDur)}
-                </span>
+
+                <div className="flex items-center space-x-1.5 relative z-10">
+                    <button
+                        type="button"
+                        onClick={(e) => {
+                            e.stopPropagation();
+                            useModalStore.getState().openCoverStudio(job, 'audio', track.audioUrl);
+                        }}
+                        title={`Remix ${track.name} with MuLaCover`}
+                        className="opacity-0 group-hover:opacity-100 px-2 py-0.5 rounded-lg bg-black/40 hover:bg-black/60 text-white text-[10px] font-bold flex items-center gap-1 backdrop-blur-sm border border-white/20 transition-all cursor-pointer shadow-sm active:scale-95"
+                    >
+                        <Sparkles size={10} className="text-teal-300" />
+                        <span>Remix</span>
+                    </button>
+
+                    {isVocal && (
+                        <button
+                            type="button"
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                useModalStore.getState().openVoiceConvert(job, track.audioUrl);
+                            }}
+                            title={`Singing Voice Conversion for ${track.name}`}
+                            className="opacity-0 group-hover:opacity-100 px-2 py-0.5 rounded-lg bg-black/40 hover:bg-black/60 text-white text-[10px] font-bold flex items-center gap-1 backdrop-blur-sm border border-white/20 transition-all cursor-pointer shadow-sm active:scale-95"
+                        >
+                            <Mic size={10} className="text-purple-300" />
+                            <span>Voice</span>
+                        </button>
+                    )}
+
+                    <span className="text-[10px] font-mono text-white/80 tabular-nums pr-1">
+                        {formatTime(effectiveDur)}
+                    </span>
+                </div>
             </div>
         </div>
     );
@@ -475,6 +510,7 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
         return stemChannels.map((track) => (
             <TrackLaneRow
                 key={track.id}
+                job={job}
                 track={track}
                 trackNotes={notesByLane[track.id] || []}
                 peaks={stemPeaks[track.id]}
@@ -483,7 +519,7 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
                 formatTime={formatTime}
             />
         ));
-    }, [stemChannels, notesByLane, stemPeaks, stemDurations, totalDuration, onSeparateStems, isSeparating]);
+    }, [job, stemChannels, notesByLane, stemPeaks, stemDurations, totalDuration, onSeparateStems, isSeparating]);
 
     return (
         <div className="flex flex-col h-full bg-[#f5f5f7] dark:bg-[#10121a] text-slate-800 dark:text-slate-200 select-none overflow-hidden transition-colors duration-200">

@@ -3449,6 +3449,8 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
                 pass
         if not parent_bg:
             parent_bg = {"bpm": parent_bpm, "beats_per_bar": 4, "first_downbeat": 0.0}
+        elif parent_bpm:
+            parent_bg["bpm"] = parent_bpm
 
         # Resolve parent cut point
         parent_dur_sec = float(parent_job.duration_ms) / 1000.0 if parent_job.duration_ms else 60.0
@@ -3593,6 +3595,9 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
         target_duration_sec=req.target_duration_sec,
         crossfade_sec=crossfade_sec,
         parent_audio_path=parent_audio_path,
+        parent_prompt=parent_prompt,
+        parent_lyrics=parent_lyrics,
+        parent_structured_caption=structured_meta,
         project_id=parent_project_id,
         session_id=parent_session_id,
         temperature=parent_temp,
@@ -3918,19 +3923,22 @@ async def voice_convert_job(job_id: str, body: dict = Body(...)):
         return new_job
 
 
-@app.get("/download_track/{job_id}")
+@app.api_route("/download_track/{job_id}", methods=["GET", "HEAD"])
 def download_track(job_id: str):
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)
         if not job or not job.audio_path:
             raise HTTPException(status_code=404, detail="Track not found")
 
-        filename = job.audio_path.replace("/audio/", "")
-        file_path = f"generated_audio/{filename}"
-        if not os.path.isfile(file_path):
-            raise HTTPException(status_code=404, detail="Audio file not found on disk")
+        from app.transcription.karaoke import _resolve_audio_file
+        resolved = _resolve_audio_file(job.audio_path)
+        if not resolved or not os.path.isfile(resolved):
+            filename = job.audio_path.replace("/audio/", "")
+            resolved = f"generated_audio/{filename}"
+            if not os.path.isfile(resolved):
+                raise HTTPException(status_code=404, detail="Audio file not found on disk")
 
-        ext = os.path.splitext(filename)[1].lower()
+        ext = os.path.splitext(resolved)[1].lower()
         media_type = {
             ".wav": "audio/wav",
             ".mp3": "audio/mpeg",
@@ -3942,7 +3950,12 @@ def download_track(job_id: str):
         safe_title = re.sub(r'[^a-zA-Z0-9_\- ]', '', job.title or "untitled").strip().replace(" ", "_")
         download_name = f"{safe_title}{ext or '.wav'}"
 
-        return FileResponse(file_path, media_type=media_type, filename=download_name)
+        headers = {
+            "Content-Disposition": f'attachment; filename="{download_name}"',
+            "Access-Control-Expose-Headers": "Content-Disposition",
+        }
+
+        return FileResponse(resolved, media_type=media_type, filename=download_name, headers=headers)
 
 
 def _delete_job_artifacts(job_id_str: str, audio_public_path: Optional[str] = None) -> int:

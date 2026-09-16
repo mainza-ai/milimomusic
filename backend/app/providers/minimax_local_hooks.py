@@ -104,20 +104,28 @@ def ar_one_frame_tuned(
     cfg_scale: float = 1.5,
     temperature: float = 1.0,
     top_k: int = 50,
+    suppress_end_token: bool = False,
 ):
-    """Autoregressive step respecting user-specified temperature, CFG scale, and top_k."""
+    """Autoregressive step respecting user-specified temperature, CFG scale, top_k, and end_token suppression."""
     if lm_logits is None:
         return ar_one_frame(language_model, depth, config, last_hidden, cache, rng_key, emit_frame=emit_frame)
 
     logits = lm_logits(language_model, last_hidden).astype(mx.float32)
     token_ids = mx.arange(logits.shape[-1])
-    allowed = mx.logical_or(
-        mx.logical_and(
+    if suppress_end_token:
+        # Enforce audio semantic tokens only; forbid audio_end_token_id to prevent premature exit
+        allowed = mx.logical_and(
             token_ids >= config.audio_code_offset,
             token_ids < config.audio_code_offset + config.semantic_vocab_size,
-        ),
-        token_ids == config.audio_end_token_id,
-    )
+        )
+    else:
+        allowed = mx.logical_or(
+            mx.logical_and(
+                token_ids >= config.audio_code_offset,
+                token_ids < config.audio_code_offset + config.semantic_vocab_size,
+            ),
+            token_ids == config.audio_end_token_id,
+        )
     logits = mx.where(allowed[None, :], logits, -1e9)
 
     # 1. Temperature scaling on logits
@@ -304,3 +312,122 @@ def generate_music_hooked(
     destination.parent.mkdir(parents=True, exist_ok=True)
     audio_write(destination, waveform, model.sample_rate)
     return str(destination)
+
+
+def generate_frame_hiddens_extended_hooked(
+    language_model,
+    depth_decoder,
+    config,
+    text_ids,
+    parent_frames: int,
+    target_frames: int,
+    seed: int,
+    temperature: float = 1.0,
+    cfg_scale: float = 1.5,
+    top_k: int = 50,
+    cancel_event: Optional[threading.Event] = None,
+    progress_cb: Optional[ProgressCB] = None,
+):
+    """
+    Rolls forward parent KV cache up to parent_frames (~11s on M3 Max for 60s of music),
+    then seamlessly continues generating frames up to target_frames while suppressing
+    audio_end_token_id to guarantee exact duration, zero tempo drift, and identical timbre.
+    """
+    if not HAS_MLX_AUDIO:
+        raise RuntimeError("mlx_audio is not available on this platform.")
+    mx.random.seed(seed)
+    key = mx.random.key(seed)
+    embeddings = language_model.model.embed_tokens(text_ids)
+    hidden, cache = qwen3_hidden(language_model, embeddings)
+    last_hidden = hidden[:, -1]
+    frames = []
+    started = time.monotonic()
+
+    for frame_index in range(target_frames + 1):
+        if frame_index % CHECK_EVERY == 0:
+            _check(cancel_event)
+            if progress_cb and frame_index:
+                rate = frame_index / max(1e-9, time.monotonic() - started)
+                eta_s = (target_frames - frame_index) / max(rate, 1e-9)
+                if frame_index < parent_frames:
+                    stage = f"Fast-forwarding parent audio context ({int(rate)} fps)"
+                else:
+                    stage = f"Composing extension ({int(rate)} fps, ETA {int(eta_s / 60)}m)"
+                _report(progress_cb, frame_index / target_frames, stage)
+
+        key, subkey = mx.random.split(key)
+        # Suppress early termination token before reaching the target frame count
+        suppress_end = (frame_index < target_frames)
+        result = ar_one_frame_tuned(
+            language_model, depth_decoder, config,
+            last_hidden, cache, subkey,
+            emit_frame=frame_index > 0,
+            cfg_scale=cfg_scale,
+            temperature=temperature,
+            top_k=top_k,
+            suppress_end_token=suppress_end,
+        )
+        last_hidden, cache = result.last_hidden, result.cache
+        if result.ended and frame_index >= target_frames:
+            break
+        if frame_index > 0:
+            frames.append(result.frame_hidden)
+            if len(frames) >= target_frames:
+                break
+
+    if not frames:
+        raise ValueError("MiniMax Music 3 generated zero audio frames")
+    return mx.stack(frames, axis=1)
+
+
+def generate_extended_music_hooked(
+    model,
+    caption: str,
+    lyrics: str,
+    parent_duration_sec: float,
+    target_duration_sec: float,
+    steps: int,
+    seed: int,
+    output_path: str,
+    temperature: float = 1.0,
+    cfg_scale: float = 1.5,
+    top_k: int = 50,
+    cancel_event=None,
+    progress_cb=None
+) -> str:
+    """
+    Roll-forward extension pipeline: reconstructs parent state via deterministic KV-cache replay,
+    continues generating without boundary discontinuity, and decodes the full continuous waveform.
+    """
+    parent_frames = max(1, int(parent_duration_sec * model.config.frame_rate))
+    target_frames = max(parent_frames + 1, int(target_duration_sec * model.config.frame_rate))
+    text_ids = model._text_ids(caption, lyrics)
+
+    def ar_progress(frac, msg):
+        _report(progress_cb, frac * 0.85, msg)
+
+    frame_hiddens = generate_frame_hiddens_extended_hooked(
+        model.language_model, model.rvq_depth_decoder, model.config,
+        text_ids, parent_frames, target_frames, seed,
+        temperature=temperature,
+        cfg_scale=cfg_scale,
+        top_k=top_k,
+        cancel_event=cancel_event,
+        progress_cb=ar_progress,
+    )
+    mx.eval(frame_hiddens)
+    _check(cancel_event)
+    audio = run_flow_hooked(
+        model, frame_hiddens, steps, seed,
+        cfg_scale=cfg_scale,
+        cancel_event=cancel_event,
+        progress_cb=progress_cb
+    )
+    mx.eval(audio)
+    _check(cancel_event)
+    waveform = mx.clip(audio[0].transpose(1, 0).astype(mx.float32), -1.0, 1.0)
+    destination = Path(output_path).expanduser()
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    audio_write(destination, waveform, model.sample_rate)
+    return str(destination)
+

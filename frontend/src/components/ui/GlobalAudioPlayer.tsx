@@ -164,15 +164,10 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
     return `${mins}:${secs < 10 ? '0' : ''}${secs}`;
   };
 
-  const downloadAudio = () => {
+  const downloadAudio = async () => {
     if (!currentSong?.audio_path) return;
-    const url = api.getAudioUrl(currentSong.audio_path);
-    const a = document.createElement('a');
-    a.href = url;
-    a.download = `${currentSong.title || 'milimo_track'}.wav`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
+    const safeTitle = (currentSong.title || 'milimo_track').replace(/[^a-zA-Z0-9_\- ]/g, '').trim().replace(/\s+/g, '_');
+    await api.downloadAudioTrack(currentSong.id, `${safeTitle}.wav`, currentSong.audio_path);
   };
 
   if (!currentSong) return null;

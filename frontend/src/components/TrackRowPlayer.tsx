@@ -66,15 +66,10 @@ export const TrackRowPlayer: React.FC<TrackRowPlayerProps> = ({ job }) => {
         }
     };
 
-    const downloadAudio = () => {
+    const downloadAudio = async () => {
         if (!job.audio_path) return;
-        const fullUrl = api.getAudioUrl(job.audio_path);
-        const a = document.createElement('a');
-        a.href = fullUrl;
-        a.download = `milimo-track-${job.id}.wav`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
+        const safeTitle = (job.title || `milimo-track-${job.id}`).replace(/[^a-zA-Z0-9_\- ]/g, '').trim().replace(/\s+/g, '_');
+        await api.downloadAudioTrack(job.id, `${safeTitle}.wav`, job.audio_path);
     };
 
     return (

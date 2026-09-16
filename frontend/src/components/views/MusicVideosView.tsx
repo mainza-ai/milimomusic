@@ -430,16 +430,13 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     </div>
 
                     {renderedVideoUrl && (
-                        <a
-                            href={api.getAudioUrl(renderedVideoUrl)}
-                            download={`${activeSong?.title || 'track'}_music_video.mp4`}
-                            target="_blank"
-                            rel="noopener noreferrer"
+                        <button
+                            onClick={() => api.downloadUrlAsFile(api.getAudioUrl(renderedVideoUrl), `${activeSong?.title || 'track'}_music_video.mp4`)}
                             className="px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-teal-500/20 active:scale-95 transition-all self-start sm:self-auto"
                         >
                             <Download size={14} />
                             <span>Download MP4 Video</span>
-                        </a>
+                        </button>
                     )}
                 </div>
 

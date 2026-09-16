@@ -39,16 +39,10 @@ export const MasteringExportModal: React.FC<MasteringExportModalProps> = ({
 
     if (!isOpen) return null;
 
-    const handleDownloadAsset = (type: string, url: string, filename: string) => {
+    const handleDownloadAsset = async (type: string, url: string, filename: string) => {
         setIsDownloading(type);
         try {
-            const a = document.createElement('a');
-            a.href = url.startsWith('http') ? url : `${API_BASE_URL}${url}`;
-            a.download = filename;
-            a.target = '_blank';
-            document.body.appendChild(a);
-            a.click();
-            document.body.removeChild(a);
+            await api.downloadUrlAsFile(url, filename);
             toast(`Downloading ${filename}`, 'success');
         } catch (e) {
             console.error('Download error:', e);

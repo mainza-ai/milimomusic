@@ -19,6 +19,7 @@ import { ModelsManagerModal } from './components/models/ModelsManagerModal';
 import { LLMSettingsModal } from './components/LLMSettingsModal';
 import { HardwareTelemetryBar } from './components/common/HardwareTelemetryBar';
 import { EngineSwitcherModal } from './components/modals/EngineSwitcherModal';
+import { ExtendTrackModal } from './components/workspace/ExtendTrackModal';
 import { useModalStore } from './stores/useModalStore';
 import { SessionWorkspace } from './components/workspace/SessionWorkspace';
 import { FloatingStatusWidget } from './components/ui/FloatingStatusWidget';
@@ -2242,6 +2243,7 @@ function App() {
       />
 
       <EngineSwitcherModal />
+      <ExtendTrackModal />
 
       <ModelsManagerModal
         isOpen={isModelsManagerOpen}

@@ -2,55 +2,71 @@
 title: Track Extension
 type: concept
 created: 2026-08-19
-updated: 2026-09-03
+updated: 2026-09-16
 sources: [sources/readme.md, production-readiness-plan.md]
-tags: [extension, track, generation, continuation, minimax, phase-5]
-aliases: [Extend, Track continuation]
+tags: [extension, track, generation, continuation, minimax, production]
+aliases: [Extend, Track continuation, Seamless Extension]
 ---
 
 # Track Extension
 
 **Track Extension** lets Milimo continue generating from where a previous track left off,
-allowing the creation of longer compositions **segment by segment**.
+allowing musicians and producers to build full-length songs (e.g. 60s -> 120s+)
+**segment by segment** while preserving acoustic timbre, tempo, key, and musical continuity.
 
-## How it works
-- Generation continues from a prior track's context (the tail audio/history becomes the new
-  prompt's reference/context), rather than starting fresh.
-- The backend links jobs via `parent_job_id` on the `Job` model, so an extension is recorded
-  as a child of the original generation (see [Backend & API](../entities/backend-api.md)).
-- The output is a longer, continuous composition built incrementally.
+---
 
-## Phase 5 redesign — analysis-conditioned extension (locked 2026-09-03)
+## 1. How It Works
 
-> [!WARNING] **Current state:** `MiniMaxProvider.extend()` (`providers/minimax_provider.py:588`)
-> just calls `generate()` with `extend_ms` — zero parent conditioning. The legacy
-> HeartMuLa token-inpainting extension is dead (HeartMuLa is legacy-isolated). The open
-> MLX MiniMax hook is caption+lyrics+duration conditioned and cannot consume reference
-> audio, so **true tail-embedding conditioning is not implementable today**.
+1. **Lossless Cut Point & Slicing**:
+   - The user selects where the continuation begins (`extend_from_sec`), defaulting to the parent track's end or an earlier section break.
+   - The engine slices parent audio up to `extend_from_sec` losslessly at 48 kHz.
+2. **Acoustic Timbre & Seed Locking**:
+   - The child job inherits the parent's exact `seed`, style tags, and prompt description.
+   - For MiniMax Music 3, locking seed and style tags while appending new section tags (`[Verse 2]`, `[Chorus]`, `[Outro]`) forces the autoregressive audio model to continue in the exact harmonic and vocal space.
+3. **Equal-Power Crossfade Concatenation**:
+   - Overlap window: $1.5\text{s}$ (user-adjustable between $0.5\text{s}$ and $3.0\text{s}$).
+   - Equal-power curve: $w_{\text{out}}(t) = \cos(\frac{\pi}{2} t)$, $w_{\text{in}}(t) = \sin(\frac{\pi}{2} t)$ such that $w_{\text{out}}^2 + w_{\text{in}}^2 = 1$.
+   - Prevents seam clicks, phase cancellations, or energy dips at the transition point.
+4. **Full Pipeline Re-Finalization**:
+   - The combined master audio is run through the entire production pipeline: stem separation (HTDemucs/BS-Roformer), [MuScriptor](../entities/muscriptor.md) neural transcription, and karaoke lyric sync.
 
-Locked design — **analysis-conditioned**, honestly labeled (no fabricated
-"audio embedding" claims):
+---
 
-1. **Load parent context**: `beat_grid_json` (BPM), `structured_caption_json`, `tags`,
-   `lyrics`, plus the tail seconds of the parent master.
-2. **Tail analysis (DSP)**: RMS decay curve for the ending character; key estimate from
-   `notes_json` pitch-class histogram (Krumhansl profile). Stored in a `conditioning`
-   metadata block.
-3. **Lyric continuation**: user-supplied text, or the producer LLM writes the next
-   section seeded with parent lyrics + BPM/key/caption — the analysis is the
-   "audio-domain context" delivered through the caption.
-4. **Generate continuation** via the real MLX path (steps budget scaled to `extend_ms`).
-5. **Equal-power crossfade mixdown**: scan the child's head for the lowest-energy
-   overlap window (1–4 s), apply √-power fades, join → extended master.
-6. **Re-finalize**: transcription, karaoke sync and stems re-run on the extended master
-   (the post-generation block of `orchestration/pipeline.py` is extracted into a shared
-   `finalize_track_assets()` helper used by both generate and extend).
+## 2. API & Database Architecture
 
-Planned surface: `POST /jobs/{job_id}/extend` body `{extend_ms, lyrics_continuation?}`
-→ child Job (`parent_job_id`, `queued`) + GPU-lane [task](../entities/task-queue.md)
-→ `202 Accepted`, SSE progress. Strict-inference mode applies to the continuation.
+- **Endpoint**: `POST /tracks/{job_id}/extend`
+  - Body: `TrackExtendRequest` (`target_duration_sec`, `extend_from_sec`, `additional_lyrics`, `prompt`, `crossfade_sec`).
+  - Response: `{ "job_id": UUID, "parent_job_id": UUID, "target_duration_sec": float, "extend_from_sec": float, "status": "queued" }`.
+- **Database Schema (`Job` model)**:
+  - `parent_job_id: Optional[UUID]`
+  - `is_extension: bool`
+  - `extend_from_sec: Optional[float]`
+- **Orchestration**: `pipeline.generate_audio_step` detects `job.is_extension` and calls `provider.extend(...)` passing parent audio, cut point, delta duration, and crossfade configuration.
 
-## Related pages
-- [HeartMuLaGenPipeline](../entities/heartmulagenpipeline.md) | [Backend & API](../entities/backend-api.md)
-- [Lyrics conditioning](lyrics-conditioning.md) | [MiniMax Music 3](../entities/minimax-music3.md)
-- [Task Queue](../entities/task-queue.md) | [Singing Voice Conversion](singing-voice-conversion.md) (Phase 5 sibling)
+---
+
+## 3. User Interface Integration
+
+- **DAW Arrange Timeline (`ArrangeTimeline.tsx`)**:
+  - Direct `Extend Song` button in timeline controls header.
+- **Track Studio (`TrackDetailView.tsx`)**:
+  - `Extend Track` action button in the audio toolstrip.
+- **Song Library (`TrackRowPlayer.tsx`)**:
+  - `Extend Track` quick-action button on hover.
+- **Extend Track Modal (`ExtendTrackModal.tsx`)**:
+  - Visual time scrubber and duration slider (+30s, +60s, +90s, +120s, +180s presets).
+  - Seam point adjustment slider.
+  - Section tag inserters (`[Verse 2]`, `[Chorus]`, `[Bridge]`, `[Guitar Solo]`, `[Outro]`).
+  - Equal-power crossfade window configuration.
+  - Lineage indicators displaying parent seed and style tags.
+
+---
+
+## Related Pages
+
+- [MiniMax Music 3](../entities/minimax-music3.md)
+- [MuLaCover](../entities/mulacover.md)
+- [Lyrics conditioning](lyrics-conditioning.md)
+- [Session Workspace](../entities/session-workspace.md)
+- [Generation Provider](../entities/generation-provider.md)

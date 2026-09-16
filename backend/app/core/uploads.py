@@ -14,6 +14,7 @@ from fastapi import HTTPException, UploadFile
 
 AUDIO_EXTS = {".mp3", ".wav", ".flac", ".m4a", ".ogg"}
 IMAGE_EXTS = {".png", ".jpg", ".jpeg", ".webp"}   # SVG deliberately excluded (stored-XSS)
+MIDI_EXTS = {".mid", ".midi"}
 
 _MAGIC = (
     # audio
@@ -22,7 +23,10 @@ _MAGIC = (
     (b"fLaC", "audio"), (b"OggS", "audio"),
     # images
     (b"\x89PNG", "image"), (b"\xff\xd8\xff", "image"),  # png, jpeg
+    # midi
+    (b"MThd", "midi"),
 )
+
 
 
 def _fail(code: str, message: str, status: int) -> HTTPException:
@@ -55,6 +59,9 @@ async def save_upload(
     elif kind == "image":
         allowed, cap_env = IMAGE_EXTS, "MAX_IMAGE_UPLOAD_MB"
         default_cap = 8.0
+    elif kind == "midi":
+        allowed, cap_env = MIDI_EXTS, "MAX_MIDI_UPLOAD_MB"
+        default_cap = 10.0
     else:
         raise ValueError(f"unknown upload kind {kind}")
 

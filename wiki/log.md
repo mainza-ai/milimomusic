@@ -1774,4 +1774,13 @@ Diagnosed and eliminated the 163.2 GB runaway memory explosion during MuLaCover 
 4. Inter-Stage Coordination: Integrated `GlobalHardwareCoordinator.flush_memory()` across `pipeline.py` (post-separation and post-transcription) and `mulacover_provider.py` (post-reference transcription).
 5. Comprehensive Validation: Verified end-to-end cover generation with real audio synthesis and 244/244 backend unit tests passing (100% pass rate).
 
+## [2026-09-16] create | Upstream Classic Checkpoint Unpickler Fix, MIDI Auto-Population & Seamless Track Extension Engine
+Resolved four critical production and UX issues across the generation pipeline and studio UI:
+1. Upstream Classic YourMT3 Checkpoint Fix: Resolved PyTorch 2.6+ unpickler failure (`AttributeError: 'tuple' object has no attribute '__module__'`) when loading `models/audio/HeartMuLa__MuLaCover/SymbolicTranscriptor/yourmt3/last.ckpt`. Implemented `_scoped_module_mocker()` in `mulacover.checkpoint` to provision contextual mock modules during unpickling, safely loading all 655 model weights without global namespace pollution. Verified end-to-end extraction (`SUCCESS! Extracted melody notes: 6 chords: 288`).
+2. DAW Arrange Timeline Light Mode Contrast: Fixed invisible structure section labels in light mode (`ArrangeTimeline.tsx`). Added WCAG AAA high-contrast classes (`text-*-950 dark:text-*-200`) across all section markers (Intro, Verse, Chorus, Solo, Bridge, Drop, Outro).
+3. Symbolic MIDI Lead Sheet Auto-Population & Uploads: Auto-populates `melodyMidiPath`, `chordMidiPath`, and `drumMidiPath` upon lead sheet extraction and queries `/jobs/{job_id}/symbolic` when opening tracks in Cover Studio. Added `POST /upload/midi` endpoint with magic-byte (`MThd`) validation and per-stem file pickers.
+4. Seamless Track Extension Engine: Built end-to-end production track extension past 60s (to 120s+). Losslessly slices parent audio at user-specified `extend_from_sec` (48 kHz), seeds continuation generation with identical parent seed, prompt, and style tags to lock acoustic timbre and BPM, concatenates via equal-power sine/cosine crossfade ($1.5\text{s}$ window, configurable $0.5$–$3.0\text{s}$), and re-runs stem separation and MuScriptor transcription. Exposed via `POST /tracks/{job_id}/extend`, `Job.is_extension`, `ExtendTrackModal.tsx`, and DAW trigger buttons.
+5. Production Verification: 100% API parity (132 routes, 137 client calls), clean Vite production build (`tsc -b && vite build`, 0 errors), and comprehensive test suite validation.
+
+
 

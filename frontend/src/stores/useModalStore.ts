@@ -21,6 +21,12 @@ interface ModalStoreState {
     voiceConvertStemPath?: string;
     openVoiceConvert: (track?: Job | null, stemPath?: string) => void;
     closeVoiceConvert: () => void;
+
+    // Track Extension Studio
+    isExtendTrackOpen: boolean;
+    extendTrackJob: Job | null;
+    openExtendTrack: (track: Job) => void;
+    closeExtendTrack: () => void;
 }
 
 export const useModalStore = create<ModalStoreState>((set) => ({
@@ -60,4 +66,17 @@ export const useModalStore = create<ModalStoreState>((set) => ({
         voiceConvertTrack: null,
         voiceConvertStemPath: undefined,
     }),
+
+    // Track Extension Modal
+    isExtendTrackOpen: false,
+    extendTrackJob: null,
+    openExtendTrack: (track: Job) => set({
+        isExtendTrackOpen: true,
+        extendTrackJob: track,
+    }),
+    closeExtendTrack: () => set({
+        isExtendTrackOpen: false,
+        extendTrackJob: null,
+    }),
 }));
+

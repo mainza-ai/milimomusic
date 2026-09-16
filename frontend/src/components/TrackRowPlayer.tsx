@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { Play, Pause, Download, Wand2, Sparkles } from 'lucide-react';
+import { Play, Pause, Download, Wand2, Sparkles, FastForward } from 'lucide-react';
 import { useAudioEngine } from '../context/AudioEngineContext';
 import { api } from '../api';
 import { StaticWaveform } from './ui/StaticWaveform';
@@ -40,7 +40,7 @@ export const TrackRowPlayer: React.FC<TrackRowPlayerProps> = ({ job }) => {
         seek
     } = useAudioEngine();
     const [isInpaintOpen, setIsInpaintOpen] = useState(false);
-    const { openCoverStudio } = useModalStore();
+    const { openCoverStudio, openExtendTrack } = useModalStore();
 
     const isActive = currentTrack?.id === job.id;
     const durationSec = job.duration_ms ? job.duration_ms / 1000 : 0;
@@ -117,6 +117,16 @@ export const TrackRowPlayer: React.FC<TrackRowPlayerProps> = ({ job }) => {
                     aria-label="Remix with MuLaCover"
                 >
                     <Sparkles className="w-3.5 h-3.5" />
+                </button>
+
+                <button
+                    onClick={() => openExtendTrack(job)}
+                    disabled={!job.audio_path}
+                    className="p-1.5 rounded-lg bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950 transition-colors disabled:opacity-40 disabled:pointer-events-none"
+                    title="Extend Track Duration"
+                    aria-label="Extend Track Duration"
+                >
+                    <FastForward className="w-3.5 h-3.5" />
                 </button>
 
                 <button

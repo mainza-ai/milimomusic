@@ -49,6 +49,7 @@ import {
     Maximize2,
     ExternalLink,
     Disc,
+    FastForward,
     X
 } from 'lucide-react';
 import { useModalStore } from '../../stores/useModalStore';
@@ -119,7 +120,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
     const [stemSourceMode, setStemSourceMode] = useState<'muscriptor' | 'neural'>('muscriptor');
     const [isGeneratingCover, setIsGeneratingCover] = useState(false);
     const [isArtworkModalOpen, setIsArtworkModalOpen] = useState(false);
-    const { openCoverStudio } = useModalStore();
+    const { openCoverStudio, openExtendTrack } = useModalStore();
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -761,11 +762,15 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                             </button>
 
                             <button
-                                onClick={() => onExtend(track)}
-                                className="px-3.5 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-bold text-xs flex items-center gap-1.5 transition-colors border border-black/[0.06] dark:border-white/5"
+                                onClick={() => {
+                                    openExtendTrack(track);
+                                    if (onExtend) onExtend(track);
+                                }}
+                                className="px-3.5 py-2 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-300 font-bold text-xs flex items-center gap-1.5 transition-colors border border-teal-500/20 shadow-sm cursor-pointer"
+                                title="Extend this track past its duration with AI musical continuity"
                             >
-                                <Sparkles size={13} />
-                                <span>Extend Outro</span>
+                                <FastForward size={13} className="text-teal-400" />
+                                <span>Extend Track</span>
                             </button>
 
                             <button

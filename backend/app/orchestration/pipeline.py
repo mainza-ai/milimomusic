@@ -154,6 +154,8 @@ class GenerateAndTranscribePipeline:
                     structured_caption=req.structured_caption or None,
                     progress_callback=_gen_progress,
                     cancel_event=cancel_event,
+                    beat_grid=getattr(req, "beat_grid", None),
+                    target_duration_sec=getattr(req, "target_duration_sec", None),
                     **extra_gen_kwargs
                 )
             else:
@@ -210,7 +212,7 @@ class GenerateAndTranscribePipeline:
                     eff_lyrics = (meta.get("effective_lyrics") or "").strip()
                     eff_prompt = (meta.get("effective_prompt") or "").strip()
                     eff_tags = (meta.get("effective_tags") or "").strip()
-                    if eff_lyrics:
+                    if eff_lyrics and not getattr(req, "is_extension", False):
                         # Persist the final, clean song (strip the Co-Writer's
                         # internal reasoning/thinking that leaks into raw output).
                         job.lyrics = extract_final_lyrics(eff_lyrics) or eff_lyrics

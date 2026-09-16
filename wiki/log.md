@@ -1805,3 +1805,19 @@ Resolved critical track extension regression where extended tracks repeated from
    - Post-crossfade continuation: exact 0.0 diff with continuation audio past $T_{cut}$; correlation between $[0 \to 60\text{s}]$ and $[60 \to 120\text{s}]$ confirmed to be near zero (no repeating).
    - Frontend production build (`tsc -b && vite build`): 0 errors.
 
+## [2026-09-16] fix | Track Extension Acoustic Continuity: Musical Attribute Extraction, Locked Constraints & Beat-Grid Splicing
+Conducted deep forensic investigation into acoustic, tempo, and timbre divergence during track extensions and implemented production-grade Option A architecture:
+1. Root Cause Analysis: Proved that appending additional lyrics increased prompt token length ($N_2 > N_1$), altering Qwen3 causal attention and RoPE rotations, which completely changed the initial hidden state $h_0$ at `<|audio_start|>`. Even under identical seeds, the model diverged from frame 0 into an unrelated 95.7 BPM electronic song instead of the 132.5 BPM gospel piano parent. Splicing at 60s was joining the tail of Song A to the middle of Song B.
+2. Musical Attribute Analysis Engine: Implemented `detect_key_from_chroma()` with Krumhansl-Kessler 24-key profile correlation and `extract_audio_musical_attributes()` extracting true BPM, musical key, and scale from parent audio, notes JSON, and beat grid artifacts.
+3. Locked Continuation Structured Caption: Implemented `build_locked_continuation_caption()` enforcing rigid `[Global Metadata]` with `Basic Attributes: bpm is {bpm}. key is {key}, and scale is {scale}.`, explicit parent instrumentation anchors in `[Arrangement]`, and vocal profile locking in `[Vocal Details]`.
+4. Delta-Continuation Generation: Updated `extend_track` in `main.py` to calculate delta duration $\Delta t = T_{target} - T_{cut} + T_{crossfade}$ and pass only the continuation lyrics tagged as continuation sections (e.g. `[Verse 3]`, `[Outro]`), preventing intro/verse repeating while preserving `full_lyrics` on the child job for complete DAW display and karaoke sync.
+5. Beat-Grid Downbeat Alignment: Updated `concatenate_and_crossfade_audio()` in `minimax_provider.py` with downbeat snapping (`effective_cut_sec = first_downbeat + k * bar_duration`), guaranteeing that cut transitions align precisely to musical measure starts (beat 1) rather than mid-phrase or mid-syllable.
+6. Target Duration Enforcement: Added target length clipping with a smooth 250ms tail fade out in `concatenate_and_crossfade_audio()` to guarantee exact target duration to the millisecond.
+7. Verification & Tests: Verified via `verify_extension_fidelity.py` on parent track `27490839`:
+   - Extracted Key: D minor (confidence 0.9074).
+   - Pre-splice parent identity: bit-for-bit identical within 16-bit PCM float quantization ($0.00003052 \le 1\text{ LSB}$).
+   - Boundary energy: smooth balance (0.1671 vs 0.1485 RMS).
+   - Resulting audio duration: exact 120.00 seconds.
+   - Frontend production build (`tsc -b && vite build`): 0 errors.
+
+

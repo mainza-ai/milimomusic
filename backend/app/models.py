@@ -289,8 +289,10 @@ class GenerationRequest(SQLModel):
     # Track Extension options
     is_extension: Optional[bool] = False
     extend_from_sec: Optional[float] = None
+    target_duration_sec: Optional[float] = None
     crossfade_sec: Optional[float] = 1.5
     parent_audio_path: Optional[str] = None
+    beat_grid: Optional[Dict[str, Any]] = None
 
     @field_validator('tags', mode='before')
     @classmethod

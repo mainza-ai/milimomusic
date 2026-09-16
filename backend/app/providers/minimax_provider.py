@@ -14,7 +14,8 @@ import logging
 import math
 import threading
 from pathlib import Path
-from typing import Optional, Callable, Any, Dict, List
+from typing import Optional, Callable, Any, Dict, List, Tuple
+import numpy as np
 from app.providers.base import (
     GenerationProvider,
     GenerationCapabilities,
@@ -159,7 +160,233 @@ def run_real_minimax_inference(
 
 
 
-def synthesize_dynamic_audio_waveform(duration_sec: float, seed: Optional[int], output_path: str, prompt: Optional[str] = None, lyrics: Optional[str] = None, style_tags: Optional[str] = None) -> None:
+# ---------------------------------------------------------------------------
+# Musical attributes analysis and constraint locking for track extension.
+# Extracts tempo (BPM), musical key, scale, and instrumentation profile to
+# guarantee acoustic, harmonic, and rhythmic continuity during continuation.
+# ---------------------------------------------------------------------------
+MAJOR_KEY_PROFILE = np.array([6.35, 2.23, 3.48, 2.33, 4.38, 4.09, 2.52, 5.19, 2.39, 3.66, 2.29, 2.88])
+MINOR_KEY_PROFILE = np.array([6.33, 2.68, 3.52, 5.38, 2.60, 3.53, 2.54, 4.75, 3.98, 2.69, 3.34, 3.17])
+PITCH_CLASS_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
+
+KEY_ROOT_FREQS = {
+    "C": 65.41, "C#": 69.30, "DB": 69.30, "D": 73.42, "D#": 77.78, "EB": 77.78,
+    "E": 82.41, "F": 87.31, "F#": 92.50, "GB": 92.50, "G": 98.00, "G#": 103.83,
+    "AB": 103.83, "A": 110.00, "A#": 116.54, "BB": 116.54, "B": 123.47
+}
+
+
+def detect_key_from_chroma(chroma_12: np.ndarray) -> Tuple[str, str, float]:
+    """
+    Given a 12-element chroma pitch vector, correlate against 24 major/minor
+    Krumhansl-Kessler key profiles to find the musical key and scale.
+    """
+    if len(chroma_12) != 12 or np.all(chroma_12 == 0):
+        return "C", "major", 0.0
+
+    best_corr = -2.0
+    best_key = "C"
+    best_scale = "major"
+
+    chroma_norm = (chroma_12 - np.mean(chroma_12)) / (np.std(chroma_12) + 1e-9)
+
+    for i in range(12):
+        # Major correlation
+        maj_rolled = np.roll(MAJOR_KEY_PROFILE, i)
+        maj_norm = (maj_rolled - np.mean(maj_rolled)) / (np.std(maj_rolled) + 1e-9)
+        maj_corr = float(np.dot(chroma_norm, maj_norm) / 12.0)
+        if maj_corr > best_corr:
+            best_corr = maj_corr
+            best_key = PITCH_CLASS_NAMES[i]
+            best_scale = "major"
+
+        # Minor correlation
+        min_rolled = np.roll(MINOR_KEY_PROFILE, i)
+        min_norm = (min_rolled - np.mean(min_rolled)) / (np.std(min_rolled) + 1e-9)
+        min_corr = float(np.dot(chroma_norm, min_norm) / 12.0)
+        if min_corr > best_corr:
+            best_corr = min_corr
+            best_key = PITCH_CLASS_NAMES[i]
+            best_scale = "minor"
+
+    return best_key, best_scale, max(0.0, best_corr)
+
+
+def extract_audio_musical_attributes(
+    audio_path: Optional[str] = None,
+    notes_json: Optional[str] = None,
+    beat_grid_json: Optional[str] = None,
+    stored_bpm: Optional[float] = None,
+) -> Dict[str, Any]:
+    """
+    Extract comprehensive musical metadata (BPM, Key, Scale) from audio waveform
+    and existing database artifacts.
+    """
+    detected_bpm = stored_bpm if stored_bpm and stored_bpm > 40.0 else None
+    detected_key = "C"
+    detected_scale = "major"
+    key_confidence = 0.0
+
+    # 1. Parse beat grid if available
+    if beat_grid_json:
+        try:
+            bg = json.loads(beat_grid_json) if isinstance(beat_grid_json, str) else beat_grid_json
+            if bg and isinstance(bg, dict) and bg.get("bpm"):
+                bg_bpm = float(bg["bpm"])
+                if bg_bpm > 40.0 and detected_bpm is None:
+                    detected_bpm = bg_bpm
+        except Exception:
+            pass
+
+    # 2. Extract key from notes if available
+    if notes_json:
+        try:
+            notes = json.loads(notes_json) if isinstance(notes_json, str) else notes_json
+            if notes and isinstance(notes, list):
+                chroma = np.zeros(12, dtype=np.float64)
+                for n in notes:
+                    pitch = n.get("pitch")
+                    dur = n.get("duration", n.get("end", 1.0) - n.get("start", 0.0))
+                    if pitch is not None:
+                        chroma[int(pitch) % 12] += max(0.05, float(dur))
+                k, s, conf = detect_key_from_chroma(chroma)
+                if conf > 0.4:
+                    detected_key = k
+                    detected_scale = s
+                    key_confidence = conf
+        except Exception:
+            pass
+
+    # 3. Analyze raw audio waveform if audio_path exists
+    if audio_path and os.path.exists(audio_path):
+        try:
+            import soundfile as sf
+            data, sr = sf.read(audio_path, dtype="float32")
+            mono = np.mean(data, axis=1) if data.ndim > 1 else data
+
+            # BPM detection via librosa if not already resolved
+            if detected_bpm is None:
+                try:
+                    import librosa
+                    tempo, _ = librosa.beat.beat_track(y=mono, sr=sr)
+                    if np.isscalar(tempo):
+                        detected_bpm = float(tempo)
+                    elif len(tempo) > 0:
+                        detected_bpm = float(tempo[0])
+                except Exception:
+                    pass
+
+            # Key detection via CQT chroma if notes confidence is low
+            if key_confidence < 0.6:
+                try:
+                    import librosa
+                    chroma = np.mean(librosa.feature.chroma_cqt(y=mono, sr=sr), axis=1)
+                    k, s, conf = detect_key_from_chroma(chroma)
+                    if conf > key_confidence:
+                        detected_key = k
+                        detected_scale = s
+                        key_confidence = conf
+                except Exception:
+                    pass
+
+        except Exception:
+            pass
+
+    final_bpm = round(detected_bpm, 1) if detected_bpm else 120.0
+    return {
+        "bpm": final_bpm,
+        "key": detected_key,
+        "scale": detected_scale,
+        "key_confidence": key_confidence,
+    }
+
+
+def build_locked_continuation_caption(
+    parent_prompt: str,
+    parent_tags: Optional[str],
+    parent_structured_caption: Optional[Dict[str, Any]],
+    musical_profile: Dict[str, Any],
+) -> Dict[str, str]:
+    """
+    Constructs a rigid MiniMax Music 3 structured caption that locks:
+    - [Global Metadata]: Basic Attributes: bpm is {bpm}. key is {key}, and scale is {scale}.
+    - [Vocal Details]: Exact singer timbre and phrasing from parent.
+    - [Arrangement]: Explicit instrument list and groove continuation.
+    """
+    bpm = int(round(musical_profile.get("bpm", 120.0)))
+    key = musical_profile.get("key", "C")
+    scale = musical_profile.get("scale", "major")
+
+    # Cleanly parse parent tags whether comma-separated or list-serialized
+    tag_list = []
+    if parent_tags:
+        clean_raw = str(parent_tags).strip()
+        if clean_raw.startswith("[") and clean_raw.endswith("]"):
+            try:
+                parsed_list = json.loads(clean_raw.replace("'", '"'))
+                tag_list = [str(x).strip() for x in parsed_list if str(x).strip()]
+            except Exception:
+                tag_list = [t.strip().strip("[]'\"") for t in clean_raw.split(",") if t.strip().strip("[]'\"")]
+        else:
+            tag_list = [t.strip().strip("[]'\"") for t in clean_raw.split(",") if t.strip().strip("[]'\"")]
+
+    genre = tag_list[0] if tag_list else "Contemporary"
+    instruments = ", ".join(tag_list[2:]) if len(tag_list) > 2 else "Piano, Bass, Drums, Strings, Vocals"
+
+    p_meta = parent_structured_caption or {}
+    p_vocal = p_meta.get("vocal_details") or ""
+    p_arr = p_meta.get("arrangement") or ""
+
+    if "Instrumentation:" in p_arr:
+        inst_match = re.search(r'Instrumentation:\s*([^\n]+)', p_arr)
+        if inst_match:
+            instruments = inst_match.group(1).strip()
+    elif "anchored by" in p_arr:
+        inst_match = re.search(r'anchored by\s*([^\n\.]+)', p_arr)
+        if inst_match:
+            instruments = inst_match.group(1).strip()
+
+    if p_vocal and "Vocal Gender & Timbre:" in p_vocal:
+        vocal_details = p_vocal
+    else:
+        vocal_details = (
+            "Vocal Gender & Timbre: Singer A (Female/Male), consistent lead vocal identity and acoustic space as parent track.\n"
+            "Vocal Style: Melodic, emotive, and dynamically continuous with previous sections.\n"
+            "Harmony/Backing Vocals: Matching choir or backing vocal harmonies.\n"
+            "Vocal FX: Matching natural reverb and spatial positioning."
+        )
+
+    global_metadata = (
+        f"Basic Attributes: bpm is {bpm}. key is {key}, and scale is {scale}. Genre: {genre}.\n"
+        f"Global Emotional Progression: Seamless continuation sustaining the {genre} theme and dynamic energy into the extended arrangement.\n"
+        f"Application Scenarios & Imagery: {parent_prompt.strip() or 'Direct musical continuation'}\n"
+        f"Sonics & Production Profile: Balanced stereo mix matched to parent recording, consistent acoustic space and instrument levels."
+    )
+
+    arrangement = (
+        f"Instrument Lifecycle (Primary/Secondary): Primary {genre} foundation anchored by {instruments}, maintaining identical rhythm, harmonic voicing, and groove.\n"
+        f"Groove & Foundation Progression: Rhythmic drive locked at {bpm} BPM tempo.\n"
+        f"Embellishments, Textures & Spatial FX: Matching reverb tails and spatial presence."
+    )
+
+    return {
+        "global_metadata": global_metadata,
+        "vocal_details": vocal_details,
+        "arrangement": arrangement,
+    }
+
+
+def synthesize_dynamic_audio_waveform(
+    duration_sec: float,
+    seed: Optional[int],
+    output_path: str,
+    prompt: Optional[str] = None,
+    lyrics: Optional[str] = None,
+    style_tags: Optional[str] = None,
+    bpm: Optional[float] = None,
+    key: Optional[str] = None,
+    scale: Optional[str] = None,
+) -> None:
     """Synthesize broadcast-standard dynamic musical track with drums, bass, chords, and melody."""
     import wave
     import numpy as np
@@ -169,18 +396,25 @@ def synthesize_dynamic_audio_waveform(duration_sec: float, seed: Optional[int], 
     num_samples = int(sample_rate * duration_sec)
     
     import hashlib
-    # Condition the musical content on the actual inputs (lyrics/prompt/style) so tracks are
-    # NOT identical: different input text yields a different content seed and tempo. An
-    # explicit seed still wins for reproducibility.
     content = f"{prompt or ''}|{lyrics or ''}|{style_tags or ''}"
     content_seed = int(hashlib.md5(content.encode('utf-8')).hexdigest()[:8], 16)
     effective_seed = seed if seed is not None else content_seed
     rng = np.random.RandomState(effective_seed % (2**32 - 1))
     waveform = np.zeros(num_samples, dtype=np.float32)
 
-    # Derive tempo from the content so the same request differs across songs.
-    bpm = float(78 + (content_seed % 83))  # 78..160 BPM
-    beat_len = 60.0 / bpm
+    # Derive tempo: honor explicit BPM or caption attribute if present
+    bpm_val = None
+    if bpm is not None and float(bpm) > 40:
+        bpm_val = float(bpm)
+    elif prompt:
+        m_bpm = re.search(r'bpm is (\d+)', prompt, re.IGNORECASE)
+        if m_bpm:
+            bpm_val = float(m_bpm.group(1))
+    if bpm_val is None:
+        bpm_val = float(78 + (content_seed % 83))
+    
+    effective_bpm = bpm_val
+    beat_len = 60.0 / effective_bpm
     total_beats = int(duration_sec / beat_len)
 
     # 1. Rhythmic Drums Track (Kick on 1 & 3, Snare on 2 & 4, Hi-Hats on 8ths)
@@ -215,12 +449,23 @@ def synthesize_dynamic_audio_waveform(duration_sec: float, seed: Optional[int], 
                 hh_noise = rng.normal(0, 0.15, hh_len) * np.exp(-np.linspace(0, 0.06, hh_len) * 55.0)
                 waveform[hh_start:hh_start + hh_len] += hh_noise
 
-    # 2. Bassline & Chord Harmony Progression (C - Am - F - G)
+    # 2. Bassline & Chord Harmony Progression transposed to target Key
+    key_root = 65.41  # Default C2
+    target_key = (key or "").strip().upper()
+    if not target_key and prompt:
+        m_key = re.search(r'key is ([A-Ga-g][#b]?)', prompt)
+        if m_key:
+            target_key = m_key.group(1).upper()
+    if target_key in KEY_ROOT_FREQS:
+        key_root = KEY_ROOT_FREQS[target_key]
+
+    transpose_ratio = key_root / 65.41
+
     chords = [
-        {"root": 65.41, "freqs": [261.63, 329.63, 392.00]},  # C Major (C3, E4, G4)
-        {"root": 55.00, "freqs": [220.00, 261.63, 329.63]},  # A Minor (A2, C4, E4)
-        {"root": 43.65, "freqs": [174.61, 220.00, 261.63]},  # F Major (F2, A3, C4)
-        {"root": 49.00, "freqs": [196.00, 246.94, 293.66]}   # G Major (G2, B3, D4)
+        {"root": 65.41 * transpose_ratio, "freqs": [f * transpose_ratio for f in [261.63, 329.63, 392.00]]},
+        {"root": 55.00 * transpose_ratio, "freqs": [f * transpose_ratio for f in [220.00, 261.63, 329.63]]},
+        {"root": 43.65 * transpose_ratio, "freqs": [f * transpose_ratio for f in [174.61, 220.00, 261.63]]},
+        {"root": 49.00 * transpose_ratio, "freqs": [f * transpose_ratio for f in [196.00, 246.94, 293.66]]}
     ]
     chord_len = 4 * beat_len  # 1 bar per chord
     total_bars = int(duration_sec / chord_len) + 1
@@ -394,8 +639,10 @@ def concatenate_and_crossfade_audio(
     output_wav_path: str,
     crossfade_sec: float = 1.5,
     extend_from_sec: Optional[float] = None,
+    beat_grid: Optional[Dict[str, Any]] = None,
+    target_duration_sec: Optional[float] = None,
 ) -> float:
-    """Concatenate parent audio with extension audio using an equal-power sine/cosine crossfade."""
+    """Concatenate parent audio with extension audio using beat-grid alignment and equal-power sine/cosine crossfade."""
     import numpy as np
     from app.core.paths import get_generated_audio_dir, get_repo_root
 
@@ -412,9 +659,24 @@ def concatenate_and_crossfade_audio(
         except Exception as _resample_err:
             logger.warning(f"Resampling failed ({_resample_err}); using extension audio as-is.")
 
-    # Slice parent audio to extend_from_sec cut point if requested
-    if extend_from_sec is not None and extend_from_sec > 0:
-        cut_samples = int(extend_from_sec * sr_p)
+    # Beat-grid alignment: snap cut point to the nearest downbeat (measure start) if available
+    effective_cut_sec = extend_from_sec
+    if effective_cut_sec is not None and effective_cut_sec > 0 and beat_grid and isinstance(beat_grid, dict):
+        bg_bpm = float(beat_grid.get("bpm", 0.0))
+        beats_per_bar = int(beat_grid.get("beats_per_bar", 4))
+        first_downbeat = float(beat_grid.get("first_downbeat", 0.0))
+        if bg_bpm > 40.0:
+            bar_dur = beats_per_bar * (60.0 / bg_bpm)
+            k = round((effective_cut_sec - first_downbeat) / bar_dur)
+            snapped_cut = first_downbeat + k * bar_dur
+            parent_total_sec = len(data_p) / sr_p
+            if 5.0 <= snapped_cut <= parent_total_sec and abs(snapped_cut - effective_cut_sec) <= 1.5:
+                logger.info(f"Beat-grid snap: aligned cut point from {effective_cut_sec:.2f}s to downbeat at {snapped_cut:.2f}s (measure {k})")
+                effective_cut_sec = snapped_cut
+
+    # Slice parent audio to cut point if requested
+    if effective_cut_sec is not None and effective_cut_sec > 0:
+        cut_samples = int(effective_cut_sec * sr_p)
         if 0 < cut_samples < len(data_p):
             data_p = data_p[:cut_samples]
         else:
@@ -436,13 +698,11 @@ def concatenate_and_crossfade_audio(
     crossfade_samples = int(min(len(data_p), len(data_e), crossfade_sec * sr_p))
 
     # Determine continuation alignment:
-    # If data_e covers the full timeline (length > cut_samples), slice data_e
-    # starting around the cut point (cut_samples - crossfade_samples) so the
-    # crossfade aligns with the cut point and audio continues forward into
-    # [extend_from_sec -> target_duration].
+    # If data_e covers the full timeline (length > cut_samples + 10s), slice data_e
+    # starting around the cut point (cut_samples - crossfade_samples).
     # If data_e is a delta snippet starting at t=0 (length <= cut_samples),
     # slice from index 0.
-    if extend_from_sec is not None and extend_from_sec > 0 and len(data_e) > cut_samples:
+    if effective_cut_sec is not None and effective_cut_sec > 0 and len(data_e) > cut_samples + int(10.0 * sr_p):
         ext_start_sample = max(0, cut_samples - crossfade_samples)
     else:
         ext_start_sample = 0
@@ -476,6 +736,16 @@ def concatenate_and_crossfade_audio(
 
         post = data_e[ext_start_sample + actual_xfade :]
         combined = np.vstack([pre, cross, post])
+
+    # Enforce exact target duration if requested with a gentle tail fade
+    if target_duration_sec is not None and target_duration_sec > 0:
+        target_samples = int(target_duration_sec * sr_p)
+        if len(combined) > target_samples:
+            fade_len = int(min(0.25 * sr_p, len(combined) - target_samples + 0.25 * sr_p))
+            combined = combined[:target_samples]
+            if fade_len > 0:
+                t_fade = np.linspace(1.0, 0.0, fade_len)[:, np.newaxis]
+                combined[-fade_len:] *= t_fade
 
     _write_wav_float(output_wav_path, sr_p, combined)
 
@@ -895,6 +1165,9 @@ class MiniMaxMusic3Provider(GenerationProvider):
         out_wav_path = str(gen_dir / f"{job_id}.wav")
         alt_wav = str(gen_dir / f"song_{job_id}.wav")
 
+        beat_grid = kwargs.get("beat_grid")
+        target_duration_sec = kwargs.get("target_duration_sec")
+
         loop = asyncio.get_event_loop()
         total_duration = await loop.run_in_executor(
             None,
@@ -904,6 +1177,8 @@ class MiniMaxMusic3Provider(GenerationProvider):
             out_wav_path,
             crossfade_sec,
             extend_from_sec,
+            beat_grid,
+            target_duration_sec,
         )
 
         # Mirror to song_{job_id}.wav for route versatility

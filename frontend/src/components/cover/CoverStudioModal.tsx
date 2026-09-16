@@ -18,7 +18,7 @@ import {
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { useModalA11y } from '../ui/primitives';
-import { remixApi, modelsApi, API_BASE_URL, type Job, type LeadSheetResult, type ModelDownloadStatus } from '../../api';
+import { remixApi, modelsApi, api, API_BASE_URL, type Job, type LeadSheetResult, type ModelDownloadStatus } from '../../api';
 import { toast } from '../../utils/toast';
 
 interface CoverStudioModalProps {
@@ -176,7 +176,11 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
         }
     };
 
-    const handleTranscribeLeadSheet = async () => {
+    const handleTranscribeLeadSheet = async (e?: React.MouseEvent) => {
+        if (e) {
+            e.preventDefault();
+            e.stopPropagation();
+        }
         if (!refAudioPath) {
             toast('Please upload or select reference audio first', 'error');
             return;
@@ -514,73 +518,73 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                                 </span>
                                             </div>
                                             
-                                            <div className="flex flex-wrap gap-1.5 pt-1">
-                                                {leadSheet.paths?.melody && (
-                                                    <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-800/80 border border-teal-500/30 text-[11px] text-zinc-200">
-                                                        <Music className="w-3 h-3 text-teal-400" />
-                                                        <span>Melody</span>
-                                                        <a
-                                                            href={leadSheet.paths.melody.startsWith('http') ? leadSheet.paths.melody : `${API_BASE_URL}${leadSheet.paths.melody}`}
-                                                            download="melody.mid"
-                                                            className="text-teal-400 hover:text-teal-300 ml-1 p-0.5 rounded hover:bg-zinc-700"
-                                                            title="Download Melody MIDI"
-                                                        >
-                                                            <Download className="w-3 h-3" />
-                                                        </a>
-                                                        {onOpenPianoRoll && (
-                                                            <button
-                                                                type="button"
-                                                                onClick={() => onOpenPianoRoll(leadSheet.paths.melody)}
-                                                                className="text-teal-400 hover:text-white ml-0.5 underline font-medium"
-                                                            >
-                                                                Roll
-                                                            </button>
-                                                        )}
-                                                    </div>
-                                                )}
-                                                {leadSheet.paths?.chord && (
-                                                    <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-800/80 border border-teal-500/30 text-[11px] text-zinc-200">
-                                                        <Music className="w-3 h-3 text-teal-400" />
-                                                        <span>Chords</span>
-                                                        <a
-                                                            href={leadSheet.paths.chord.startsWith('http') ? leadSheet.paths.chord : `${API_BASE_URL}${leadSheet.paths.chord}`}
-                                                            download="chords.mid"
-                                                            className="text-teal-400 hover:text-teal-300 ml-1 p-0.5 rounded hover:bg-zinc-700"
-                                                            title="Download Chords MIDI"
-                                                        >
-                                                            <Download className="w-3 h-3" />
-                                                        </a>
-                                                    </div>
-                                                )}
-                                                {leadSheet.paths?.drum && (
-                                                    <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-800/80 border border-teal-500/30 text-[11px] text-zinc-200">
-                                                        <Music className="w-3 h-3 text-teal-400" />
-                                                        <span>Drums</span>
-                                                        <a
-                                                            href={leadSheet.paths.drum.startsWith('http') ? leadSheet.paths.drum : `${API_BASE_URL}${leadSheet.paths.drum}`}
-                                                            download="drums.mid"
-                                                            className="text-teal-400 hover:text-teal-300 ml-1 p-0.5 rounded hover:bg-zinc-700"
-                                                            title="Download Drums MIDI"
-                                                        >
-                                                            <Download className="w-3 h-3" />
-                                                        </a>
-                                                    </div>
-                                                )}
-                                                {(leadSheet.paths?.leadsheet_summary_midi || leadSheet.paths?.leadsheet_midi) && (
-                                                    <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-800/80 border border-cyan-500/30 text-[11px] text-zinc-200">
-                                                        <Music className="w-3 h-3 text-cyan-400" />
-                                                        <span>Full Lead Sheet</span>
-                                                        <a
-                                                            href={(leadSheet.paths.leadsheet_summary_midi || leadSheet.paths.leadsheet_midi).startsWith('http') ? (leadSheet.paths.leadsheet_summary_midi || leadSheet.paths.leadsheet_midi) : `${API_BASE_URL}${(leadSheet.paths.leadsheet_summary_midi || leadSheet.paths.leadsheet_midi)}`}
-                                                            download="lead_sheet.mid"
-                                                            className="text-cyan-400 hover:text-cyan-300 ml-1 p-0.5 rounded hover:bg-zinc-700"
-                                                            title="Download Full Lead Sheet MIDI"
-                                                        >
-                                                            <Download className="w-3 h-3" />
-                                                        </a>
-                                                    </div>
-                                                )}
-                                            </div>
+                                             <div className="flex flex-wrap gap-1.5 pt-1">
+                                                 {leadSheet.paths?.melody && (
+                                                     <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-800/80 border border-teal-500/30 text-[11px] text-zinc-200">
+                                                         <Music className="w-3 h-3 text-teal-400" />
+                                                         <span>Melody</span>
+                                                         <a
+                                                             href={api.getAudioUrl(leadSheet.paths.melody)}
+                                                             download="melody.mid"
+                                                             className="text-teal-400 hover:text-teal-300 ml-1 p-0.5 rounded hover:bg-zinc-700"
+                                                             title="Download Melody MIDI"
+                                                         >
+                                                             <Download className="w-3 h-3" />
+                                                         </a>
+                                                         {onOpenPianoRoll && (
+                                                             <button
+                                                                 type="button"
+                                                                 onClick={() => onOpenPianoRoll(leadSheet.paths.melody)}
+                                                                 className="text-teal-400 hover:text-white ml-0.5 underline font-medium"
+                                                             >
+                                                                 Roll
+                                                             </button>
+                                                         )}
+                                                     </div>
+                                                 )}
+                                                 {leadSheet.paths?.chord && (
+                                                     <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-800/80 border border-teal-500/30 text-[11px] text-zinc-200">
+                                                         <Music className="w-3 h-3 text-teal-400" />
+                                                         <span>Chords</span>
+                                                         <a
+                                                             href={api.getAudioUrl(leadSheet.paths.chord)}
+                                                             download="chords.mid"
+                                                             className="text-teal-400 hover:text-teal-300 ml-1 p-0.5 rounded hover:bg-zinc-700"
+                                                             title="Download Chords MIDI"
+                                                         >
+                                                             <Download className="w-3 h-3" />
+                                                         </a>
+                                                     </div>
+                                                 )}
+                                                 {(leadSheet.paths?.drum || leadSheet.paths?.drums) && (
+                                                     <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-800/80 border border-teal-500/30 text-[11px] text-zinc-200">
+                                                         <Music className="w-3 h-3 text-teal-400" />
+                                                         <span>Drums</span>
+                                                         <a
+                                                             href={api.getAudioUrl(leadSheet.paths.drum || leadSheet.paths.drums)}
+                                                             download="drums.mid"
+                                                             className="text-teal-400 hover:text-teal-300 ml-1 p-0.5 rounded hover:bg-zinc-700"
+                                                             title="Download Drums MIDI"
+                                                         >
+                                                             <Download className="w-3 h-3" />
+                                                         </a>
+                                                     </div>
+                                                 )}
+                                                 {(leadSheet.paths?.leadsheet_summary_midi || leadSheet.paths?.leadsheet_midi) && (
+                                                     <div className="flex items-center gap-1.5 px-2 py-1 rounded bg-zinc-800/80 border border-cyan-500/30 text-[11px] text-zinc-200">
+                                                         <Music className="w-3 h-3 text-cyan-400" />
+                                                         <span>Full Lead Sheet</span>
+                                                         <a
+                                                             href={api.getAudioUrl(leadSheet.paths.leadsheet_summary_midi || leadSheet.paths.leadsheet_midi)}
+                                                             download="lead_sheet.mid"
+                                                             className="text-cyan-400 hover:text-cyan-300 ml-1 p-0.5 rounded hover:bg-zinc-700"
+                                                             title="Download Full Lead Sheet MIDI"
+                                                         >
+                                                             <Download className="w-3 h-3" />
+                                                         </a>
+                                                     </div>
+                                                 )}
+                                             </div>
                                         </div>
                                     )}
                                 </div>

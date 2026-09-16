@@ -1855,3 +1855,26 @@ Resolved CI GitHub Actions test suite failures on `develop` and `main`:
 3. Verification:
    - `backend/tests/test_api_parity.py` and `backend/tests/test_v2_core.py` pass cleanly locally and when run alongside full app endpoints.
    - Synchronized and pushed to both `origin/develop` and `origin/main`.
+
+## [2026-09-16] fix | Extension Lyrics Control, Segment Repair Modernization & Button Tooltip Audit
+Completed four-part upgrade across backend and frontend:
+1. Extension Lyrics Control:
+   - Enforced that track extension NEVER automatically generates or adds lyrics by default.
+   - Added `auto_generate_lyrics: bool = Field(default=False)` to `TrackExtendRequest` (backend) and `TrackExtendParams` (frontend).
+   - When disabled and no `additional_lyrics` are provided, `child_job.lyrics` strictly matches `parent_lyrics` without solo/verse tokens.
+   - In `ExtendTrackModal.tsx`, added an opt-in toggle (default: OFF) and an on-demand "✨ Draft with AI" button (`lyricsApi.generateLyrics`) allowing user review and modification before submission.
+2. Removed Legacy Remix / Re-roll Button:
+   - Removed the redundant `Remix / Re-roll` button from `TrackDetailView.tsx` now that MuLaCover remixing is in place.
+3. Modernized Audio Segment Repair (Inpainting):
+   - Fully audited and modernized `backend/app/services/inpainting_service.py` to decouple from legacy HeartMuLa token files (`generated_tokens/*.pt`).
+   - Integrated Milimo v2 audio-domain infill using parent audio resolution (`_resolve_audio_file`), beat-grid downbeat snapping, acoustic conditioning (`build_locked_continuation_caption`), and dual equal-power sine/cosine crossfading (`_equal_power_crossfade`).
+   - Added post-repair processing cascade (BS-Roformer 6-stem neural source separation, MuScriptor neural transcription to MIDI/MusicXML, and WhisperX lyric sync).
+   - Updated `POST /jobs/{job_id}/inpaint` with `TrackInpaintRequest` validation and background execution.
+   - Added `Repair Segment` button to `TrackDetailView.tsx` wired to `InpaintModal`.
+4. Button Tooltip Audit:
+   - Audited every `<button>` element across the entire frontend (421 buttons).
+   - Injected descriptive, accessible `title="..."` attributes on all 196 buttons missing tooltips across 27 components.
+5. Verification:
+   - Frontend: `npm run build` compiled with 0 errors.
+   - API/UI Parity: `scripts/check_api_parity.py` verified 132 routes, all called; 137 client calls, all resolve.
+   - Backend Tests: All tests in `test_extension_inpaint.py`, `test_api_parity.py`, `test_v2_core.py`, and `test_audio_serving.py` passed.

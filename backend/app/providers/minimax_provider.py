@@ -1182,7 +1182,11 @@ class MiniMaxMusic3Provider(GenerationProvider):
         # Check if real MLX inference is available and seed is known
         if _MLX_AUDIO_AVAILABLE and self.snapshot_path and seed is not None:
             parent_prompt = kwargs.get("parent_prompt") or prompt or ""
-            parent_lyrics = kwargs.get("parent_lyrics") or lyrics or ""
+            base_parent_lyrics = kwargs.get("parent_lyrics") or ""
+            if lyrics and lyrics.strip() and lyrics.strip() not in base_parent_lyrics:
+                effective_extension_lyrics = f"{base_parent_lyrics}\n\n{lyrics.strip()}".strip() if base_parent_lyrics else lyrics.strip()
+            else:
+                effective_extension_lyrics = base_parent_lyrics
 
             # Check for parent structured caption to maintain 100% token parity with parent run
             parent_sc = kwargs.get("parent_structured_caption")
@@ -1236,7 +1240,7 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 run_real_minimax_extension,
                 self.snapshot_path,
                 formatted_caption,
-                parent_lyrics,
+                effective_extension_lyrics,
                 parent_dur,
                 target_dur,
                 int(seed),

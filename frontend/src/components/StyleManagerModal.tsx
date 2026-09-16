@@ -133,7 +133,7 @@ export const StyleManagerModal: React.FC<StyleManagerModalProps> = ({
                                             ? 'bg-white dark:bg-white/10 shadow-sm text-teal-600 dark:text-teal-300 ring-1 ring-black/5 dark:ring-white/10'
                                             : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-black/5 dark:hover:bg-white/5'
                                             }`}
-                                    >
+                                     title="🎵 Official ( )">
                                         🎵 Official ({officialStyles.length})
                                     </button>
                                     <button
@@ -142,7 +142,7 @@ export const StyleManagerModal: React.FC<StyleManagerModalProps> = ({
                                             ? 'bg-white dark:bg-white/10 shadow-sm text-teal-600 dark:text-teal-300 ring-1 ring-black/5 dark:ring-white/10'
                                             : 'text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 hover:bg-black/5 dark:hover:bg-white/5'
                                             }`}
-                                    >
+                                     title="⚗️ Custom ( )">
                                         ⚗️ Custom ({customStyles.length})
                                     </button>
                                 </div>
@@ -185,7 +185,7 @@ export const StyleManagerModal: React.FC<StyleManagerModalProps> = ({
                                                         onClick={handleAddStyle}
                                                         disabled={isAdding || !newStyleName.trim()}
                                                         className="px-4 py-2 bg-amber-500 hover:bg-amber-600 text-white rounded-md font-bold text-sm shadow-md transition-all disabled:opacity-50 flex items-center gap-2"
-                                                    >
+                                                     title="Add">
                                                         {isAdding ? <Loader2 className="w-4 h-4 animate-spin" /> : <Plus className="w-4 h-4" />}
                                                         Add
                                                     </button>
@@ -216,7 +216,7 @@ export const StyleManagerModal: React.FC<StyleManagerModalProps> = ({
                                                             <button
                                                                 onClick={() => handleDeleteStyle(style.name)}
                                                                 className="p-1.5 text-slate-400 hover:text-red-500 hover:bg-red-50 rounded transition-colors"
-                                                            >
+                                                             title="Delete">
                                                                 <Trash2 className="w-4 h-4" />
                                                             </button>
                                                         </div>

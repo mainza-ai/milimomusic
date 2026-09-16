@@ -12,7 +12,7 @@ import {
 import { GlassCard } from '../ui/GlassCard';
 import { useModalA11y } from '../ui/primitives';
 import { useModalStore } from '../../stores/useModalStore';
-import { trackApi } from '../../api';
+import { trackApi, api } from '../../api';
 import { toast } from '../../utils/toast';
 
 export const ExtendTrackModal: React.FC = () => {
@@ -30,6 +30,8 @@ export const ExtendTrackModal: React.FC = () => {
     const [extendFromSec, setExtendFromSec] = useState<number>(parentDurationSec);
     const [targetDurationSec, setTargetDurationSec] = useState<number>(Math.min(300, parentDurationSec + 60));
     const [additionalLyrics, setAdditionalLyrics] = useState<string>('');
+    const [autoGenerateLyrics, setAutoGenerateLyrics] = useState<boolean>(false);
+    const [isDraftingLyrics, setIsDraftingLyrics] = useState<boolean>(false);
     const [customPrompt, setCustomPrompt] = useState<string>('');
     const [crossfadeSec, setCrossfadeSec] = useState<number>(1.5);
     const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
@@ -42,9 +44,27 @@ export const ExtendTrackModal: React.FC = () => {
             setExtendFromSec(dur);
             setTargetDurationSec(Math.min(300, dur + 60));
             setAdditionalLyrics('');
+            setAutoGenerateLyrics(false);
             setCustomPrompt('');
         }
     }, [extendTrackJob]);
+
+    const handleDraftLyrics = async () => {
+        setIsDraftingLyrics(true);
+        try {
+            const topic = `Continuation lyrics for track "${parentTitle}", style: ${parentTags || 'pop'}`;
+            const drafted = await api.generateLyrics(topic, 'deepseek-v3', additionalLyrics || undefined, parentTags);
+            if (drafted) {
+                setAdditionalLyrics(prev => prev.trim() ? `${prev.trim()}\n\n${drafted.trim()}` : drafted.trim());
+                toast('Drafted continuation lyrics with AI!', 'success');
+            }
+        } catch (e) {
+            console.error('Failed to draft lyrics:', e);
+            toast('Failed to draft lyrics with AI', 'error');
+        } finally {
+            setIsDraftingLyrics(false);
+        }
+    };
 
     if (!isExtendTrackOpen || !extendTrackJob) return null;
 
@@ -81,6 +101,7 @@ export const ExtendTrackModal: React.FC = () => {
                 target_duration_sec: targetDurationSec,
                 extend_from_sec: extendFromSec,
                 additional_lyrics: additionalLyrics.trim() || undefined,
+                auto_generate_lyrics: autoGenerateLyrics,
                 prompt: customPrompt.trim() || undefined,
                 crossfade_sec: crossfadeSec,
             });
@@ -127,8 +148,9 @@ export const ExtendTrackModal: React.FC = () => {
                     </div>
                     <button
                         onClick={closeExtendTrack}
-                        className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800/60 transition-colors"
+                        className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800/60 transition-colors cursor-pointer"
                         aria-label="Close modal"
+                        title="Close modal"
                     >
                         <X className="w-5 h-5" />
                     </button>
@@ -179,7 +201,8 @@ export const ExtendTrackModal: React.FC = () => {
                                         key={delta}
                                         type="button"
                                         onClick={() => handleQuickAddDelta(delta)}
-                                        className={`py-2 text-xs rounded-xl border font-medium transition-all ${
+                                        title={`Extend duration by ${delta} seconds (Target: ${formatTime(target)})`}
+                                        className={`py-2 text-xs rounded-xl border font-medium transition-all cursor-pointer ${
                                             isSelected
                                                 ? 'bg-teal-500/20 border-teal-500/60 text-teal-300 shadow-sm shadow-teal-500/20'
                                                 : 'bg-zinc-900/60 border-zinc-800 text-zinc-400 hover:text-white hover:bg-zinc-800'
@@ -251,7 +274,28 @@ export const ExtendTrackModal: React.FC = () => {
                             <label className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">
                                 Extension Lyrics & Arrangement
                             </label>
-                            <span className="text-[10px] text-zinc-400">Optional: leave empty for instrumental continuation</span>
+                            <div className="flex items-center gap-2">
+                                <span className="text-[10px] text-zinc-400">Empty = instrumental continuation</span>
+                                <button
+                                    type="button"
+                                    onClick={handleDraftLyrics}
+                                    disabled={isDraftingLyrics}
+                                    className="px-2.5 py-1 text-[11px] rounded-lg bg-teal-500/10 hover:bg-teal-500/20 border border-teal-500/30 text-teal-300 font-medium flex items-center gap-1 transition-colors cursor-pointer disabled:opacity-50"
+                                    title="Draft continuation lyrics with AI based on song style"
+                                >
+                                    {isDraftingLyrics ? (
+                                        <>
+                                            <Loader2 className="w-3 h-3 animate-spin" />
+                                            <span>Drafting...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Sparkles className="w-3 h-3 text-teal-400" />
+                                            <span>Draft with AI</span>
+                                        </>
+                                    )}
+                                </button>
+                            </div>
                         </div>
 
                         {/* Quick Tag Pills */}
@@ -261,7 +305,8 @@ export const ExtendTrackModal: React.FC = () => {
                                     key={tag}
                                     type="button"
                                     onClick={() => handleInsertTag(tag)}
-                                    className="px-2.5 py-1 text-[11px] rounded-lg bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-white transition-colors"
+                                    className="px-2.5 py-1 text-[11px] rounded-lg bg-zinc-900/80 hover:bg-zinc-800 border border-zinc-800 text-zinc-300 hover:text-white transition-colors cursor-pointer"
+                                    title={`Insert ${tag} marker`}
                                 >
                                     + {tag}
                                 </button>
@@ -275,6 +320,29 @@ export const ExtendTrackModal: React.FC = () => {
                             placeholder="[Verse 2]&#10;Add lyrics for the continued section...&#10;&#10;[Outro]&#10;Fade into the night..."
                             className="w-full px-3.5 py-2.5 text-xs rounded-xl bg-zinc-900/70 border border-zinc-800 text-white font-mono placeholder:text-zinc-400 focus:outline-none focus:border-teal-500/60 focus:ring-1 focus:ring-teal-500/40 custom-scrollbar resize-none"
                         />
+
+                        {/* Auto-generate lyrics toggle (Default: OFF) */}
+                        <div className="flex items-center justify-between p-3 rounded-xl bg-zinc-900/50 border border-zinc-800/60">
+                            <div>
+                                <label htmlFor="auto-gen-lyrics-toggle" className="text-xs font-medium text-zinc-200 block cursor-pointer">
+                                    Auto-generate continuation lyrics with AI
+                                </label>
+                                <span className="text-[11px] text-zinc-400 block">
+                                    Off by default. When disabled, lyrics are never added automatically.
+                                </span>
+                            </div>
+                            <label className="relative inline-flex items-center cursor-pointer">
+                                <input
+                                    id="auto-gen-lyrics-toggle"
+                                    type="checkbox"
+                                    checked={autoGenerateLyrics}
+                                    onChange={e => setAutoGenerateLyrics(e.target.checked)}
+                                    className="sr-only peer"
+                                    title="Toggle auto-generation of continuation lyrics"
+                                />
+                                <div className="w-9 h-5 bg-zinc-800 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-teal-500"></div>
+                            </label>
+                        </div>
                     </div>
 
                     {/* Advanced Settings Toggle */}
@@ -282,7 +350,8 @@ export const ExtendTrackModal: React.FC = () => {
                         <button
                             type="button"
                             onClick={() => setShowAdvanced(!showAdvanced)}
-                            className="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1.5 font-medium transition-colors"
+                            title={showAdvanced ? "Hide advanced acoustic settings" : "Show advanced acoustic settings"}
+                            className="text-xs text-zinc-400 hover:text-zinc-200 flex items-center gap-1.5 font-medium transition-colors cursor-pointer"
                         >
                             <Sliders className="w-3.5 h-3.5" />
                             <span>{showAdvanced ? 'Hide Advanced Settings' : 'Show Advanced Acoustic Settings'}</span>
@@ -330,14 +399,16 @@ export const ExtendTrackModal: React.FC = () => {
                         <button
                             type="button"
                             onClick={closeExtendTrack}
-                            className="px-4 py-2 text-xs font-semibold text-zinc-300 hover:text-white bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl transition-colors"
+                            title="Cancel extension"
+                            className="px-4 py-2 text-xs font-semibold text-zinc-300 hover:text-white bg-zinc-900 hover:bg-zinc-800 border border-zinc-800 rounded-xl transition-colors cursor-pointer"
                         >
                             Cancel
                         </button>
                         <button
                             type="submit"
                             disabled={isSubmitting}
-                            className="px-5 py-2 text-xs font-semibold text-white bg-gradient-to-r from-teal-500 to-indigo-600 hover:from-teal-400 hover:to-indigo-500 rounded-xl shadow-lg shadow-teal-500/20 flex items-center gap-2 transition-all disabled:opacity-50"
+                            title={`Queue extension to ${formatTime(targetDurationSec)}`}
+                            className="px-5 py-2 text-xs font-semibold text-white bg-gradient-to-r from-teal-500 to-indigo-600 hover:from-teal-400 hover:to-indigo-500 rounded-xl shadow-lg shadow-teal-500/20 flex items-center gap-2 transition-all disabled:opacity-50 cursor-pointer"
                         >
                             {isSubmitting ? (
                                 <>

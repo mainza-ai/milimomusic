@@ -211,7 +211,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                         <button
                             onClick={() => setIsCreating(false)}
                             className="text-xs text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                        >
+                         title="Cancel">
                             Cancel
                         </button>
                     </div>
@@ -237,13 +237,13 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                                 type="button"
                                 onClick={() => setIsCreating(false)}
                                 className="px-4 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 text-xs font-semibold text-slate-600 dark:text-slate-400"
-                            >
+                             title="Cancel">
                                 Cancel
                             </button>
                             <button
                                 type="submit"
                                 className="px-4 py-2 rounded-xl bg-teal-500 text-slate-950 text-xs font-bold shadow-sm hover:bg-teal-400 transition-all"
-                            >
+                             title="Save Playlist">
                                 Save Playlist
                             </button>
                         </div>
@@ -332,7 +332,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                                     <button
                                         onClick={() => onPlaySong(activePlaylistSongs[0])}
                                         className="px-4 py-2 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition-all shadow-md shadow-teal-500/20 active:scale-95"
-                                    >
+                                     title="Play All">
                                         <Play size={14} className="ml-0.5" />
                                         <span>Play All</span>
                                     </button>
@@ -404,7 +404,7 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
                                                 <button
                                                     onClick={() => onOpenWorkspace(song)}
                                                     className="px-2.5 py-1 bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950 font-bold rounded-lg text-[10px] transition-all"
-                                                >
+                                                 title="DAW Edit">
                                                     DAW Edit
                                                 </button>
 

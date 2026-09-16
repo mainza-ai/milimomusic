@@ -1892,7 +1892,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                                 className={`px-1.5 py-0.5 rounded font-bold ${
                                     rowH === h ? 'bg-teal-500/15 text-teal-600 dark:text-teal-400' : 'hover:text-slate-800 dark:hover:text-slate-200'
                                 }`}
-                            >
+                             title="Action">
                                 {h === 18 ? 'S' : h === 24 ? 'M' : 'L'}
                             </button>
                         ))}

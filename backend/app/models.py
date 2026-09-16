@@ -50,8 +50,9 @@ class Job(SQLModel, table=True):
     # Generation Model & Provider
     model_provider: Optional[str] = Field(default="minimax_music3")
     llm_model: Optional[str] = Field(default=None) # Track which LLM was used for lyrics
-    parent_job_id: Optional[str] = Field(default=None) # For extensions
+    parent_job_id: Optional[str] = Field(default=None) # For extensions and repairs
     is_extension: bool = Field(default=False)
+    is_repair: bool = Field(default=False)
     extend_from_sec: Optional[float] = Field(default=None)
     temperature: Optional[float] = Field(default=None)
     cfg_scale: Optional[float] = Field(default=None)
@@ -286,8 +287,9 @@ class GenerationRequest(SQLModel):
     bpm: Optional[float] = None
     transcription_engine: Optional[str] = "milimo_neural"
 
-    # Track Extension options
+    # Track Extension & Inpainting options
     is_extension: Optional[bool] = False
+    is_repair: Optional[bool] = False
     extend_from_sec: Optional[float] = None
     target_duration_sec: Optional[float] = None
     crossfade_sec: Optional[float] = 1.5
@@ -312,8 +314,17 @@ class TrackExtendRequest(SQLModel):
     target_duration_sec: float = Field(..., ge=15.0, le=600.0)
     extend_from_sec: Optional[float] = None
     additional_lyrics: Optional[str] = None
+    auto_generate_lyrics: bool = Field(default=False, description="Whether to automatically generate continuation lyrics with AI. Default: False.")
     prompt: Optional[str] = None
     crossfade_sec: float = Field(default=1.5, ge=0.1, le=5.0)
+
+
+class TrackInpaintRequest(SQLModel):
+    model_config = {"protected_namespaces": ()}
+    start_time: float = Field(..., ge=0.0, description="Start time of region to repair in seconds.")
+    end_time: float = Field(..., ge=0.1, description="End time of region to repair in seconds.")
+    prompt: Optional[str] = None
+    crossfade_sec: float = Field(default=1.0, ge=0.05, le=5.0)
 
 
 class CoverGenerationRequest(SQLModel):

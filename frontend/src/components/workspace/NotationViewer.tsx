@@ -562,7 +562,7 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
                                     ? 'bg-teal-500 text-slate-950 shadow-sm'
                                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                             }`}
-                        >
+                         title="All Parts">
                             All Parts
                         </button>
                         {availableInstruments.map(inst => (
@@ -574,7 +574,7 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
                                         ? 'bg-teal-500 text-slate-950 shadow-sm'
                                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                                 }`}
-                            >
+                             title="Action">
                                 {inst}
                             </button>
                         ))}
@@ -645,7 +645,7 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
                             <button
                                 onClick={() => setIsSheetsModalOpen(false)}
                                 className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200"
-                            >
+                             title="Close">
                                 <X size={16} />
                             </button>
                         </div>

@@ -477,10 +477,12 @@ export const api = {
         return res.data;
     },
 
-    inpaintTrack: async (jobId: string, startTime: number, endTime: number) => {
+    inpaintTrack: async (jobId: string, startTime: number, endTime: number, prompt?: string, crossfadeSec?: number) => {
         const res = await axios.post(`${API_BASE_URL}/jobs/${jobId}/inpaint`, {
             start_time: startTime,
-            end_time: endTime
+            end_time: endTime,
+            prompt,
+            crossfade_sec: crossfadeSec ?? 1.0,
         });
         return res.data;
     },
@@ -943,6 +945,7 @@ export interface TrackExtendParams {
     target_duration_sec: number;
     extend_from_sec?: number;
     additional_lyrics?: string;
+    auto_generate_lyrics?: boolean;
     prompt?: string;
     crossfade_sec?: number;
 }

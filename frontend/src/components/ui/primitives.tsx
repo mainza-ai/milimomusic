@@ -58,7 +58,7 @@ export const Button: React.FC<ButtonProps> = ({
             className
         )}
         {...rest}
-    >
+     title="Action">
         {loading && <Loader2 size={14} className="animate-spin" />}
         {children}
     </button>
@@ -79,7 +79,7 @@ export const Spinner: React.FC<SpinnerProps> = ({ size = 16, className, label })
 );
 
 // ── Toggle switch ───────────────────────────────────────────────────────────
-// Accessible switch: real <button>, keyboard operable, aria-checked. Replaces
+// Accessible switch: real <button title="Action">, keyboard operable, aria-checked. Replaces
 // the <div onClick> switches that keyboard users could not operate at all.
 interface ToggleProps {
     checked: boolean;
@@ -232,7 +232,7 @@ export const Modal: React.FC<ModalProps> = ({ isOpen, onClose, title, widthClass
                             onClick={onClose}
                             aria-label="Close dialog"
                             className="p-1.5 rounded-xl text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 hover:bg-black/5 dark:hover:bg-white/10 transition-colors"
-                        >
+                         title="Close dialog">
                             <X size={16} />
                         </button>
                     </div>

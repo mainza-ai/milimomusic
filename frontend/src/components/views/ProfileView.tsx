@@ -104,7 +104,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ songs, onPlaySong, onO
                     <button
                         onClick={() => setIsEditing(!isEditing)}
                         className="px-4 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-bold text-xs transition-all border border-black/[0.06] dark:border-white/10"
-                    >
+                     title="Action">
                         {isEditing ? 'Cancel' : 'Edit Profile'}
                     </button>
                 </div>
@@ -134,7 +134,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ songs, onPlaySong, onO
                                 type="submit"
                                 disabled={isSaving}
                                 className="px-4 py-1.5 bg-teal-500 hover:bg-teal-400 disabled:opacity-50 text-slate-950 font-bold text-xs rounded-xl shadow-sm transition-all"
-                            >
+                             title="Submit">
                                 {isSaving ? 'Saving...' : 'Save Changes'}
                             </button>
                         </div>
@@ -208,7 +208,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ songs, onPlaySong, onO
                                 <button
                                     onClick={() => onPlaySong(song)}
                                     className="px-2.5 py-1 bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950 font-bold rounded-lg text-[10px] transition-all"
-                                >
+                                 title="Play">
                                     Play
                                 </button>
                                 {onSelectTrack && (
@@ -223,7 +223,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ songs, onPlaySong, onO
                                 <button
                                     onClick={() => onOpenWorkspace(song)}
                                     className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-bold rounded-lg text-[10px] transition-all"
-                                >
+                                 title="DAW">
                                     DAW
                                 </button>
                             </div>

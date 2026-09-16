@@ -834,7 +834,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                     <button
                         onClick={openCreateModal}
                         className="px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs flex items-center gap-2 shadow-md shadow-teal-500/20 active:scale-[0.98] transition-all"
-                    >
+                     title="New Artist">
                         <Plus size={14} /> New Artist
                     </button>
                 </div>
@@ -862,7 +862,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                             Create an artist profile, assign their AI crew, and let the Experiencer imagine their first album.
                         </p>
                         <button onClick={openCreateModal}
-                            className="mt-1 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 active:scale-[0.98] transition-all">
+                            className="mt-1 inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 active:scale-[0.98] transition-all" title="Create your first artist">
                             <Plus size={14} /> Create your first artist
                         </button>
                     </div>
@@ -887,7 +887,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                         aria-label={`Open artist ${p.name}`}
                                         onClick={() => openProfile(p.id)}
                                         className="text-left p-5 rounded-2xl bg-white/95 dark:bg-[#141620]/95 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm hover:shadow-apple-md transition-all hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-teal-500/60 outline-none"
-                                    >
+                                     title="Action">
                                         <div className="flex items-center gap-3">
                                             {p.cover_image_path ? (
                                                 <img src={coverApi.getCoverUrl(p.cover_image_path)} alt="" className="w-10 h-10 rounded-xl object-cover border border-black/10 dark:border-white/10" />
@@ -930,9 +930,9 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                 </span>
                                 <div className="flex items-center gap-1.5">
                                     <button onClick={() => setPage(p => Math.max(0, p - 1))} disabled={page === 0}
-                                        className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] disabled:opacity-40 transition-colors">Prev</button>
+                                        className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] disabled:opacity-40 transition-colors" title="Prev">Prev</button>
                                     <button onClick={() => setPage(p => p + 1)} disabled={(page + 1) * PAGE_SIZE >= total}
-                                        className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] disabled:opacity-40 transition-colors">Next</button>
+                                        className="text-[10px] font-bold px-2.5 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] disabled:opacity-40 transition-colors" title="Next">Next</button>
                                 </div>
                             </div>
                         )}
@@ -990,7 +990,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                         )}
                                     </label>
                                     <button type="button" onClick={() => createForm.setField('bio', 'Raised between two cities and a river of late-night radio. Writes about distance, memory, and the small hours. Voice like worn velvet over steady drums.')}
-                                        className="text-[10px] font-bold text-teal-600 dark:text-teal-400 hover:underline">
+                                        className="text-[10px] font-bold text-teal-600 dark:text-teal-400 hover:underline" title="Use an example">
                                         Use an example
                                     </button>
                                 </div>
@@ -1012,7 +1012,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                                     <button key={s.name} type="button" onClick={() => toggleChip(s.name)}
                                                         className={`text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors ${active
                                                             ? 'bg-teal-500 text-slate-950 border-teal-500'
-                                                            : 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-500/20 hover:bg-teal-500/20'}`}>
+                                                            : 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-500/20 hover:bg-teal-500/20'}`} title="Action">
                                                         {s.name}
                                                     </button>
                                                 );
@@ -1044,7 +1044,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                         </label>
                                         {createCover && (
                                             <button type="button" onClick={() => { setCreateCover(null); setCreateCoverPreview(''); }}
-                                                className="text-[10px] font-bold text-slate-400 hover:text-rose-500">Remove</button>
+                                                className="text-[10px] font-bold text-slate-400 hover:text-rose-500" title="Remove">Remove</button>
                                         )}
                                     </div>
                                     <p className="text-[10px] text-slate-400">You can always add this later from the artist's page.</p>
@@ -1054,24 +1054,24 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                             <div className="flex justify-between items-center pt-1">
                                 {createStep > 0 ? (
                                     <button onClick={() => setCreateStep(s => s - 1)} disabled={createBusy}
-                                        className="px-3 py-1.5 text-xs font-bold rounded-xl text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 disabled:opacity-40">
+                                        className="px-3 py-1.5 text-xs font-bold rounded-xl text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 disabled:opacity-40" title="Back">
                                         Back
                                     </button>
                                 ) : (
                                     <button onClick={() => setIsCreateOpen(false)} disabled={createBusy}
-                                        className="px-3 py-1.5 text-xs font-bold rounded-xl text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 disabled:opacity-40">
+                                        className="px-3 py-1.5 text-xs font-bold rounded-xl text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 disabled:opacity-40" title="Cancel">
                                         Cancel
                                     </button>
                                 )}
                                 {createStep < 3 ? (
                                     <button onClick={() => setCreateStep(s => s + 1)}
                                         disabled={createStep === 0 ? !!createForm.errors.name : createStep === 1 ? !!createForm.errors.bio : false}
-                                        className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs disabled:opacity-40 active:scale-[0.98] transition-all">
+                                        className="px-4 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs disabled:opacity-40 active:scale-[0.98] transition-all" title="Next">
                                         Next
                                     </button>
                                 ) : (
                                     <button onClick={submitCreate} disabled={createBusy || !!createForm.errors.name || !!createForm.errors.bio}
-                                        className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs disabled:opacity-40 active:scale-[0.98] transition-all">
+                                        className="inline-flex items-center gap-1.5 px-4 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs disabled:opacity-40 active:scale-[0.98] transition-all" title="Create Artist">
                                         {createBusy ? <Loader2 size={13} className="animate-spin" /> : <CheckCircle2 size={13} />}
                                         Create Artist
                                     </button>
@@ -1092,7 +1092,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
             <div className="flex items-center justify-between gap-4 mb-6">
                 <div className="flex items-center gap-3 min-w-0">
                     <button onClick={closeDetail} aria-label="Back to artists"
-                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 border border-black/[0.06] dark:border-white/10 text-xs font-semibold transition-all">
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 border border-black/[0.06] dark:border-white/10 text-xs font-semibold transition-all" title="Back to artists">
                         <ArrowLeft size={14} />
                         <span>Artists</span>
                     </button>
@@ -1155,7 +1155,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                     ? 'bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 shadow-teal-500/20'
                                     : 'bg-black/[0.04] dark:bg-white/5 border border-black/[0.06] dark:border-white/10 text-slate-700 dark:text-slate-200'
                             }`}
-                        >
+                         title="Save Identity">
                             <Save size={13} />
                             <span>Save Identity</span>
                         </button>
@@ -1329,7 +1329,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                     onClick={handleGenerateLore}
                                     disabled={loreGenerating || loreSaving}
                                     className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 border border-teal-500/20 disabled:opacity-50 transition-colors"
-                                >
+                                 title="Generate with AI">
                                     <Sparkles size={12} />
                                     <span>{loreGenerating ? 'Imagining…' : 'Generate with World-Builder'}</span>
                                 </button>
@@ -1337,7 +1337,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                     onClick={handleSaveLore}
                                     disabled={loreSaving || loreGenerating}
                                     className="inline-flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-xl bg-black/[0.04] dark:bg-white/5 text-slate-700 dark:text-slate-200 hover:bg-black/[0.08] dark:hover:bg-white/10 border border-black/[0.06] dark:border-white/10 disabled:opacity-50 transition-colors"
-                                >
+                                 title="Save">
                                     <Save size={12} />
                                     <span>{loreSaving ? 'Saving…' : 'Save Lore'}</span>
                                 </button>
@@ -1454,7 +1454,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                 onClick={addCrewMember}
                                 aria-label="Add crew member"
                                 className="w-full h-[34px] px-3 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 shadow-sm active:scale-[0.98] transition-all"
-                            >
+                             title="Add crew member">
                                 <Plus size={14} /> <span>Add</span>
                             </button>
                         </div>
@@ -1587,7 +1587,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                         onClick={runExperiencer}
                         disabled={runPhase === 'running' || !briefTitle.trim() || !briefConcept.trim()}
                         className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 active:scale-[0.98] transition-all disabled:opacity-40 disabled:pointer-events-none"
-                    >
+                     title="Action">
                         {runPhase === 'running' ? <Loader2 size={13} className="animate-spin" /> : <Mic2 size={13} />}
                         <span>{runPhase === 'running' ? 'Imagining…' : 'Run Experiencer'}</span>
                     </button>
@@ -1681,7 +1681,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                     )}
 
                     <button onClick={saveVisionAsRelease}
-                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 border border-black/[0.06] dark:border-white/10 text-xs font-bold text-slate-700 dark:text-slate-200 active:scale-[0.98] transition-all">
+                        className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 border border-black/[0.06] dark:border-white/10 text-xs font-bold text-slate-700 dark:text-slate-200 active:scale-[0.98] transition-all" title="Save as Release">
                         <Disc3 size={13} /> Save as Release
                     </button>
                 </section>
@@ -1714,10 +1714,10 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                 <div className="flex items-center gap-1.5 shrink-0">
                                     {albumRun.status === 'awaiting_approval' && (
                                         <button onClick={approveNextTrack}
-                                            className="text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400 transition-colors">Approve next track</button>)}
+                                            className="text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400 transition-colors" title="Approve next track">Approve next track</button>)}
                                     {['queued', 'running', 'awaiting_approval', 'cancelling'].includes(albumRun.status) && (
                                         <button onClick={cancelAlbum}
-                                            className="text-[10px] font-bold px-2 py-1 rounded-lg bg-red-500/10 text-red-600 hover:bg-red-500 hover:text-slate-950 transition-colors">Cancel</button>)}
+                                            className="text-[10px] font-bold px-2 py-1 rounded-lg bg-red-500/10 text-red-600 hover:bg-red-500 hover:text-slate-950 transition-colors" title="Cancel">Cancel</button>)}
                                 </div>
                             </div>
                             <div className="w-full h-1.5 rounded-full bg-black/[0.06] dark:bg-white/10 overflow-hidden mb-1">
@@ -1742,7 +1742,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                         <button onClick={async () => {
                             const r = await profilesApi.createRelease({ profile_id: detail.profile.id, title: newReleaseTitle.trim() }).catch((e) => { toast(String(e?.response?.data?.detail?.error?.message || e?.message || "Request failed"), "error"); return null; });
                             if (r) { setDetail(d => d ? ({ ...d, releases: [r, ...d.releases] }) : d); setNewReleaseTitle(''); }
-                        }} className="p-2 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 transition-colors" aria-label="Create release"><Plus size={13} /></button>
+                        }} className="p-2 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 hover:bg-teal-500 hover:text-slate-950 transition-colors" aria-label="Create release" title="Create release"><Plus size={13} /></button>
                     )}
                 </div>
                 <label className="flex items-center gap-2 text-[10px] font-mono text-slate-500 dark:text-slate-400 select-none">
@@ -1787,9 +1787,9 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                     placeholder="description (optional)" aria-label="Release description"
                                     className="apple-input !py-1 text-[10px] flex-1" />
                                 <button onClick={() => handleRenameRelease(r.id)} disabled={!editReleaseTitle.trim()}
-                                    className="text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400 disabled:opacity-40 transition-colors">Save</button>
+                                    className="text-[10px] font-bold px-2 py-1 rounded-lg bg-emerald-500 text-slate-950 hover:bg-emerald-400 disabled:opacity-40 transition-colors" title="Save">Save</button>
                                 <button onClick={() => setEditReleaseId(null)}
-                                    className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-500 hover:text-slate-700 transition-colors">Cancel</button>
+                                    className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-500 hover:text-slate-700 transition-colors" title="Cancel">Cancel</button>
                             </div>
                         ) : (
                             <>
@@ -1814,7 +1814,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                     <button onClick={() => handleDeleteRelease(r.id, r.title)}
                                         className="text-[10px] font-bold px-2 py-1 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-slate-950 transition-colors"
                                         title="Delete release" aria-label={`Delete ${r.title}`}>Delete</button>
-                                    <button onClick={() => toggleTracks(r.id)} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] dark:hover:bg-white/10 transition-colors">{openTracks === r.id ? 'Hide tracks' : 'Tracks'}</button>
+                                    <button onClick={() => toggleTracks(r.id)} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] dark:hover:bg-white/10 transition-colors" title="Action">{openTracks === r.id ? 'Hide tracks' : 'Tracks'}</button>
                                     <button onClick={() => startAlbum(r.id, r.title)} disabled={albumActive}
                                         className="text-[10px] font-bold px-2 py-1 rounded-lg bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 hover:bg-fuchsia-500 hover:text-slate-950 transition-colors disabled:opacity-40"
                                         title={autopilot ? 'Produce this album (autopilot: no pauses)' : 'Produce this album (gated: pauses after each track)'}>Produce</button>

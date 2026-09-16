@@ -87,14 +87,14 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
                         <button
                             onClick={this.handleBackToExplore}
                             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 active:scale-[0.98] transition-all"
-                        >
+                         title="Back to Explore">
                             <Undo2 size={14} />
                             <span>Back to Explore</span>
                         </button>
                         <button
                             onClick={this.handleReload}
                             className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 border border-black/[0.06] dark:border-white/10 text-slate-700 dark:text-slate-200 font-bold text-xs active:scale-[0.98] transition-all"
-                        >
+                         title="Reload Studio">
                             <RefreshCw size={14} />
                             <span>Reload Studio</span>
                         </button>

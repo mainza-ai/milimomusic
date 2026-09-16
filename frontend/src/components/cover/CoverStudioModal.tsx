@@ -343,7 +343,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                         <button
                             onClick={onClose}
                             className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors"
-                        >
+                         title="Close">
                             <X className="w-5 h-5" />
                         </button>
                     </div>
@@ -358,7 +358,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                     ? 'bg-teal-600 text-white shadow-lg shadow-teal-600/30'
                                     : 'text-zinc-400 hover:text-zinc-200'
                             }`}
-                        >
+                         title="Reference Audio Mode">
                             <FileAudio className="w-4 h-4" />
                             Reference Audio Mode
                         </button>
@@ -370,7 +370,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                     ? 'bg-teal-600 text-white shadow-lg shadow-teal-600/30'
                                     : 'text-zinc-400 hover:text-zinc-200'
                             }`}
-                        >
+                         title="Symbolic MIDI Lead Sheet Mode">
                             <Layers className="w-4 h-4" />
                             Symbolic MIDI Lead Sheet Mode
                         </button>
@@ -434,7 +434,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                             onClick={handleDownloadBundle}
                                             disabled={isDownloadingModel}
                                             className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-amber-500 hover:bg-amber-400 text-black shadow-md flex items-center gap-1.5 disabled:opacity-50 cursor-pointer transition-colors"
-                                        >
+                                         title="Action">
                                             {isDownloadingModel ? (
                                                 <>
                                                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -487,7 +487,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                                     type="button"
                                                     onClick={togglePreview}
                                                     className="flex items-center gap-1 px-2 py-1 rounded bg-zinc-700 hover:bg-zinc-600 text-white text-xs"
-                                                >
+                                                 title="Play">
                                                     {isPlayingPreview ? <Pause className="w-3 h-3" /> : <Play className="w-3 h-3" />}
                                                     {isPlayingPreview ? 'Pause' : 'Play'}
                                                 </button>
@@ -525,7 +525,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                                         ? 'bg-teal-500/20 border-teal-500/50 text-white'
                                                         : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
                                                 }`}
-                                            >
+                                             title="Action">
                                                 <div className="font-semibold text-teal-300">Milimo Neural (SOTA)</div>
                                                 <div className="text-[10px] text-zinc-400">BS-Roformer 6-stem + Pitch tracking</div>
                                             </button>
@@ -537,7 +537,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                                         ? 'bg-teal-500/20 border-teal-500/50 text-white'
                                                         : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
                                                 }`}
-                                            >
+                                             title="Upstream Classic YourMT3 + ChordNet ensemble">
                                                 <div className="font-semibold text-teal-300">Upstream Classic</div>
                                                 <div className="text-[10px] text-zinc-400">YourMT3 + ChordNet ensemble</div>
                                             </button>
@@ -560,7 +560,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                             onClick={handleTranscribeLeadSheet}
                                             disabled={!refAudioPath || isTranscribing}
                                             className="mt-4 px-3 py-1.5 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-teal-400 border border-teal-500/30 disabled:opacity-50 flex items-center gap-1.5"
-                                        >
+                                         title="Extract Lead Sheet">
                                             {isTranscribing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                                             Extract Lead Sheet
                                         </button>
@@ -593,7 +593,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                                                  type="button"
                                                                  onClick={() => onOpenPianoRoll(leadSheet.paths.melody)}
                                                                  className="text-teal-400 hover:text-white ml-0.5 underline font-medium"
-                                                             >
+                                                              title="Roll">
                                                                  Roll
                                                              </button>
                                                          )}
@@ -670,7 +670,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                                 onClick={handleTranscribeLeadSheet}
                                                 disabled={isTranscribing}
                                                 className="px-2.5 py-1 text-[11px] font-semibold rounded bg-teal-600 hover:bg-teal-500 text-white flex items-center gap-1.5 transition-colors flex-shrink-0 disabled:opacity-50"
-                                            >
+                                             title="Action">
                                                 {isTranscribing ? (
                                                     <>
                                                         <Loader2 className="w-3 h-3 animate-spin" />
@@ -825,7 +825,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                                 type="button"
                                                 onClick={() => addSectionToLyrics(sec)}
                                                 className="px-1.5 py-0.5 text-[10px] rounded bg-zinc-800 hover:bg-zinc-700 text-zinc-300 border border-zinc-700"
-                                            >
+                                             title="+">
                                                 +{sec}
                                             </button>
                                         ))}
@@ -849,7 +849,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                     type="button"
                                     onClick={() => setShowAdvanced(!showAdvanced)}
                                     className="w-full flex items-center justify-between text-xs font-medium text-zinc-400 hover:text-zinc-200"
-                                >
+                                 title="Advanced Hyperparameters (CFG, Temperature, Top-K)">
                                     <span className="flex items-center gap-1.5">
                                         <Sliders className="w-3.5 h-3.5" />
                                         Advanced Hyperparameters (CFG, Temperature, Top-K)
@@ -922,7 +922,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                 type="button"
                                 onClick={onClose}
                                 className="px-4 py-2 text-xs font-semibold rounded-lg bg-zinc-800 hover:bg-zinc-700 text-zinc-300 transition-colors"
-                            >
+                             title="Cancel">
                                 Cancel
                             </button>
                             <button

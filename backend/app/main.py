@@ -441,9 +441,17 @@ async def rate_limit_middleware(request: Request, call_next):
 @app.exception_handler(Exception)
 async def unhandled_exception_handler(request: Request, exc: Exception):
     logger.exception(f"Unhandled error on {request.method} {request.url.path}: {exc}")
+    origin = request.headers.get("origin")
+    headers = {}
+    if origin and ("*" in _cors_origins or origin in _cors_origins):
+        headers["Access-Control-Allow-Origin"] = origin
+        headers["Access-Control-Allow-Credentials"] = "true" if _cors_credentials else "false"
+        headers["Access-Control-Allow-Methods"] = "*"
+        headers["Access-Control-Allow-Headers"] = "*"
     return JSONResponse(
         status_code=500,
         content={"error": {"code": "internal_error", "message": "Unexpected server error."}},
+        headers=headers,
     )
 
 
@@ -2708,8 +2716,10 @@ async def upload_audio_file(file: UploadFile = File(...)):
 async def upload_midi_file(file: UploadFile = File(...)):
     """Upload MIDI file for symbolic lead sheet conditioning (melody, chords, drums)."""
     from app.core.uploads import save_upload
+    from app.core.paths import get_generated_audio_dir
+    upload_dir = get_generated_audio_dir() / "symbolic" / "uploads"
     dest_path, filename = await save_upload(
-        file, "generated_audio/symbolic/uploads", kind="midi"
+        file, str(upload_dir), kind="midi"
     )
     return {
         "url": f"/audio/symbolic/uploads/{filename}",
@@ -3306,7 +3316,8 @@ async def transcribe_lead_sheet(req: LeadSheetExtractRequest):
         raise HTTPException(status_code=404, detail=f"Audio file not found: {req.audio_path}")
 
     export_id = str(uuid.uuid4())
-    output_dir = Path("generated_audio/symbolic") / export_id
+    from app.core.paths import get_generated_audio_dir
+    output_dir = get_generated_audio_dir() / "symbolic" / export_id
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
@@ -3340,18 +3351,44 @@ async def transcribe_lead_sheet(req: LeadSheetExtractRequest):
 @app.get("/jobs/{job_id}/symbolic")
 async def get_job_symbolic(job_id: UUID):
     """Get the exported symbolic lead sheet MIDI paths for a job."""
-    symbolic_dir = Path("generated_audio/symbolic") / str(job_id)
-    if not symbolic_dir.is_dir():
-        raise HTTPException(status_code=404, detail="No symbolic lead sheet found for this job")
+    from app.core.paths import get_generated_audio_dir
 
     midis = {}
-    for name in ("melody", "chord", "drums"):
-        p = symbolic_dir / f"{name}.mid"
-        if p.is_file():
-            midis[name] = f"/audio/symbolic/{job_id}/{name}.mid"
+    bpm = None
 
-    bpm_file = symbolic_dir / "bpm.txt"
-    bpm = float(bpm_file.read_text().strip()) if bpm_file.is_file() else None
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        if job:
+            if job.melody_midi_path:
+                midis["melody"] = job.melody_midi_path
+            if job.chord_midi_path:
+                midis["chord"] = job.chord_midi_path
+            if job.drum_midi_path:
+                midis["drums"] = job.drum_midi_path
+            if job.bpm:
+                bpm = job.bpm
+
+    canonical_dir = get_generated_audio_dir() / "symbolic" / str(job_id)
+    fallback_dir = Path("generated_audio/symbolic") / str(job_id)
+    symbolic_dir = canonical_dir if canonical_dir.is_dir() else fallback_dir
+
+    if symbolic_dir.is_dir():
+        for name in ("melody", "chord", "drums"):
+            if name not in midis:
+                p = symbolic_dir / f"{name}.mid"
+                if p.is_file():
+                    midis[name] = f"/audio/symbolic/{job_id}/{name}.mid"
+
+        if bpm is None:
+            bpm_file = symbolic_dir / "bpm.txt"
+            if bpm_file.is_file():
+                try:
+                    bpm = float(bpm_file.read_text().strip())
+                except Exception:
+                    pass
+
+    if not midis:
+        raise HTTPException(status_code=404, detail="No symbolic lead sheet found for this job")
 
     return {
         "job_id": str(job_id),
@@ -3384,8 +3421,24 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
         delta_sec = req.target_duration_sec - extend_from
         delta_ms = int(delta_sec * 1000)
 
+        # Snapshot parent fields locally inside session to avoid DetachedInstanceError
+        parent_title = parent_job.title or "Track"
+        parent_prompt = parent_job.prompt or ""
+        parent_lyrics = parent_job.lyrics or ""
+        parent_tags = parent_job.tags or ""
+        parent_seed = parent_job.seed
+        parent_provider = parent_job.model_provider or "minimax_music3"
+        parent_audio_path = parent_job.audio_path
+        parent_temp = parent_job.temperature or 1.0
+        parent_cfg = parent_job.cfg_scale or 1.5
+        parent_topk = parent_job.topk or 50
+        parent_project_id = parent_job.project_id
+        parent_session_id = parent_job.session_id
+        parent_cover_image = parent_job.cover_image_path
+        parent_bpm = parent_job.bpm
+
         # Merge lyrics
-        full_lyrics = parent_job.lyrics or ""
+        full_lyrics = parent_lyrics
         if req.additional_lyrics and req.additional_lyrics.strip():
             if full_lyrics:
                 full_lyrics = f"{full_lyrics}\n\n{req.additional_lyrics.strip()}"
@@ -3401,23 +3454,23 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
                 pass
 
         child_job = Job(
-            title=f"{parent_job.title or 'Track'} (Extended)",
-            prompt=req.prompt or parent_job.prompt,
+            title=f"{parent_title} (Extended)",
+            prompt=req.prompt or parent_prompt,
             lyrics=full_lyrics,
             duration_ms=int(req.target_duration_sec * 1000),
-            tags=parent_job.tags,
-            seed=parent_job.seed,
-            model_provider=parent_job.model_provider or "minimax_music3",
-            parent_job_id=str(parent_job.id),
+            tags=parent_tags,
+            seed=parent_seed,
+            model_provider=parent_provider,
+            parent_job_id=str(job_id),
             is_extension=True,
             extend_from_sec=extend_from,
-            temperature=parent_job.temperature,
-            cfg_scale=parent_job.cfg_scale,
-            topk=parent_job.topk,
-            project_id=parent_job.project_id,
-            session_id=parent_job.session_id,
-            cover_image_path=parent_job.cover_image_path,
-            bpm=parent_job.bpm,
+            temperature=parent_temp,
+            cfg_scale=parent_cfg,
+            topk=parent_topk,
+            project_id=parent_project_id,
+            session_id=parent_session_id,
+            cover_image_path=parent_cover_image,
+            bpm=parent_bpm,
         )
         session.add(child_job)
         session.commit()
@@ -3426,12 +3479,13 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
         child_job_id = child_job.id
         child_job_id_str = str(child_job.id)
         child_title = child_job.title
+        child_prompt = child_job.prompt
         child_provider = child_job.model_provider
 
         # Link to session if parent was in one
-        if parent_job.session_id:
+        if parent_session_id:
             try:
-                studio_session = session.get(StudioSession, UUID(str(parent_job.session_id)))
+                studio_session = session.get(StudioSession, UUID(str(parent_session_id)))
                 if studio_session:
                     studio_session.active_job_id = child_job_id_str
                     studio_session.updated_at = datetime.now(timezone.utc)
@@ -3444,30 +3498,33 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
     event_manager.publish("job_update", {
         "job_id": child_job_id_str,
         "status": "queued",
-        "prompt": child_job.prompt,
+        "prompt": child_prompt,
         "model_provider": child_provider,
         "is_extension": True,
         "parent_job_id": str(job_id)
     })
 
+    gen_lyrics = req.additional_lyrics.strip() if (req.additional_lyrics and req.additional_lyrics.strip()) else parent_lyrics
+    gen_prompt = req.prompt.strip() if (req.prompt and req.prompt.strip()) else parent_prompt
+
     gen_req = GenerationRequest(
         title=child_title,
-        prompt=req.prompt or parent_job.prompt,
-        lyrics=req.additional_lyrics or parent_job.lyrics,
+        prompt=gen_prompt,
+        lyrics=gen_lyrics,
         duration_ms=delta_ms,
-        tags=parent_job.tags,
-        seed=parent_job.seed,
+        tags=parent_tags,
+        seed=parent_seed,
         model_provider=child_provider,
         parent_job_id=str(job_id),
         is_extension=True,
         extend_from_sec=extend_from,
-        crossfade_sec=req.crossfade_sec,
-        parent_audio_path=parent_job.audio_path,
-        project_id=parent_job.project_id,
-        session_id=parent_job.session_id,
-        temperature=parent_job.temperature or 1.0,
-        cfg_scale=parent_job.cfg_scale or 1.5,
-        topk=parent_job.topk or 50,
+        crossfade_sec=req.crossfade_sec or 1.5,
+        parent_audio_path=parent_audio_path,
+        project_id=parent_project_id,
+        session_id=parent_session_id,
+        temperature=parent_temp,
+        cfg_scale=parent_cfg,
+        topk=parent_topk,
         structured_caption=structured_meta,
     )
 

@@ -230,7 +230,8 @@ class GenerateAndTranscribePipeline:
                 "message": "Neural source separation (BS-Roformer 6-stem): vocals, drums, bass, guitar, piano, other..."
             })
 
-            local_master = gen_result.audio_path.replace("/audio/", "generated_audio/")
+            from app.transcription.karaoke import _resolve_audio_file
+            local_master = _resolve_audio_file(gen_result.audio_path) or gen_result.audio_path.replace("/audio/", "generated_audio/")
 
             # Run real neural separation off the event loop; if it ever fails
             # (heavy model load, missing weights, resource pressure) the job must

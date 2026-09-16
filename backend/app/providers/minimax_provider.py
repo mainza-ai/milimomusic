@@ -763,18 +763,10 @@ class MiniMaxMusic3Provider(GenerationProvider):
         Preserves the parent audio bit-for-bit, anchored to the parent seed and style.
         """
         # 1. Resolve parent audio path on disk
-        candidates = [
-            parent_audio_path,
-            parent_audio_path.lstrip("/"),
-            parent_audio_path.replace("/audio/", "generated_audio/"),
-            os.path.join("generated_audio", os.path.basename(parent_audio_path)),
-            os.path.join("generated_audio", f"song_{os.path.basename(parent_audio_path)}"),
-        ]
-        resolved_parent = None
-        for c in candidates:
-            if os.path.isfile(c) and os.path.getsize(c) > 0:
-                resolved_parent = c
-                break
+        from app.transcription.karaoke import _resolve_audio_file
+        from app.core.paths import get_generated_audio_dir
+
+        resolved_parent = _resolve_audio_file(parent_audio_path)
 
         # 2. Generate continuation segment
         temp_ext_job_id = f"{job_id}_ext_segment"
@@ -796,8 +788,10 @@ class MiniMaxMusic3Provider(GenerationProvider):
             return ext_result
 
         # 3. Concatenate and crossfade
-        ext_local_path = ext_result.audio_path.replace("/audio/", "generated_audio/")
-        out_wav_path = os.path.join("generated_audio", f"song_{job_id}.wav")
+        ext_local_path = _resolve_audio_file(ext_result.audio_path) or ext_result.audio_path.replace("/audio/", "generated_audio/")
+        gen_dir = get_generated_audio_dir()
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        out_wav_path = str(gen_dir / f"song_{job_id}.wav")
 
         loop = asyncio.get_event_loop()
         total_duration = await loop.run_in_executor(
@@ -811,7 +805,7 @@ class MiniMaxMusic3Provider(GenerationProvider):
         )
 
         # Mirror to {job_id}.wav for route versatility
-        alt_wav = os.path.join("generated_audio", f"{job_id}.wav")
+        alt_wav = str(gen_dir / f"{job_id}.wav")
         try:
             if os.path.abspath(out_wav_path) != os.path.abspath(alt_wav):
                 shutil.copy2(out_wav_path, alt_wav)

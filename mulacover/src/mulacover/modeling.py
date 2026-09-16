@@ -136,14 +136,15 @@ class SymbolicAdaptor(nn.Module):
         chord: torch.Tensor,
         mask: torch.Tensor,
     ) -> torch.Tensor:
-        pianoroll = self.pianoroll_proj(pianoroll)
-        drum_pianoroll = self.drum_pianoroll_proj(drum_pianoroll)
-        chord = self.chord_proj(chord)
+        dtype = self.pianoroll_proj.weight.dtype
+        pianoroll = self.pianoroll_proj(pianoroll.to(dtype))
+        drum_pianoroll = self.drum_pianoroll_proj(drum_pianoroll.to(dtype))
+        chord = self.chord_proj(chord.to(dtype))
         hidden_states = self.fusion_proj(
             torch.cat([pianoroll, drum_pianoroll, chord], dim=-1)
         )
         attention_mask = _build_attention_mask(mask, hidden_states)
-        hidden_states = self.decoder(hidden_states, mask=attention_mask)
+        hidden_states = self.decoder(hidden_states, mask=attention_mask).to(dtype)
         return self.out_proj(hidden_states)
 
 
@@ -316,7 +317,8 @@ class StyleMLP(nn.Module):
         nn.init.zeros_(self.mlp.bias)
 
     def forward(self, style_embedding: torch.Tensor):
-        return self.mlp(self.act(style_embedding)).chunk(2, dim=-1)
+        dtype = self.mlp.weight.dtype
+        return self.mlp(self.act(style_embedding.to(dtype))).chunk(2, dim=-1)
 
 
 class MuLaCover(PreTrainedModel):
@@ -454,8 +456,8 @@ class MuLaCover(PreTrainedModel):
         model_dtype = next(self.parameters()).dtype
         batch_size = tokens.size(0)
         backbone_mask = _index_causal_mask(self.backbone_causal_mask, input_pos)
-        qwen_prefix_embedding = qwen_embedding.detach().clone()
-        style_embedding = qwen_embedding.unsqueeze(1)
+        qwen_prefix_embedding = qwen_embedding.detach().clone().to(model_dtype)
+        style_embedding = qwen_embedding.unsqueeze(1).to(model_dtype)
 
         uncond_mask = None
         if cfg_scale > 1.0 and batch_size > 1:
@@ -477,9 +479,8 @@ class MuLaCover(PreTrainedModel):
             pianoroll = _mask_condition(pianoroll, uncond_mask)
             drum_pianoroll = _mask_condition(drum_pianoroll, uncond_mask)
             chord = _mask_condition(chord, uncond_mask)
-            # Match the original float-mask arithmetic, including promotion
-            # of BF16 inputs. This is raw Qwen, not its prefix projection.
-            style_mask = uncond_mask.view(batch_size, 1, 1).float()
+            # Match the original mask arithmetic in model_dtype
+            style_mask = uncond_mask.view(batch_size, 1, 1).to(model_dtype)
             style_embedding = (
                 style_embedding * (1 - style_mask)
                 + (-torch.ones_like(style_embedding)) * style_mask

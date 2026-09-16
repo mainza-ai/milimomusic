@@ -329,7 +329,7 @@ def reconcile_orphan_jobs() -> int:
     process can never finish — mark them failed with an honest reason."""
     with Session(engine) as session:
         orphans = session.exec(
-            select(Job).where(Job.status.in_([JobStatus.QUEUED, JobStatus.PROCESSING]))
+            select(Job).where(Job.status.in_([JobStatus.QUEUED, JobStatus.PROCESSING, "QUEUED", "PROCESSING", "queued", "processing"]))
         ).all()
         for job in orphans:
             job.status = JobStatus.FAILED

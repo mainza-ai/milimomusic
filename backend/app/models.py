@@ -292,6 +292,9 @@ class GenerationRequest(SQLModel):
     target_duration_sec: Optional[float] = None
     crossfade_sec: Optional[float] = 1.5
     parent_audio_path: Optional[str] = None
+    parent_prompt: Optional[str] = None
+    parent_lyrics: Optional[str] = None
+    parent_structured_caption: Optional[Dict[str, str]] = None
     beat_grid: Optional[Dict[str, Any]] = None
 
     @field_validator('tags', mode='before')

@@ -67,8 +67,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Structured Captions](concepts/structured-caption.md) — the MiniMax Global Metadata / Vocal Details / Arrangement format.
 - [Caption Rewriter](concepts/caption-rewriter.md) — official music-caption-rewriter port: brief → professional three-heading caption via the real LLM.
 - [Lyrics conditioning](concepts/lyrics-conditioning.md) — how audio is aligned to lyrics & prosody.
-- [Prompt structure & style tags](concepts/prompt-structure.md) — the [BOS] <tag>… format + supported HeartMuLa tags.
-- [Track extension](concepts/track-extension.md) — continuing generation from prior track; production seed-anchored continuation with equal-power crossfade.
+- [Track extension](concepts/track-extension.md) — continuing generation from prior track; model-native MLX KV-cache roll-forward, token parity, early cutoff suppression, beat-grid snapping, and verified zero tempo drift ($\Delta = 0.0$ BPM).
 - [Singing Voice Conversion](concepts/singing-voice-conversion.md) — Phase 5 locked design: vendored RVC v2 inference (RMVPE + ContentVec), honest DSP fallback, voice-convert bug fixes.
 - [Playlists & Studio Profile](concepts/playlists-profiles.md) — Phase 6 locked design: Playlist/PlaylistTrack/StudioUserProfile tables, Alembic baseline, localStorage one-time import.
 - [LM-guided inpainting](concepts/lm-guided-inpainting.md) — the two-stage repair strategy.

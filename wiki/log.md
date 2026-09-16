@@ -1820,4 +1820,25 @@ Conducted deep forensic investigation into acoustic, tempo, and timbre divergenc
    - Resulting audio duration: exact 120.00 seconds.
    - Frontend production build (`tsc -b && vite build`): 0 errors.
 
+## [2026-09-16] fix | Track Extension Option 1 & 1A: MiniMax KV-Cache Roll-Forward & Zero Tempo Discontinuity
+Executed and verified Option 1 and Option 1A model-native track extension for MiniMax Music 3:
+1. Root Cause Resolution: Discovered that verbose locked structured captions altered system prompt token length (from 300 to 503 tokens), changing Qwen3 rotary position embeddings (RoPE) and initial embeddings from $t=0$. Even with the same seed, the model diverged immediately into an unrelated song at 92.3 BPM.
+2. Token & Caption Parity: Threaded `parent_structured_caption` across `GenerationRequest`, `pipeline.py`, and `minimax_provider.py` so the extension generator uses the exact parent prompt and structured caption tokens, guaranteeing 100% bit-exact autoregressive replay.
+3. KV-Cache Roll-Forward Hooks: Implemented `generate_frame_hiddens_extended_hooked` in `minimax_local_hooks.py`. Fast-forwards parent Qwen3 KV cache across parent frames at ~11 fps, then continues generating new frames up to target duration.
+4. Early Termination Suppression: Masked `audio_end_token_id` (token 151670) during roll-forward (`suppress_end_token = (frame_index < target_frames)`), eliminating premature cutoffs and guaranteeing exact requested duration.
+5. Downbeat Splicing: Spliced parent disk master ($0 \to \text{cut}$) into roll-forward continuation ($\text{cut} \to \text{target}$) using beat-grid downbeat snapping and equal-power crossfading in `concatenate_and_crossfade_audio`.
+6. Live Verification on Parent Track `27490839` (`a7abdea8`):
+   - Duration: Exactly 120.00 seconds.
+   - Tempo: Part 1 = 136.0 BPM, Part 2 = 136.0 BPM ($\Delta = 0.0$ BPM).
+   - Spectral Centroid: Matched within 7% (2702 Hz vs 2516 Hz).
+   - Pipeline: Complete post-generation pass (BS-Roformer stems, MuScriptor transcription, karaoke alignment, FLUX cover art).
+
+## [2026-09-16] fix | Native File Downloads: Blob Fetching & Content-Disposition Attachment Headers
+Fixed audio and asset download buttons opening browser media players in a new tab:
+1. Root Cause: Clicking `<a href="http://localhost:8000/audio/..." download>` cross-origin from port 5173 causes modern browsers to ignore the HTML5 `download` attribute. Static file endpoints without `Content-Disposition: attachment` caused browsers to open the audio file in the default browser player.
+2. Backend Attachment Headers: Updated `@app.api_route("/download_track/{job_id}", methods=["GET", "HEAD"])` in `backend/app/main.py` using `_resolve_audio_file()` to return `FileResponse` with explicit `Content-Disposition: attachment; filename="<title>.wav"` and `Access-Control-Expose-Headers: Content-Disposition`.
+3. Frontend Blob Download Utilities: Added `downloadUrlAsFile()` and `downloadAudioTrack()` in `frontend/src/api.ts`. Fetches assets into same-origin `blob:` URLs before triggering simulated anchor clicks, ensuring browsers trigger native save file dialogs instead of media player navigation.
+4. UI Component Updates: Updated `TrackRowPlayer.tsx`, `GlobalAudioPlayer.tsx`, `MasteringExportModal.tsx`, `MusicVideosView.tsx`, and `TrackDetailView.tsx` to use the new blob download helpers for master WAVs, isolated stem WAVs, multi-track MIDIs, MusicXML files, synced LRC lyrics, and cover PNGs.
+5. Verification: Verified via `curl -I` and frontend production build (`tsc -b && vite build` passed with 0 errors).
+
 

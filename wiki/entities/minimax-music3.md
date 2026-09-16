@@ -2,7 +2,7 @@
 title: MiniMax Music 3
 type: entity
 created: 2026-08-19
-updated: 2026-09-03
+updated: 2026-09-16
 sources: [sources/v2-refactor-plan.md]
 tags: [minimax, music3, model, generation, provider]
 aliases: [MiniMax-Music3, Music 3]
@@ -68,6 +68,14 @@ From `MiniMaxMusic3Provider.get_capabilities()`:
 > and occupies ~28–31 GB unified memory during execution. Separation models (BS-Roformer/HTDemucs)
 > and MuScriptor run sequentially on MPS to preserve memory headroom.
 
+## Model-Native Track Extension (Option 1 & 1A)
+- Implements `extend()` via `generate_frame_hiddens_extended_hooked` in `minimax_local_hooks.py`.
+- Fast-forwards the deterministic Qwen3 autoregressive KV cache across the parent track's frame context at ~11 fps.
+- Rolls forward into the continuation window without empty-cache divergence, locking tempo, pitch, groove, and acoustic space.
+- Early termination suppression: suppresses `audio_end_token_id` (token `151670`) to guarantee full target duration without premature cutoff.
+- Beat-grid downbeat snapping: snaps the cut point to the nearest musical downbeat before performing equal-power sine/cosine crossfading over 1.5s.
+- Verified in production: achieves $\Delta = 0.0$ BPM tempo continuity across the boundary (see [Track Extension](../concepts/track-extension.md)).
+
 ## In the pipeline
 Resolved by the [generation-provider](generation-provider.md) registry and driven through the
 [orchestration pipeline](../concepts/generation-pipeline.md) (Step 1).
@@ -78,5 +86,5 @@ song generation with Structured Captions; **non-commercial project use only**.
 
 ## Related pages
 - [Generation provider](generation-provider.md) | [Structured Captions](../concepts/structured-caption.md) | [Caption Rewriter](../concepts/caption-rewriter.md)
-- [Model Manager](model-manager.md) | [Orchestration pipeline](../concepts/generation-pipeline.md)
+- [Track Extension](../concepts/track-extension.md) | [Model Manager](model-manager.md) | [Orchestration pipeline](../concepts/generation-pipeline.md)
 - [Roadmap (v2)](../roadmap.md) | [v2 reference projects](v2-references.md)

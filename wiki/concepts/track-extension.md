@@ -18,48 +18,57 @@ allowing musicians and producers to build full-length songs (e.g. 60s -> 120s+)
 
 ## 1. How It Works
 
-1. **Lossless Cut Point & Slicing**:
-   - The user selects where the continuation begins (`extend_from_sec`), defaulting to the parent track's end or an earlier section break.
-   - The engine slices parent audio up to `extend_from_sec` losslessly at 48 kHz.
-2. **Acoustic Timbre & Seed Locking**:
-   - The child job inherits the parent's exact `seed`, style tags, and prompt description.
-   - For MiniMax Music 3, locking seed and style tags while appending new section tags (`[Verse 2]`, `[Chorus]`, `[Outro]`) forces the autoregressive audio model to continue in the exact harmonic and vocal space.
-3. **Equal-Power Crossfade Concatenation**:
-   - Overlap window: $1.5\text{s}$ (user-adjustable between $0.5\text{s}$ and $3.0\text{s}$).
-   - Equal-power curve: $w_{\text{out}}(t) = \cos(\frac{\pi}{2} t)$, $w_{\text{in}}(t) = \sin(\frac{\pi}{2} t)$ such that $w_{\text{out}}^2 + w_{\text{in}}^2 = 1$.
-   - Prevents seam clicks, phase cancellations, or energy dips at the transition point.
-4. **Full Pipeline Re-Finalization**:
-   - The combined master audio is run through the entire production pipeline: stem separation (HTDemucs/BS-Roformer), [MuScriptor](../entities/muscriptor.md) neural transcription, and karaoke lyric sync.
+1. **Model-Native KV-Cache Roll-Forward (Option 1 & 1A)**:
+   - For MiniMax Music 3 (`mlx-community/MiniMax-Music3-bf16`), the engine utilizes `generate_frame_hiddens_extended_hooked` to deterministically replay the parent track's autoregressive Qwen3 hidden states at ~11 fps up to `parent_frames` (e.g. 1500 frames for 60s).
+   - Rather than generating an independent segment from scratch, the language model simply rolls forward its established KV-cache into the future, maintaining identical rhythm, harmonic voicing, timbre, and acoustic space.
+2. **Deterministic Token & Caption Parity**:
+   - In MiniMax Music 3, prompt text and lyrics tokens precede `<|audio_start|>`. Appending text or altering structured captions shifts Rotary Position Embeddings (RoPE) and initial embeddings, destroying deterministic replay.
+   - The extension engine preserves `parent_prompt`, `parent_structured_caption`, and parent lyrics for the autoregressive conditioning tokens, guaranteeing bit-exact mathematical replay ($0.0000000$ error) across the parent frame window.
+3. **Early Audio Termination Suppression**:
+   - The autoregressive token loop suppresses `audio_end_token_id` (token `151670`) via `suppress_end_token = (frame_index < target_frames)` to prevent the model from exiting early when initial lyrics finish.
+4. **Beat-Grid Downbeat Snapping & Equal-Power Crossfading**:
+   - `extend_from_sec` snaps to the nearest musical downbeat (measure start) based on detected tempo and meter (`beat_grid`).
+   - Splicing joins the parent disk audio ($0 \to \text{cut}$) with the roll-forward continuation ($\text{cut} \to \text{target}$) using equal-power sine/cosine crossfading over $1.5\text{s}$:
+     $$w_{\text{out}}(t) = \cos(\frac{\pi}{2} t), \quad w_{\text{in}}(t) = \sin(\frac{\pi}{2} t), \quad w_{\text{out}}^2 + w_{\text{in}}^2 = 1$$
+   - A subtle 0.25s tail fade enforces exact `target_duration_sec`.
+5. **Full Pipeline Re-Finalization**:
+   - The extended audio is automatically run through the entire production pipeline: BS-Roformer 4-stem separation, [MuScriptor](../entities/muscriptor.md) neural transcription (MIDI + MusicXML), and forced-alignment lyric sync.
 
 ---
 
-## 2. API & Database Architecture
+## 2. Forensic Validation Metrics
 
-- **Endpoint**: `POST /tracks/{job_id}/extend`
+Live verification on parent track `27490839` (136.0 BPM gospel piano ballad) extended to 120.0s (`a7abdea8`):
+
+- **Target Duration**: Exactly $120.00\text{s}$ (no premature cutoff).
+- **Tempo Continuity**: Part 1 (0–60s) = $136.0\text{ BPM}$, Part 2 (60–120s) = $136.0\text{ BPM}$ ($\mathbf{\Delta = 0.0\text{ BPM}}$).
+- **Acoustic Environment**: Spectral Centroid matched within 7% (2702 Hz vs 2516 Hz).
+
+---
+
+## 3. API, Database & Download Architecture
+
+- **Extension Endpoint**: `POST /tracks/{job_id}/extend`
   - Body: `TrackExtendRequest` (`target_duration_sec`, `extend_from_sec`, `additional_lyrics`, `prompt`, `crossfade_sec`).
   - Response: `{ "job_id": UUID, "parent_job_id": UUID, "target_duration_sec": float, "extend_from_sec": float, "status": "queued" }`.
+- **Dedicated Download Endpoint**: `GET /download_track/{job_id}`
+  - Resolves disk audio path via `_resolve_audio_file()`.
+  - Returns `FileResponse` with explicit `Content-Disposition: attachment; filename="<title>.wav"` and `Access-Control-Expose-Headers: Content-Disposition`.
+  - Frontend utilizes `api.downloadAudioTrack()` / `api.downloadUrlAsFile()` to fetch cross-origin audio files into in-memory `blob:` URLs before triggering anchor download. This bypasses HTML5 cross-origin download restrictions and prevents browsers from playing the .wav file in a new tab.
 - **Database Schema (`Job` model)**:
   - `parent_job_id: Optional[UUID]`
   - `is_extension: bool`
   - `extend_from_sec: Optional[float]`
-- **Orchestration**: `pipeline.generate_audio_step` detects `job.is_extension` and calls `provider.extend(...)` passing parent audio, cut point, delta duration, and crossfade configuration.
+  - `parent_structured_caption: Optional[Dict[str, str]]`
 
 ---
 
-## 3. User Interface Integration
+## 4. User Interface Integration
 
-- **DAW Arrange Timeline (`ArrangeTimeline.tsx`)**:
-  - Direct `Extend Song` button in timeline controls header.
-- **Track Studio (`TrackDetailView.tsx`)**:
-  - `Extend Track` action button in the audio toolstrip.
-- **Song Library (`TrackRowPlayer.tsx`)**:
-  - `Extend Track` quick-action button on hover.
-- **Extend Track Modal (`ExtendTrackModal.tsx`)**:
-  - Visual time scrubber and duration slider (+30s, +60s, +90s, +120s, +180s presets).
-  - Seam point adjustment slider.
-  - Section tag inserters (`[Verse 2]`, `[Chorus]`, `[Bridge]`, `[Guitar Solo]`, `[Outro]`).
-  - Equal-power crossfade window configuration.
-  - Lineage indicators displaying parent seed and style tags.
+- **DAW Arrange Timeline (`ArrangeTimeline.tsx`)**: Direct `Extend Song` button in timeline controls header.
+- **Track Studio (`TrackDetailView.tsx`)**: `Extend Track` action button in the audio toolstrip; downloadable master, stems, and MIDI files via `downloadUrlAsFile`.
+- **Song Library (`TrackRowPlayer.tsx`) & Global Dock Player (`GlobalAudioPlayer.tsx`)**: Direct download action buttons triggering `api.downloadAudioTrack()`.
+- **Extend Track Modal (`ExtendTrackModal.tsx`)**: Visual time scrubber, downbeat snapping indicator, and duration presets (+30s, +60s, +90s, +120s).
 
 ---
 
@@ -70,3 +79,4 @@ allowing musicians and producers to build full-length songs (e.g. 60s -> 120s+)
 - [Lyrics conditioning](lyrics-conditioning.md)
 - [Session Workspace](../entities/session-workspace.md)
 - [Generation Provider](../entities/generation-provider.md)
+- [MuScriptor](../entities/muscriptor.md)

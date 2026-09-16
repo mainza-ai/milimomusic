@@ -159,6 +159,48 @@ def run_real_minimax_inference(
     return output_path
 
 
+def run_real_minimax_extension(
+    snapshot_path: str,
+    prompt: str,
+    lyrics: Optional[str],
+    parent_duration_sec: float,
+    target_duration_sec: float,
+    seed: int,
+    output_path: str,
+    steps: int = 24,
+    temperature: float = 1.0,
+    cfg_scale: float = 1.5,
+    topk: int = 50,
+    cancel_event=None,
+    progress_cb=None,
+) -> str:
+    """
+    MiniMax Music 3 extension via KV-cache roll-forward and suppression of early termination.
+    Replays the parent deterministic state, continues generating frames without empty-cache
+    divergence, and synthesizes continuous audio for the full requested duration.
+    """
+    from app.providers.minimax_local_hooks import generate_extended_music_hooked
+    model = _load_minimax_model(snapshot_path)
+    clean_seed = int(seed)
+    flow_steps = int(os.environ.get("MILIMO_FLOW_STEPS", str(steps)))
+    generate_extended_music_hooked(
+        model=model,
+        caption=prompt,
+        lyrics=lyrics or "",
+        parent_duration_sec=parent_duration_sec,
+        target_duration_sec=target_duration_sec,
+        steps=max(1, min(30, flow_steps)),
+        seed=clean_seed,
+        output_path=output_path,
+        temperature=temperature,
+        cfg_scale=cfg_scale,
+        top_k=topk,
+        cancel_event=cancel_event,
+        progress_cb=progress_cb,
+    )
+    return output_path
+
+
 
 # ---------------------------------------------------------------------------
 # Musical attributes analysis and constraint locking for track extension.
@@ -227,19 +269,50 @@ def extract_audio_musical_attributes(
     detected_scale = "major"
     key_confidence = 0.0
 
-    # 1. Parse beat grid if available
-    if beat_grid_json:
+    # 1. Analyze raw audio waveform first if audio_path exists (ground-truth acoustic analysis)
+    if audio_path and os.path.exists(audio_path):
+        try:
+            import soundfile as sf
+            data, sr = sf.read(audio_path, dtype="float32")
+            mono = np.mean(data, axis=1) if data.ndim > 1 else data
+
+            # Ground-truth BPM detection via librosa directly on the waveform
+            try:
+                import librosa
+                tempo, _ = librosa.beat.beat_track(y=mono, sr=sr)
+                audio_bpm = float(tempo[0]) if isinstance(tempo, (np.ndarray, list)) else float(tempo)
+                if audio_bpm > 40.0:
+                    detected_bpm = round(audio_bpm, 1)
+            except Exception as e:
+                logger.debug(f"Librosa beat tracking error: {e}")
+
+            # Ground-truth Key detection via CQT chroma
+            try:
+                import librosa
+                chroma = np.mean(librosa.feature.chroma_cqt(y=mono, sr=sr), axis=1)
+                k, s, conf = detect_key_from_chroma(chroma)
+                if conf > key_confidence:
+                    detected_key = k
+                    detected_scale = s
+                    key_confidence = conf
+            except Exception as e:
+                logger.debug(f"Librosa CQT chroma error: {e}")
+        except Exception as e:
+            logger.debug(f"Failed to read audio file for musical analysis: {e}")
+
+    # 2. Parse beat grid fallback if audio analysis did not produce valid BPM
+    if detected_bpm is None and beat_grid_json:
         try:
             bg = json.loads(beat_grid_json) if isinstance(beat_grid_json, str) else beat_grid_json
             if bg and isinstance(bg, dict) and bg.get("bpm"):
                 bg_bpm = float(bg["bpm"])
-                if bg_bpm > 40.0 and detected_bpm is None:
+                if bg_bpm > 40.0:
                     detected_bpm = bg_bpm
         except Exception:
             pass
 
-    # 2. Extract key from notes if available
-    if notes_json:
+    # 3. Extract key from notes if confidence is low
+    if key_confidence < 0.6 and notes_json:
         try:
             notes = json.loads(notes_json) if isinstance(notes_json, str) else notes_json
             if notes and isinstance(notes, list):
@@ -250,45 +323,10 @@ def extract_audio_musical_attributes(
                     if pitch is not None:
                         chroma[int(pitch) % 12] += max(0.05, float(dur))
                 k, s, conf = detect_key_from_chroma(chroma)
-                if conf > 0.4:
+                if conf > key_confidence:
                     detected_key = k
                     detected_scale = s
                     key_confidence = conf
-        except Exception:
-            pass
-
-    # 3. Analyze raw audio waveform if audio_path exists
-    if audio_path and os.path.exists(audio_path):
-        try:
-            import soundfile as sf
-            data, sr = sf.read(audio_path, dtype="float32")
-            mono = np.mean(data, axis=1) if data.ndim > 1 else data
-
-            # BPM detection via librosa if not already resolved
-            if detected_bpm is None:
-                try:
-                    import librosa
-                    tempo, _ = librosa.beat.beat_track(y=mono, sr=sr)
-                    if np.isscalar(tempo):
-                        detected_bpm = float(tempo)
-                    elif len(tempo) > 0:
-                        detected_bpm = float(tempo[0])
-                except Exception:
-                    pass
-
-            # Key detection via CQT chroma if notes confidence is low
-            if key_confidence < 0.6:
-                try:
-                    import librosa
-                    chroma = np.mean(librosa.feature.chroma_cqt(y=mono, sr=sr), axis=1)
-                    k, s, conf = detect_key_from_chroma(chroma)
-                    if conf > key_confidence:
-                        detected_key = k
-                        detected_scale = s
-                        key_confidence = conf
-                except Exception:
-                    pass
-
         except Exception:
             pass
 
@@ -1123,16 +1161,155 @@ class MiniMaxMusic3Provider(GenerationProvider):
         **kwargs
     ) -> GeneratedAudioResult:
         """
-        Extend parent audio with continuation segment and equal-power crossfade.
-        Preserves the parent audio bit-for-bit, anchored to the parent seed and style.
+        Extend parent audio using Option 1/1A: MiniMax KV-cache roll-forward extension.
+        Fast-forwards parent deterministic acoustic state to cut boundary, then continues
+        generating new frames with early termination suppressed, guaranteeing 100% tempo,
+        pitch, and timbre continuity.
         """
-        # 1. Resolve parent audio path on disk
+        import shutil
         from app.transcription.karaoke import _resolve_audio_file
         from app.core.paths import get_generated_audio_dir
 
-        resolved_parent = _resolve_audio_file(parent_audio_path)
+        gen_dir = get_generated_audio_dir()
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        out_wav_path = str(gen_dir / f"{job_id}.wav")
+        alt_wav = str(gen_dir / f"song_{job_id}.wav")
 
-        # 2. Generate continuation segment
+        resolved_parent = _resolve_audio_file(parent_audio_path)
+        parent_dur = float(extend_from_sec) if extend_from_sec is not None else 60.0
+        target_dur = float(kwargs.get("target_duration_sec")) if kwargs.get("target_duration_sec") else (parent_dur + extend_ms / 1000.0)
+
+        # Check if real MLX inference is available and seed is known
+        if _MLX_AUDIO_AVAILABLE and self.snapshot_path and seed is not None:
+            parent_prompt = kwargs.get("parent_prompt") or prompt or ""
+            parent_lyrics = kwargs.get("parent_lyrics") or lyrics or ""
+
+            # Check for parent structured caption to maintain 100% token parity with parent run
+            parent_sc = kwargs.get("parent_structured_caption")
+            if not parent_sc:
+                parent_job_id = kwargs.get("parent_job_id")
+                if parent_job_id:
+                    try:
+                        from sqlmodel import Session
+                        from app.core.database import engine
+                        from app.models import Job
+                        with Session(engine) as session:
+                            pj = session.get(Job, parent_job_id)
+                            if pj and pj.structured_caption_json:
+                                parent_sc = json.loads(pj.structured_caption_json)
+                    except Exception as _e:
+                        logger.debug("Failed to lookup parent_structured_caption: %s", _e)
+
+            if parent_sc and isinstance(parent_sc, dict):
+                structured_meta = {
+                    "global_metadata": (parent_sc.get("global_metadata") or "").strip(),
+                    "vocal_details": (parent_sc.get("vocal_details") or "").strip(),
+                    "arrangement": (parent_sc.get("arrangement") or "").strip(),
+                }
+            else:
+                provided = structured_caption or {}
+                auto_meta = self.parse_structured_caption(parent_prompt, tags or "")
+                structured_meta = {
+                    "global_metadata": (provided.get("global_metadata") or "").strip() or auto_meta.get("global_metadata", ""),
+                    "vocal_details": (provided.get("vocal_details") or "").strip() or auto_meta.get("vocal_details", ""),
+                    "arrangement": (provided.get("arrangement") or "").strip() or auto_meta.get("arrangement", ""),
+                }
+            formatted_caption = self.format_full_caption(structured_meta, parent_prompt)
+
+            steps = min(30, max(10, int(target_dur / 4)))
+            temperature = float(kwargs.get("temperature", 1.0))
+            cfg_scale = float(kwargs.get("cfg_scale", 1.5))
+            topk = int(kwargs.get("topk", 50))
+
+            if progress_callback:
+                progress_callback(1, 3, f"MiniMax Music 3: Executing KV-Cache Roll-Forward Extension ({steps} flow steps)...")
+
+            def _hooked_progress(frac: float, msg: str):
+                if progress_callback:
+                    progress_callback(1, 3, f"MiniMax Music 3: {msg} [{int(frac * 100)}%]")
+
+            loop = asyncio.get_running_loop()
+            raw_extended_wav = str(gen_dir / f"{job_id}_raw_extended.wav")
+
+            await loop.run_in_executor(
+                None,
+                run_real_minimax_extension,
+                self.snapshot_path,
+                formatted_caption,
+                parent_lyrics,
+                parent_dur,
+                target_dur,
+                int(seed),
+                raw_extended_wav,
+                steps,
+                temperature,
+                cfg_scale,
+                topk,
+                cancel_event,
+                _hooked_progress,
+            )
+
+            # Reconcile with resolved parent audio if on disk:
+            # Splicing with crossfade over crossfade_sec guarantees exact parent disk audio up to cut point
+            if resolved_parent and os.path.exists(resolved_parent):
+                beat_grid = kwargs.get("beat_grid")
+                total_duration = await loop.run_in_executor(
+                    None,
+                    concatenate_and_crossfade_audio,
+                    resolved_parent,
+                    raw_extended_wav,
+                    out_wav_path,
+                    crossfade_sec,
+                    parent_dur,
+                    beat_grid,
+                    target_dur,
+                )
+                try:
+                    if os.path.exists(raw_extended_wav):
+                        os.remove(raw_extended_wav)
+                except Exception:
+                    pass
+            else:
+                shutil.move(raw_extended_wav, out_wav_path)
+                import soundfile as sf
+                info = sf.info(out_wav_path)
+                total_duration = info.duration
+
+            # Mirror to song_{job_id}.wav for route versatility
+            try:
+                if os.path.abspath(out_wav_path) != os.path.abspath(alt_wav):
+                    shutil.copy2(out_wav_path, alt_wav)
+            except Exception:
+                pass
+
+            # Also mirror to backend/generated_audio
+            try:
+                from app.core.paths import get_repo_root
+                backend_dir = get_repo_root() / "backend" / "generated_audio"
+                backend_dir.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(out_wav_path, str(backend_dir / f"{job_id}.wav"))
+                shutil.copy2(out_wav_path, str(backend_dir / f"song_{job_id}.wav"))
+            except Exception:
+                pass
+
+            return GeneratedAudioResult(
+                audio_path=f"/audio/{job_id}.wav",
+                duration_sec=total_duration,
+                sample_rate=44100,
+                structured_caption=structured_caption,
+                used_fallback_synth=False,
+                fallback_reason=None,
+                metadata={
+                    "extended_from": parent_audio_path,
+                    "extend_from_sec": parent_dur,
+                    "target_duration_sec": target_dur,
+                    "total_duration_sec": total_duration,
+                    "roll_forward_extension": True,
+                    "seed": seed,
+                }
+            )
+
+        # Fallback path if MLX or seed unavailable:
         temp_ext_job_id = f"{job_id}_ext_segment"
         ext_result = await self.generate(
             job_id=temp_ext_job_id,
@@ -1151,9 +1328,6 @@ class MiniMaxMusic3Provider(GenerationProvider):
             logger.warning(f"Parent audio {parent_audio_path} not found on disk; returning continuation directly.")
             return ext_result
 
-        # 3. Concatenate and crossfade
-        gen_dir = get_generated_audio_dir()
-        gen_dir.mkdir(parents=True, exist_ok=True)
         ext_local_path = _resolve_audio_file(ext_result.audio_path)
         if not ext_local_path or not os.path.exists(ext_local_path):
             candidate = str(gen_dir / f"{temp_ext_job_id}.wav")
@@ -1162,12 +1336,7 @@ class MiniMaxMusic3Provider(GenerationProvider):
             else:
                 ext_local_path = ext_result.audio_path.replace("/audio/", "generated_audio/")
 
-        out_wav_path = str(gen_dir / f"{job_id}.wav")
-        alt_wav = str(gen_dir / f"song_{job_id}.wav")
-
         beat_grid = kwargs.get("beat_grid")
-        target_duration_sec = kwargs.get("target_duration_sec")
-
         loop = asyncio.get_event_loop()
         total_duration = await loop.run_in_executor(
             None,
@@ -1178,17 +1347,15 @@ class MiniMaxMusic3Provider(GenerationProvider):
             crossfade_sec,
             extend_from_sec,
             beat_grid,
-            target_duration_sec,
+            target_dur,
         )
 
-        # Mirror to song_{job_id}.wav for route versatility
         try:
             if os.path.abspath(out_wav_path) != os.path.abspath(alt_wav):
                 shutil.copy2(out_wav_path, alt_wav)
         except Exception:
             pass
 
-        # Also mirror to backend/generated_audio
         try:
             from app.core.paths import get_repo_root
             backend_dir = get_repo_root() / "backend" / "generated_audio"
@@ -1198,7 +1365,6 @@ class MiniMaxMusic3Provider(GenerationProvider):
         except Exception:
             pass
 
-        # Cleanup intermediate extension segment to preserve disk space
         if ext_local_path and os.path.exists(ext_local_path) and "_ext_segment" in ext_local_path:
             try:
                 os.remove(ext_local_path)

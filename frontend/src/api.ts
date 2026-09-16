@@ -533,6 +533,69 @@ export const api = {
         return `${API_BASE_URL}/download_track/${jobId}`;
     },
 
+    downloadUrlAsFile: async (url: string, filename: string): Promise<void> => {
+        try {
+            const targetUrl = url.startsWith('http') ? url : `${API_BASE_URL}${url}`;
+            const res = await fetch(targetUrl);
+            if (res.ok) {
+                const blob = await res.blob();
+                const blobUrl = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = filename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+                return;
+            }
+        } catch (e) {
+            console.warn('downloadUrlAsFile blob fetch failed, falling back to anchor click:', e);
+        }
+        const a = document.createElement('a');
+        a.href = url.startsWith('http') ? url : `${API_BASE_URL}${url}`;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    },
+
+    downloadAudioTrack: async (jobId: string, filename?: string, fallbackAudioPath?: string): Promise<void> => {
+        const downloadUrl = `${API_BASE_URL}/download_track/${jobId}`;
+        const targetFilename = filename || `milimo-track-${jobId}.wav`;
+
+        try {
+            const res = await fetch(downloadUrl);
+            if (res.ok) {
+                const blob = await res.blob();
+                const blobUrl = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = blobUrl;
+                a.download = targetFilename;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+                setTimeout(() => URL.revokeObjectURL(blobUrl), 2000);
+                return;
+            }
+        } catch (e) {
+            console.warn('download_track fetch failed, trying fallbackAudioPath:', e);
+        }
+
+        if (fallbackAudioPath) {
+            const fallbackUrl = api.getAudioUrl(fallbackAudioPath);
+            await api.downloadUrlAsFile(fallbackUrl, targetFilename);
+            return;
+        }
+
+        const a = document.createElement('a');
+        a.href = downloadUrl;
+        a.download = targetFilename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+    },
+
     connectToEvents: (onMessage: (event: MessageEvent) => void, extraEventTypes: string[] = []) => {
         const token = localStorage.getItem('milimo_auth_token') || '';
         const url = token ? `${API_BASE_URL}/events?auth=${encodeURIComponent(token)}` : `${API_BASE_URL}/events`;

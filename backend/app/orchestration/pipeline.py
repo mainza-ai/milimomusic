@@ -156,6 +156,9 @@ class GenerateAndTranscribePipeline:
                     cancel_event=cancel_event,
                     beat_grid=getattr(req, "beat_grid", None),
                     target_duration_sec=getattr(req, "target_duration_sec", None),
+                    parent_prompt=getattr(req, "parent_prompt", None),
+                    parent_lyrics=getattr(req, "parent_lyrics", None),
+                    parent_structured_caption=getattr(req, "parent_structured_caption", None),
                     **extra_gen_kwargs
                 )
             else:

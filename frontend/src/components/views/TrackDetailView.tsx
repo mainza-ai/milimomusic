@@ -1202,14 +1202,13 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                                 {isMuted ? 'Muted in preview' : isSolo ? 'Soloed in preview' : 'Stem'}
                                             </span>
                                             {stem.path && (
-                                                <a
-                                                    href={stem.path.startsWith('http') ? stem.path : `${API_BASE_URL}${stem.path}`}
-                                                    download={`${track.title || 'track'}_${stem.key}.wav`}
-                                                    className="text-teal-600 dark:text-teal-400 hover:underline font-bold flex items-center gap-1"
+                                                <button
+                                                    onClick={() => api.downloadUrlAsFile(stem.path.startsWith('http') ? stem.path : `${API_BASE_URL}${stem.path}`, `${track.title || 'track'}_${stem.key}.wav`)}
+                                                    className="text-teal-600 dark:text-teal-400 hover:underline font-bold flex items-center gap-1 cursor-pointer"
                                                 >
                                                     <Download size={12} />
                                                     <span>Download WAV</span>
-                                                </a>
+                                                </button>
                                             )}
                                         </div>
                                     </div>
@@ -1280,10 +1279,12 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                             </h4>
                             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                 {track.midi_path && (
-                                    <a
-                                        href={track.midi_path.startsWith('http') ? track.midi_path : `${API_BASE_URL}${track.midi_path}`}
-                                        download={`${track.title || 'track'}.mid`}
-                                        className="p-3.5 rounded-xl bg-black/[0.03] dark:bg-white/5 hover:bg-teal-500/10 border border-black/[0.06] dark:border-white/5 flex items-center justify-between group transition-colors"
+                                    <button
+                                        onClick={() => {
+                                            const p = track.midi_path;
+                                            if (p) api.downloadUrlAsFile(p.startsWith('http') ? p : `${API_BASE_URL}${p}`, `${track.title || 'track'}.mid`);
+                                        }}
+                                        className="p-3.5 rounded-xl bg-black/[0.03] dark:bg-white/5 hover:bg-teal-500/10 border border-black/[0.06] dark:border-white/5 flex items-center justify-between group transition-colors text-left w-full cursor-pointer"
                                     >
                                         <div className="flex items-center gap-2.5">
                                             <Music size={18} className="text-teal-500" />
@@ -1293,14 +1294,16 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                             </div>
                                         </div>
                                         <Download size={14} className="text-slate-400 group-hover:text-teal-500" />
-                                    </a>
+                                    </button>
                                 )}
 
                                 {track.musicxml_path && (
-                                    <a
-                                        href={track.musicxml_path.startsWith('http') ? track.musicxml_path : `${API_BASE_URL}${track.musicxml_path}`}
-                                        download={`${track.title || 'track'}.musicxml`}
-                                        className="p-3.5 rounded-xl bg-black/[0.03] dark:bg-white/5 hover:bg-teal-500/10 border border-black/[0.06] dark:border-white/5 flex items-center justify-between group transition-colors"
+                                    <button
+                                        onClick={() => {
+                                            const p = track.musicxml_path;
+                                            if (p) api.downloadUrlAsFile(p.startsWith('http') ? p : `${API_BASE_URL}${p}`, `${track.title || 'track'}.musicxml`);
+                                        }}
+                                        className="p-3.5 rounded-xl bg-black/[0.03] dark:bg-white/5 hover:bg-teal-500/10 border border-black/[0.06] dark:border-white/5 flex items-center justify-between group transition-colors text-left w-full cursor-pointer"
                                     >
                                         <div className="flex items-center gap-2.5">
                                             <FileCode size={18} className="text-cyan-500" />
@@ -1310,7 +1313,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                             </div>
                                         </div>
                                         <Download size={14} className="text-slate-400 group-hover:text-cyan-500" />
-                                    </a>
+                                    </button>
                                 )}
 
                                 {notesData.length > 0 && (
@@ -1345,10 +1348,12 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                     </div>
                                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
                                         {track.melody_midi_path && (
-                                            <a
-                                                href={track.melody_midi_path.startsWith('http') ? track.melody_midi_path : `${API_BASE_URL}${track.melody_midi_path}`}
-                                                download={`${track.title || 'track'}_melody.mid`}
-                                                className="p-3 rounded-xl bg-teal-500/5 hover:bg-teal-500/10 border border-teal-500/20 flex items-center justify-between group transition-colors"
+                                            <button
+                                                onClick={() => {
+                                                    const p = track.melody_midi_path;
+                                                    if (p) api.downloadUrlAsFile(p.startsWith('http') ? p : `${API_BASE_URL}${p}`, `${track.title || 'track'}_melody.mid`);
+                                                }}
+                                                className="p-3 rounded-xl bg-teal-500/5 hover:bg-teal-500/10 border border-teal-500/20 flex items-center justify-between group transition-colors text-left w-full cursor-pointer"
                                             >
                                                 <div className="flex items-center gap-2">
                                                     <Music size={16} className="text-teal-500" />
@@ -1358,13 +1363,15 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                                     </div>
                                                 </div>
                                                 <Download size={13} className="text-slate-400 group-hover:text-teal-500" />
-                                            </a>
+                                            </button>
                                         )}
                                         {track.chord_midi_path && (
-                                            <a
-                                                href={track.chord_midi_path.startsWith('http') ? track.chord_midi_path : `${API_BASE_URL}${track.chord_midi_path}`}
-                                                download={`${track.title || 'track'}_chords.mid`}
-                                                className="p-3 rounded-xl bg-teal-500/5 hover:bg-teal-500/10 border border-teal-500/20 flex items-center justify-between group transition-colors"
+                                            <button
+                                                onClick={() => {
+                                                    const p = track.chord_midi_path;
+                                                    if (p) api.downloadUrlAsFile(p.startsWith('http') ? p : `${API_BASE_URL}${p}`, `${track.title || 'track'}_chords.mid`);
+                                                }}
+                                                className="p-3 rounded-xl bg-teal-500/5 hover:bg-teal-500/10 border border-teal-500/20 flex items-center justify-between group transition-colors text-left w-full cursor-pointer"
                                             >
                                                 <div className="flex items-center gap-2">
                                                     <Music size={16} className="text-cyan-500" />
@@ -1374,13 +1381,15 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                                     </div>
                                                 </div>
                                                 <Download size={13} className="text-slate-400 group-hover:text-cyan-500" />
-                                            </a>
+                                            </button>
                                         )}
                                         {track.drum_midi_path && (
-                                            <a
-                                                href={track.drum_midi_path.startsWith('http') ? track.drum_midi_path : `${API_BASE_URL}${track.drum_midi_path}`}
-                                                download={`${track.title || 'track'}_drums.mid`}
-                                                className="p-3 rounded-xl bg-teal-500/5 hover:bg-teal-500/10 border border-teal-500/20 flex items-center justify-between group transition-colors"
+                                            <button
+                                                onClick={() => {
+                                                    const p = track.drum_midi_path;
+                                                    if (p) api.downloadUrlAsFile(p.startsWith('http') ? p : `${API_BASE_URL}${p}`, `${track.title || 'track'}_drums.mid`)}
+                                                }
+                                                className="p-3 rounded-xl bg-teal-500/5 hover:bg-teal-500/10 border border-teal-500/20 flex items-center justify-between group transition-colors text-left w-full cursor-pointer"
                                             >
                                                 <div className="flex items-center gap-2">
                                                     <Music size={16} className="text-amber-500" />
@@ -1390,7 +1399,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                                     </div>
                                                 </div>
                                                 <Download size={13} className="text-slate-400 group-hover:text-amber-500" />
-                                            </a>
+                                            </button>
                                         )}
                                     </div>
                                 </div>
@@ -1457,15 +1466,14 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                         </button>
 
                                         {/* Download LRC */}
-                                        <a
-                                            href={`${API_BASE_URL}/tracks/${track.id}/lrc`}
-                                            download={`${track.title || 'lyrics'}.lrc`}
-                                            className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-xl flex items-center gap-1 transition-all"
+                                        <button
+                                            onClick={() => api.downloadUrlAsFile(`${API_BASE_URL}/tracks/${track.id}/lrc`, `${track.title || 'lyrics'}.lrc`)}
+                                            className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-xl flex items-center gap-1 transition-all cursor-pointer"
                                             title="Download Synchronized LRC File"
                                         >
                                             <FileText size={12} className="text-teal-500" />
                                             <span>.LRC</span>
-                                        </a>
+                                        </button>
 
                                         {/* Copy Text */}
                                         <button
@@ -1930,14 +1938,13 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                     <ExternalLink size={13} />
                                     <span>Open in New Tab</span>
                                 </a>
-                                <a
-                                    href={coverApi.getCoverUrl(track.cover_image_path)}
-                                    download={`${(track.title || 'album_artwork').replace(/\s+/g, '_')}.png`}
+                                <button
+                                    onClick={() => api.downloadUrlAsFile(coverApi.getCoverUrl(track.cover_image_path), `${(track.title || 'album_artwork').replace(/\s+/g, '_')}.png`)}
                                     className="px-3.5 py-2 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-semibold text-xs flex items-center gap-1.5 transition-colors border border-black/10 dark:border-white/10 cursor-pointer"
                                 >
                                     <Download size={13} />
                                     <span>Download PNG</span>
-                                </a>
+                                </button>
                             </div>
 
                             <button

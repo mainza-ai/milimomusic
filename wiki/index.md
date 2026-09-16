@@ -32,16 +32,20 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 ## Entities — transcription, DAW & production
 
 - [MuScriptor](entities/muscriptor.md) — multi-instrument transcription → MIDI + MusicXML (git submodule, integrated).
+- [Drum Tracker](entities/drum-tracker.md) — spectral flux sub-band onset extraction for Kick (36), Snare (38), Hi-Hat (42) MIDI conditioning.
 - [Stem Separation (Dual-Engine)](entities/stem-separator.md) — HTDemucs real neural separation + MuScriptor per-instrument parts, user-selectable in the DAW.
 - [Matchering Reference Mastering](entities/matchering-mastering.md) — -14 LUFS reference mastering.
 - [Karaoke & Lyric Sync](entities/karaoke-lyricsync.md) — TorchAudio MMS_FA neural forced alignment, sub-100ms word sync, .lrc/.srt export.
 - [Voice Studio (SVC)](entities/voice-service.md) — offline voice conversion + consent-gated profiles.
+- [Neural Singing Voice Conversion (SVC)](entities/neural-svc.md) — zero-shot vocal timbre transfer, formant morphing, pitch transposition, and dry/wet blending.
 - [AI Music Video Studio](entities/video-studio.md) — Wan 2.1 & LTX-Video diffusion, LivePortrait neural singing avatar lip-syncing, autonomous musical director, pre-rendered keyframes, and burned karaoke ASS subtitles.
 - [Session Workspace (DAW)](entities/session-workspace.md) — Listen/Arrange/Piano Roll/Notation/Mix/Lyrics.
 - [Studio Projects](entities/projects.md) — multi-session production workspaces, BPM/Key conditioning, multi-track stems aggregation, and Studio Pack (.zip) export.
 
 ## Entities — in-app services & agents
 
+- [Global Hardware Coordinator](entities/hardware-coordinator.md) — centralized GPU device lock, VRAM telemetry, multi-backend cache flushing, and live telemetry bar.
+- [Sidecar Engine Manager](entities/sidecar-engine-manager.md) — isolated `uv` virtual environments for external audio/video backbones (`backend/engines/<id>/.venv`).
 - [AI Co-Writer](entities/ai-cowriter.md) — the multi-agent lyrics engine (Coordinator→Lyricist→StructureGuard).
 - [Producer Service](entities/producer-service.md) — LLM producer that enhances weak prompts + writes real lyrics; captions now come from the [Caption Rewriter](concepts/caption-rewriter.md).
 - [Training Studio](entities/training-studio.md) — (Deprecated) decommissioned due to MiniMax Music 3 decoder-only architecture and VRAM constraints. `tags: [training, lora, deprecated]`
@@ -79,6 +83,9 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Naming Contract](concepts/naming-contract.md) — Session/Job/Project titles are independent; rename validation, auto-rename guard. `tags: [naming, sessions, projects]`
 - [Modality Taxonomy](concepts/modality-taxonomy.md) — canonical audio|image|video decision chain, H3 misrouting case study, relocate/delete/guard rules. `tags: [modality, taxonomy, model-manager]`
 - [Audio Synthesis & Performance Standards](concepts/audio-synthesis-standards.md) — Fletcher-Munson loudness calibration (-13 to -18 dBFS), physical acoustic modeling (electric guitar pick transient, clarinet stopped pipe odd harmonics, drum sub sweeps), crest factor / spectral centroid metrics, and Web Audio transport performance standards. `tags: [dsp, synthesis, loudness, lufs, crest-factor, web-audio, performance-standards]`
+- [Vocal Performance Tokens](concepts/vocal-performance-tokens.md) — acoustic performance modifiers (`[breath]`, `[whisper]`, `[belt]`, `[pause]`) and section duet casting. `tags: [lyrics, performance, tokens, composition]`
+- [Stem Audio-Reactive Video](concepts/stem-audio-reactive-video.md) — bleed-free vocal envelopes for lip sync and rhythm transient extraction for Wan 2.1 camera zoom/shakes. `tags: [video, audio-reactive, stems, lip-sync]`
+- [Modal Store Architecture](concepts/modal-store-architecture.md) — Zustand single-mount modal state management and timeline clip routing. `tags: [frontend, zustand, modal, daw]`
 - [Database Integrity Lifecycle](concepts/database-integrity-lifecycle.md) — SQLite text vs SQLAlchemy GUID 32-hex dialect contract, universal multi-format lookup (`get_job_by_id`), boot-time self-healing migrations, relational cascade nullification, and comprehensive filesystem sweeps. `tags: [database, sqlite, sqlalchemy, sqlmodel, uuid, lifecycle, cascade-delete, data-integrity]`
 - [Artwork & Static Media Architecture](concepts/artwork-and-static-media-architecture.md) — multi-directory fallback static file serving (`RangedStaticFiles`), bidirectional disk mirroring, auto-cover generation lifecycle, and on-demand manual artwork generation/regeneration. `tags: [media, covers, static-files, ranged-static, pipeline, storage]`
 

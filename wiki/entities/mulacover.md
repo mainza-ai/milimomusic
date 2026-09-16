@@ -56,9 +56,10 @@ Unlike single-repository models, MuLaCover relies on a unified ensemble of 4 dis
 MuLaCover accepts both reference audio files and direct MIDI lead sheets. When provided with audio, Milimo Music offers dual neural transcription:
 
 - **Milimo Neural Mode (SOTA)**:
-  - Uses BS-Roformer to split the source audio into isolated vocal and accompaniment stems.
+  - Uses BS-Roformer to split the source audio into isolated vocal, accompaniment, and drum stems.
   - Runs [MuScriptor](muscriptor.md) note-tracking on the vocal stem to yield clean melody events.
   - Performs neural pitch and chord estimation on accompaniment stems.
+  - Runs [Drum Tracker](drum-tracker.md) (`drum_tracker.py`) with spectral flux onset envelope detection and sub-band filtering (Kick Note 36, Snare Note 38, Hi-Hat Note 42) into `SymbolicCondition.drums`.
 - **Upstream Classic Mode**:
   - Direct YourMT3 multi-instrument transcription + 5-fold ChordNet ensemble inference directly on audio.
 
@@ -67,7 +68,7 @@ MuLaCover accepts both reference audio files and direct MIDI lead sheets. When p
 - Generates standard `.mid` files:
   - `melody.mid`: Isolated melodic lead line.
   - `chord.mid`: Quantized harmonic chord progression.
-  - `drum.mid`: Percussion rhythm pattern.
+  - `drum.mid`: Percussion rhythm pattern from [Drum Tracker](drum-tracker.md).
   - `leadsheet_summary_midi`: Combined lead sheet for DAW and PianoRoll import.
 
 ---
@@ -75,7 +76,7 @@ MuLaCover accepts both reference audio files and direct MIDI lead sheets. When p
 ## 4. Workflows & User Interface Integration
 
 1. **Cover & Remix Studio (`CoverStudioModal.tsx`)**:
-   - Dedicated modal accessible from the left navigation bar, Command Palette (`⌘K`), and composer header.
+   - Dedicated modal accessible from the left navigation bar, Command Palette (`⌘K`), and composer header, unified under [Modal Store Architecture](../concepts/modal-store-architecture.md).
    - Dual input modes: **Reference Audio Mode** (with real-time audio player, BPM detection, and lead sheet extraction) and **Symbolic MIDI Lead Sheet Mode**.
    - First-run onboarding card with one-click bundle downloading and real-time progress bar when checkpoints are uninstalled.
    - MIDI lead sheet download chips with direct **Edit in PianoRoll** navigation.
@@ -94,7 +95,7 @@ MuLaCover accepts both reference audio files and direct MIDI lead sheets. When p
 ## 5. Endpoints & Database Schema
 
 - `POST /generate/cover`: Enqueues cover song jobs with upfront validation of checkpoints and symbolic inputs.
-- `POST /transcribe/lead-sheet`: Extracts multi-track MIDI lead sheets from audio.
+- `POST /transcribe/lead-sheet`: Extracts multi-track MIDI lead sheets from audio. Features robust audio path resolution (`_resolve_audio_file`), stripping dev server URLs (`http://localhost:5173/audio/...`) and resolving static mount aliases (`/audio/...` -> `generated_audio/...`) to prevent 404 extraction failures.
 - `GET /jobs/{job_id}/symbolic`: Fetches extracted MIDI paths for completed jobs.
 - `GET /models/check/mulacover`: Validates checkpoint integrity.
 - **Database Schema (`Job` model)**:
@@ -105,3 +106,11 @@ MuLaCover accepts both reference audio files and direct MIDI lead sheets. When p
   - `chord_midi_path: str`
   - `drum_midi_path: str`
   - `bpm: float`
+
+## Related Pages
+
+- [Generation Provider](generation-provider.md)
+- [Drum Tracker](drum-tracker.md)
+- [MuScriptor](muscriptor.md)
+- [Global Hardware Coordinator](hardware-coordinator.md)
+- [Modal Store Architecture](../concepts/modal-store-architecture.md)

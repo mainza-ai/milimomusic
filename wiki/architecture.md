@@ -18,21 +18,22 @@ Milimo Music is a full-featured open-source AI music generation and production D
 │  FRONTEND (React 19 / Vite / Tailwind)  :5173                          │
 │  Explore & Producer Landing · 5-Mode Session Workspace (Listen,       │
 │  Arrange, Piano Roll, Notation, Mix) · Voice Identity Studio · Model   │
-│  Manager · Floating Task Monitor · MuLaCover Remix Studio              │
+│  Manager · Hardware Telemetry Bar · Global Modal Store (Zustand)       │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │ HTTP + SSE + Audio Streaming
 ┌───────────────────────────────────┴────────────────────────────────────┐
 │  BACKEND (FastAPI / SQLModel / SQLite WAL)  :8000                      │
-│  ProviderRegistry · GenerateAndTranscribePipeline · MuScriptorProvider │
-│  MuLaCoverEngine · SymbolicHub · StemSeparator · MatcheringEngine      │
-│  LyricSyncEngine · VoiceService · AgentRuntime (4 crew agents)         │
+│  GlobalHardwareCoordinator · ProviderRegistry · GeneratePipeline       │
+│  MuScriptorProvider · MuLaCoverEngine · DrumTracker · SymbolicHub      │
+│  NeuralSVCService · StemSeparator · MatcheringEngine · LyricSyncEngine │
+│  SidecarEngineManager · AgentRuntime (4 crew agents)                   │
 └─────────────┬───────────────────────────┬──────────────────────────────┘
               │                           │
   ┌───────────▼────────────┐  ┌───────────▼────────────┐  ┌──────────────▼────────────┐
   │  GENERATION PROVIDERS  │  │  TRANSCRIPTION ENGINE  │  │  LLM PROVIDERS            │
   │  MiniMax Music 3 (Def) │  │  MuScriptor (MT3)      │  │  Ollama / OpenAI / Gemini │
   │  MuLaCover-3B (Remix)  │  │  Dual SymbolicHub      │  │  DeepSeek / Claude        │
-  │  HeartMuLa-3B (Legacy) │  │  MIDI + MusicXML +     │  │  (Lyrics, Co-Writer graph,│
+  │  HeartMuLa-3B (Legacy) │  │  Drum Tracker (MIDI)   │  │  (Lyrics, Co-Writer graph,│
   │  Capability manifests  │  │  Note events + Stems   │  │   artist crew + critic)   │
   └────────────────────────┘  └────────────────────────┘  └───────────────────────────┘
 ```
@@ -69,18 +70,32 @@ Tracks are managed under an atomic lifecycle architecture (see [Database Integri
 - **Startup Self-Healing Migration**: Boot-time migration in `init_db()` normalizing non-canonical UUIDs across `job`, `session`, `sessionmessage`, `playlisttrack`, and `release`.
 - **Atomic Cascade Deletion**: `DELETE /jobs/{id}` nullifies session and message references, deletes playlist tracks, expunges ORM tracking to eliminate duplicate-delete warnings, and executes an exhaustive multi-directory filesystem sweep.
 
+## Hardware Coordination & Memory Lifecycle
+Milimo Music orchestrates concurrent audio and video generative backbones using the [Global Hardware Coordinator](entities/hardware-coordinator.md) (`backend/app/core/hardware_lock.py`):
+- **Serialized Device Mutex**: Prevents concurrent execution of MiniMax Music 3, MuLaCover, Wan 2.1 Video DiT, and LivePortrait on constrained accelerator memory (MPS Unified Memory or CUDA VRAM).
+- **Aggressive Memory Eviction**: Automatically triggers multi-backend memory purges (`torch.cuda.empty_cache()`, `torch.mps.empty_cache()`, and `gc.collect()`) upon device lock release or via `POST /system/flush`.
+- **Live Telemetry & Engine Switching**: Real-time VRAM telemetry streamed to `HardwareTelemetryBar.tsx` and interactive engine introspection via `EngineSwitcherModal.tsx` (`Ctrl+E`).
+- **Sidecar Virtualenv Isolation**: [Sidecar Engine Manager](entities/sidecar-engine-manager.md) isolates conflicting neural dependencies under `backend/engines/<id>/.venv`.
+
+## Global Modal Store Architecture
+To eliminate duplicate modal component instances and desynchronized state, frontend modal management is unified under [Modal Store Architecture](concepts/modal-store-architecture.md) (`useModalStore.ts`):
+- **Single Mount at Root**: Key studio modals (`<CoverStudioModal>`, `<EngineSwitcherModal>`, `<VoiceStudioModal>`) are mounted once in `App.tsx`.
+- **Authoritative Routing**: Views and timeline clips (`ArrangeTimeline.tsx`) summon modals with full job context intact without local visibility state bloat.
+
 ## System Performance Standards & Benchmarks
 Milimo Music enforces measurable production performance benchmarks across the stack:
 - **Web Audio Clock Jitter**: **0.00ms** clock skew across all stems via sample-locked `AudioContext.currentTime` transport.
 - **Web Audio Playback Latency**: **< 20ms** start-to-sound latency; **< 250ms** multitrack stem decode latency.
 - **Database Query Latency**: Universal `get_job_by_id()` resolves in **< 1.5ms**; full cascading delete in **< 25ms**.
 - **Frontend Production Build**: Client bundle compiles via Vite (`tsc -b && vite build`) in **< 1.6s** (gzip size: < 261 kB JS, < 16 kB CSS).
-- **Automated Test Integrity**: Full test suite comprises **213 tests** executing in **< 6.0s** with a 100% pass rate.
+- **Automated Test Integrity**: Full test suite comprises **243 tests** executing with a 100% pass rate.
 
 ## Related pages
 
 - [Overview](overview.md) | [Backend & API](entities/backend-api.md) | [Frontend](entities/frontend.md)
 - [Audio Synthesis Standards](concepts/audio-synthesis-standards.md) | [Database Integrity Lifecycle](concepts/database-integrity-lifecycle.md)
+- [Global Hardware Coordinator](entities/hardware-coordinator.md) | [Modal Store Architecture](concepts/modal-store-architecture.md)
 - [Generation Provider](entities/generation-provider.md) | [Model Manager](entities/model-manager.md)
 - [MiniMax Music 3](entities/minimax-music3.md) | [MuLaCover](entities/mulacover.md) | [MuScriptor](entities/muscriptor.md)
+- [Drum Tracker](entities/drum-tracker.md) | [Neural SVC](entities/neural-svc.md) | [Sidecar Engine Manager](entities/sidecar-engine-manager.md)
 - [Session Workspace](entities/session-workspace.md) | [Index](index.md)

@@ -2,7 +2,7 @@
 title: Wiki Log
 type: log
 created: 2026-08-19
-updated: 2026-09-15
+updated: 2026-09-16
 ---
 
 # Wiki Log
@@ -1792,3 +1792,16 @@ Conducted exhaustive production audit following track extension failures and COR
 6. Root Cause 6 (Symbolic MIDI Auto-Population & Fallback): Updated `CoverStudioModal.tsx` and `mulacover_provider.py` to auto-populate from `initialTrack.midi_path` when separate stems aren't present and allow single MIDI lead sheets.
 7. DAW Contrast: Enhanced measure ruler numbers (`text-slate-700 dark:text-slate-300`) and structure section labels in light mode for WCAG AAA contrast.
 8. End-to-End Recovery & Verification: Fully recovered and completed the 118.6s extended track (`4108a95d-5b6d-4dbc-bcec-866b517d7e52`) with all 2,177 notes transcribed by MuScriptor. Verified live `POST /tracks/{id}/extend` returning 200 OK with `Access-Control-Allow-Origin: http://localhost:5173`. Verified clean frontend build (`tsc -b && vite build`, 0 errors).
+
+## [2026-09-16] fix | True Track Extension: Autoregressive Continuation & Offset-Aware Crossfade (Eliminating Repetition)
+Resolved critical track extension regression where extended tracks repeated from the beginning (verse 1 loop) at the extension mark instead of continuing forward:
+1. Root Cause Identification: Diagnosed the 99.38% Pearson correlation between parent track and extension segment. Previously, `extend_track` in `main.py` calculated `delta_sec = target_duration - extend_from` and dispatched `duration_ms=delta_ms` with `seed=parent_seed`, causing the model to generate from second zero again. In `minimax_provider.py`, `concatenate_and_crossfade_audio` sliced the extension starting from sample 0 (`data_e[:crossfade_samples]`), directly crossfading parent $[0 \to 60\text{s}]$ into extension $[0 \to 60\text{s}]$ and duplicating the song's opening.
+2. Full Autoregressive Continuation: Updated `extend_track` in `main.py` to pass the full `target_duration_sec * 1000` (e.g. 120,000 ms) and merged `full_lyrics` (`parent_lyrics + "\n\n" + additional_lyrics`) into `GenerationRequest`. MiniMax Music 3 autoregressively continues musical progression forward under identical seed conditioning.
+3. Forward Sampling Controls: Enhanced `pipeline.py` to forward parent sampling parameters (`temperature`, `cfg_scale`, `topk`, `llm_model`) into `provider.extend()`.
+4. Offset-Aware Crossfade Splicing: Overhauled `concatenate_and_crossfade_audio` in `minimax_provider.py`. When extension audio covers the full timeline (`len(data_e) > cut_samples`), it slices `data_e` starting at `cut_samples - crossfade_samples`, aligning the equal-power crossfade to the cut boundary and splicing the parent bit-for-bit with the continuation slice $[T_{cut} \to T_{target}]$. Slicing gracefully falls back to index 0 if delta snippets are supplied.
+5. Verification & Tests: Verified via mathematical and empirical unit tests (`verify_concat_wav.py`):
+   - Pre-crossfade parent audio: exact 0.0 diff (bit-for-bit identical to parent track).
+   - Boundary crossfade: smooth equal-power sine/cosine transition over $[T_{cut} - \text{crossfade} \to T_{cut}]$.
+   - Post-crossfade continuation: exact 0.0 diff with continuation audio past $T_{cut}$; correlation between $[0 \to 60\text{s}]$ and $[60 \to 120\text{s}]$ confirmed to be near zero (no repeating).
+   - Frontend production build (`tsc -b && vite build`): 0 errors.
+

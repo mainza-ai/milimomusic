@@ -417,6 +417,10 @@ def concatenate_and_crossfade_audio(
         cut_samples = int(extend_from_sec * sr_p)
         if 0 < cut_samples < len(data_p):
             data_p = data_p[:cut_samples]
+        else:
+            cut_samples = len(data_p)
+    else:
+        cut_samples = len(data_p)
 
     if data_p.ndim == 1:
         data_p = data_p[:, np.newaxis]
@@ -430,16 +434,47 @@ def concatenate_and_crossfade_audio(
         data_e = np.repeat(data_e, channels, axis=1)
 
     crossfade_samples = int(min(len(data_p), len(data_e), crossfade_sec * sr_p))
-    if crossfade_samples <= 0:
-        combined = np.vstack([data_p, data_e])
-    else:
-        t = np.linspace(0, np.pi / 2, crossfade_samples, endpoint=False)[:, np.newaxis]
-        fade_out = np.cos(t)
-        fade_in = np.sin(t)
 
+    # Determine continuation alignment:
+    # If data_e covers the full timeline (length > cut_samples), slice data_e
+    # starting around the cut point (cut_samples - crossfade_samples) so the
+    # crossfade aligns with the cut point and audio continues forward into
+    # [extend_from_sec -> target_duration].
+    # If data_e is a delta snippet starting at t=0 (length <= cut_samples),
+    # slice from index 0.
+    if extend_from_sec is not None and extend_from_sec > 0 and len(data_e) > cut_samples:
+        ext_start_sample = max(0, cut_samples - crossfade_samples)
+    else:
+        ext_start_sample = 0
+
+    if crossfade_samples <= 0:
+        if extend_from_sec is not None and extend_from_sec > 0 and len(data_e) > cut_samples:
+            combined = np.vstack([data_p, data_e[cut_samples:]])
+        else:
+            combined = np.vstack([data_p, data_e])
+    else:
         pre = data_p[:-crossfade_samples]
-        cross = data_p[-crossfade_samples:] * fade_out + data_e[:crossfade_samples] * fade_in
-        post = data_e[crossfade_samples:]
+        cross_p = data_p[-crossfade_samples:]
+        cross_e = data_e[ext_start_sample : ext_start_sample + crossfade_samples]
+
+        actual_xfade = min(len(cross_p), len(cross_e))
+        if actual_xfade < crossfade_samples:
+            if actual_xfade > 0:
+                t = np.linspace(0, np.pi / 2, actual_xfade, endpoint=False)[:, np.newaxis]
+                fade_out = np.cos(t)
+                fade_in = np.sin(t)
+                cross = data_p[-actual_xfade:] * fade_out + cross_e[:actual_xfade] * fade_in
+                pre = data_p[:-actual_xfade]
+            else:
+                cross = np.empty((0, channels), dtype=data_p.dtype)
+                pre = data_p
+        else:
+            t = np.linspace(0, np.pi / 2, crossfade_samples, endpoint=False)[:, np.newaxis]
+            fade_out = np.cos(t)
+            fade_in = np.sin(t)
+            cross = cross_p * fade_out + cross_e * fade_in
+
+        post = data_e[ext_start_sample + actual_xfade :]
         combined = np.vstack([pre, cross, post])
 
     _write_wav_float(output_wav_path, sr_p, combined)

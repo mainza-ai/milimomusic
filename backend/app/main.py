@@ -3520,14 +3520,14 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
         "parent_job_id": str(job_id)
     })
 
-    gen_lyrics = req.additional_lyrics.strip() if (req.additional_lyrics and req.additional_lyrics.strip()) else parent_lyrics
+    gen_lyrics = full_lyrics
     gen_prompt = req.prompt.strip() if (req.prompt and req.prompt.strip()) else parent_prompt
 
     gen_req = GenerationRequest(
         title=child_title,
         prompt=gen_prompt,
         lyrics=gen_lyrics,
-        duration_ms=delta_ms,
+        duration_ms=int(req.target_duration_sec * 1000),
         tags=parent_tags,
         seed=parent_seed,
         model_provider=child_provider,

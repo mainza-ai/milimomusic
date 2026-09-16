@@ -295,8 +295,9 @@ class MuLaCoverEngine:
     ) -> torch.Tensor:
         dtype = self.dtypes["mulacover"]
         inputs = {k: v.to(self.device) for k, v in model_inputs.items()}
-        for k in ("pianoroll", "drum_pianoroll", "chord"):
-            inputs[k] = inputs[k].to(dtype)
+        for k in ("pianoroll", "drum_pianoroll", "chord", "qwen_embedding", "muq_embedding"):
+            if k in inputs and inputs[k] is not None and isinstance(inputs[k], torch.Tensor) and torch.is_floating_point(inputs[k]):
+                inputs[k] = inputs[k].to(dtype)
 
         tokens = inputs.pop("tokens")
         mask = inputs.pop("tokens_mask")

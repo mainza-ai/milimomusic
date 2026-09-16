@@ -72,6 +72,17 @@ class Conv1d(nn.Conv1d):
         if self.causal:
             x = F.pad(x.unsqueeze(2), (self.left_padding, 0, 0, 0)).squeeze(2)
 
+        if x.device.type == "mps" and x.shape[-1] > 60000:
+            return F.conv1d(
+                x.cpu(),
+                self.weight.cpu(),
+                self.bias.cpu() if self.bias is not None else None,
+                self.stride,
+                self.padding,
+                self.dilation,
+                self.groups,
+            ).to(x.device)
+
         return super(Conv1d, self).forward(x)
 
 

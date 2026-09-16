@@ -283,6 +283,7 @@ class MuLaCoverEngine:
                 }
             }
 
+    @torch.inference_mode()
     def _forward_cancellable(
         self,
         model_inputs: Dict[str, torch.Tensor],
@@ -369,6 +370,7 @@ class MuLaCoverEngine:
                 self._mulacover.reset_caches()
             self._release_component("mulacover")
 
+    @torch.inference_mode()
     def _detokenize(self, frames: torch.Tensor) -> Tuple[torch.Tensor, int]:
         try:
             codec = self.codec

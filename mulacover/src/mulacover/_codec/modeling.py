@@ -158,9 +158,18 @@ class HeartCodec(PreTrainedModel):
             latent = latent.reshape(
                 latent.shape[0] * 2, latent.shape[2], latent.shape[3]
             )
-            cur_output = (
-                self.scalar_model.decode(latent.transpose(1, 2)).squeeze(0).squeeze(1)
-            )  # 1 512 256
+            scalar_device = next(self.scalar_model.parameters()).device
+            decode_latent = latent.transpose(1, 2)
+            if scalar_device.type == "mps":
+                self.scalar_model.to("cpu")
+                cur_output = (
+                    self.scalar_model.decode(decode_latent.cpu()).squeeze(0).squeeze(1)
+                )
+                self.scalar_model.to(scalar_device)
+            else:
+                cur_output = (
+                    self.scalar_model.decode(decode_latent).squeeze(0).squeeze(1)
+                )  # 1 512 256
 
             cur_output = cur_output[:, 0:min_samples].detach().cpu()  # B, T
             if cur_output.dim() == 3:

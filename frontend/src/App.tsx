@@ -1457,7 +1457,7 @@ function App() {
                         setCurrentNav('workspace');
                       }}
                       className="w-full text-left p-2 rounded-xl text-[11px] hover:bg-black/[0.03] dark:hover:bg-white/5 transition-colors flex items-center justify-between group"
-                    >
+                     title="Open in Workspace">
                       <div className="truncate pr-2">
                         <div className="font-semibold text-slate-800 dark:text-slate-200 truncate">
                           {session.title || session.prompt.slice(0, 22)}
@@ -1488,7 +1488,7 @@ function App() {
             <button
               onClick={() => setCurrentNav('profile')}
               className="w-full p-2 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] hover:bg-black/[0.05] dark:hover:bg-white/[0.07] border border-black/[0.04] dark:border-white/5 flex items-center space-x-2.5 transition-all text-left group"
-            >
+             title="Action">
               <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-teal-500 to-cyan-500 flex items-center justify-center text-slate-950 font-bold text-xs shadow-sm flex-shrink-0">
                 MK
               </div>
@@ -1611,7 +1611,7 @@ function App() {
           <button
             onClick={() => setIsMobileMenuOpen(true)}
             className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-black/5 dark:hover:bg-white/10"
-          >
+           title="Action">
             <Menu size={18} />
           </button>
           <MilimoLogo size="sm" />
@@ -1882,7 +1882,7 @@ function App() {
                       onClick={handleCreateNewSession}
                       disabled={isCreatingSession}
                       className="px-3 py-1.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-xs font-semibold text-slate-600 dark:text-slate-300 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                    >
+                     title="Action">
                       {isCreatingSession && <Loader2 size={12} className="animate-spin" />}
                       <span>{isCreatingSession ? 'Creating...' : '+ New Session'}</span>
                     </button>
@@ -1975,7 +1975,7 @@ function App() {
                             <button
                               onClick={handleCancelChatSubmission}
                               className="text-[11px] font-bold text-rose-500 hover:text-rose-600 hover:underline flex items-center gap-1 transition-colors"
-                            >
+                             title="Stop generating">
                               <Square size={10} className="fill-current" />
                               <span>Stop generating</span>
                             </button>
@@ -2077,7 +2077,7 @@ function App() {
                     <Paperclip size={13} />
                     <span className="truncate">Attached: {attachmentPath.split('/').pop()}</span>
                   </div>
-                  <button onClick={() => setAttachmentPath(null)} className="p-1 hover:text-rose-500 text-xs">✕</button>
+                  <button onClick={() => setAttachmentPath(null)} className="p-1 hover:text-rose-500 text-xs" title="✕">✕</button>
                 </div>
               )}
 
@@ -2308,14 +2308,14 @@ function App() {
                     <button
                       onClick={handleCompletionPlay}
                       className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs flex items-center gap-1.5 active:scale-[0.98] transition-transform"
-                    >
+                     title="Play">
                       <Play size={12} className="ml-0.5" />
                       <span>Play</span>
                     </button>
                     <button
                       onClick={handleCompletionOpenStudio}
                       className="px-3 py-1.5 rounded-xl bg-black/[0.05] dark:bg-white/10 text-slate-700 dark:text-slate-200 font-bold text-xs active:scale-[0.98] transition-transform"
-                    >
+                     title="Open Studio">
                       Open Studio
                     </button>
                   </div>

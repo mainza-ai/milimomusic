@@ -245,7 +245,7 @@ export const VoiceStudioModal: React.FC<VoiceStudioModalProps> = ({ isOpen, onCl
                                 type="submit"
                                 disabled={isSubmitting || !name || !consentConfirmed}
                                 className="px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 disabled:opacity-50 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition-all shadow-md shadow-teal-500/20"
-                            >
+                             title="Submit">
                                 <ShieldCheck size={14} />
                                 <span>{isSubmitting ? "Extracting F0 & Training Profile..." : "Create Voice Profile"}</span>
                             </button>

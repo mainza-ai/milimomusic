@@ -497,7 +497,7 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
                             onClick={(e) => { e.stopPropagation(); onSeparateStems(); }}
                             disabled={isSeparating}
                             className="px-4 py-2 rounded-xl bg-teal-600 hover:bg-teal-500 disabled:opacity-50 text-white text-xs font-semibold shadow-sm transition-colors flex items-center gap-2 cursor-pointer"
-                        >
+                         title="Action">
                             {isSeparating ? (
                                 <>
                                     <span className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin" />

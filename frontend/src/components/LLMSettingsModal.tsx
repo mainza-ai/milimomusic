@@ -209,7 +209,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                                 ? 'bg-white dark:bg-white/15 text-teal-700 dark:text-teal-300 shadow-apple-sm font-bold border border-teal-500/20'
                                                 : 'text-slate-600 dark:text-slate-400 hover:bg-black/[0.03] dark:hover:bg-white/5'
                                         }`}
-                                    >
+                                     title="Action">
                                         <div className="flex items-center space-x-2.5 truncate">
                                             <span className="text-base">{p.icon}</span>
                                             <div className="truncate">
@@ -284,7 +284,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                                     onClick={handleFetchModels}
                                                     disabled={isLoadingModels}
                                                     className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
-                                                >
+                                                 title="Refresh Models">
                                                     <RefreshCw size={11} className={isLoadingModels ? 'animate-spin' : ''} />
                                                     <span>Refresh Models</span>
                                                 </button>
@@ -346,7 +346,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                                     onClick={handleFetchModels}
                                                     disabled={isLoadingModels}
                                                     className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
-                                                >
+                                                 title="Refresh Models">
                                                     <RefreshCw size={11} className={isLoadingModels ? 'animate-spin' : ''} />
                                                     <span>Refresh Models</span>
                                                 </button>
@@ -394,7 +394,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                                     onClick={handleFetchModels}
                                                     disabled={isLoadingModels}
                                                     className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
-                                                >
+                                                 title="Refresh Models">
                                                     <RefreshCw size={11} className={isLoadingModels ? 'animate-spin' : ''} />
                                                     <span>Refresh Models</span>
                                                 </button>
@@ -431,7 +431,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                         <div className="space-y-1">
                                             <div className="flex items-center justify-between">
                                                 <label className="text-xs font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider">Model</label>
-                                                <button onClick={handleFetchModels} disabled={isLoadingModels} className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline">
+                                                <button onClick={handleFetchModels} disabled={isLoadingModels} className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline" title="Refresh">
                                                     Refresh
                                                 </button>
                                             </div>
@@ -608,7 +608,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                                     onClick={handleFetchModels}
                                                     disabled={isLoadingModels}
                                                     className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
-                                                >
+                                                 title="Refresh Models">
                                                     <RefreshCw size={11} className={isLoadingModels ? 'animate-spin' : ''} />
                                                     <span>Refresh Models</span>
                                                 </button>
@@ -634,7 +634,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                         onClick={handleSave}
                                         disabled={isSaving}
                                         className="px-5 py-2.5 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 rounded-xl font-bold text-xs shadow-md shadow-teal-500/20 transition-all flex items-center gap-2 disabled:opacity-50 active:scale-95"
-                                    >
+                                     title="Save & Set Active Provider">
                                         {isSaving ? <span className="animate-spin">⌛</span> : <Save className="w-4 h-4" />}
                                         <span>Save & Set Active Provider</span>
                                     </button>

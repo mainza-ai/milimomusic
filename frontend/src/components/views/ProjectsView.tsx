@@ -332,7 +332,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           <button
             onClick={() => setActiveProject(null)}
             className="inline-flex items-center space-x-2 text-xs font-bold text-slate-500 hover:text-slate-900 dark:hover:text-white transition-colors"
-          >
+           title="All Project Folders">
             <ArrowLeft size={16} />
             <span>All Project Folders</span>
           </button>
@@ -540,14 +540,14 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                 <button
                   onClick={() => onGenerateInProject(activeProject)}
                   className="px-5 py-2.5 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs rounded-xl shadow-md flex items-center space-x-2"
-                >
+                 title="Generate First Session">
                   <Sparkles size={15} />
                   <span>Generate First Session</span>
                 </button>
                 <button
                   onClick={() => setIsAddTrackModalOpen(true)}
                   className="px-4 py-2.5 bg-black/[0.04] dark:bg-white/5 text-slate-700 dark:text-slate-300 font-bold text-xs rounded-xl"
-                >
+                 title="Add Existing Track">
                   Add Existing Track
                 </button>
               </div>
@@ -641,7 +641,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                         <button
                           onClick={() => onOpenWorkspace(job)}
                           className="px-3 py-1.5 bg-teal-500/10 hover:bg-teal-500 text-teal-700 dark:text-teal-300 hover:text-slate-950 font-bold text-xs rounded-xl transition-all flex items-center gap-1"
-                        >
+                         title="DAW">
                           <Sliders size={13} />
                           <span>DAW</span>
                         </button>
@@ -699,7 +699,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                 <button
                   onClick={() => setIsAddTrackModalOpen(false)}
                   className="px-4 py-2 rounded-xl bg-black/5 dark:bg-white/5 text-slate-700 dark:text-slate-300 font-bold text-xs"
-                >
+                 title="Cancel">
                   Cancel
                 </button>
               </div>
@@ -743,7 +743,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                         }}
                         disabled={isUploadingCover}
                         className="py-1.5 px-3 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-xs font-semibold text-slate-700 dark:text-slate-300 flex items-center space-x-1 border border-black/10 dark:border-white/10"
-                      >
+                       title="Upload">
                         <Upload size={12} />
                         <span>{isUploadingCover && coverTarget === 'edit' ? 'Uploading...' : 'Upload'}</span>
                       </button>
@@ -755,7 +755,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                         }}
                         disabled={isGeneratingCover}
                         className="py-1.5 px-3 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-xs font-semibold text-teal-600 dark:text-teal-400 flex items-center space-x-1 border border-teal-500/20"
-                      >
+                       title="Generate with AI">
                         <Sparkles size={12} />
                         <span>{isGeneratingCover && coverTarget === 'edit' ? 'Generating...' : 'AI Cover'}</span>
                       </button>
@@ -858,7 +858,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                             ? 'border-white scale-110 shadow-md'
                             : 'border-transparent opacity-60'
                         }`}
-                      />
+                       title="Action"/>
                     ))}
                   </div>
                 </div>
@@ -868,13 +868,13 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                     type="button"
                     onClick={() => setIsEditModalOpen(false)}
                     className="px-4 py-2 rounded-xl bg-black/5 dark:bg-white/5 text-slate-600 dark:text-slate-300 font-bold text-xs"
-                  >
+                   title="Cancel">
                     Cancel
                   </button>
                   <button
                     type="submit"
                     className="px-5 py-2 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs shadow-sm"
-                  >
+                   title="Save Changes">
                     Save Changes
                   </button>
                 </div>
@@ -908,7 +908,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
         <button
           onClick={() => setIsCreateModalOpen(true)}
           className="px-4 py-2.5 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs rounded-2xl shadow-apple-md flex items-center space-x-2 transition-all hover:scale-105 active:scale-95 flex-shrink-0"
-        >
+         title="New project">
           <Plus size={16} />
           <span>New project</span>
         </button>
@@ -930,7 +930,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
               <button
                 onClick={() => setSearchQuery('')}
                 className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600 dark:hover:text-white"
-              >
+               title="Close">
                 <X size={13} />
               </button>
             )}
@@ -945,7 +945,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                     ? 'bg-teal-500 text-slate-950 shadow-sm'
                     : 'bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                 }`}
-              >
+               title="All">
                 All
               </button>
               {Array.from(new Set(projects.flatMap(p => (p.tags ? p.tags.split(',').map(t => t.trim()) : [])).filter(Boolean)))
@@ -959,7 +959,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                         ? 'bg-teal-500 text-slate-950 shadow-sm'
                         : 'bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                     }`}
-                  >
+                   title="#">
                     #{tag}
                   </button>
                 ))}
@@ -991,7 +991,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
           <button
             onClick={() => setIsCreateModalOpen(true)}
             className="px-5 py-2.5 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs rounded-xl shadow-md inline-flex items-center space-x-2"
-          >
+           title="Create First Project">
             <FolderPlus size={16} />
             <span>Create First Project</span>
           </button>
@@ -1023,7 +1023,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                     setSelectedTag('all');
                   }}
                   className="px-4 py-1.5 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400 text-xs font-bold transition-colors"
-                >
+                 title="Reset filters">
                   Reset filters
                 </button>
               </GlassCard>
@@ -1215,7 +1215,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                       }}
                       disabled={isUploadingCover}
                       className="py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-semibold text-slate-300 hover:text-white flex items-center justify-center space-x-1.5 transition-colors border border-white/5"
-                    >
+                     title="Upload">
                       <Upload size={14} />
                       <span>{isUploadingCover && coverTarget === 'create' ? 'Uploading...' : 'Upload'}</span>
                     </button>
@@ -1228,7 +1228,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                       }}
                       disabled={isGeneratingCover}
                       className="py-2 px-3 rounded-xl bg-white/5 hover:bg-white/10 text-xs font-semibold text-teal-300 hover:text-teal-200 flex items-center justify-center space-x-1.5 transition-colors border border-white/5"
-                    >
+                     title="Generate with AI">
                       <Sparkles size={14} />
                       <span>{isGeneratingCover && coverTarget === 'create' ? 'Generating...' : 'Prompt'}</span>
                     </button>
@@ -1342,7 +1342,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                               ? 'border-white scale-110 shadow-md ring-2 ring-white/20'
                               : 'border-transparent opacity-60 hover:opacity-100'
                           }`}
-                        />
+                         title="Action"/>
                       ))}
                     </div>
                   </div>
@@ -1352,7 +1352,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                       type="submit"
                       disabled={!newProject.name.trim()}
                       className="px-6 py-2.5 rounded-xl bg-teal-500 hover:bg-teal-400 disabled:opacity-50 text-slate-950 font-bold text-xs shadow-md transition-all active:scale-95"
-                    >
+                     title="Create Project">
                       Create Project
                     </button>
                   </div>

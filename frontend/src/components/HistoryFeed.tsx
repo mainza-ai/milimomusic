@@ -138,7 +138,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                         ? 'bg-white dark:bg-white/20 text-teal-700 dark:text-teal-300 shadow-apple-sm font-bold'
                                         : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                                 }`}
-                            >
+                             title="Action">
                                 {status}
                             </button>
                         ))}
@@ -237,7 +237,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                                         onChange={e => setTempTitle(e.target.value)}
                                                                         onKeyDown={e => e.key === 'Enter' && handleRenameSave(job.id)}
                                                                     />
-                                                                    <button onClick={() => handleRenameSave(job.id)} className="p-1 bg-teal-500 text-slate-950 rounded-lg">
+                                                                    <button onClick={() => handleRenameSave(job.id)} className="p-1 bg-teal-500 text-slate-950 rounded-lg" title="Confirm">
                                                                         <Check size={12} />
                                                                     </button>
                                                                 </div>
@@ -352,7 +352,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                         <button
                                                             onClick={() => onOpenWorkspace(job)}
                                                             className="px-3 py-1 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-[10px] flex items-center gap-1 transition-all shadow-sm active:scale-95"
-                                                        >
+                                                         title="DAW">
                                                             <Sliders size={11} />
                                                             <span>DAW</span>
                                                         </button>
@@ -404,7 +404,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                             <button
                                                                 onClick={() => setLyricsOpen(prev => ({ ...prev, [job.id]: !prev[job.id] }))}
                                                                 className="w-full flex items-center justify-between text-[10px] font-mono font-bold text-teal-700 dark:text-teal-300 uppercase tracking-wider"
-                                                            >
+                                                             title="Lyrics">
                                                                 <span>Lyrics</span>
                                                                 <span className="text-[10px] text-slate-400">
                                                                     {lyricsOpen[job.id] ? 'Hide ▲' : 'Show ▼'}
@@ -439,7 +439,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                             onClick={onLoadMore}
                             disabled={isLoadingMore}
                             className="px-5 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 border border-black/[0.06] dark:border-white/10 text-xs font-bold text-slate-700 dark:text-slate-200 transition-colors disabled:opacity-50"
-                        >
+                         title="Action">
                             {isLoadingMore ? 'Loading…' : 'Load More Tracks'}
                         </button>
                     </div>

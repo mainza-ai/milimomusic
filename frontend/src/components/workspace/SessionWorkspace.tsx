@@ -1514,7 +1514,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
                                             alert("Lyrics copied to clipboard!");
                                         }}
                                         className="px-3 py-1.5 rounded-xl bg-teal-500/10 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/20 text-xs font-semibold flex items-center gap-1.5 transition-colors"
-                                    >
+                                     title="Copy Text">
                                         <Copy size={13} />
                                         <span>Copy Text</span>
                                     </button>

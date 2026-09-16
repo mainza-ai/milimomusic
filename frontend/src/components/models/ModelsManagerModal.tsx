@@ -188,7 +188,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                 ? 'border-teal-500 text-teal-600 dark:text-teal-400'
                                 : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
                         }`}
-                    >
+                     title="🎵 Audio & Music 3">
                         <span>🎵 Audio & Music 3</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-black/5 dark:bg-white/5 text-[10px]">
                             {audioCount}
@@ -202,7 +202,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                 ? 'border-teal-500 text-teal-600 dark:text-teal-400'
                                 : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
                         }`}
-                    >
+                     title="🎨 Image & Covers (FLUX)">
                         <span>🎨 Image & Covers (FLUX)</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-black/5 dark:bg-white/5 text-[10px]">
                             {imageCount}
@@ -216,7 +216,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                 ? 'border-teal-500 text-teal-600 dark:text-teal-400'
                                 : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
                         }`}
-                    >
+                     title="🎬 Video Studios (Hailuo/Wan)">
                         <span>🎬 Video Studios (Hailuo/Wan)</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-black/5 dark:bg-white/5 text-[10px]">
                             {videoCount}
@@ -235,7 +235,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                 ? 'border-teal-500 text-teal-600 dark:text-teal-400'
                                 : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
                         }`}
-                    >
+                     title="Hugging Face Hub Live">
                         <Search size={13} />
                         <span>Hugging Face Hub</span>
                         <span className="px-1.5 py-0.5 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400 text-[10px] font-bold">
@@ -300,7 +300,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                         onClick={() => handleRunSearch()}
                                         disabled={isSearching}
                                         className="px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-50"
-                                    >
+                                     title="Search">
                                         {isSearching ? <Loader2 size={13} className="animate-spin" /> : <Search size={13} />}
                                         <span>{isSearching ? 'Searching…' : 'Search Hub'}</span>
                                     </button>
@@ -326,7 +326,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                     ? 'bg-teal-500/20 border-teal-500/40 text-teal-700 dark:text-teal-300 font-bold'
                                                     : 'bg-black/[0.02] dark:bg-white/[0.02] border-black/[0.05] dark:border-white/5 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
                                             }`}
-                                        >
+                                         title="Action">
                                             {chip.label}
                                         </button>
                                     ))}
@@ -368,7 +368,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                         onClick={handleDownloadCustomRepo}
                                         disabled={busy || !customRepoInput.trim()}
                                         className="px-3.5 py-1.5 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-all disabled:opacity-50 flex-shrink-0"
-                                    >
+                                     title="Download">
                                         <Download size={13} />
                                         <span>Download</span>
                                     </button>
@@ -452,7 +452,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                                                 onClick={() => handleActivateModel(matched.id)}
                                                                                 disabled={activatingId === matched.id}
                                                                                 className="px-2.5 py-1 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-sm active:scale-95 disabled:opacity-50"
-                                                                            >
+                                                                             title="Action">
                                                                                 {activatingId === matched.id ? 'Activating…' : 'Select'}
                                                                             </button>
                                                                         );
@@ -472,7 +472,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                                 onClick={() => handleDownload(res.repo_id, (['audio', 'image', 'video'] as const).includes(res.category as any) ? (res.category as any) : undefined)}
                                                                 disabled={busy}
                                                                 className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-50"
-                                                            >
+                                                             title="Action">
                                                                 {busy && download?.repo_id === res.repo_id ? (
                                                                     <Loader2 size={13} className="animate-spin" />
                                                                 ) : (
@@ -559,7 +559,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                             onClick={() => handleActivateModel(m.id)}
                                                             disabled={activatingId === m.id}
                                                             className="px-3 py-1.5 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-sm active:scale-95 disabled:opacity-50"
-                                                        >
+                                                         title="Action">
                                                             {activatingId === m.id ? 'Activating…' : 'Select'}
                                                         </button>
                                                     )}
@@ -659,7 +659,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                                 onClick={() => handleActivateModel(m.id)}
                                                                 disabled={activatingId === m.id}
                                                                 className="px-2.5 py-1 bg-black/5 dark:bg-white/5 hover:bg-teal-500/20 text-slate-700 dark:text-slate-200 hover:text-teal-600 dark:hover:text-teal-300 font-bold rounded-xl text-xs transition-all border border-black/5 dark:border-white/5"
-                                                            >
+                                                             title="Action">
                                                                 {activatingId === m.id ? 'Activating…' : 'Activate'}
                                                             </button>
                                                         )}
@@ -669,7 +669,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                         onClick={() => handleDownload(m.repo_id || m.id)}
                                                         disabled={busy || !m.repo_id}
                                                         className="px-3.5 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-50"
-                                                    >
+                                                     title="Download">
                                                         {busy ? <Loader2 size={13} className="animate-spin" /> : <Download size={13} />}
                                                         <span>{busy ? 'Downloading…' : 'Download'}</span>
                                                     </button>

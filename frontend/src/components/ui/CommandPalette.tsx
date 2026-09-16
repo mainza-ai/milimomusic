@@ -117,7 +117,7 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
                         <button
                             onClick={() => setQuery('')}
                             className="p-1 rounded-md text-slate-400 hover:text-slate-200 transition-colors"
-                        >
+                         title="Close">
                             <X size={14} />
                         </button>
                     )}

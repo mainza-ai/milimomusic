@@ -111,7 +111,8 @@ from app.models import (
     SceneRegenerateRequest,
     CoverGenerationRequest,
     LeadSheetExtractRequest,
-    TrackExtendRequest
+    TrackExtendRequest,
+    TrackInpaintRequest
 )
 from app.agents.registry import AGENTS, get_agent, list_agents
 from app.agents.runtime.context import RunContext
@@ -3509,22 +3510,35 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
             musical_profile=musical_profile,
         )
 
-        # Continuation lyrics: for the continuation segment generation
-        if req.additional_lyrics and req.additional_lyrics.strip():
+        # Continuation lyrics logic:
+        # Lyrics must NEVER be automatically added by default.
+        # Only explicit user input or explicit opt-in (auto_generate_lyrics=True) can add lyrics.
+        has_additional_lyrics = bool(req.additional_lyrics and req.additional_lyrics.strip())
+        auto_gen_opt_in = getattr(req, "auto_generate_lyrics", False)
+
+        continuation_lyrics = ""
+        full_lyrics = parent_lyrics or ""
+
+        if has_additional_lyrics:
             c_lyrics = req.additional_lyrics.strip()
             if not re.search(r'\[(.*?)\]', c_lyrics):
                 c_lyrics = f"[Verse]\n{c_lyrics}"
             continuation_lyrics = c_lyrics
+            full_lyrics = f"{full_lyrics}\n\n{c_lyrics}".strip() if full_lyrics else c_lyrics
+        elif auto_gen_opt_in:
+            try:
+                from app.services.llm_service import LLMService
+                topic = f"Continuation of song: {parent_lyrics[-250:] if parent_lyrics else parent_prompt}"
+                ai_lyrics = await LLMService.generate_lyrics_async(topic=topic, tags=parent_tags or "pop")
+                if ai_lyrics and ai_lyrics.strip():
+                    continuation_lyrics = ai_lyrics.strip()
+                    full_lyrics = f"{full_lyrics}\n\n{continuation_lyrics}".strip() if full_lyrics else continuation_lyrics
+            except Exception as e:
+                logger.warning("Failed to auto-generate continuation lyrics: %s", e)
         else:
-            continuation_lyrics = "[Solo]\n[Outro]"
-
-        # Full lyrics: complete track lyrics from beginning to end
-        full_lyrics = parent_lyrics
-        if req.additional_lyrics and req.additional_lyrics.strip():
-            if full_lyrics:
-                full_lyrics = f"{full_lyrics}\n\n{req.additional_lyrics.strip()}"
-            else:
-                full_lyrics = req.additional_lyrics.strip()
+            # Default: NEVER automatically add lyrics. Keep parent lyrics untouched.
+            continuation_lyrics = ""
+            full_lyrics = parent_lyrics or ""
 
         child_job = Job(
             title=f"{parent_title} (Extended)",
@@ -3622,17 +3636,37 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
 
 
 @app.post("/jobs/{job_id}/inpaint")
-async def inpaint_track(job_id: UUID, request: dict = Body(...)):
-    start_time = request.get("start_time")
-    end_time = request.get("end_time")
-    
-    if start_time is None or end_time is None:
-        raise HTTPException(status_code=400, detail="start_time and end_time required")
-        
+async def inpaint_track(job_id: UUID, req: TrackInpaintRequest, background_tasks: BackgroundTasks):
+    with Session(engine) as session:
+        parent_job = session.get(Job, job_id)
+        if not parent_job:
+            raise HTTPException(status_code=404, detail="Parent track not found")
+        if not parent_job.audio_path:
+            raise HTTPException(status_code=400, detail="Parent track has no audio to repair")
+        parent_dur = (parent_job.duration_ms / 1000.0) if parent_job.duration_ms else 60.0
+        if req.start_time >= req.end_time:
+            raise HTTPException(status_code=400, detail="start_time must be less than end_time")
+        if req.start_time >= parent_dur:
+            raise HTTPException(status_code=400, detail=f"start_time ({req.start_time}s) exceeds track duration ({parent_dur:.1f}s)")
+
     from app.services.inpainting_service import inpainting_service
-    asyncio.create_task(inpainting_service.regenerate_segment(str(job_id), float(start_time), float(end_time), engine))
-    
-    return {"status": "queued", "message": "In-painting started"}
+    repair_job_id = inpainting_service.create_repair_job(str(job_id), req, engine)
+    background_tasks.add_task(
+        inpainting_service.regenerate_segment,
+        parent_job_id=str(job_id),
+        repair_job_id=repair_job_id,
+        start_sec=req.start_time,
+        end_sec=req.end_time,
+        crossfade_sec=req.crossfade_sec,
+        prompt=req.prompt,
+        db_engine=engine,
+    )
+    return {
+        "status": "queued",
+        "job_id": repair_job_id,
+        "parent_job_id": str(job_id),
+        "message": "In-painting started",
+    }
 
 
 @app.get("/jobs/{job_id}", response_model=Job)

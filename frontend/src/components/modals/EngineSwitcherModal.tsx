@@ -149,7 +149,7 @@ export const EngineSwitcherModal: React.FC = () => {
                     <button
                         onClick={closeEngineSwitcher}
                         className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
-                    >
+                     title="Close">
                         <X size={18} />
                     </button>
                 </div>
@@ -171,7 +171,7 @@ export const EngineSwitcherModal: React.FC = () => {
                                 onClick={handleFlush}
                                 disabled={isFlushing}
                                 className="flex items-center space-x-1.5 px-3 py-1 rounded-lg text-xs font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 transition-all cursor-pointer"
-                            >
+                             title="Delete">
                                 <Trash2 size={12} className={isFlushing ? 'animate-spin' : ''} />
                                 <span>{isFlushing ? 'Flushing...' : 'Flush VRAM Cache'}</span>
                             </button>
@@ -269,7 +269,7 @@ export const EngineSwitcherModal: React.FC = () => {
                     <button
                         onClick={closeEngineSwitcher}
                         className="px-4 py-1.5 rounded-xl font-semibold bg-slate-200 dark:bg-white/10 hover:bg-slate-300 dark:hover:bg-white/15 text-slate-800 dark:text-slate-200 transition-colors"
-                    >
+                     title="Close">
                         Close
                     </button>
                 </div>

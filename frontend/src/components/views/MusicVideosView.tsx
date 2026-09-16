@@ -433,7 +433,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                         <button
                             onClick={() => api.downloadUrlAsFile(api.getAudioUrl(renderedVideoUrl), `${activeSong?.title || 'track'}_music_video.mp4`)}
                             className="px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-teal-500/20 active:scale-95 transition-all self-start sm:self-auto"
-                        >
+                         title="Download MP4 Video">
                             <Download size={14} />
                             <span>Download MP4 Video</span>
                         </button>
@@ -505,7 +505,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                             ? 'bg-teal-500/10 border-teal-500/30 text-teal-700 dark:text-teal-300 font-bold shadow-sm'
                                             : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-600 dark:text-slate-400 hover:bg-black/[0.04]'
                                     }`}
-                                >
+                                 title="Action">
                                     <div className="flex items-center justify-between">
                                         <span>🖥️ Local Apple Silicon (M3 Max 128GB)</span>
                                         <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-700 dark:text-teal-300 font-bold">Offline Free</span>
@@ -520,7 +520,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                             ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-700 dark:text-cyan-300 font-bold shadow-sm'
                                             : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-600 dark:text-slate-400 hover:bg-black/[0.04]'
                                     }`}
-                                >
+                                 title="Action">
                                     <div className="flex items-center justify-between">
                                         <span>⚡ Cloud Studio (Fal.ai GPU)</span>
                                         <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 font-bold">Parallel Fast</span>
@@ -553,7 +553,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                                     ? 'bg-teal-500/10 border-teal-500/30 text-teal-700 dark:text-teal-300 font-bold shadow-sm'
                                                     : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-600 dark:text-slate-400 hover:bg-black/[0.04] dark:hover:bg-white/5'
                                             }`}
-                                        >
+                                         title="Action">
                                             <div className="flex items-center justify-between">
                                                 <div className="flex items-center gap-1.5">
                                                     <span>{conf.label}</span>
@@ -659,7 +659,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                                         ? 'bg-teal-500/20 text-teal-400 border border-teal-500/40'
                                                         : 'text-slate-400 hover:text-white border border-transparent'
                                                 }`}
-                                            >
+                                             title="LivePortrait (Neural)">
                                                 LivePortrait (Neural)
                                             </button>
                                             <button
@@ -670,7 +670,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                                         ? 'bg-teal-500/20 text-teal-400 border border-teal-500/40'
                                                         : 'text-slate-400 hover:text-white border border-transparent'
                                                 }`}
-                                            >
+                                             title="Viseme Mesh (Fast)">
                                                 Viseme Mesh (Fast)
                                             </button>
                                         </div>
@@ -710,7 +710,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                                     ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-600 dark:text-cyan-400 font-bold'
                                                     : 'border-black/5 dark:border-white/5 text-slate-400'
                                             }`}
-                                        >
+                                         title="Action">
                                             {style}
                                         </button>
                                     ))}
@@ -738,7 +738,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                                 ? 'bg-teal-500/10 border-teal-500/30 text-teal-700 dark:text-teal-300 font-bold'
                                                 : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-600 dark:text-slate-400'
                                         }`}
-                                    >
+                                     title="Action">
                                         {style.name}
                                     </button>
                                 ))}
@@ -750,13 +750,13 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                     <button
                                         onClick={() => setResolution('720p')}
                                         className={`px-2.5 py-0.5 text-xs rounded-md ${resolution === '720p' ? 'bg-teal-500 text-slate-950 font-bold' : 'bg-black/5 dark:bg-white/5 text-slate-400'}`}
-                                    >
+                                     title="720p">
                                         720p
                                     </button>
                                     <button
                                         onClick={() => setResolution('1080p')}
                                         className={`px-2.5 py-0.5 text-xs rounded-md ${resolution === '1080p' ? 'bg-teal-500 text-slate-950 font-bold' : 'bg-black/5 dark:bg-white/5 text-slate-400'}`}
-                                    >
+                                     title="1080p">
                                         1080p
                                     </button>
                                 </div>
@@ -817,7 +817,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                             <button
                                                 onClick={() => activeSong && onPlay(activeSong)}
                                                 className="px-4 py-2 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md transition-all active:scale-95"
-                                            >
+                                             title="Play">
                                                 {isPlaying && playingSongId === activeSong?.id ? (
                                                     <>
                                                         <Pause size={13} className="ml-0.5" />
@@ -834,7 +834,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                                 onClick={handlePlanScenes}
                                                 disabled={isPlanning || isRendering || !activeSong}
                                                 className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded-xl flex items-center space-x-1.5 backdrop-blur-md transition-all disabled:opacity-50"
-                                            >
+                                             title="Action">
                                                 {isPlanning ? <Loader2 size={13} className="animate-spin" /> : <Layers size={13} />}
                                                 <span>{isPlanning ? 'Planning…' : 'Plan Scene Breakdown'}</span>
                                             </button>
@@ -851,7 +851,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                                 onClick={handleRenderAdvancedVideo}
                                                 disabled={isRendering || !activeSong}
                                                 className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md transition-all disabled:opacity-50"
-                                            >
+                                             title="Action">
                                                 {isRendering ? <Loader2 size={13} className="animate-spin" /> : <Video size={13} />}
                                                 <span>{isRendering ? 'Rendering Video…' : 'Render Production Video'}</span>
                                             </button>
@@ -974,7 +974,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                                 onClick={handleGenerateStoryboard}
                                                 disabled={isGeneratingStory}
                                                 className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
-                                            >
+                                             title="Regenerate Directing Notes">
                                                 {isGeneratingStory ? <Loader2 size={11} className="animate-spin" /> : <Wand2 size={11} />}
                                                 <span>Regenerate Directing Notes</span>
                                             </button>

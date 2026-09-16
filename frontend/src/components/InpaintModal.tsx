@@ -148,7 +148,8 @@ export const InpaintModal: React.FC<InpaintModalProps> = ({
                         <button
                             onClick={handleSubmit}
                             disabled={isSubmitting}
-                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 active:scale-95 transition-all flex items-center gap-2"
+                            title="Regenerate this audio segment"
+                            className="px-4 py-2 bg-indigo-600 text-white rounded-lg font-medium hover:bg-indigo-700 active:scale-95 transition-all flex items-center gap-2 cursor-pointer disabled:opacity-50"
                         >
                             {isSubmitting ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wand2 className="w-4 h-4" />}
                             Regenerate Segment

@@ -111,7 +111,7 @@ export const Combobox: React.FC<ComboboxProps> = ({
                                 onChange("");
                             }}
                             className="p-1 hover:bg-slate-100 dark:hover:bg-white/10 rounded-full text-slate-400"
-                        >
+                         title="Clear selection">
                             <X className="w-3 h-3" />
                         </button>
                     )}
@@ -164,7 +164,7 @@ export const Combobox: React.FC<ComboboxProps> = ({
                                                 ? 'bg-teal-500/10 text-teal-700 dark:text-teal-300'
                                                 : 'text-slate-600 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-white/5'}
                                         `}
-                                    >
+                                     title="Confirm">
                                         <span className="truncate">{option}</span>
                                         {value === option && <Check className="w-3 h-3" />}
                                     </button>
@@ -175,7 +175,7 @@ export const Combobox: React.FC<ComboboxProps> = ({
                                         <button
                                             onClick={handleCustomSubmit}
                                             className="text-teal-600 dark:text-teal-400 hover:underline"
-                                        >
+                                         title="Use &quot; &quot;">
                                             Use "{searchTerm}"
                                         </button>
                                     ) : (
@@ -195,7 +195,7 @@ export const Combobox: React.FC<ComboboxProps> = ({
                                     }}
                                     className="w-full py-2 text-xs text-center text-teal-600 dark:text-teal-400 hover:text-teal-800 dark:hover:text-teal-300 hover:bg-teal-500/10 rounded flex items-center justify-center gap-1 font-medium transition-colors"
                                     disabled={isLoading}
-                                >
+                                 title="Refresh List">
                                     {isLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                                     <span>Refresh List</span>
                                 </button>

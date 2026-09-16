@@ -480,7 +480,7 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                         <button
                                             onClick={() => onSelectTrack?.(song)}
                                             className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-bold rounded-xl text-[10px] transition-all"
-                                        >
+                                         title="Details">
                                             Details
                                         </button>
                                         <button
@@ -582,7 +582,7 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                 <button
                                     onClick={() => setSelectedLyricsSong(null)}
                                     className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
-                                >
+                                 title="Close">
                                     <X size={14} />
                                 </button>
                             </div>

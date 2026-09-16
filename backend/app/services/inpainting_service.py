@@ -1,406 +1,484 @@
-
 import asyncio
-import os
-import torch
+import json
 import logging
-from app.models import Job, JobStatus
+import math
+import os
+import shutil
+import threading
+import time
+import uuid
+from typing import Optional, Dict, Any
+import numpy as np
+import soundfile as sf
 from sqlmodel import Session, select
-from app.services.music_service import music_service, event_manager # Share loaded pipeline
+
+from app.models import Job, JobStatus, GenerationRequest, TrackInpaintRequest
+from app.services.music_service import music_service, event_manager
+from app.providers.registry import provider_registry
+from app.transcription.muscriptor_provider import muscriptor_provider
+from app.transcription.real_separator import separate_sources, unload_model
+from app.transcription.instrument_stems import render_instrument_parts
+from app.transcription.karaoke import lyric_sync_engine, _resolve_audio_file
+from app.core.paths import get_generated_audio_dir, get_repo_root
+from app.core.hardware_lock import GlobalHardwareCoordinator
+from app.providers.minimax_provider import (
+    extract_audio_musical_attributes,
+    build_locked_continuation_caption,
+)
 
 logger = logging.getLogger(__name__)
 
+
+def _load_audio_np(file_path: str):
+    """Load an audio file into a 2D numpy float32 array [channels, samples] and sample rate."""
+    data, sr = sf.read(file_path, dtype="float32")
+    if data.ndim == 1:
+        data = np.expand_dims(data, axis=0)  # [1, samples]
+    else:
+        data = data.T  # [samples, channels] -> [channels, samples]
+    return data, sr
+
+
+def _save_audio_np(file_path: str, data: np.ndarray, sr: int):
+    """Save [channels, samples] numpy float32 array as 16-bit PCM WAV."""
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    if data.ndim == 1:
+        out = data
+    else:
+        out = data.T  # [samples, channels]
+    sf.write(file_path, out, sr, subtype="PCM_16")
+
+
+def _equal_power_crossfade(chunk_a: np.ndarray, chunk_b: np.ndarray) -> np.ndarray:
+    """Equal-power sine/cosine crossfade between chunk_a (fading out) and chunk_b (fading in)."""
+    n = min(chunk_a.shape[-1], chunk_b.shape[-1])
+    if n == 0:
+        return chunk_a
+    ca = chunk_a[..., :n]
+    cb = chunk_b[..., :n]
+    t = np.linspace(0.0, np.pi / 2.0, n, dtype=np.float32)
+    fade_out = np.cos(t)
+    fade_in = np.sin(t)
+    if ca.ndim == 2:
+        fade_out = fade_out[np.newaxis, :]
+        fade_in = fade_in[np.newaxis, :]
+    return ca * fade_out + cb * fade_in
+
+
 class InpaintingService:
     _instance = None
-    
+
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(InpaintingService, cls).__new__(cls)
         return cls._instance
 
-    async def regenerate_segment(self, job_id: str, start_sec: float, end_sec: float, db_engine):
-        """Regenerate a specific time range of an existing job."""
-        
-        # Borrow pipeline from MusicService
-        pipeline = music_service.pipeline
-        if not pipeline:
-            logger.error("Pipeline not loaded. Cannot inpaint.")
-            return
-            
-        async with music_service.gpu_lock:
-            try:
-                # 1. Fetch Job
-                with Session(db_engine) as session:
-                    parent_job = session.exec(select(Job).where(Job.id == job_id)).one_or_none()
-                    if not parent_job:
-                        logger.error(f"Job {job_id} not found.")
-                        return
-                    
-                    # Create NEW Child Job for the result
-                    import uuid
-                    new_job_id = str(uuid.uuid4())
-                    new_job = Job(
-                        id=new_job_id,
-                        prompt=f"Repair of {parent_job.title}",
-                        status=JobStatus.PROCESSING,
-                        parent_job_id=job_id,
-                        duration_ms=parent_job.duration_ms, # Same duration
-                        title=f"{parent_job.title} (Repaired)",
-                        lyrics=parent_job.lyrics, # Copy lyrics
-                        tags=parent_job.tags,     # Copy tags
-                        seed=int(torch.seed() % 2147483647) # Safe 32-bit int for SQLite
-                    )
-                    session.add(new_job)
-                    session.commit()
-                    
+    def create_repair_job(self, parent_job_id: str, req: TrackInpaintRequest, db_engine) -> str:
+        """Create and persist a child Job record for the segment repair, returning its new job ID."""
+        with Session(db_engine) as session:
+            parent_job = session.get(Job, uuid.UUID(parent_job_id) if isinstance(parent_job_id, str) and "-" in parent_job_id else parent_job_id)
+            if not parent_job:
+                parent_job = session.exec(select(Job).where(Job.id == str(parent_job_id))).one_or_none()
+            if not parent_job:
+                raise ValueError(f"Parent track {parent_job_id} not found")
 
-                    # Capture safely inside session
-                    parent_duration_secs = parent_job.duration_ms / 1000.0
-                    parent_lyrics = parent_job.lyrics
-                    parent_tags = parent_job.tags
-                
-                # Notify Start
-                event_manager.publish("job_update", {"job_id": new_job_id, "status": "processing"})
-                event_manager.publish("job_progress", {"job_id": new_job_id, "progress": 0, "msg": "Starting repair..."})
+            new_job_id = str(uuid.uuid4())
+            parent_title = parent_job.title or parent_job.prompt or "Track"
+            repair_title = f"{parent_title} (Repaired)"
 
-                # 2. Load Tokens
-                tokens_path = os.path.join(os.getcwd(), "generated_tokens", f"{job_id}.pt")
-                if not os.path.exists(tokens_path):
-                    raise FileNotFoundError(f"Tokens not found at {tokens_path}")
-                
-                # Explicitly set weights_only=False because we are loading tensor data that might rely on pickle for some internals,
-                # though usually safe with True for pure tensors. We suppress the warning.
-                codes = torch.load(tokens_path, map_location=music_service.device, weights_only=False)
-                
-                # Fix dimensions if needed (should be [1, 8, T])
-                # If loaded as [8, T], unsqueeze
-                if codes.dim() == 2:
-                    codes = codes.unsqueeze(0)
-                
-                # 3. Calculate Frames
-                # HeartCodec is 12.5 Hz approx? Need to verify rate.
-                # In detokenize: min_samples = duration * 12.5. So 12.5 Hz.
-                fps = 12.5
-                start_frame = int(start_sec * fps)
-                end_frame = int(end_sec * fps)
-                
-                # 4. Generate Auto-Title
-                import threading
-                abort_event = threading.Event()
-                # Register with MusicService so it can be tracked/cancelled
-                music_service.active_jobs[new_job_id] = abort_event
-                
+            new_job = Job(
+                id=new_job_id,
+                title=repair_title,
+                prompt=req.prompt or parent_job.prompt,
+                status=JobStatus.PROCESSING,
+                parent_job_id=str(parent_job.id),
+                duration_ms=parent_job.duration_ms,
+                lyrics=parent_job.lyrics,
+                tags=parent_job.tags,
+                bpm=parent_job.bpm,
+                beat_grid_json=parent_job.beat_grid_json,
+                structured_caption_json=parent_job.structured_caption_json,
+                project_id=parent_job.project_id,
+                session_id=parent_job.session_id,
+                cover_image_path=parent_job.cover_image_path,
+                model_provider=parent_job.model_provider or "minimax_music3",
+                is_repair=True,
+                seed=((parent_job.seed or 42) + 7919) % 2147483647,
+            )
+            session.add(new_job)
+            session.commit()
+
+            # Publish SSE initial state
+            event_manager.publish("job_update", {
+                "job_id": new_job_id,
+                "status": "processing",
+                "title": repair_title,
+                "parent_job_id": str(parent_job.id),
+                "is_repair": True,
+            })
+            return new_job_id
+
+    async def regenerate_segment(
+        self,
+        parent_job_id: str,
+        repair_job_id: str,
+        start_sec: float,
+        end_sec: float,
+        crossfade_sec: float = 1.0,
+        prompt: Optional[str] = None,
+        db_engine: Any = None,
+    ):
+        """Regenerate an audio time segment while preserving surrounding audio and musical continuity."""
+        abort_event = threading.Event()
+        music_service.active_jobs[repair_job_id] = abort_event
+        music_service.job_started_monotonic[repair_job_id] = time.monotonic()
+
+        gen_dir = get_generated_audio_dir()
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        final_wav_path = str(gen_dir / f"{repair_job_id}.wav")
+
+        try:
+            # 1. Fetch parent job metadata
+            with Session(db_engine) as session:
+                pj = session.get(Job, uuid.UUID(parent_job_id) if "-" in parent_job_id else parent_job_id)
+                if not pj:
+                    pj = session.exec(select(Job).where(Job.id == str(parent_job_id))).one_or_none()
+                if not pj:
+                    raise FileNotFoundError(f"Parent job {parent_job_id} not found in database")
+
+                parent_audio_path = pj.audio_path
+                parent_prompt = pj.prompt or ""
+                parent_lyrics = pj.lyrics or ""
+                parent_tags = pj.tags or ""
+                parent_provider = pj.model_provider or "minimax_music3"
+                parent_seed = pj.seed
+                parent_bpm = pj.bpm
+                parent_beat_grid_json = pj.beat_grid_json
+                parent_sc_json = pj.structured_caption_json
+
+            event_manager.publish("job_progress", {
+                "job_id": repair_job_id,
+                "step": 1,
+                "total_steps": 4,
+                "phase": "analysis",
+                "progress": 15,
+                "message": f"Analyzing parent audio and beat grid (repairing {start_sec:.1f}s - {end_sec:.1f}s)...",
+            })
+
+            # 2. Resolve parent audio on disk
+            resolved_parent = _resolve_audio_file(parent_audio_path)
+            if not resolved_parent or not os.path.exists(resolved_parent):
+                raise FileNotFoundError(f"Parent audio file not found on disk: {parent_audio_path}")
+
+            loop = asyncio.get_running_loop()
+            parent_audio, parent_sr = await loop.run_in_executor(None, _load_audio_np, resolved_parent)
+            num_channels, total_samples = parent_audio.shape
+            total_duration_sec = total_samples / float(parent_sr)
+
+            # 3. Beat-grid alignment & downbeat snapping
+            musical_profile = extract_audio_musical_attributes(
+                audio_path=resolved_parent,
+                notes_json=None,
+                beat_grid_json=parent_beat_grid_json,
+                stored_bpm=parent_bpm,
+            )
+            bpm = musical_profile.get("bpm") or parent_bpm or 120.0
+
+            parent_bg = None
+            if parent_beat_grid_json:
                 try:
-                    # 4b. Load Parent Audio
-                    # We need the original wav to mix the seamless segment into.
-                    import torchaudio
-                    audio_path = os.path.join(os.getcwd(), "generated_audio", f"song_{job_id}.mp3")
-                    if not os.path.exists(audio_path):
-                         raise FileNotFoundError(f"Original audio not found at {audio_path}")
-                    
-                    # Check device for crossfade operations
-                    mix_device = "cpu" # Perform mixing on CPU to avoid VRAM issues
-                    
-                    parent_wav_tensor, parent_sr = torchaudio.load(audio_path)
-                    # Ensure 48k or pipeline SR
-                    if parent_sr != pipeline.audio_codec.config.sample_rate:
-                        # Resample if needed
-                        resampler = torchaudio.transforms.Resample(parent_sr, pipeline.audio_codec.config.sample_rate)
-                        parent_wav_tensor = resampler(parent_wav_tensor)
-                    
-                    parent_wav_tensor = parent_wav_tensor.to(mix_device)
-                    
-                    # 5. Run In-Painting
-                    loop = asyncio.get_running_loop()
-                    
-                    def _progress_callback(progress):
-                        if abort_event.is_set():
-                            raise InterruptedError("Job Cancelled")
-                        pct = int(progress * 100)
-                        msg = f"Repairing... {pct}%"
-                        loop.call_soon_threadsafe(
-                            event_manager.publish,
-                            "job_progress",
-                            {"job_id": new_job_id, "progress": pct, "msg": msg}
-                        )
+                    parent_bg = json.loads(parent_beat_grid_json)
+                except Exception:
+                    pass
+            if not parent_bg:
+                parent_bg = {"bpm": bpm, "beats_per_bar": 4, "first_downbeat": 0.0}
 
-                    # Strategy: Windowed In-Painting (Context + Generation)
-                    # We define a "Window" of context around the repair area.
-                    # We run 'inpaint' on this window, asking it to KEEP the context and GENERATE the gap.
-                    
-                    # Parameters
-                    CONTEXT_SEC = 8.0 
-                    CROSSFADE_SEC = 0.1
-                    
-                    total_frames = codes.shape[-1]
-                    context_frames = int(CONTEXT_SEC * 12.5)
-                    
-                    # Window Definition
-                    win_start = max(0, start_frame - context_frames)
-                    win_end = min(total_frames, end_frame + context_frames)
-                    
-                    # Extract Context Codes
-                    window_codes = codes[:, :, win_start:win_end].clone()
-                    
-                    # Calculate Relative Repair Region within the Window
-                    rel_start = start_frame - win_start
-                    rel_end = end_frame - win_start
-                    
-                    print(f"[InpaintingService] Windowed In-Painting: {win_start}-{win_end} (Repairing {rel_start}-{rel_end})")
+            # Snap repair boundaries to musical downbeats/beats if plausible
+            snapped_start = start_sec
+            snapped_end = end_sec
+            if parent_bg and parent_bg.get("bpm", 0.0) > 40.0:
+                bg_bpm = float(parent_bg["bpm"])
+                beat_dur = 60.0 / bg_bpm
+                bpb = int(parent_bg.get("beats_per_bar", 4))
+                f_down = float(parent_bg.get("first_downbeat", 0.0))
 
+                # Snap start
+                k_start = round((start_sec - f_down) / beat_dur)
+                cand_start = f_down + k_start * beat_dur
+                if 0.0 <= cand_start < total_duration_sec and abs(cand_start - start_sec) <= 0.6:
+                    snapped_start = max(0.0, cand_start)
 
-                    def _run_generate_and_mix():
-                        if abort_event.is_set(): return None
-                        
-                        # Strategy: LM-Guided Repair (Generate New Tokens -> Splice -> Decode)
-                        logger.info(f"Generating new token content for gap: {rel_start} to {rel_end}")
-                        
-                        # 1. Prepare History (Context up to repair start)
-                        history_codes = codes[..., :start_frame].clone() 
-                        
-                        # Calculate duration in MS
-                        gap_frames = rel_end - rel_start
-                        gap_ms = int((gap_frames / 12.5) * 1000)
-                        
-                        history_ms = int((history_codes.shape[-1] / 12.5) * 1000)
-                        total_ms = history_ms + gap_ms
-                        
-                        # Fix History Shape for Pipeline: [1, 8, T] -> [1, T, 8]
-                        hist_in = history_codes.permute(0, 2, 1)
-                        if music_service.pipeline and hasattr(music_service.pipeline, "_parallel_number"):
-                            expected = music_service.pipeline._parallel_number
-                            if hist_in.shape[-1] == expected - 1:
-                                padding = torch.zeros((hist_in.shape[0], hist_in.shape[1], 1), device=hist_in.device, dtype=hist_in.dtype)
-                                hist_in = torch.cat([hist_in, padding], dim=-1)
-                        
-                        # 2. Call Pipeline (Sync, Blocking)
-                        # We use the ORIGINAL lyrics/tags to maintain style and voice.
-                        output = music_service.pipeline(
-                            {
-                                "lyrics": parent_lyrics or "...", 
-                                "tags": parent_tags or "pop, continuation", 
-                            },
-                            max_audio_length_ms=total_ms,
-                            history_tokens=hist_in, 
-                            temperature=0.2,   # Near-deterministic (Vocal Stability)
-                            topk=30,           # Even narrower for precise matching
-                            cfg_scale=1.0,     # Audio Dominance (Trust History)
-                            save_path=None, 
-                        )
-                        
-                        if output and "tokens" in output:
-                            # 3. Extract New Tokens
-                            generated_tokens = output["tokens"]
-                            
-                            # Normalize [8, T] -> [1, 8, T]
-                            if generated_tokens.dim() == 2:
-                                generated_tokens = generated_tokens.unsqueeze(0)
-                            # Normalize [B, T, 8] -> [B, 8, T]
-                            elif generated_tokens.dim() == 3 and generated_tokens.shape[1] != 8 and generated_tokens.shape[2] == 8:
-                                generated_tokens = generated_tokens.permute(0, 2, 1)
+                # Snap end
+                k_end = round((end_sec - f_down) / beat_dur)
+                cand_end = f_down + k_end * beat_dur
+                if snapped_start < cand_end <= total_duration_sec and abs(cand_end - end_sec) <= 0.6:
+                    snapped_end = cand_end
 
-                            # Remove 9th channel if present [B, 9, T]
-                            if generated_tokens.shape[1] > 8:
-                                generated_tokens = generated_tokens[:, :8, :]
-                                
-                            hist_len = history_codes.shape[-1]
-                            new_content = generated_tokens[..., hist_len:]
-                            
-                            if new_content.shape[-1] >= gap_frames:
-                                new_content = new_content[..., :gap_frames]
-                            else:
-                                diff = gap_frames - new_content.shape[-1]
-                                if diff > 0 and new_content.shape[-1] > 0:
-                                     new_content = torch.cat([new_content, new_content[..., -1:]], dim=-1) # primitive padding if really short
-                            
-                            # 4. Splice into Window Codes
-                            new_content = new_content.to(window_codes.device)
-                            
-                            # Size check
-                            write_len = min(new_content.shape[-1], rel_end - rel_start)
-                            window_codes[:, :, rel_start:rel_start+write_len] = new_content[..., :write_len]
-                            logger.info("Splice successful. Decoding...")
-                        
-                        if abort_event.is_set(): return None
+            # Ensure valid bounds
+            snapped_start = max(0.0, min(snapped_start, total_duration_sec - 0.2))
+            snapped_end = max(snapped_start + 0.2, min(snapped_end, total_duration_sec))
+            xfade_sec = max(0.05, min(crossfade_sec, 2.5, (snapped_end - snapped_start) / 2.0))
 
-                        win_duration = (win_end - win_start) / 12.5
-                        
-                        # 5. Decode (Mask 2 = Keep Tokens)
-                        new_wav = pipeline.audio_codec.inpaint(
-                            window_codes[0],
-                            start_frame=0, 
-                            end_frame=0,
-                            duration=win_duration,
-                            device=music_service.device.type,
-                            mask_mode=2, 
-                        )
-                        
-                        if abort_event.is_set(): return None
+            logger.info(
+                f"[InpaintingService] Repair region: {snapped_start:.2f}s - {snapped_end:.2f}s "
+                f"(duration: {snapped_end - snapped_start:.2f}s, xfade: {xfade_sec:.2f}s)"
+            )
 
-                        # FIX: Clone to detach from InferenceMode
-                        new_wav = new_wav.clone()
-                        
-                        # Normalize to [C, T] or [T]
-                        # We used to squeeze blindly, which failed for Stereo [2, T].
-                        # Let's trust proper robust slicing instead.
+            # 4. Generate Infill Segment
+            event_manager.publish("job_progress", {
+                "job_id": repair_job_id,
+                "step": 1,
+                "total_steps": 4,
+                "phase": "generation",
+                "progress": 30,
+                "message": "Synthesizing infill audio segment with acoustic continuity...",
+            })
 
-                        # Extract the Gap + small sync buffer for crossfade
-                        sr = pipeline.audio_codec.config.sample_rate
-                        ratio = sr / 12.5
-                        
-                        # Calculate Sample Indices relative to the Window Start
-                        samp_rel_start = int(rel_start * ratio)
-                        samp_rel_end = int(rel_end * ratio)
-                        
-                        # Extract THE GENERATED SEGMENT
-                        # USE ELLIPSIS slicing to ensure we slice the LAST dimension (Time)
-                        generated_segment = new_wav[..., samp_rel_start : samp_rel_end]
-                        print(f"[Debug] Extracted Segment: {generated_segment.shape} (from {new_wav.shape})")
-                        
-                        # Now Crossfade into Parent
-                        # Parent global indices
-                        samp_global_start = int(start_frame * ratio)
-                        
-                        final_wav = parent_wav_tensor.clone()
-                        
-                        channels = 1
-                        if final_wav.dim() == 2:
-                            channels = final_wav.shape[0]
-                        
-                        # Match Channels
-                        # If generated is [T], unsqueeze to [1, T] then match
-                        if generated_segment.dim() == 1:
-                             generated_segment = generated_segment.unsqueeze(0)
-                        
-                        # If generated is [1, T] and final is [2, T], repeat
-                        if channels > 1 and generated_segment.shape[0] == 1:
-                            generated_segment = generated_segment.repeat(channels, 1)
-                        # If generated is [C, T] but channels=1, mean?
-                        elif channels == 1 and generated_segment.shape[0] > 1:
-                            generated_segment = generated_segment.mean(dim=0, keepdim=True)
-                            
-                        # Insert Logic
-                        insert_len = generated_segment.shape[-1]
-                        
-                        # Bounds check
-                        if samp_global_start + insert_len > final_wav.shape[-1]:
-                             valid_len = final_wav.shape[-1] - samp_global_start
-                             if generated_segment.dim() == 2:
-                                 generated_segment = generated_segment[:, :valid_len]
-                             else:
-                                 generated_segment = generated_segment[:valid_len]
-                             insert_len = valid_len
-                             
-                        xfade_samps = int(CROSSFADE_SEC * sr)
-                        
-                        generated_segment = generated_segment.to(mix_device)
-                        final_wav = final_wav.to(mix_device)
-                        
-                        if xfade_samps > 0 and insert_len > xfade_samps:
-                            fade_in = torch.linspace(0, 1, xfade_samps, device=mix_device)
-                            fade_out = torch.linspace(1, 0, xfade_samps, device=mix_device)
-                            
-                            
-                            if channels > 1:
-                                # Ensure fade vectors have channel dim [1, N]
-                                if fade_in.dim() == 1:
-                                    fade_in = fade_in.unsqueeze(0)
-                                    fade_out = fade_out.unsqueeze(0)
-                            
-                            old_chunk = final_wav[..., samp_global_start : samp_global_start+xfade_samps]
-                            new_chunk = generated_segment[..., :xfade_samps]
-                            
-                            # Safety check for empty chunks
-                            if old_chunk.shape[-1] == 0 or new_chunk.shape[-1] == 0:
-                                print("[Debug] Skipping start crossfade due to empty chunk")
-                            else:
-                                # Ensure lengths match exactly (trim to min)
-                                min_len = min(old_chunk.shape[-1], new_chunk.shape[-1])
-                                
-                                # Resize/Trim
-                                old_chunk = old_chunk[..., :min_len]
-                                new_chunk = new_chunk[..., :min_len]
-                                fade_in = fade_in[..., :min_len] # This might retain shape [1, N]
-                                fade_out = fade_out[..., :min_len]
+            gap_sec = (snapped_end - snapped_start) + (2.0 * xfade_sec)
+            infill_job_id = f"{repair_job_id}_infill"
 
-                                print(f"[Debug-Crossfade] Old: {old_chunk.shape} | New: {new_chunk.shape} | FadeIn: {fade_in.shape} | FadeOut: {fade_out.shape}")
+            # Parse structured caption
+            structured_meta = None
+            if parent_sc_json:
+                try:
+                    structured_meta = json.loads(parent_sc_json)
+                except Exception:
+                    pass
 
-                                mixed_start = old_chunk * fade_out + new_chunk * fade_in
-                                generated_segment[..., :min_len] = mixed_start
-                            
-                            # End Boundary
-                            end_pos = samp_global_start + insert_len
-                            old_end_chunk = final_wav[..., end_pos-xfade_samps : end_pos]
-                            new_end_chunk = generated_segment[..., -xfade_samps:]
-                            
-                            mixed_end = old_end_chunk * fade_in + new_end_chunk * fade_out
-                            generated_segment[..., -xfade_samps:] = mixed_end
+            locked_caption = build_locked_continuation_caption(
+                parent_prompt=parent_prompt,
+                parent_tags=parent_tags,
+                parent_structured_caption=structured_meta,
+                musical_profile=musical_profile,
+            )
 
-                        final_wav[..., samp_global_start : samp_global_start+insert_len] = generated_segment
-                        
-                        return final_wav
-                    
-                    wav_tensor = await loop.run_in_executor(None, _run_generate_and_mix)
-                    
-                    if wav_tensor is None or abort_event.is_set():
-                        raise InterruptedError("Job Cancelled")
+            provider = provider_registry.get(parent_provider)
+            infill_req_prompt = prompt.strip() if (prompt and prompt.strip()) else parent_prompt
 
-                    # 5. Save Result
-                    output_filename = f"song_{new_job_id}.mp3"
-                    save_path = os.path.abspath(f"generated_audio/{output_filename}")
-                    
-                    import torchaudio
-                    torchaudio.save(save_path, wav_tensor, 48000)
-                    
-                    # 6. Complete
-                    with Session(db_engine) as session:
-                        job = session.exec(select(Job).where(Job.id == new_job_id)).one_or_none()
-                        if job:
-                            job.status = JobStatus.COMPLETED
-                            job.audio_path = f"/audio/{output_filename}"
-                            session.add(job)
-                            session.commit()
-                            
-                            final_job_path = job.audio_path
-                            final_job_title = job.title
-                        
-                    event_manager.publish("job_update", {"job_id": new_job_id, "status": "completed", "audio_path": final_job_path, "title": final_job_title})
-                    
-                except InterruptedError:
-                    logger.info(f"Repair Job {new_job_id} cancelled.")
-                    # Mark as failed/cancelled
-                    with Session(db_engine) as session:
-                        job = session.exec(select(Job).where(Job.id == new_job_id)).one_or_none()
-                        if job:
-                            job.status = JobStatus.FAILED
-                            job.error_msg = "Cancelled"
-                            session.add(job)
-                            session.commit()
-                    event_manager.publish("job_update", {"job_id": new_job_id, "status": "failed", "error": "Cancelled"})
+            infill_result = await provider.generate(
+                job_id=infill_job_id,
+                prompt=infill_req_prompt,
+                lyrics="",  # Instrumental infill to seamlessly fit accompaniment
+                duration_ms=int(max(5.0, gap_sec) * 1000),
+                tags=parent_tags,
+                seed=((parent_seed or 42) + 7919) % 2147483647,
+                structured_caption=locked_caption,
+                cancel_event=abort_event,
+            )
 
-                except Exception as e:
-                    logger.error(f"In-painting failed: {e}", exc_info=True)
-                    
-                    with Session(db_engine) as session:
-                        job = session.exec(select(Job).where(Job.id == new_job_id)).one_or_none()
-                        if job:
-                            job.status = JobStatus.FAILED
-                            job.error_msg = str(e)
-                            session.add(job)
-                            session.commit()
-                            
-                            event_manager.publish("job_update", {
-                                "job_id": new_job_id, 
-                                "status": "failed", 
-                                "error": str(e)
-                            })
-                finally:
-                    # Cleanup
-                    if 'new_job_id' in locals() and new_job_id in music_service.active_jobs:
-                        del music_service.active_jobs[new_job_id]
+            if abort_event.is_set():
+                raise asyncio.CancelledError("Repair cancelled by user")
 
+            infill_audio_path = _resolve_audio_file(infill_result.audio_path)
+            if not infill_audio_path or not os.path.exists(infill_audio_path):
+                raise FileNotFoundError(f"Generated infill audio not found at {infill_result.audio_path}")
+
+            infill_audio, infill_sr = await loop.run_in_executor(None, _load_audio_np, infill_audio_path)
+
+            # Resample infill if sample rates differ
+            if infill_sr != parent_sr:
+                import soxr
+                infill_resampled = []
+                for ch in range(infill_audio.shape[0]):
+                    res = soxr.resample(infill_audio[ch], infill_sr, parent_sr)
+                    infill_resampled.append(res)
+                infill_audio = np.stack(infill_resampled, axis=0)
+
+            # Match channel count
+            if infill_audio.shape[0] < num_channels:
+                infill_audio = np.repeat(infill_audio, num_channels, axis=0)
+            elif infill_audio.shape[0] > num_channels:
+                infill_audio = infill_audio[:num_channels]
+
+            # 5. Equal-Power Splicing into Parent Master Audio
+            event_manager.publish("job_progress", {
+                "job_id": repair_job_id,
+                "step": 1,
+                "total_steps": 4,
+                "phase": "splicing",
+                "progress": 45,
+                "message": "Performing equal-power crossfade and splicing into master track...",
+            })
+
+            def _splice_audio():
+                start_samp = int(snapped_start * parent_sr)
+                end_samp = int(snapped_end * parent_sr)
+                xfade_samp = int(xfade_sec * parent_sr)
+
+                # Part 1: Head from 0 up to start_samp
+                head = parent_audio[:, :start_samp]
+
+                # Crossfade 1: transition from parent to infill
+                p_leadout = parent_audio[:, start_samp : start_samp + xfade_samp]
+                inf_leadin = infill_audio[:, :xfade_samp]
+                xfade_1 = _equal_power_crossfade(p_leadout, inf_leadin)
+
+                # Core infill
+                inf_core_len = max(0, (end_samp - start_samp) - xfade_samp)
+                inf_core = infill_audio[:, xfade_samp : xfade_samp + inf_core_len]
+
+                # Crossfade 2: transition from infill back to parent
+                inf_leadout = infill_audio[:, xfade_samp + inf_core_len : xfade_samp + inf_core_len + xfade_samp]
+                p_leadin = parent_audio[:, end_samp - xfade_samp : end_samp]
+                xfade_2 = _equal_power_crossfade(inf_leadout, p_leadin)
+
+                # Part 3: Tail from end_samp to end
+                tail = parent_audio[:, end_samp:]
+
+                assembled = np.concatenate([head, xfade_1, inf_core, xfade_2, tail], axis=-1)
+
+                # Ensure length matches total_samples exactly
+                if assembled.shape[-1] > total_samples:
+                    assembled = assembled[:, :total_samples]
+                elif assembled.shape[-1] < total_samples:
+                    pad = np.zeros((num_channels, total_samples - assembled.shape[-1]), dtype=np.float32)
+                    assembled = np.concatenate([assembled, pad], axis=-1)
+
+                _save_audio_np(final_wav_path, assembled, parent_sr)
+
+                # Also mirror aliases
+                try:
+                    alt_wav = str(gen_dir / f"song_{repair_job_id}.wav")
+                    if os.path.abspath(final_wav_path) != os.path.abspath(alt_wav):
+                        shutil.copy2(final_wav_path, alt_wav)
+                    backend_dir = get_repo_root() / "backend" / "generated_audio"
+                    backend_dir.mkdir(parents=True, exist_ok=True)
+                    shutil.copy2(final_wav_path, str(backend_dir / f"{repair_job_id}.wav"))
+                    shutil.copy2(final_wav_path, str(backend_dir / f"song_{repair_job_id}.wav"))
+                except Exception as _e:
+                    logger.debug("Failed mirroring audio aliases: %s", _e)
+
+            await loop.run_in_executor(None, _splice_audio)
+
+            if abort_event.is_set():
+                raise asyncio.CancelledError("Repair cancelled by user")
+
+            # 6. Step 2: Neural stem separation (BS-Roformer 6-stem)
+            event_manager.publish("job_progress", {
+                "job_id": repair_job_id,
+                "step": 2,
+                "total_steps": 4,
+                "phase": "stems",
+                "progress": 60,
+                "message": "Separating repaired master stems (BS-Roformer 6-stem)...",
+            })
+
+            real_stems = {}
+            stems_dir = str(gen_dir / "stems")
+            os.makedirs(stems_dir, exist_ok=True)
+            try:
+                separation_res = await loop.run_in_executor(
+                    None, separate_sources, final_wav_path, stems_dir, repair_job_id, 1
+                )
+                if hasattr(separation_res, "stems"):
+                    real_stems = dict(separation_res.stems)
+                elif isinstance(separation_res, dict):
+                    real_stems = dict(separation_res)
             except Exception as e:
-                logger.error(f"Inpainting setup/lifecycle failed: {e}", exc_info=True)
-                # Ensure we don't leave zombie jobs if possible, but hard to recover without ID context
+                logger.warning(f"Stem separation failed for repair job {repair_job_id}: {e}")
+            finally:
+                try:
+                    unload_model()
+                    GlobalHardwareCoordinator.flush_memory()
+                except Exception:
+                    pass
+
+            if abort_event.is_set():
+                raise asyncio.CancelledError("Repair cancelled by user")
+
+            # 7. Step 3: MuScriptor Neural Transcription
+            event_manager.publish("job_progress", {
+                "job_id": repair_job_id,
+                "step": 3,
+                "total_steps": 4,
+                "phase": "transcription",
+                "progress": 80,
+                "message": "MuScriptor neural transcribing note events, chords & score...",
+            })
+
+            transcription_result = None
+            try:
+                transcription_result = await muscriptor_provider.transcribe(
+                    audio_file_path=f"/audio/{repair_job_id}.wav",
+                    job_id=repair_job_id,
+                    progress_callback=lambda s, t, m: event_manager.publish("job_progress", {
+                        "job_id": repair_job_id, "step": 3, "total_steps": 4, "phase": "transcription", "progress": 85, "message": m
+                    })
+                )
+            except Exception as e:
+                logger.warning(f"MuScriptor transcription failed for repair job {repair_job_id}: {e}")
+
+            # 8. Step 4: Lyric synchronization & final DB commit
+            event_manager.publish("job_progress", {
+                "job_id": repair_job_id,
+                "step": 4,
+                "total_steps": 4,
+                "phase": "lyrics",
+                "progress": 95,
+                "message": "Aligning timed lyrics and finalizing database records...",
+            })
+
+            vocal_stem_candidate = real_stems.get("vocals", "") or final_wav_path
+            timed_lyrics = None
+            try:
+                timed_lyrics = lyric_sync_engine.align_lyrics(
+                    lyrics=parent_lyrics or "",
+                    duration_sec=total_duration_sec,
+                    vocal_stem_path=vocal_stem_candidate,
+                )
+            except Exception as e:
+                logger.warning(f"Lyric sync failed for repair job {repair_job_id}: {e}")
+
+            with Session(db_engine) as session:
+                job = session.exec(select(Job).where(Job.id == repair_job_id)).one_or_none()
+                if job:
+                    job.status = JobStatus.COMPLETED
+                    job.audio_path = f"/audio/{repair_job_id}.wav"
+                    job.duration_ms = int(total_duration_sec * 1000)
+                    if real_stems:
+                        job.stems_json = json.dumps(real_stems)
+                    if timed_lyrics:
+                        job.timed_lyrics_json = json.dumps(timed_lyrics)
+                    if transcription_result:
+                        job.midi_path = transcription_result.midi_path
+                        job.musicxml_path = transcription_result.musicxml_path
+                        job.notes_json = json.dumps(transcription_result.notes)
+                    session.add(job)
+                    session.commit()
+
+            event_manager.publish("job_update", {
+                "job_id": repair_job_id,
+                "status": "completed",
+                "audio_path": f"/audio/{repair_job_id}.wav",
+                "duration_ms": int(total_duration_sec * 1000),
+            })
+            logger.info(f"Segment repair job {repair_job_id} successfully completed.")
+
+        except asyncio.CancelledError:
+            logger.info(f"Segment repair job {repair_job_id} cancelled.")
+            with Session(db_engine) as session:
+                job = session.exec(select(Job).where(Job.id == repair_job_id)).one_or_none()
+                if job:
+                    job.status = JobStatus.FAILED
+                    job.error_msg = "Cancelled by user"
+                    session.add(job)
+                    session.commit()
+            event_manager.publish("job_update", {"job_id": repair_job_id, "status": "failed", "error": "Cancelled"})
+
+        except Exception as e:
+            logger.error(f"Segment repair job {repair_job_id} failed: {e}", exc_info=True)
+            with Session(db_engine) as session:
+                job = session.exec(select(Job).where(Job.id == repair_job_id)).one_or_none()
+                if job:
+                    job.status = JobStatus.FAILED
+                    job.error_msg = str(e)
+                    session.add(job)
+                    session.commit()
+            event_manager.publish("job_update", {"job_id": repair_job_id, "status": "failed", "error": str(e)})
+
+        finally:
+            music_service.job_started_monotonic.pop(repair_job_id, None)
+            music_service.active_jobs.pop(repair_job_id, None)
 
 
 inpainting_service = InpaintingService()

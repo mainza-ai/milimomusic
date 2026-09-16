@@ -191,7 +191,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
               <button
                 onClick={() => { clearPlaybackError(); playTrack(currentSong, playlist); }}
                 className="px-2.5 py-1 rounded-xl text-[11px] font-bold bg-rose-500/20 text-rose-700 dark:text-rose-200 hover:bg-rose-500/30 transition-colors"
-              >
+               title="Retry">
                 Retry
               </button>
             )}
@@ -199,7 +199,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
               onClick={clearPlaybackError}
               className="px-2 py-1 rounded-xl text-[11px] font-bold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
               aria-label="Dismiss playback error"
-            >
+             title="Dismiss playback error">
               ✕
             </button>
           </div>
@@ -220,7 +220,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
                 <button
                   onClick={clearQueue}
                   className="px-2.5 py-1 rounded-xl text-xs font-mono text-rose-600 dark:text-rose-400 hover:bg-rose-500/10 flex items-center gap-1 transition-colors"
-                >
+                 title="Clear Queue">
                   <Trash2 size={12} />
                   <span>Clear Queue</span>
                 </button>
@@ -228,7 +228,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
               <button
                 onClick={() => setIsQueueOpen(false)}
                 className="p-1 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
-              >
+               title="Close">
                 <X size={16} />
               </button>
             </div>
@@ -669,7 +669,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
                           ? 'bg-teal-500/15 text-teal-700 dark:text-teal-300 font-bold'
                           : 'text-slate-600 dark:text-slate-400 hover:bg-black/5 dark:hover:bg-white/5'
                       }`}
-                    >
+                     title="x">
                       {s}x
                     </button>
                   ))}

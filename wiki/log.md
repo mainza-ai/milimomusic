@@ -1841,4 +1841,17 @@ Fixed audio and asset download buttons opening browser media players in a new ta
 4. UI Component Updates: Updated `TrackRowPlayer.tsx`, `GlobalAudioPlayer.tsx`, `MasteringExportModal.tsx`, `MusicVideosView.tsx`, and `TrackDetailView.tsx` to use the new blob download helpers for master WAVs, isolated stem WAVs, multi-track MIDIs, MusicXML files, synced LRC lyrics, and cover PNGs.
 5. Verification: Verified via `curl -I` and frontend production build (`tsc -b && vite build` passed with 0 errors).
 
-
+## [2026-09-16] fix | CI Parity Gate & Hermetic MuScriptor Artifact Mirroring
+Resolved CI GitHub Actions test suite failures on `develop` and `main`:
+1. API/UI Parity Gate (`test_api_ui_parity`):
+   - In `backend/app/main.py`, `/download_track/{job_id}` had been decorated with `@app.api_route(..., methods=["GET", "HEAD"])`.
+   - `scripts/check_api_parity.py` parses standard `@app.(get|post|put|patch|delete|websocket)` decorators, causing `/download_track/{job_id}` to be omitted from backend routes and flagged as a dangling frontend call.
+   - Restored standard `@app.get("/download_track/{job_id}")` decorator (FastAPI/Starlette routes already handle HEAD requests automatically). Parity check confirmed: 132 routes, all called; 137 client calls, all resolve.
+2. MuScriptor Transcription Test (`test_muscriptor_transcription`):
+   - `backend/app/main.py` line 8 anchors working directory via `os.chdir(backend/)`. Tests importing `app.main` (e.g., `test_batch.py`, `test_api_endpoints.py`) shifted CWD from repository root to `backend/`.
+   - When `test_v2_core.py` ran after `main.py`, `assert os.path.exists("generated_audio/test_job_123.mid")` checked `backend/generated_audio/` relative to CWD.
+   - In `muscriptor_provider.py`, `import shutil` was missing from module imports, causing the mirror copy to fail silently under `except Exception: pass`. Furthermore, `_fallback_transcription` omitted MIDI generation.
+   - Fixed by importing `shutil`, mirroring both `.mid` and `.musicxml` across canonical (`get_repo_root() / "generated_audio"`), `backend/generated_audio`, and CWD `Path("generated_audio")`, adding MIDI export to `_fallback_transcription`, and asserting against `get_generated_audio_dir()`.
+3. Verification:
+   - `backend/tests/test_api_parity.py` and `backend/tests/test_v2_core.py` pass cleanly locally and when run alongside full app endpoints.
+   - Synchronized and pushed to both `origin/develop` and `origin/main`.

@@ -76,18 +76,20 @@ class InpaintingService:
     def create_repair_job(self, parent_job_id: str, req: TrackInpaintRequest, db_engine) -> str:
         """Create and persist a child Job record for the segment repair, returning its new job ID."""
         with Session(db_engine) as session:
-            parent_job = session.get(Job, uuid.UUID(parent_job_id) if isinstance(parent_job_id, str) and "-" in parent_job_id else parent_job_id)
+            parent_uuid = uuid.UUID(parent_job_id) if isinstance(parent_job_id, str) and "-" in parent_job_id else parent_job_id
+            parent_job = session.get(Job, parent_uuid)
             if not parent_job:
-                parent_job = session.exec(select(Job).where(Job.id == str(parent_job_id))).one_or_none()
+                parent_job = session.exec(select(Job).where(Job.id == parent_uuid)).one_or_none()
             if not parent_job:
                 raise ValueError(f"Parent track {parent_job_id} not found")
 
-            new_job_id = str(uuid.uuid4())
+            new_job_uuid = uuid.uuid4()
+            new_job_id = str(new_job_uuid)
             parent_title = parent_job.title or parent_job.prompt or "Track"
             repair_title = f"{parent_title} (Repaired)"
 
             new_job = Job(
-                id=new_job_id,
+                id=new_job_uuid,
                 title=repair_title,
                 prompt=req.prompt or parent_job.prompt,
                 status=JobStatus.PROCESSING,
@@ -140,9 +142,10 @@ class InpaintingService:
         try:
             # 1. Fetch parent job metadata
             with Session(db_engine) as session:
-                pj = session.get(Job, uuid.UUID(parent_job_id) if "-" in parent_job_id else parent_job_id)
+                p_uuid = uuid.UUID(parent_job_id) if isinstance(parent_job_id, str) and "-" in parent_job_id else parent_job_id
+                pj = session.get(Job, p_uuid)
                 if not pj:
-                    pj = session.exec(select(Job).where(Job.id == str(parent_job_id))).one_or_none()
+                    pj = session.exec(select(Job).where(Job.id == p_uuid)).one_or_none()
                 if not pj:
                     raise FileNotFoundError(f"Parent job {parent_job_id} not found in database")
 
@@ -429,8 +432,11 @@ class InpaintingService:
             except Exception as e:
                 logger.warning(f"Lyric sync failed for repair job {repair_job_id}: {e}")
 
+            repair_uuid = uuid.UUID(repair_job_id) if isinstance(repair_job_id, str) and "-" in repair_job_id else repair_job_id
             with Session(db_engine) as session:
-                job = session.exec(select(Job).where(Job.id == repair_job_id)).one_or_none()
+                job = session.get(Job, repair_uuid)
+                if not job:
+                    job = session.exec(select(Job).where(Job.id == repair_uuid)).one_or_none()
                 if job:
                     job.status = JobStatus.COMPLETED
                     job.audio_path = f"/audio/{repair_job_id}.wav"
@@ -456,8 +462,11 @@ class InpaintingService:
 
         except asyncio.CancelledError:
             logger.info(f"Segment repair job {repair_job_id} cancelled.")
+            repair_uuid = uuid.UUID(repair_job_id) if isinstance(repair_job_id, str) and "-" in repair_job_id else repair_job_id
             with Session(db_engine) as session:
-                job = session.exec(select(Job).where(Job.id == repair_job_id)).one_or_none()
+                job = session.get(Job, repair_uuid)
+                if not job:
+                    job = session.exec(select(Job).where(Job.id == repair_uuid)).one_or_none()
                 if job:
                     job.status = JobStatus.FAILED
                     job.error_msg = "Cancelled by user"
@@ -467,8 +476,11 @@ class InpaintingService:
 
         except Exception as e:
             logger.error(f"Segment repair job {repair_job_id} failed: {e}", exc_info=True)
+            repair_uuid = uuid.UUID(repair_job_id) if isinstance(repair_job_id, str) and "-" in repair_job_id else repair_job_id
             with Session(db_engine) as session:
-                job = session.exec(select(Job).where(Job.id == repair_job_id)).one_or_none()
+                job = session.get(Job, repair_uuid)
+                if not job:
+                    job = session.exec(select(Job).where(Job.id == repair_uuid)).one_or_none()
                 if job:
                     job.status = JobStatus.FAILED
                     job.error_msg = str(e)

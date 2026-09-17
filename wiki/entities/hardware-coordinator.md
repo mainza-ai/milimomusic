@@ -1,28 +1,63 @@
 ---
-title: Global Hardware Coordinator
+title: Global Hardware Coordinator & Auto-Tune Manager
 type: entity
 created: 2026-09-15
-updated: 2026-09-15
-sources: [sources/v2-refactor-plan.md, sources/readme.md]
-tags: [hardware, gpu, vram, coordinator, mps, cuda, telemetry, architecture]
-aliases: [Hardware Coordinator, GlobalHardwareCoordinator, VRAM Manager]
+updated: 2026-09-16
+sources: [sources/v2-refactor-plan.md, sources/readme.md, sources/maestro-creative-studio.md]
+tags: [hardware, gpu, vram, coordinator, mps, cuda, telemetry, architecture, autotune, profiles, oom]
+aliases: [Hardware Coordinator, GlobalHardwareCoordinator, VRAM Manager, HardwareAutoTune]
 ---
 
-# Global Hardware Coordinator
+# Global Hardware Coordinator & Auto-Tune Manager
 
-The **Global Hardware Coordinator** (`backend/app/core/hardware_lock.py`) provides centralized hardware resource management and execution serialization across all heavy neural backbones in [Milimo Music](../overview.md).
+The **Global Hardware Coordinator** (`backend/app/core/hardware_lock.py` and `hardware_autotune.py`) provides centralized hardware resource management, lock serialization, empirical profile auto-tuning, and OOM self-healing across all heavy neural backbones in [Milimo Music](../overview.md).
 
 ## Architectural Purpose
 
 Milimo Music runs multiple generative AI and neural audio/video models locally on Apple Silicon (MPS Unified Memory) and NVIDIA (CUDA):
 - **MiniMax Music 3**: MLX mxfp4 / DiT flow-matching generation (~14 GB).
+- **YuE2 3B**: 48 kHz stereo autoregressive + diffusion audio synthesis (~12–16 GB).
 - **MuLaCover 3B**: Autoregressive symbolic cover generation (~6.2 GB).
 - **BS-Roformer & HTDemucs**: 6-stem neural source separation (~3.2 GB).
 - **MuScriptor / MT3**: Note-level multi-instrument transcription (~2.1 GB).
-- **Wan 2.1 DiT (14B / 1.3B) & LivePortrait**: Diffusion music video rendering (~12–16 GB).
+- **Wan 2.1 DiT (14B / 1.3B) & MiniMax H3 (33B)**: Diffusion music video rendering (~12–24 GB).
 - **Neural SVC**: Zero-shot pitch-adaptive vocal timbre transfer (~1.8 GB).
 
 Concurrent execution of these models without serialization causes catastrophic out-of-memory (OOM) errors and MPS unified memory thrashing. The `GlobalHardwareCoordinator` acts as an authoritative async device mutex ensuring only one heavy neural workload commands the accelerator at any given instant.
+
+## Hardware Auto-Tune & Empirical Profiles
+
+Modeled after [Maestro](../sources/maestro-creative-studio.md), the system auto-tunes hardware on startup:
+
+| Profile | Tier | Configuration | Strategy |
+|---|---|---|---|
+| **1.0** | High VRAM + High RAM | VRAM $\ge 24\text{ GB}$, RAM $\ge 60\text{ GB}$ | 100% VRAM resident models. Zero streaming latency. |
+| **2.0** | Balanced Streaming | VRAM $12-24\text{ GB}$, RAM $\ge 31\text{ GB}$ | Transformer weights pinned in host RAM, streamed per block. |
+| **3.0 / 3.5** | High VRAM + Low RAM | VRAM $\ge 24\text{ GB}$, RAM $< 28\text{ GB}$ | Prioritizes VRAM residency, limits host memory caching. |
+| **4.0 / 4.5** | Consumer Production | VRAM $12-16\text{ GB}$, RAM $16-31\text{ GB}$ | Aggressive memory cleanup after each inference stage. |
+| **5.0** | Max Layer Offload | VRAM $< 12\text{ GB}$ or CPU | Quantized INT8 ConvRot / NVFP4 execution with CPU offload. |
+
+See [Hardware Auto-Tune, Memory Profiles & OOM Self-Healing](../concepts/hardware-autotune-memory-profiles.md) for detailed mathematical criteria and benchmarks.
+
+## Safety Coefficient & Headroom Reservation
+
+To prevent sudden spikes in PyTorch activation caching and VAE decoding from crashing the server, memory allocations are bounded by an empirical safety coefficient:
+$$\text{MaxUsableVRAM} = \text{TotalPhysicalVRAM} \times C_{\text{safety}}$$
+- $C_{\text{safety}} = 0.80$ for cards with $\ge 12\text{ GB}$ VRAM.
+- $C_{\text{safety}} = 0.70$ for cards with $< 12\text{ GB}$ VRAM.
+- $C_{\text{safety}} = 0.75$ on Apple Silicon MPS Unified Memory.
+
+## Scoped CPU Execution (`cpu_scoped()`)
+
+Audio loading and format conversion (via Librosa, torchaudio, or soundfile) are executed inside `cpu_scoped()` context managers to ensure helper allocations never contaminate CUDA/MPS memory pools or trigger heap fragmentation.
+
+## OOM Interception & Self-Healing Telemetry
+
+If an out-of-memory exception occurs:
+1. Catches the exception before process termination.
+2. Dumps memory diagnostics (process RSS, system RAM, PyTorch allocated/reserved/peak).
+3. Evicts dormant tensor caches via `torch.cuda.empty_cache()` / `torch.mps.empty_cache()`.
+4. Lowers the active safety coefficient by $0.10$ and surfaces an in-app banner for one-click retry with reduced batch size.
 
 ## Core API & Implementation
 
@@ -53,25 +88,21 @@ class GlobalHardwareCoordinator:
         ...
 ```
 
-### Multi-Backend Memory Reclamation
-
-When `release_device()` or `flush_memory()` is triggered:
-1. **Garbage Collection**: Invokes `gc.collect()` to purge unreferenced Python tensor wrappers.
-2. **CUDA Empty Cache**: Invokes `torch.cuda.empty_cache()` and `torch.cuda.ipc_collect()`.
-3. **MPS Empty Cache**: Invokes `torch.mps.empty_cache()` and queries Apple Silicon unified memory allocation via `psutil`.
-
 ## Endpoints
 
-- `GET /system/telemetry`: Returns real-time VRAM allocation, total capacity, percentage usage, and current active consumer:
+- `GET /system/telemetry`: Returns real-time VRAM allocation, total capacity, percentage usage, active consumer, and active performance profile:
   ```json
   {
-    "device_type": "mps",
-    "device_name": "Apple Silicon Unified Memory (MPS)",
+    "device_type": "cuda",
+    "device_name": "NVIDIA GeForce RTX 4090",
     "active_consumer": "idle",
     "vram_allocated_mb": 0.0,
-    "vram_reserved_mb": 44423.1,
-    "vram_total_mb": 131072.0,
-    "usage_percent": 0.0,
+    "vram_reserved_mb": 1240.0,
+    "vram_total_mb": 24564.0,
+    "usage_percent": 5.05,
+    "profile": 1.0,
+    "profile_name": "Profile 1 — Maximum Performance",
+    "safety_coefficient": 0.80,
     "lock_held": false
   }
   ```
@@ -86,6 +117,9 @@ When `release_device()` or `flush_memory()` is triggered:
 
 - [Architecture](../architecture.md)
 - [Video Studio](video-studio.md)
+- [Hardware Auto-Tune](../concepts/hardware-autotune-memory-profiles.md)
+- [YuE2 Music](yue2-music.md)
+- [Durable Task Queue](durable-task-queue.md)
 - [Generation Pipeline](../concepts/generation-pipeline.md)
 - [Neural SVC](neural-svc.md)
 - [MuLaCover](mulacover.md)

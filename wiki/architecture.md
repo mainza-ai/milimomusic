@@ -2,9 +2,9 @@
 title: Milimo Music — Architecture
 type: overview
 created: 2026-08-19
-updated: 2026-09-15
-sources: [sources/heartlib-bible.md, sources/readme.md, sources/v2-refactor-plan.md]
-tags: [architecture, system, backend, frontend, minimax, mulacover, muscriptor, daw]
+updated: 2026-09-16
+sources: [sources/heartlib-bible.md, sources/readme.md, sources/v2-refactor-plan.md, sources/maestro-creative-studio.md]
+tags: [architecture, system, backend, frontend, minimax, yue2, mulacover, muscriptor, daw, director, timeline, autotune, queue]
 ---
 
 # Milimo Music — Architecture (v2 AI Production DAW)
@@ -17,25 +17,28 @@ Milimo Music is a full-featured open-source AI music generation and production D
 ┌────────────────────────────────────────────────────────────────────────┐
 │  FRONTEND (React 19 / Vite / Tailwind)  :5173                          │
 │  Explore & Producer Landing · 5-Mode Session Workspace (Listen,       │
-│  Arrange, Piano Roll, Notation, Mix) · Voice Identity Studio · Model   │
-│  Manager · Hardware Telemetry Bar · Global Modal Store (Zustand)       │
+│  Arrange, Piano Roll, Notation, Mix) · Multitrack Timeline Editor ·    │
+│  Music Video Director Studio · Voice Identity Studio · Model Manager · │
+│  Hardware Telemetry Bar · Global Modal Store (Zustand)                 │
 └───────────────────────────────────┬────────────────────────────────────┘
                                     │ HTTP + SSE + Audio Streaming
 ┌───────────────────────────────────┴────────────────────────────────────┐
 │  BACKEND (FastAPI / SQLModel / SQLite WAL)  :8000                      │
-│  GlobalHardwareCoordinator · ProviderRegistry · GeneratePipeline       │
-│  MuScriptorProvider · MuLaCoverEngine · DrumTracker · SymbolicHub      │
-│  NeuralSVCService · StemSeparator · MatcheringEngine · LyricSyncEngine │
-│  SidecarEngineManager · AgentRuntime (4 crew agents)                   │
+│  GlobalHardwareCoordinator (Auto-Tune) · DurableTaskQueue · Pipeline   │
+│  ProviderRegistry (MiniMax, YuE2, MuLaCover, HeartMuLa) · VideoDirector│
+│  MultitrackTimelineCompiler · MuScriptorProvider · MuLaCoverEngine     │
+│  DrumTracker · SymbolicHub · NeuralSVCService · StemSeparator          │
+│  MatcheringEngine · LyricSyncEngine · SidecarEngineManager             │
 └─────────────┬───────────────────────────┬──────────────────────────────┘
               │                           │
   ┌───────────▼────────────┐  ┌───────────▼────────────┐  ┌──────────────▼────────────┐
   │  GENERATION PROVIDERS  │  │  TRANSCRIPTION ENGINE  │  │  LLM PROVIDERS            │
   │  MiniMax Music 3 (Def) │  │  MuScriptor (MT3)      │  │  Ollama / OpenAI / Gemini │
-  │  MuLaCover-3B (Remix)  │  │  Dual SymbolicHub      │  │  DeepSeek / Claude        │
-  │  HeartMuLa-3B (Legacy) │  │  Drum Tracker (MIDI)   │  │  (Lyrics, Co-Writer graph,│
-  │  Capability manifests  │  │  Note events + Stems   │  │   artist crew + critic)   │
-  └────────────────────────┘  └────────────────────────┘  └───────────────────────────┘
+  │  YuE2 3B (48kHz Stereo)│  │  Dual SymbolicHub      │  │  DeepSeek / Claude        │
+  │  MuLaCover-3B (Remix)  │  │  Drum Tracker (MIDI)   │  │  (Lyrics, Co-Writer graph,│
+  │  HeartMuLa-3B (Legacy) │  │  Note events + Stems   │  │   director shot planner)  │
+  │  Capability manifests  │  └────────────────────────┘  └───────────────────────────┘
+  └────────────────────────┘
 ```
 
 ## Generation & Transcription Pipeline
@@ -43,8 +46,8 @@ Milimo Music is a full-featured open-source AI music generation and production D
 The full flow is the [orchestration pipeline](concepts/generation-pipeline.md)
 (`orchestration/pipeline.py`):
 
-1. **Generation (MiniMax Music 3 default / HeartMuLa)**: [Structured Caption](concepts/structured-caption.md)
-   embeddings conditioning flow-matching DiT with section tags (`[Intro]`, `[Verse]`, `[Chorus]`, etc.).
+1. **Generation (MiniMax Music 3 default / YuE2 3B / HeartMuLa)**: [Structured Caption](concepts/structured-caption.md)
+   embeddings conditioning flow-matching DiT with section tags (`[Intro]`, `[Verse]`, `[Chorus]`, etc.) or [YuE2](entities/yue2-music.md) 48 kHz stereo music generation with optional ABC notation conditioning.
 2. **Stem Separation**: [Stem Separator](entities/stem-separator.md) — filter-bank extraction of
    4 preview clips (Vocals, Drums, Bass, Instruments) + combined Instrumental. The **DAW's
    playback channels**, however, source from **dynamic per-instrument parts derived from the
@@ -56,46 +59,39 @@ The full flow is the [orchestration pipeline](concepts/generation-pipeline.md)
 5. **Mastering & Export**: [Matchering](entities/matchering-mastering.md) reference mastering
    (-14 LUFS) and multi-format export (MIDI, MusicXML, LRC, SRT).
 
-All outputs feed the [Session Workspace (DAW)](entities/session-workspace.md).
+All outputs feed the [Session Workspace (DAW)](entities/session-workspace.md) and the [Multitrack Timeline Editor](entities/multitrack-editor.md).
 
-## Acoustic Calibration & Procedural DSP Synthesis
-The platform features dual-engine stem auditioning: real neural source separation (HTDemucs) alongside MuScriptor note-level procedural synthesis. The synthesis engine enforces strict psychoacoustic calibration (see [Audio Synthesis Standards](concepts/audio-synthesis-standards.md)):
-- **Psychoacoustic Target RMS**: Fletcher-Munson staged loudness curve (Drums: -13.1 dBFS / 0.22 RMS, Piano: -14.0 dBFS / 0.20 RMS, Clean Electric Guitar: -16.5 dBFS / 0.15–0.18 RMS, Clarinet: -18.4 dBFS / 0.12 RMS).
-- **Physical Acoustic Modeling**: Exponential pick transient clicks ($\exp(-220t)$) and pickup harmonics ($f, 2f, 3f, 4f, 5f$) for electric guitar; cylindrical stopped-pipe odd harmonics ($f, 3f, 5f, 7f$) with suppressed even harmonics for clarinet; sub-frequency sweeps ($140 \to 48\text{ Hz}$) for acoustic drums.
-- **Physical Signal Verification**: Crest Factor ($>6.0$ for pluck transients, $<3.0$ for pipe resonance) and Spectral Centroid profiling.
+## Director Mode v2 & AI Music Video Studio
+Directs synchronized cinematic video clips:
+- **Hierarchical Musical Accent Snapping**: Upgraded to [Director Mode v2](concepts/director-mode-v2.md) in `video_director.py`, scoring beats, downbeats, lyric phrase boundaries, and percussion entrances.
+- **Pacing Control**: User-selectable Cut Speed bias slider ($-2$ to $+2$).
+- **Performer Role Ownership**: Assigns visual and vocal roles to performers, ensuring `mouth_movement: closed` during instrumental breaks and solos.
+- **Discrete Frame Lattice Snapping**: Snaps clips to discrete video model frame lattices ($F_{\text{min}} + k \cdot F_{\text{step}}$) and applies sample-accurate sub-second trimming (`music_output_trim`) to eliminate cumulative audio-video drift.
 
-## Data Integrity, UUID Standards & Relational Lifecycle
-Tracks are managed under an atomic lifecycle architecture (see [Database Integrity Lifecycle](concepts/database-integrity-lifecycle.md)):
-- **Universal Multi-Format Lookup**: Parameterized text SQL condition (`id = :c OR id = :h OR id = :hyp`) resolving both 32-hex and 36-hyphenated UUID representations, bypassing SQLite dialect hex stripping.
-- **Startup Self-Healing Migration**: Boot-time migration in `init_db()` normalizing non-canonical UUIDs across `job`, `session`, `sessionmessage`, `playlisttrack`, and `release`.
-- **Atomic Cascade Deletion**: `DELETE /jobs/{id}` nullifies session and message references, deletes playlist tracks, expunges ORM tracking to eliminate duplicate-delete warnings, and executes an exhaustive multi-directory filesystem sweep.
+## Non-Destructive Multitrack Timeline Editor
+- **Atomic Project Schema**: Described in [Non-Destructive Multitrack Timeline](concepts/non-destructive-multitrack-timeline.md), supporting layered video, isolated audio stems, and animated subtitle text.
+- **Single-Pass Hardware-Accelerated Export**: `compile_editor_render()` compiles the multi-track timeline directly into a single FFmpeg `-filter_complex` command via NVENC or Apple Silicon VideoToolbox with zero intermediate generational loss.
+- **AI Round-Trip Take**: Select any timeline clip $\rightarrow$ send to AI for a retake or variation $\rightarrow$ drops back into the timeline slot without disturbing cut boundaries or soundtrack sync.
 
-## Hardware Coordination & Memory Lifecycle
-Milimo Music orchestrates concurrent audio and video generative backbones using the [Global Hardware Coordinator](entities/hardware-coordinator.md) (`backend/app/core/hardware_lock.py`):
-- **Serialized Device Mutex**: Prevents concurrent execution of MiniMax Music 3, MuLaCover, Wan 2.1 Video DiT, and LivePortrait on constrained accelerator memory (MPS Unified Memory or CUDA VRAM).
-- **Aggressive Memory Eviction**: Automatically triggers multi-backend memory purges (`torch.cuda.empty_cache()`, `torch.mps.empty_cache()`, and `gc.collect()`) upon device lock release or via `POST /system/flush`.
-- **Live Telemetry & Engine Switching**: Real-time VRAM telemetry streamed to `HardwareTelemetryBar.tsx` and interactive engine introspection via `EngineSwitcherModal.tsx` (`Ctrl+E`).
+## Hardware Auto-Tune & Resilient Memory Lifecycle
+Milimo Music orchestrates concurrent audio and video generative backbones using the [Global Hardware Coordinator](entities/hardware-coordinator.md) and [Hardware Auto-Tune](concepts/hardware-autotune-memory-profiles.md):
+- **Empirical Performance Profiles (1 to 5)**: Automatically detects GPU VRAM, compute capability, and host RAM at startup and selects optimal memory offloading (Profile 1: Max Performance, Profile 2: Balanced Streaming, Profile 4: Consumer Standard, Profile 5: Max Layer Offload).
+- **VRAM Safety Coefficient**: Enforces a strict $\le 0.80$ memory ceiling ($0.70$ for $< 12\text{ GB}$ VRAM) to prevent activation spikes and VAE decoding from crashing the GPU.
+- **Scoped CPU Execution (`cpu_scoped()`)**: Pre-processing, format loading (Librosa/torchaudio), and audio decoders are strictly scoped to CPU memory, preventing CUDA memory heap fragmentation.
+- **OOM Interception & Self-Healing**: Catches allocation failures, flushes PyTorch caches, lowers safety coefficients by $0.10$, and emits self-healing telemetry.
 - **Sidecar Virtualenv Isolation**: [Sidecar Engine Manager](entities/sidecar-engine-manager.md) isolates conflicting neural dependencies under `backend/engines/<id>/.venv`.
 
-## Global Modal Store Architecture
-To eliminate duplicate modal component instances and desynchronized state, frontend modal management is unified under [Modal Store Architecture](concepts/modal-store-architecture.md) (`useModalStore.ts`):
-- **Single Mount at Root**: Key studio modals (`<CoverStudioModal>`, `<EngineSwitcherModal>`, `<VoiceStudioModal>`) are mounted once in `App.tsx`.
-- **Authoritative Routing**: Views and timeline clips (`ArrangeTimeline.tsx`) summon modals with full job context intact without local visibility state bloat.
-
-## System Performance Standards & Benchmarks
-Milimo Music enforces measurable production performance benchmarks across the stack:
-- **Web Audio Clock Jitter**: **0.00ms** clock skew across all stems via sample-locked `AudioContext.currentTime` transport.
-- **Web Audio Playback Latency**: **< 20ms** start-to-sound latency; **< 250ms** multitrack stem decode latency.
-- **Database Query Latency**: Universal `get_job_by_id()` resolves in **< 1.5ms**; full cascading delete in **< 25ms**.
-- **Frontend Production Build**: Client bundle compiles via Vite (`tsc -b && vite build`) in **< 1.6s** (gzip size: < 261 kB JS, < 16 kB CSS).
-- **Automated Test Integrity**: Full test suite comprises **243 tests** executing with a 100% pass rate.
+## Durable Task Queue & Job Recovery
+- **Persistent SQLite Store**: Upgraded from transient memory dictionaries to [Durable Task Queue](entities/durable-task-queue.md).
+- **Asset Ownership Vault**: Copies input assets to dedicated job workspaces so external file moves cannot corrupt active jobs.
+- **Restart & Crash Recovery**: Interrupted jobs transition to `PAUSED` on boot, allowing 1-click resumption without re-rendering completed scenes.
+- **Queue Pre-Enhancement**: Asynchronously expands prompts in the background while the GPU is executing previous tasks.
 
 ## Related pages
 
 - [Overview](overview.md) | [Backend & API](entities/backend-api.md) | [Frontend](entities/frontend.md)
+- [Director Mode v2](concepts/director-mode-v2.md) | [AI Music Video Studio](entities/video-studio.md)
+- [Multitrack Timeline Editor](entities/multitrack-editor.md) | [Non-Destructive Multitrack Timeline](concepts/non-destructive-multitrack-timeline.md)
+- [YuE2 48kHz Stereo](entities/yue2-music.md) | [Hardware Auto-Tune](concepts/hardware-autotune-memory-profiles.md)
+- [Durable Task Queue](entities/durable-task-queue.md) | [Global Hardware Coordinator](entities/hardware-coordinator.md)
 - [Audio Synthesis Standards](concepts/audio-synthesis-standards.md) | [Database Integrity Lifecycle](concepts/database-integrity-lifecycle.md)
-- [Global Hardware Coordinator](entities/hardware-coordinator.md) | [Modal Store Architecture](concepts/modal-store-architecture.md)
-- [Generation Provider](entities/generation-provider.md) | [Model Manager](entities/model-manager.md)
-- [MiniMax Music 3](entities/minimax-music3.md) | [MuLaCover](entities/mulacover.md) | [MuScriptor](entities/muscriptor.md)
-- [Drum Tracker](entities/drum-tracker.md) | [Neural SVC](entities/neural-svc.md) | [Sidecar Engine Manager](entities/sidecar-engine-manager.md)
-- [Session Workspace](entities/session-workspace.md) | [Index](index.md)

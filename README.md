@@ -75,39 +75,60 @@ Natural language prompt composer, AI Co-Writer brainstorm assistant, real-time s
   <img src="assets/screenshots/explore-studio.png" alt="Milimo Music Explore & Create Studio" width="100%" />
 </p>
 
-### 2. Grand Piano Roll & Polyphonic MIDI Editor
-144px interactive Studio Grand keyboard, note-by-note duration and velocity editing, live Web Audio polyphonic synth auditioning, and bidirectional score synchronization.
-
-<p align="center">
-  <img src="assets/screenshots/piano-roll.png" alt="Grand Piano Roll and Interactive MIDI Score" width="100%" />
-</p>
-
-### 3. Multitrack Stem Arrangement & Timeline
-Dynamic per-instrument stem lanes (Piano, Drums, Voice, Clarinet, Guitar), real note-density waveforms, measure grids, and tactile Solo (`S`) / Mute (`M`) staging.
-
-<p align="center">
-  <img src="assets/screenshots/multitrack-arrange.png" alt="Multitrack Stem Arrangement and Timeline" width="100%" />
-</p>
-
-### 4. DAW Console Mixer & Matchering Reference Master
-Channel strip gain staging, stereo panning, animated LED peak meters, and Matchering reference mastering calibrated to a strict -14.0 LUFS broadcast target.
-
-<p align="center">
-  <img src="assets/screenshots/console-mixer.png" alt="DAW Console Mixer and Matchering DSP" width="100%" />
-</p>
-
-### 5. Track Studio Deep-Drill & Dual-Engine Stems Matrix
+### 2. Track Studio Deep-Drill & Dual-Engine Stems Matrix
 Deep inspection of generated assets, stem mix preview with solo/mute auditioning, version trees, and one-click downloads for neural stems (`BS-Roformer`) and MIDI instrument parts (`MuScriptor`).
 
 <p align="center">
   <img src="assets/screenshots/track-studio.png" alt="Track Studio Deep-Drill and Dual-Engine Stems Matrix" width="100%" />
 </p>
 
-### 6. Autonomous AI Artist Profiles & Creative Squad
+### 3. Multitrack Stem Arrangement & Song Structure
+Dynamic per-instrument stem lanes (Piano, Bass, Drums, Clean Electric Guitar, Voice, Clarinet), real note-density waveforms, measure grids, song structure markers (Verse, Chorus, Bridge, Outro), and tactile Solo (`S`) / Mute (`M`) staging.
+
+<p align="center">
+  <img src="assets/screenshots/multitrack-arrange.png" alt="Multitrack Stem Arrangement and Song Structure" width="100%" />
+</p>
+
+### 4. Neural Master Stems Arrangement Matrix
+Direct toggle between dynamic synthesized parts and 4-stem / 6-stem neural source separation (Drums, Bass, Other, Vocals) with synchronized playhead tracking and bar-level arrangement blocks.
+
+<p align="center">
+  <img src="assets/screenshots/neural-stems-arrange.png" alt="Neural Master Stems Arrangement Matrix" width="100%" />
+</p>
+
+### 5. Grand Piano Roll & Polyphonic MIDI Editor
+144px interactive Studio Grand keyboard, note-by-note duration and velocity editing, live Web Audio polyphonic synth auditioning, quantize grid snapping, and bidirectional score synchronization.
+
+<p align="center">
+  <img src="assets/screenshots/piano-roll.png" alt="Grand Piano Roll and Interactive MIDI Score" width="100%" />
+</p>
+
+### 6. MusicXML Score Notation & Engraving
+Full W3C MusicXML Grand Staff notation viewer with real diatonic pitch placement, measure-by-measure navigation, high-resolution score rendering, and one-click Sheet Music PDF and MusicXML export.
+
+<p align="center">
+  <img src="assets/screenshots/musicxml-notation.png" alt="MusicXML Score Notation and Engraving" width="100%" />
+</p>
+
+### 7. DAW Console Mixer & Matchering Reference Master
+Channel strip gain staging, rotary stereo pan knobs, tactile Solo/Mute toggles, animated LED peak meters, and Matchering reference mastering calibrated to a strict -14.0 LUFS broadcast target.
+
+<p align="center">
+  <img src="assets/screenshots/console-mixer.png" alt="DAW Console Mixer and Matchering DSP" width="100%" />
+</p>
+
+### 8. Autonomous AI Artist Profiles & Creative Crew Studio
 Virtual artist identities with persistent world lore, style DNA, release catalog management, and assigned AI agent crews (World-Builder, Experiencer, Songwriter, Stylist, Critic).
 
 <p align="center">
   <img src="assets/screenshots/artist-profiles.png" alt="Autonomous AI Artist Profiles and Creative Squad" width="100%" />
+</p>
+
+### 9. Multi-Modal Generation Model Hub
+Centralized model management hub for Audio (MiniMax Music 3 MLX mxfp4 / bfloat16, PyTorch, HeartMuLa-3B, MuLaCover-3B), FLUX.2 image diffusion checkpoints, and Hailuo/Wan video engines with local download status and hardware requirement indicators.
+
+<p align="center">
+  <img src="assets/screenshots/model-manager.png" alt="Multi-Modal Generation Model Hub" width="100%" />
 </p>
 
 ---

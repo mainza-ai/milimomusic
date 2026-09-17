@@ -177,6 +177,11 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 - **Hardware Acceleration**: Automatic native execution across CUDA, Apple Silicon MPS, and CPU.
 - **Dual-Engine DAW Stems**: Toggle between **Neural Stems (BS-Roformer)** and **Dynamic Per-Instrument Parts (MuScriptor)**.
 
+### 🩹 Track Extend, Repair Segment & Neural Inpainting
+- **Downbeat-Synchronized Audio Infill**: Non-destructive waveform inpainting and segment regeneration using beat-grid alignment (`beat-this` / `librosa`).
+- **Equal-Power Crossfading**: Glitch-free repair boundaries (`is_repair`, `is_extension`) with automatic downbeat snapping to maintain continuous harmonic and rhythmic timing.
+- **Cascading Derivative Regeneration**: Automatically triggers stem re-separation (`BS-Roformer`), neural transcription (`MuScriptor`), and acoustic forced alignment (`MMS_FA`) for patched sections.
+
 ### 🎤 Neural Acoustic Lyrics & Forced Alignment
 - **TorchAudio `MMS_FA` Forced Alignment**: Frame-level CTC acoustic alignment mapping tokenized words directly to isolated vocal stems with sub-100ms precision.
 - **Multi-Interval Adaptive VAD**: Dynamic 75th-percentile energy thresholding preserving instrumental solos and pauses between stanzas.
@@ -235,6 +240,7 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 | **Backend** | FastAPI, SQLModel, SQLite, PyTorch, Librosa | REST API, async task execution, SSE progress streaming, audio pipeline |
 | **Generative ML** | MLX (Apple Silicon), PyTorch (CUDA/CPU) | MiniMax Music 3 (Primary), MuLaCover-3B (Cover & Remix), HeartMuLa-3B (Legacy fallback), HeartCodec |
 | **Separation & Transcription** | BS-Roformer, MelBand-Roformer, MuScriptor, YourMT3, ChordNet, MusicXML 3.1 | 6-stem neural source separation, dual symbolic transcription, MIDI lead sheets |
+| **Audio Infill & Extension** | Librosa, Beat-This, Equal-Power Crossfade | Downbeat-aligned waveform inpainting, segment repair, seamless track extension |
 | **Lyric Sync** | TorchAudio MMS_FA, Adaptive VAD, LRC/SRT Generator | Acoustic forced alignment, progressive word timing |
 | **LLM & Co-Writer** | OpenCode Zen (DeepSeek v4 Flash), NVIDIA NIM, Gemini, OpenAI | Structured caption rewriter, multi-agent lyricist crew, style tagging |
 

@@ -67,7 +67,7 @@ def test_extension_lyrics_never_auto_added_by_default():
 
     with Session(engine) as session:
         parent_job = Job(
-            id=str(parent_id),
+            id=parent_id,
             title="Test Parent Song",
             prompt="pop electronic upbeat",
             lyrics=original_lyrics,
@@ -126,7 +126,7 @@ def test_inpaint_track_endpoint():
 
     with Session(engine) as session:
         parent_job = Job(
-            id=str(parent_id),
+            id=parent_id,
             title="Inpaint Parent Track",
             prompt="acoustic guitar melody",
             lyrics="[Verse]\nAcoustic melody playing.",

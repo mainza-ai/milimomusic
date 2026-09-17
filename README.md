@@ -13,7 +13,7 @@ Created by **[Mainza Kangombe](https://www.linkedin.com/in/mainza-kangombe-62142
 [![FastAPI](https://img.shields.io/badge/Backend-FastAPI%20%7C%20SQLModel-14b8a6.svg)](https://fastapi.tiangolo.com/)
 [![React 19](https://img.shields.io/badge/Frontend-React%2019%20%7C%20Vite%20%7C%20Tailwind-0ea5e9.svg)](https://react.dev/)
 [![MLX: Apple Silicon](https://img.shields.io/badge/Inference-Apple%20Silicon%20MLX%20%7C%20CUDA-0f172a.svg)](https://github.com/ml-explore/mlx)
-[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-slate.svg)](#multi-platform-architecture)
+[![Platform](https://img.shields.io/badge/Platform-macOS%20%7C%20Linux%20%7C%20Windows-slate.svg)](#%EF%B8%8F-system-requirements)
 
 <p align="center">
   <a href="#-overview">Overview</a> •
@@ -323,11 +323,12 @@ All generated audio, stems, database records, and downloaded model weights are p
 ### 💻 Option 2: Local Native Setup (Recommended for Apple Silicon M1–M4 Native MLX)
 
 #### Prerequisites
-- **Python 3.10+** (Recommended: Python 3.12 via Conda)
+- **Python 3.10–3.12** (Recommended: Python 3.12 via Conda / Homebrew / pyenv)
 - **Node.js ≥ 20.19** & npm (Vite 7 requirement)
+- **FFmpeg 6.0+** with `libsndfile1` and `fluidsynth`
 - **Hardware**: macOS with Apple Silicon (M1/M2/M3/M4) or Linux/Windows with CUDA GPU
 
-#### 1. Clone Repository & Setup Conda
+#### 1. Clone Repository & Setup Environment
 
 ```bash
 git clone --recurse-submodules https://github.com/mainza-ai/milimomusic.git
@@ -337,37 +338,59 @@ conda create -n milimomusic python=3.12 -y
 conda activate milimomusic
 ```
 
-#### 2. Backend Initialization
+#### 2. One-Command Automated Installation (Backend, Neural Modules & Frontend)
+
+You can install all dependencies and build the production frontend in a single step using the bundled CLI:
 
 ```bash
-cd backend
-conda activate milimomusic
-pip install -r requirements.txt
-python -m uvicorn app.main:app --host 0.0.0.0 --port 8000
+chmod +x milimo
+./milimo install
 ```
-> Interactive OpenAPI documentation is accessible at `http://localhost:8000/docs`.
+
+*(Manual Step-by-Step Alternative)*:
+```bash
+# Backend dependencies and editable packages
+pip install --upgrade pip uv
+uv pip install -r backend/requirements.txt
+uv pip install -e mulacover
+
+# Frontend dependencies and production build
+cd frontend && npm install && npm run build && cd ..
+```
+
+#### 3. Launching Services
+
+**Production Unified Single-Process Mode (Port 8000)**:
+```bash
+./milimo start
+```
+> Starts the backend serving the compiled DAW SPA at [**http://localhost:8000**](http://localhost:8000). Inspect health and status anytime with `./milimo status`. Stop services with `./milimo stop`.
+
+**Developer Mode (with Vite HMR on Port 5173)**:
+```bash
+./milimo start --dev
+```
 
 *(Native Apple Silicon MLX Acceleration)*:
 ```bash
-echo 'MINIMAX_MODEL_PATH=mlx-community/MiniMax-Music3-bf16' >> ../.env
+echo 'MINIMAX_MODEL_PATH=mlx-community/MiniMax-Music3-bf16' >> .env
 pip install mlx "mlx-audio @ git+https://github.com/Blaizzy/mlx-audio.git@784b29e2691a93ca7483147d86f61859dfaa6296"
 ./scripts/start-backend.sh
 ```
 
-#### 3. Frontend Initialization
-
-In a separate terminal window:
-
-```bash
-cd frontend
-npm install
-npm run dev
-```
-> Access the studio workstation at `http://localhost:5173`.
-
 ---
 
 ## 🔧 Operations
+
+### Unified CLI (`./milimo`)
+Milimo provides a root control utility for managing the entire production suite:
+- `./milimo start` — Launch production services in the background.
+- `./milimo start --dev` — Launch with hot-reloading frontend development server.
+- `./milimo stop` / `./milimo restart` — Gracefully terminate or reboot processes.
+- `./milimo status` — Probe service PIDs, health checks, and active AI models.
+- `./milimo build` — Compile frontend production bundle (`frontend/dist`).
+- `./milimo models` — Inspect loaded audio, image, and video neural models.
+- `./milimo docker up|down|logs` — Manage containerized instances.
 
 ### Single-instance lock
 The backend enforces an instance lock to prevent GPU and database contention:
@@ -386,11 +409,12 @@ The backend enforces an instance lock to prevent GPU and database contention:
 | `MILIMO_STRICT_INFERENCE` | `1` | Enforces genuine neural inference (fails loudly if unavailable) |
 | `MILIMO_LOCK_FILE` | `.milimo.lock` | Instance-lock file path |
 | `MILIMO_ALLOW_MULTI_INSTANCE` | unset | Set to `1` to bypass the boot lock |
+| `MILIMO_DB_NAME` | `jobs.db` | SQLite database file name (or set `MILIMO_DATABASE_URL`) |
 
 ### Backing Up the Database
 SQLite runs in WAL mode. Never copy active database files directly while the server is live. Take a consistent atomic snapshot with:
 ```bash
-sqlite3 milimo.db "VACUUM INTO 'backup.db';"
+sqlite3 jobs.db "VACUUM INTO 'backup.db';"
 ```
 
 ---
@@ -419,8 +443,13 @@ Milimo Music maintains a comprehensive, LLM-curated **Technical Encyclopedia and
 | 🌐 [**Overview & Scope (`wiki/overview.md`)**](wiki/overview.md) | High-level synthesis, product philosophy, and technical boundaries |
 | 🏗️ [**System Architecture (`wiki/architecture.md`)**](wiki/architecture.md) | Data flow pipelines, provider abstraction layer, and system topology |
 | 🎬 [**AI Music Video Studio (`wiki/entities/video-studio.md`)**](wiki/entities/video-studio.md) | Wan 2.1 14B & LTX-Video diffusion, LivePortrait neural singing avatar, autonomous director, pre-rendered keyframes, ASS karaoke |
-| 📦 [**Model Manager (`wiki/entities/model-manager.md`)**](wiki/entities/model-manager.md) | Multi-modal tree, Hugging Face Hub search, and download policies |
+| 🎚️ [**MuLaCover 3B Cover & Remix (`wiki/entities/mulacover.md`)**](wiki/entities/mulacover.md) | Controllable symbolic cross-attention cover engine, dual transcription, and lead sheet extraction |
+| 🎛️ [**Multitrack Timeline Editor (`wiki/entities/multitrack-editor.md`)**](wiki/entities/multitrack-editor.md) | Non-destructive audio/video multi-track timeline, hardware FFmpeg export, and AI round-trip takes |
+| ⚡ [**Global Hardware Coordinator (`wiki/entities/hardware-coordinator.md`)**](wiki/entities/hardware-coordinator.md) | Unified device lock, empirical memory auto-tuning tiers (1–5), and real-time telemetry |
+| ⏱️ [**Durable Task Queue (`wiki/entities/durable-task-queue.md`)**](wiki/entities/durable-task-queue.md) | SQLite-backed persistent queue, input asset vaulting, and crash recovery checkpoints |
 | 🎼 [**MiniMax Music 3 Engine (`wiki/entities/minimax-music3.md`)**](wiki/entities/minimax-music3.md) | Sampling parameters, structured captions, and MLX/DiT hooks |
+| 🎸 [**YuE2 48kHz Stereo Provider (`wiki/entities/yue2-music.md`)**](wiki/entities/yue2-music.md) | Full 48kHz stereo generation, ABC notation guidance, and personal style adapter fine-tuning |
+| 📦 [**Model Manager (`wiki/entities/model-manager.md`)**](wiki/entities/model-manager.md) | Multi-modal tree, Hugging Face Hub search, and download policies |
 | 🎙️ [**Voice Studio & SVC (`wiki/entities/voice-service.md`)**](wiki/entities/voice-service.md) | Offline singing voice conversion (SVC) and acoustic formant chains |
 | 🏛️ [**ADR: Training Studio Decommission (`wiki/entities/training-studio.md`)**](wiki/entities/training-studio.md) | Technical investigation and architectural record retiring fine-tuning |
 | 🤖 [**AI Co-Writer Engine (`wiki/entities/ai-cowriter.md`)**](wiki/entities/ai-cowriter.md) | Multi-agent lyric coordination graph (Lyricist, StructureGuard) |

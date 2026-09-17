@@ -2,87 +2,71 @@
 title: Milimo Music v2 — Refactor & Upgrade Roadmap
 type: overview
 created: 2026-08-19
-updated: 2026-08-20
-sources: [sources/v2-refactor-plan.md]
-tags: [roadmap, v2, daw, minimax, muscriptor]
+updated: 2026-09-16
+sources: [sources/v2-refactor-plan.md, sources/maestro-creative-studio.md]
+tags: [roadmap, v2, daw, minimax, muscriptor, yue2, director, editor, autotune, queue]
 aliases: [v2 plan, refactor plan]
 ---
 
 # Milimo Music v2 — Refactor & Upgrade Roadmap
 
-Synthesis of `devs/milimo-music-v2-refactor-plan.md`. The goal: evolve Milimo from a
-HeartMuLa music generator into a **full open-source AI production DAW**.
+Synthesis of `devs/milimo-music-v2-refactor-plan.md` and production architecture ingest from [Maestro Creative Studio](sources/maestro-creative-studio.md). The goal: evolve Milimo from a generative music tool into a **complete open-source AI production DAW and creative multimedia studio**.
 
-> [!IMPORTANT] **Implementation status (2026-08-20).** Most of this plan is now *built and
-> wired*: the provider abstraction, **MiniMax default with real MLX inference on Apple** (and
-> cross-platform fallback), MuScriptor integration, **dynamic per-instrument stems**,
-> mastering, lyric sync, voice studio, Suno-class IA, 5-mode DAW workspace, Project folders,
-> and OpenCode/OMLX providers are implemented and verified end-to-end. Lower-priority paths
-> remain scaffold-level (DSP stem preview, Matchering mastering stub, SVC not fully wired;
-> HeartMuLa/Heartlib is optional/legacy only). See [v2 reference projects](entities/v2-references.md)
-> for a 🔵/🟡/⚪ status legend per component, and [overview](overview.md) for the current product.
+> [!IMPORTANT] **Implementation status (2026-09-16).**
+> Core v2 architecture (MiniMax Music 3 default, MuScriptor transcription, dynamic per-instrument stems, Apple theme, DAW workspace, project folders, and agent crew) is active.
+> Following the comprehensive investigation of Maestro, the roadmap now incorporates **Director Mode v2**, the **Non-Destructive Multitrack Timeline Editor**, **YuE2 48kHz Stereo Provider**, **Hardware Auto-Tune (Profiles 1–5)**, and the **Durable Task Queue**.
 
-## The core insight
+## The Core Insight
 
-- **MiniMax Music 3** makes Milimo *generate better* (full songs, structured captions).
-- **MuScriptor** makes Milimo *editable* — it's the only piece that turns opaque audio
-  back into structured, note-level, per-instrument data you can touch.
+- **MiniMax Music 3 & YuE2 3B** make Milimo *generate at studio quality* (full songs, structured captions, 48 kHz stereo, ABC notation guidance).
+- **MuScriptor** makes Milimo *editable* — turning opaque audio back into structured, note-level, per-instrument data.
+- **Director Mode v2 & Multitrack Timeline Editor** make Milimo a *complete audio-visual production suite* — aligning cinematic scene cuts with musical downbeats and providing a non-destructive multi-track editor with AI round-trip retakes.
 
-> Target state: generate with any model → auto-transcribe every stem into MIDI + notation
-> via MuScriptor → drop into a multitrack editor (piano roll, mixer, per-instrument
-> regeneration) → export stems/MIDI/MusicXML/master. This is a different product category
-> from Suno, which stays a black box.
+## Key Plan Elements
 
-## Key plan elements
+### 3.1 Generation Provider Abstraction
+Pluggable `GenerationProvider` interface (`generate()`, `extend()`, `repair_segment()`, `capabilities()`). Capabilities drive UI options:
+- **MiniMax Music 3**: Default DiT flow-matching with Structured Captions.
+- **YuE2 3B**: Open-weight foundation model delivering native **48 kHz stereo music**, symbolic ABC notation guidance, and personal style adapter fine-tuning.
+- **HeartMuLa**: Legacy 44.1kHz provider.
+- **MuLaCover 3B**: Symbolic cover generation.
 
-### 3.1 Generation Provider abstraction
-Replace the hardcoded HeartMuLa path with a **`GenerationProvider` interface**
-(`generate()`, `extend()`, `repair_segment()`, `capabilities()`). **Capabilities, not model
-names**, drive the UI (e.g. `max_duration`, `supports_structured_caption`,
-`supports_section_tags`, `supports_lora`).
+### 3.2 MuScriptor Neural Transcription Engine
+Generated WAV $\rightarrow$ neural transcription $\rightarrow$ per-instrument MIDI + MusicXML + note JSON.
+Users can edit notes directly in the 5-mode DAW workspace (Piano Roll, Notation, Arrange, Mixer, Lyrics).
 
-### 3.2 MiniMax Music 3 as default, HeartMuLa as option
-Settings gains a **Model** section. MiniMax is a heavier deployment (2-GPU split or
-SGLang-Omni); docs need a real hardware-tiers table. The Co-Writer's Lyricist learns to
-emit **Structured Captions** when MiniMax is active.
+### 3.3 Director Mode v2 (Beat-Aware & Performer Directing)
+Upgrades video generation into a multi-signal directing engine:
+- **Hierarchical Accent Snapping**: Scored cut boundaries landing on beats ($+0.5$), downbeats ($+1.8$), lyric phrase boundaries ($+2.5$), and percussion entrances.
+- **Cut Speed Slider ($-2$ to $+2$)**: Lets creators select between sweeping long takes and rapid beat-matched montage cuts.
+- **Performer Role Ownership**: Mandates `mouth_movement: closed` during instrumental breaks and guitar/drum solos, reserving lip-sync exclusively for the active singer.
+- **Discrete Frame Lattice Snapping**: Snaps clips to discrete video model frame increments ($F_{\text{min}} + k \cdot F_{\text{step}}$) with sample-accurate FFmpeg sub-second trimming (`music_output_trim`) to eliminate cumulative drift.
 
-### 3.3 MuScriptor as the producer-edit engine
-Biggest structural addition: generated WAV → transcription → per-instrument MIDI +
-MusicXML + note-JSON. A "song" becomes `{ audio, midi, notation, stems, metadata }`.
-User note-level edits become an editable production layer over the immutable AI master.
+### 3.4 Non-Destructive Multitrack Timeline Editor
+- Multitrack composition workspace layering video tracks, isolated stem channels (`vocals`, `drums`, `bass`, `other`), and animated subtitle lanes.
+- Single-pass FFmpeg filter graph compilation using hardware encoders (NVIDIA NVENC, Apple Silicon VideoToolbox, Linux VAAPI).
+- **AI Round-Trip Take**: Select any timeline clip $\rightarrow$ send to AI for a retake or variation $\rightarrow$ drops back into the timeline slot without disturbing cut boundaries or soundtrack sync.
 
-### 3.4 Model & adapter management
-MiniMax's HF repo is a **model tree** (2B base + Adapters/Finetunes/Quantizations).
-Backend needs a model-manifest fetcher + download-on-demand UI, applied to HeartMuLa too.
+### 3.5 Hardware Auto-Tune & Memory Profiles (Profiles 1 to 5)
+Zero-config startup profiling:
+- Profiles 1–5 automatically configured from GPU VRAM and host RAM.
+- Strict $\le 0.80$ VRAM safety coefficient to prevent activation spikes from causing OOM errors.
+- `cpu_scoped()` execution for Librosa, torchaudio, and audio pre-processing.
+- OOM interception and self-healing headroom adjustment.
 
-### 3.5 Dependency currency policy
-Every third-party dependency gets a swappable, versioned reference (lesson from Demucs
-being archived). Provider abstraction applies to audio-processing tools too.
-
-### 3.6 Voice Training & Vocal Identity Cloning
-Neither model does vocal-identity cloning natively. Path: **post-generation SVC** using
-**RVC v2** (via maintained forks like Applio) or So-VITS-SVC, layered on the stem
-separation pipeline. A "Sing as…" voice-profile selector in Compose. Requires a consent gate.
-
-### 3.7 New backend capabilities
-Fast stem separation (**BS-Roformer/MelBand-Roformer** 6-stem via `audio-separator` and native neural pipeline), reference mastering
-(**Matchering**), acoustic & syllable-weighted karaoke sync, stem/MIDI/MusicXML export,
-piano roll/notation editing, instrument re-assignment, remix/rearrange, import &
-transcribe user audio, DAW-native (Ableton) export.
-
-### 4. UI: session grows a workspace
-Keep the Apple-grade DAW workspace (left rail, chat-first Compose, Explore feed) with a finished
-session mode switcher: **Listen → Arrange → Piano Roll → Notation → Mix → Lyrics**.
-
-### 5. Licensing
-Non-commercial open source; produce an accurate `LICENSES.md` matrix
-(model → weight license → code license). MuScriptor weights are CC BY-NC 4.0 (MIT code);
-usage terms prohibit transcribing audio you don't hold rights to.
+### 3.6 Durable Task Queue & Job Recovery
+- Persistent SQLite queue replacing volatile in-memory task dictionaries.
+- Input asset vaulting ensuring running jobs cannot be corrupted by external file movements.
+- 1-Click restart recovery restoring interrupted jobs to `PAUSED` state without losing previously rendered clips.
+- Queue pre-enhancement executing prompt expansion in the background while the GPU is busy.
 
 ## Status
-Core v2 capabilities (MiniMax Music 3 provider, MuScriptor neural transcription, BS-Roformer 6-stem separation, dynamic DAW workspace, acoustic karaoke synchronization, voice profile management) are actively shipped and integrated. Ongoing work focuses on fine-tuning extensions and external mastering plugins.
+
+Core generative and transcription pipelines are integrated. Current priority focus is deploying Director Mode v2, the Multitrack Timeline Editor, Hardware Auto-Tune, and YuE2 48kHz audio support.
 
 ## Related pages
 - [Overview](overview.md) | [Architecture](architecture.md)
-- [MiniMax Music 3](entities/minimax-music3.md) | [MuScriptor](entities/muscriptor.md)
+- [Director Mode v2](concepts/director-mode-v2.md) | [Multitrack Timeline Editor](entities/multitrack-editor.md)
+- [Non-Destructive Multitrack Timeline](concepts/non-destructive-multitrack-timeline.md) | [YuE2 Music](entities/yue2-music.md)
+- [Hardware Auto-Tune](concepts/hardware-autotune-memory-profiles.md) | [Durable Task Queue](entities/durable-task-queue.md)
 - [v2 reference projects](entities/v2-references.md) | [Index](index.md)

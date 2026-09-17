@@ -2,14 +2,14 @@
 title: AI Music Video Studio
 type: entity
 created: 2026-09-07
-updated: 2026-09-15
-tags: [video, studio, wan, liveportrait, ltx-video, diffusers, lipsync, karaoke, ass]
+updated: 2026-09-16
+tags: [video, studio, wan, liveportrait, ltx-video, diffusers, lipsync, karaoke, ass, director, timeline]
 aliases: [VideoStudio, MusicVideosView, VideoService, VideoOrchestrator]
 ---
 
 # AI Music Video Studio
 
-The **AI Music Video Studio** (`backend/app/services/video/` and frontend `MusicVideosView.tsx`) is Milimo Music's production-grade AI music video generation, neural singing avatar animation, and visual performance engine. It turns generated music tracks into broadcast-grade music videos with beat-matched scene cuts, neural facial lip-syncing driven by isolated vocal stems, pre-rendered scene keyframes, synchronized karaoke subtitles, and cinematic video diffusion.
+The **AI Music Video Studio** (`backend/app/services/video/` and frontend `MusicVideosView.tsx`) is Milimo Music's production-grade AI music video generation, neural singing avatar animation, and visual performance engine. It turns generated music tracks into broadcast-grade music videos with beat-matched scene cuts, neural facial lip-syncing driven by isolated vocal stems, pre-rendered scene keyframes, synchronized karaoke subtitles, cinematic video diffusion, and a non-destructive multi-track timeline editor.
 
 ## 1. Generative Video Models & Diffusion Engines
 
@@ -20,36 +20,41 @@ Frontier text-to-video and image-to-video diffusion models operate with strict s
 | `wan_14b` | Alibaba Wan 2.1 14B | **5.0s** | `WanPipeline` / `WanImageToVideoPipeline` | SOTA 14B DiT with 3D spatio-temporal attention, keyframe I2V and T2V |
 | `wan_1.3b` | Alibaba Wan 2.1 1.3B | **5.0s** | `WanPipeline` / `WanImageToVideoPipeline` | Lightweight 1.3B DiT suitable for rapid local rendering |
 | `ltx_video` | Lightricks LTX-Video 0.9B | **10.0s** | `LTXPipeline` / `LTXImageToVideoPipeline` | Real-time high-efficiency DiT capable of up to 10s continuous generation |
+| `hailuo_h3` | MiniMax Hailuo H3 33B | **15.0s** | Native H3 DiT / MLX | SOTA 33B Omni-modal DiT with Context-IR prompt formatting |
 | `cloud_fal` | Fal.ai Cloud GPU | **5.0s - 15.0s** | Fast Serverless REST | Offloaded Wan 2.1 / LivePortrait generation without local GPU pressure |
 | `cloud_replicate`| Replicate Cloud GPU | **5.0s - 15.0s** | Managed Model Runner | Offloaded Wan 2.1 / LivePortrait execution via Replicate API token |
 
-- **Musical Bar Snapping**: `VideoDirector.segment_song()` uses detected BPM to snap clip durations to exact integer musical bars (`(60.0 / BPM) * 4.0`), guaranteeing that scene cuts land precisely on musical beats.
+- **Director Mode v2 Musical Pacing**: Upgraded from naive fixed bars to [Director Mode v2](../concepts/director-mode-v2.md) featuring hierarchical scored accent snapping (beats $+0.5$, downbeats $+1.8$, lyric boundaries $+2.5$), cut speed bias ($-2$ to $+2$), and model-native discrete frame increments ($F_{\text{min}} + k \cdot F_{\text{step}}$) with sub-second output trimming.
 - **Keyframe Pre-Rendering**: Users can pre-render visual keyframe stills (`POST /videos/keyframes/{job_id}`) across all planned scenes to inspect and approve directorial composition before triggering full video diffusion.
 
 ## 2. Neural Singing Avatar & Lip-Syncing (LivePortrait)
 
 To eliminate unnatural mouth twitching and deliver broadcast-quality vocal performances:
 1. **Stem Isolation**: The director routes only the isolated vocal track (`vocals.wav` / `vocals.mp3` from Demucs) to the lip-sync engine. Heavy kicks and 808 bass cannot distort lip movements.
-2. **LivePortrait Neural Avatar**:
+2. **Performer Role Ownership**: Conforms to [Director Mode v2](../concepts/director-mode-v2.md) performer rules: during instrumental solos or drum cutaways, the performer's mouth is strictly kept closed (`mouth_movement: closed`), reserving lip-sync solely for the assigned active singer.
+3. **LivePortrait Neural Avatar**:
    - Uses implicit keypoint representations and landmark deformation driven by audio pitch and amplitude.
    - Synthesizes organic eye blinks, micro-expressions, head nods, and realistic phonetic viseme transitions.
    - Executed under [Global Hardware Coordinator](hardware-coordinator.md) device locks to prevent VRAM exhaustion with audio pipelines.
    - Supports local Apple Silicon PyTorch MPS execution as well as cloud GPU offloading.
-3. **Smooth Viseme Mesh Fallback**:
+4. **Smooth Viseme Mesh Fallback**:
    - For low-resource environments without neural weights, a bilinear jaw mesh warp engine smoothly translates the mouth cavity and lips based on vocal power envelopes, avoiding static OpenCV ellipse overlays.
-4. **Stem Audio-Reactive Modulation**:
+5. **Stem Audio-Reactive Modulation**:
    - Powered by [Stem Audio-Reactive Video](../concepts/stem-audio-reactive-video.md) (`stem_audio_reactive.py`), extracting clean vocal envelopes for lip-sync and percussive downbeat transients from drums/bass to drive Wan 2.1 camera zooms, pulses, and shakes.
 
-## 3. Autonomous Video Director
+## 3. Autonomous Video Director v2
 
 - **Musical Beat & Lyric Alignment**: Analyzes energy peaks and lyrical timestamps to segment tracks into Vocal Performance scenes (when lyrics are active) and Cinematic B-Roll scenes (instrumental breaks, drops, intros).
 - **Cinematic Camera & Lighting Direction**: Directs specialized camera motions (dolly zoom, slow track, crane sweep, orbiting steadycam) and volumetric lighting designs (cyan rim, warm amber spotlights, atmospheric haze) matched to the selected aesthetic preset.
+- **Model-Specific Prompt Compilation**: Translates high-level shot plans into model-specific dialects (e.g. Context-IR for MiniMax H3, LTX-2.5 embedded prompt rules, or Wan2.1 action tags).
 
-## 4. Synchronized Karaoke & Master Audio Muxing
+## 4. Multitrack Timeline & Master Rendering
 
-- **ASS Subtitle Burning**: Compiles Advanced SubStation Alpha (`.ass`) karaoke scripts with real-time word/syllable timing and style-matched color highlights, burned directly into video streams using FFmpeg `-filter_complex "[0:v]subtitles='...'"`.
-- **Sample-Accurate Remuxing**: Stitches individual MP4 video clips via FFmpeg concat demuxer and remuxes with 256k AAC master audio, ensuring zero audio-video drift across the entire track duration.
+- **Non-Destructive Multitrack Editor**: Integrated with [Multitrack Timeline Editor](multitrack-editor.md) and [Non-Destructive Multitrack Timeline](../concepts/non-destructive-multitrack-timeline.md), enabling creators to arrange video tracks, stem audio tracks, and subtitle layers with in/out trims, opacity, crossfades, and canvas transforms (16:9, 9:16, 21:9).
+- **AI Round-Trip Take**: Select any scene clip on the timeline to generate an AI retake or variation and drop it directly back into the exact timeline slot without re-editing neighboring scenes.
+- **Hardware-Accelerated Single-Pass Compilation**: Compiles the composition into a single FFmpeg `-filter_complex` command using NVENC or Apple Silicon VideoToolbox, remuxed with 256k AAC audio and zero generational loss.
 
 ## Related pages
 - [Overview](../overview.md) | [Architecture](../architecture.md) | [Stem Separator](stem-separator.md) | [Karaoke & Lyric Sync](karaoke-lyricsync.md)
-- [Global Hardware Coordinator](hardware-coordinator.md) | [Sidecar Engine Manager](sidecar-engine-manager.md) | [Stem Audio-Reactive Video](../concepts/stem-audio-reactive-video.md)
+- [Global Hardware Coordinator](hardware-coordinator.md) | [Director Mode v2](../concepts/director-mode-v2.md) | [Multitrack Timeline Editor](multitrack-editor.md)
+- [Non-Destructive Multitrack Timeline](../concepts/non-destructive-multitrack-timeline.md) | [Hardware Auto-Tune](../concepts/hardware-autotune-memory-profiles.md)

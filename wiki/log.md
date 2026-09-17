@@ -1878,3 +1878,12 @@ Completed four-part upgrade across backend and frontend:
    - Frontend: `npm run build` compiled with 0 errors.
    - API/UI Parity: `scripts/check_api_parity.py` verified 132 routes, all called; 137 client calls, all resolve.
    - Backend Tests: All tests in `test_extension_inpaint.py`, `test_api_parity.py`, `test_v2_core.py`, and `test_audio_serving.py` passed.
+
+## [2026-09-16] ingest | Maestro Creative Studio
+Completed thorough investigation of Blizaine/Maestro (v2.2.1) and ingested key architectural systems into Milimo Music:
+1. Ingested `sources/maestro-creative-studio.md` analyzing Director Mode v2, Multitrack Editor, YuE2 48kHz audio, Hardware Auto-Tune, and Universal Queue.
+2. Created `concepts/director-mode-v2.md` formalizing scored musical accent snapping (beats 0.5, downbeats 1.8, lyric boundaries 2.5), cut speed bias (-2 to +2), model-native frame lattice increments ($F_{\text{min}} + k \cdot F_{\text{step}}$), output trimming, and performer role ownership (eliminating flapping lips on instrumental cutaways).
+3. Created `concepts/non-destructive-multitrack-timeline.md` formalizing atomic multitrack JSON schema, single-pass hardware-accelerated FFmpeg filter graph compilation (NVENC, VideoToolbox, VAAPI), and the AI Round-Trip Take workflow.
+4. Created `concepts/hardware-autotune-memory-profiles.md` formalizing empirical Profiles 1–5, $\le 0.80$ VRAM safety coefficients, scoped CPU memory execution (`cpu_scoped()`), kernel benchmarking, and self-healing OOM telemetry.
+5. Created entity pages: `entities/yue2-music.md` (48 kHz stereo foundation provider, ABC scores, personal style LoRA studio), `entities/multitrack-editor.md` (DAW/video editor), and `entities/durable-task-queue.md` (persistent SQLite queue, asset vaulting, restart recovery).
+6. Updated `entities/video-studio.md`, `entities/hardware-coordinator.md`, `architecture.md`, `roadmap.md`, and `index.md`.

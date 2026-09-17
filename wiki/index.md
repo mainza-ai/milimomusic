@@ -2,7 +2,7 @@
 title: Milimo Music Wiki — Index
 type: index
 created: 2026-08-19
-updated: 2026-09-15
+updated: 2026-09-16
 ---
 
 # Milimo Music Wiki — Index
@@ -20,6 +20,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 
 - [Generation Provider Abstraction](entities/generation-provider.md) — pluggable `GenerationProvider` interface + registry + capability manifests.
 - [MiniMax Music 3](entities/minimax-music3.md) — the default generation model (structured captions, up to 5 min; fallback-to-synth now surfaced to the UI).
+- [YuE2 48kHz Stereo Music Provider](entities/yue2-music.md) — open-weight 48 kHz stereo music generation, ABC notation guidance, source covers, and personal style adapter fine-tuning.
 - [MuLaCover](entities/mulacover.md) — 3B controllable music cover & remix engine (symbolic cross-attention, dual transcription, composite downloader).
 - [HeartMuLa](entities/heartmula.md) — the 3B music language model; now a legacy/local provider.
 - [Heartlib](entities/heartlib.md) — the local audio-generation framework wrapping HeartMuLa + HeartCodec.
@@ -32,6 +33,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 ## Entities — transcription, DAW & production
 
 - [MuScriptor](entities/muscriptor.md) — multi-instrument transcription → MIDI + MusicXML (git submodule, integrated).
+- [Multitrack Timeline Editor](entities/multitrack-editor.md) — non-destructive video and audio multi-track editor, transitions, hardware-accelerated FFmpeg export, and AI round-trip takes.
 - [Drum Tracker](entities/drum-tracker.md) — spectral flux sub-band onset extraction for Kick (36), Snare (38), Hi-Hat (42) MIDI conditioning.
 - [Stem Separation (Dual-Engine)](entities/stem-separator.md) — HTDemucs real neural separation + MuScriptor per-instrument parts, user-selectable in the DAW.
 - [Matchering Reference Mastering](entities/matchering-mastering.md) — -14 LUFS reference mastering.
@@ -44,13 +46,14 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 
 ## Entities — in-app services & agents
 
-- [Global Hardware Coordinator](entities/hardware-coordinator.md) — centralized GPU device lock, VRAM telemetry, multi-backend cache flushing, and live telemetry bar.
+- [Global Hardware Coordinator](entities/hardware-coordinator.md) — centralized GPU device lock, Auto-Tune empirical profiles (1–5), VRAM safety coefficients, scoped CPU memory execution, and live telemetry bar.
+- [Durable Task Queue & Job Lifecycle Manager](entities/durable-task-queue.md) — persistent SQLite task queue, input asset vaulting, independent clip checkpointing, and 1-click restart recovery.
 - [Sidecar Engine Manager](entities/sidecar-engine-manager.md) — isolated `uv` virtual environments for external audio/video backbones (`backend/engines/<id>/.venv`).
 - [AI Co-Writer](entities/ai-cowriter.md) — the multi-agent lyrics engine (Coordinator→Lyricist→StructureGuard).
 - [Producer Service](entities/producer-service.md) — LLM producer that enhances weak prompts + writes real lyrics; captions now come from the [Caption Rewriter](concepts/caption-rewriter.md).
 - [Training Studio](entities/training-studio.md) — (Deprecated) decommissioned due to MiniMax Music 3 decoder-only architecture and VRAM constraints. `tags: [training, lora, deprecated]`
 - [Artist Crew Agents](entities/artist-crew-agents.md) — the four registered agents (Experiencer, World Builder, Stylist, Critic) and how they hook into the album pipeline.
-- [Durable Task Queue](entities/task-queue.md) — Phase 4 design (locked): SQLite-backed `TaskRecord` queue, GPU/IO lanes, 202 + SSE endpoint conversions, re-enqueue-on-restart.
+- [Task Queue (Phase 4)](entities/task-queue.md) — Phase 4 design (locked): SQLite-backed `TaskRecord` queue, GPU/IO lanes, 202 + SSE endpoint conversions, re-enqueue-on-restart.
 - [Repair Segment / Inpainting Service](entities/inpainting.md) — audio-domain infill regeneration, beat-grid downbeat snapping, equal-power crossfading, and post-repair separation/transcription cascade.
 - [LLM Service & Providers](entities/llm-service.md) — OpenCode, Anthropic Claude, OMLX, Ollama, OpenAI, Gemini, OpenRouter, DeepSeek, LM Studio, NVIDIA NIM.
 - [Backend & API](entities/backend-api.md) — FastAPI/SQLModel backend, Job/Project models, endpoints, SSE.
@@ -63,6 +66,9 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 
 ## Concepts
 
+- [Director Mode v2](concepts/director-mode-v2.md) — multi-signal audio analysis, hierarchical accent snapping, cut speed pacing ($-2$ to $+2$), performer role ownership, and discrete model frame lattice trimming.
+- [Non-Destructive Multitrack Timeline](concepts/non-destructive-multitrack-timeline.md) — atomic project schema, single-pass FFmpeg hardware-accelerated filter graph compilation (NVENC/VideoToolbox), and AI round-trip take workflow.
+- [Hardware Auto-Tune, Memory Profiles & OOM Self-Healing](concepts/hardware-autotune-memory-profiles.md) — zero-config empirical profiles 1 to 5, $\le 0.80$ VRAM safety coefficient, scoped CPU execution, kernel benchmarking (PyTorch vs Triton), and self-healing telemetry.
 - [Orchestration Pipeline](concepts/generation-pipeline.md) — the 4-step generate → stems → voice → transcribe flow.
 - [Structured Captions](concepts/structured-caption.md) — the MiniMax Global Metadata / Vocal Details / Arrangement format.
 - [Caption Rewriter](concepts/caption-rewriter.md) — official music-caption-rewriter port: brief → professional three-heading caption via the real LLM.
@@ -97,6 +103,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 
 ## Sources
 
+- [Maestro Creative Studio Ingest](sources/maestro-creative-studio.md) — architecture, Director v2, Editor mode, YuE2 48kHz audio, Hardware Auto-Tune, and universal queue.
 - [README (Milimo Music)](sources/readme.md) — product overview, capabilities, setup.
 - [Heartlib Bible](sources/heartlib-bible.md) — the definitive Heartlib framework guide.
 - [Training Studio Guide](sources/training-studio-guide.md) — UI + API reference for fine-tuning.

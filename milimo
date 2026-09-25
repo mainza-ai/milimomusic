@@ -162,7 +162,7 @@ cmd_start() {
     # Start Frontend dev server if requested with --dev
     if [[ "$*" == *"--dev"* ]]; then
         cd "$DIR/frontend"
-        nohup npm run dev -- --host 0.0.0.0 > "$LOG_DIR/frontend.log" 2>&1 &
+        nohup npm run dev -- --host 0.0.0.0 < /dev/null > "$LOG_DIR/frontend.log" 2>&1 &
         echo $! > "$FRONTEND_PID_FILE"
         echo "   Frontend dev server started (PID $(cat "$FRONTEND_PID_FILE")), logging to $LOG_DIR/frontend.log"
     fi

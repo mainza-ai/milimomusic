@@ -32,6 +32,7 @@ from app.services.video.generators.diffusers_ltx import DiffusersLTXGenerator
 from app.services.video.generators.cloud_video import CloudVideoGenerator
 from app.services.video.generators.procedural import ProceduralVideoGenerator
 from app.core.hardware_lock import GlobalHardwareCoordinator
+from app.core.task_queue import task_queue
 from app.services.video.stem_audio_reactive import extract_stem_reactive_modulation
 
 logger = logging.getLogger(__name__)
@@ -65,7 +66,13 @@ class VideoOrchestrator:
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             t = self._tasks.get(task_id)
-            return t.to_dict() if t else None
+            if t:
+                return t.to_dict()
+        # Query durable SQLite task queue if not in memory
+        pt = task_queue.get_task(task_id)
+        if pt:
+            return pt.to_dict()
+        return None
 
     def update_task(self, task_id: str, **kwargs):
         with self._lock:
@@ -74,6 +81,20 @@ class VideoOrchestrator:
                 for k, v in kwargs.items():
                     if hasattr(t, k):
                         setattr(t, k, v)
+        # Update persistent SQLite queue
+        try:
+            status = kwargs.get("status")
+            progress = kwargs.get("progress")
+            step = kwargs.get("step") or kwargs.get("error")
+            task_queue.update_task(
+                task_id=task_id,
+                status=status,
+                progress=progress,
+                message=step,
+                error=kwargs.get("error"),
+            )
+        except Exception as e:
+            logger.debug(f"Failed to sync task {task_id} to durable queue: {e}")
 
     def resolve_audio_path(self, path: Optional[str]) -> Optional[str]:
         if not path:
@@ -300,6 +321,19 @@ class VideoOrchestrator:
         )
         with self._lock:
             self._tasks[task_id] = task_info
+
+        try:
+            task_queue.enqueue_task(
+                task_id=task_id,
+                task_type="video_generation",
+                payload={"job_id": str(job.id), "config": config},
+                initial_status="processing",
+                initial_message="Analyzing Track & Ingesting Stems",
+            )
+            if job.audio_path:
+                task_queue.create_task_workspace(task_id, [job.audio_path])
+        except Exception as e:
+            logger.warning(f"Failed persisting task {task_id} to SQLite queue: {e}")
 
         rendered_clips: List[str] = []
         hardware_acquired = False

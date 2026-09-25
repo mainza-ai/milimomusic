@@ -97,7 +97,7 @@ const AESTHETIC_STYLES: AestheticStyle[] = [
     { id: 'custom', name: 'Custom Prompt', category: 'custom', desc: 'Freeform director notes, lighting & color grade', swatch: 'from-indigo-500 via-purple-500 to-pink-500' }
 ];
 
-export const VideoInspectorDock: React.FC<VideoInspectorProps> = ({
+const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
     videoModel,
     onSelectModel,
     modelConstraints,
@@ -155,7 +155,7 @@ export const VideoInspectorDock: React.FC<VideoInspectorProps> = ({
     );
 
     return (
-        <GlassCard className="p-3.5 sm:p-4 flex flex-col h-full rounded-2xl border border-black/[0.08] dark:border-white/10 shadow-apple-lg">
+        <GlassCard animateEntry={false} className="p-3.5 sm:p-4 flex flex-col h-full rounded-2xl border border-black/[0.08] dark:border-white/10 shadow-apple-lg">
             {/* Dock Header Tabs (Responsive & Compact) */}
             <div className="flex items-center space-x-1 p-1 bg-black/[0.04] dark:bg-white/5 rounded-xl border border-black/[0.06] dark:border-white/10 mb-4 overflow-x-auto scrollbar-none">
                 <button
@@ -710,3 +710,5 @@ export const VideoInspectorDock: React.FC<VideoInspectorProps> = ({
         </GlassCard>
     );
 };
+
+export const VideoInspectorDock = React.memo(VideoInspectorDockComponent);

@@ -39,7 +39,7 @@ interface VideoTopBarProps {
     onDownloadVideo?: () => void;
 }
 
-export const VideoTopBar: React.FC<VideoTopBarProps> = ({
+const VideoTopBarComponent: React.FC<VideoTopBarProps> = ({
     completedSongs,
     selectedSongId,
     onSelectSong,
@@ -249,3 +249,5 @@ export const VideoTopBar: React.FC<VideoTopBarProps> = ({
         </header>
     );
 };
+
+export const VideoTopBar = React.memo(VideoTopBarComponent);

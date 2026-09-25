@@ -1489,6 +1489,10 @@ export const videoApi = {
         const res = await axios.get(`${API_BASE_URL}/videos/active-engine`);
         return res.data;
     },
+    setActiveVideoEngine: async (engine: string): Promise<{ status: string; engine: string; model_id: string | null; name: string | null; weights_present: boolean }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/active-engine`, { engine });
+        return res.data;
+    },
     getVideoProviders: async (): Promise<VideoProvider[]> => {
         const res = await axios.get(`${API_BASE_URL}/videos/providers`);
         return res.data;

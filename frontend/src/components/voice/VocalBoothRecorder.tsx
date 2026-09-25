@@ -19,7 +19,7 @@ interface VocalBoothRecorderProps {
     maxDurationSec?: number;
 }
 
-export const VocalBoothRecorder: React.FC<VocalBoothRecorderProps> = ({
+const VocalBoothRecorderComponent: React.FC<VocalBoothRecorderProps> = ({
     onAudioCaptured,
     onUseAsVocalTrack,
     onCancel,
@@ -31,9 +31,9 @@ export const VocalBoothRecorder: React.FC<VocalBoothRecorderProps> = ({
     const [audioBlob, setAudioBlob] = useState<Blob | null>(null);
     const [audioUrl, setAudioUrl] = useState<string | null>(null);
     const [isPlaying, setIsPlaying] = useState<boolean>(false);
-    const [meterLevels, setMeterLevels] = useState<number[]>(Array(16).fill(0));
     const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
+    const canvasRef = useRef<HTMLCanvasElement | null>(null);
     const mediaRecorderRef = useRef<MediaRecorder | null>(null);
     const streamRef = useRef<MediaStream | null>(null);
     const audioContextRef = useRef<AudioContext | null>(null);
@@ -99,21 +99,54 @@ export const VocalBoothRecorder: React.FC<VocalBoothRecorderProps> = ({
         };
     }, []);
 
-    // Live level visualizer loop
+    // Live level visualizer loop (direct 60fps canvas paint without React state re-renders)
     const updateMeter = useCallback(() => {
-        if (!analyserRef.current) return;
-        const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
-        analyserRef.current.getByteFrequencyData(dataArray);
+        const loop = () => {
+            if (!analyserRef.current) return;
+            const canvas = canvasRef.current;
+            if (canvas) {
+                const ctx = canvas.getContext('2d');
+                if (ctx) {
+                    const width = canvas.width;
+                    const height = canvas.height;
+                    const dataArray = new Uint8Array(analyserRef.current.frequencyBinCount);
+                    analyserRef.current.getByteFrequencyData(dataArray);
 
-        // Sample 16 discrete frequency buckets
-        const step = Math.floor(dataArray.length / 16);
-        const levels = Array.from({ length: 16 }, (_, i) => {
-            const val = dataArray[i * step] || 0;
-            return Math.min(100, Math.round((val / 255) * 100));
-        });
-        setMeterLevels(levels);
+                    ctx.clearRect(0, 0, width, height);
 
-        animFrameRef.current = requestAnimationFrame(updateMeter);
+                    const numBars = 16;
+                    const gap = 4;
+                    const barWidth = (width - (numBars - 1) * gap) / numBars;
+                    const step = Math.max(1, Math.floor(dataArray.length / numBars));
+
+                    for (let i = 0; i < numBars; i++) {
+                        const val = dataArray[i * step] || 0;
+                        const percent = Math.max(0.08, val / 255);
+                        const barHeight = percent * height;
+                        const x = i * (barWidth + gap);
+                        const y = height - barHeight;
+
+                        if (percent > 0.8) {
+                            ctx.fillStyle = '#f43f5e'; // rose-500
+                        } else if (percent > 0.5) {
+                            ctx.fillStyle = '#fbbf24'; // amber-400
+                        } else {
+                            ctx.fillStyle = '#2dd4bf'; // teal-400
+                        }
+
+                        if (typeof ctx.roundRect === 'function') {
+                            ctx.beginPath();
+                            ctx.roundRect(x, y, barWidth, barHeight, [2, 2, 0, 0]);
+                            ctx.fill();
+                        } else {
+                            ctx.fillRect(x, y, barWidth, barHeight);
+                        }
+                    }
+                }
+            }
+            animFrameRef.current = requestAnimationFrame(loop);
+        };
+        loop();
     }, []);
 
     // Start recording after countdown
@@ -251,7 +284,7 @@ export const VocalBoothRecorder: React.FC<VocalBoothRecorderProps> = ({
     };
 
     return (
-        <GlassCard className="p-5 border border-teal-500/20 bg-gradient-to-b from-teal-500/[0.03] to-cyan-500/[0.02]">
+        <GlassCard animateEntry={false} className="p-5 border border-teal-500/20 bg-gradient-to-b from-teal-500/[0.03] to-cyan-500/[0.02]">
             <div className="flex items-center justify-between pb-3 border-b border-black/[0.06] dark:border-white/10">
                 <div className="flex items-center space-x-2">
                     <div className="w-8 h-8 rounded-xl bg-teal-500/10 text-teal-600 dark:text-teal-400 flex items-center justify-center">
@@ -329,21 +362,14 @@ export const VocalBoothRecorder: React.FC<VocalBoothRecorderProps> = ({
             {/* State 3: RECORDING */}
             {state === 'recording' && (
                 <div className="py-5 space-y-4">
-                    {/* Live Peak Meter Bars */}
-                    <div className="flex items-end justify-center gap-1.5 h-16 px-4 bg-black/10 dark:bg-black/40 rounded-xl p-2">
-                        {meterLevels.map((lvl, idx) => (
-                            <div
-                                key={idx}
-                                style={{ height: `${Math.max(8, lvl)}%` }}
-                                className={`w-3.5 rounded-t-sm transition-all duration-75 ${
-                                    lvl > 80
-                                        ? 'bg-rose-500'
-                                        : lvl > 50
-                                        ? 'bg-amber-400'
-                                        : 'bg-teal-400'
-                                }`}
-                            />
-                        ))}
+                    {/* Live Peak Meter Canvas (Direct GPU Paint) */}
+                    <div className="flex items-center justify-center h-16 px-4 bg-black/10 dark:bg-black/40 rounded-xl p-2">
+                        <canvas
+                            ref={canvasRef}
+                            width={320}
+                            height={64}
+                            className="w-full max-w-xs h-12"
+                        />
                     </div>
 
                     <div className="flex items-center justify-between px-2">
@@ -433,3 +459,5 @@ export const VocalBoothRecorder: React.FC<VocalBoothRecorderProps> = ({
         </GlassCard>
     );
 };
+
+export const VocalBoothRecorder = React.memo(VocalBoothRecorderComponent);

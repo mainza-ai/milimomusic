@@ -4601,6 +4601,19 @@ def get_active_video_engine():
     return video_service.get_active_video_engine()
 
 
+@app.post("/videos/active-engine")
+def set_active_video_engine(body: dict = Body(...)):
+    """Set the active video engine, persist to active_models.json, and sync with model_manager."""
+    engine_or_model = body.get("engine") or body.get("model_id")
+    if not engine_or_model:
+        raise HTTPException(status_code=400, detail="engine or model_id is required")
+    from app.services.video_service import video_service
+    try:
+        return video_service.set_active_video_engine(engine_or_model)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
 @app.get("/videos/providers")
 def get_video_providers():
     """Return available video generation and lip-sync providers (Local M3 Max, Fal.ai, Replicate)."""
@@ -4629,7 +4642,7 @@ async def plan_music_video(job_id: str, req: VideoPlanRequest = Body(default=Vid
         job = get_job_by_id(session, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        model_name = req.model_name or "wan2.1"
+        model_name = req.model_name or "wan_14b"
         model_max = video_service.get_model_max_duration(model_name)
         if req.max_clip_duration is not None and float(req.max_clip_duration) > 0:
             clip_dur = max(1.0, min(float(req.max_clip_duration), model_max))

@@ -1,4 +1,4 @@
-import React, { useState, useRef, useEffect } from 'react';
+import React, { useState, useRef, useEffect, useMemo } from 'react';
 import {
     Play,
     Pause,
@@ -24,7 +24,7 @@ interface VocalAuditionPlayerProps {
 
 export type AuditionSource = 'converted' | 'original' | 'master';
 
-export const VocalAuditionPlayer: React.FC<VocalAuditionPlayerProps> = ({
+const VocalAuditionPlayerComponent: React.FC<VocalAuditionPlayerProps> = ({
     track,
     originalVocalUrl,
     convertedVocalUrl,
@@ -41,8 +41,8 @@ export const VocalAuditionPlayer: React.FC<VocalAuditionPlayerProps> = ({
 
     const audioRef = useRef<HTMLAudioElement | null>(null);
 
-    // Resolve current active audio URL
-    const getActiveUrl = (): string | null => {
+    // Resolve current active audio URL with useMemo
+    const activeUrl = useMemo<string | null>(() => {
         if (selectedSource === 'converted' && convertedVocalUrl) {
             return api.getAudioUrl(convertedVocalUrl);
         }
@@ -60,9 +60,7 @@ export const VocalAuditionPlayer: React.FC<VocalAuditionPlayerProps> = ({
             : track?.audio_path
             ? api.getAudioUrl(track.audio_path)
             : null;
-    };
-
-    const activeUrl = getActiveUrl();
+    }, [selectedSource, convertedVocalUrl, originalVocalUrl, remixedMasterUrl, track?.audio_path]);
 
     // Auto-switch to converted when newly available
     useEffect(() => {
@@ -74,6 +72,11 @@ export const VocalAuditionPlayer: React.FC<VocalAuditionPlayerProps> = ({
     // Update audio source when activeUrl changes, preserving playhead position if applicable
     useEffect(() => {
         if (!audioRef.current || !activeUrl) return;
+        const targetUrl = new URL(activeUrl, window.location.href).href;
+        if (audioRef.current.src === targetUrl) {
+            return;
+        }
+
         const wasPlaying = isPlaying;
         const prevTime = audioRef.current.currentTime;
 
@@ -168,7 +171,7 @@ export const VocalAuditionPlayer: React.FC<VocalAuditionPlayerProps> = ({
     };
 
     return (
-        <GlassCard className="p-5 border border-black/[0.08] dark:border-white/10 space-y-4">
+        <GlassCard animateEntry={false} className="p-5 border border-black/[0.08] dark:border-white/10 space-y-4">
             <audio
                 ref={audioRef}
                 onTimeUpdate={() => audioRef.current && setCurrentTime(audioRef.current.currentTime)}
@@ -332,3 +335,5 @@ export const VocalAuditionPlayer: React.FC<VocalAuditionPlayerProps> = ({
         </GlassCard>
     );
 };
+
+export const VocalAuditionPlayer = React.memo(VocalAuditionPlayerComponent);

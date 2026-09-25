@@ -27,7 +27,7 @@ interface VocalDSPRackProps {
     onConvertVocals: () => void;
 }
 
-export const VocalDSPRack: React.FC<VocalDSPRackProps> = ({
+const VocalDSPRackComponent: React.FC<VocalDSPRackProps> = ({
     selectedTrack,
     hasVocalStem,
     voiceProfiles,
@@ -55,7 +55,7 @@ export const VocalDSPRack: React.FC<VocalDSPRackProps> = ({
     ];
 
     return (
-        <GlassCard className="p-5 space-y-5 border border-black/[0.08] dark:border-white/10">
+        <GlassCard animateEntry={false} className="p-5 space-y-5 border border-black/[0.08] dark:border-white/10">
             {/* Header */}
             <div className="flex items-center justify-between pb-3 border-b border-black/[0.06] dark:border-white/10">
                 <div className="flex items-center space-x-2">
@@ -267,3 +267,5 @@ export const VocalDSPRack: React.FC<VocalDSPRackProps> = ({
         </GlassCard>
     );
 };
+
+export const VocalDSPRack = React.memo(VocalDSPRackComponent);

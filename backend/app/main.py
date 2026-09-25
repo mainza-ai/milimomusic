@@ -5082,6 +5082,39 @@ def compile_editor_render(project_id: str):
     }
 
 
+@app.post("/api/training/jobs")
+async def create_training_job(payload: dict):
+    """Create a new YuE2 training job (Auto Mode or Guided Mode)."""
+    import uuid
+    import asyncio
+    from app.services.training.yue2_trainer import YuE2TrainingStudio, TrainingWorkflowMode
+    dataset_name = payload.get("dataset_name", "custom_dataset")
+    mode_str = payload.get("mode", "auto")
+    rank = int(payload.get("rank", 32))
+    job_id = f"yue2_train_{uuid.uuid4().hex[:8]}"
+    mode = TrainingWorkflowMode(mode_str)
+    job = YuE2TrainingStudio.create_job(job_id=job_id, dataset_name=dataset_name, mode=mode, rank=rank)
+    if mode == TrainingWorkflowMode.AUTO:
+        asyncio.create_task(YuE2TrainingStudio.run_auto_pipeline(job.job_id))
+    return job.to_dict()
+
+
+@app.get("/api/training/jobs/{job_id}")
+def get_training_job(job_id: str):
+    """Get training job status and audition artifacts."""
+    from app.services.training.yue2_trainer import YuE2TrainingStudio
+    job = YuE2TrainingStudio.get_job(job_id)
+    if not job:
+        raise HTTPException(status_code=404, detail="Training job not found")
+    return job.to_dict()
+
+
+# Audition audio files mount
+auditions_dir = Path("data/training_auditions").resolve()
+auditions_dir.mkdir(parents=True, exist_ok=True)
+app.mount("/data/training_auditions", RangedStaticFiles(directories=[auditions_dir]), name="training_auditions")
+
+
 # --- Frontend Static Files & SPA Fallback (Unified Single-Process Mode) ---
 
 frontend_dist = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../frontend/dist"))
@@ -5093,7 +5126,7 @@ if os.path.exists(frontend_dist):
     @app.api_route("/{full_path:path}", methods=["GET", "HEAD"])
     async def serve_frontend(full_path: str):
         # Specific API prefixes should return 404 JSON if not matched by earlier routes
-        api_prefixes = ("models/", "audio/", "covers/", "videos/", "mastering/", "stem-separation/", "events")
+        api_prefixes = ("api/", "models/", "audio/", "covers/", "videos/", "mastering/", "stem-separation/", "events")
         if any(full_path.startswith(p) for p in api_prefixes):
             raise HTTPException(status_code=404, detail="Endpoint not found")
 

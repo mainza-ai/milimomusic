@@ -76,6 +76,14 @@ export const HardwareTelemetryBar: React.FC = () => {
                     <span className="font-semibold text-slate-700 dark:text-slate-300 uppercase tracking-wider text-[11px]">
                         {deviceType}
                     </span>
+                    {telemetry.profile_id && (
+                        <span
+                            className="px-1.5 py-0.2 rounded bg-indigo-500/10 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold border border-indigo-500/20"
+                            title={`Empirical Profile: ${telemetry.profile_name || ''}\nStrategy: ${telemetry.offload_strategy || 'none'}\nSafe Budget: ${Math.round((telemetry.safe_vram_allowance_mb || 0) / 1024)}GB`}
+                        >
+                            P{telemetry.profile_id}
+                        </span>
+                    )}
                 </div>
 
                 {/* Progress bar */}

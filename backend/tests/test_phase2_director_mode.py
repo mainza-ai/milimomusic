@@ -155,3 +155,40 @@ def test_convrot_quant_parsing():
     assert cfg.quant_format == "convrot_int8"
     assert cfg.group_size == 256
     assert cfg.turbo_preset_steps == 4
+
+
+def test_aesthetic_palettes_and_custom_prompt():
+    from app.services.video.video_director import STYLE_PALETTES, video_director
+    from app.models import Job
+
+    # Check 14 curated palettes exist
+    expected_palettes = [
+        "neon-cyberpunk", "anime-cinematic", "retro-vhs", "minimal-stage",
+        "film-noir-35mm", "golden-hour-folk", "hyper-scifi", "gothic-dark",
+        "vintage-kodak", "kpop-holographic", "psychedelic-surreal",
+        "urban-street-grime", "claymation-stopmo", "wes-anderson-pastel"
+    ]
+    for pal in expected_palettes:
+        assert pal in STYLE_PALETTES, f"Palette {pal} missing from STYLE_PALETTES"
+        palette_def = STYLE_PALETTES[pal]
+        assert "atmosphere" in palette_def
+        assert "desc" in palette_def
+        assert "negative" in palette_def
+        assert "colors" in palette_def
+
+    # Test custom style prompt injection
+    mock_job = Job(id="test-job-aesthetic", title="Aesthetic Test", duration_ms=30000)
+    scenes = video_director.generate_storyboard_scenes(
+        job=mock_job,
+        visual_style="custom",
+        custom_style_prompt="Underwater ethereal bioluminescence with drifting jellyfish"
+    )
+    assert len(scenes) > 0
+    # Custom prompt should be injected into prompt/lighting
+    found_custom = any(
+        "Underwater ethereal bioluminescence" in s.get("prompt", "") or
+        "Underwater ethereal bioluminescence" in s.get("lighting", "")
+        for s in scenes
+    )
+    assert found_custom, "Custom style prompt was not properly injected into storyboard scenes"
+

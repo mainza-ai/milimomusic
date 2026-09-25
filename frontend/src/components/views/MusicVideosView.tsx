@@ -126,7 +126,9 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         };
     }, [selectEngine]);
 
-    const [videoStyle, setVideoStyle] = useState<'neon-cyberpunk' | 'anime-cinematic' | 'retro-vhs' | 'minimal-lyrics'>('neon-cyberpunk');
+    const [videoStyle, setVideoStyle] = useState<string>('neon-cyberpunk');
+    const [customStylePrompt, setCustomStylePrompt] = useState<string>('');
+    const [timelineSeekTime, setTimelineSeekTime] = useState<number | null>(null);
     const [resolution, setResolution] = useState<'720p' | '1080p'>('720p');
     const [transitionStyle, setTransitionStyle] = useState<'beat_cut' | 'crossfade' | 'flash' | 'whip_pan' | 'glitch'>('beat_cut');
     const [isDeletingVideo, setIsDeletingVideo] = useState(false);
@@ -232,6 +234,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 max_clip_duration: clipDuration,
                 bpm: 120,
                 visual_style: videoStyle,
+                custom_style_prompt: customStylePrompt,
                 aspect_ratio: aspectRatio,
                 provider: videoProvider,
                 pacing_bias: pacingBias,
@@ -256,7 +259,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         if (!activeSong) return;
         try {
             setIsGeneratingKeyframes(true);
-            const res = await videoApi.generateKeyframes(activeSong.id, videoStyle, resolution);
+            const res = await videoApi.generateKeyframes(activeSong.id, videoStyle, resolution, customStylePrompt);
             if (res && res.keyframes) {
                 const kfMap: Record<number, string> = {};
                 for (const kf of res.keyframes) {
@@ -283,6 +286,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             const params: VideoRenderParams = {
                 model_name: videoModel,
                 visual_style: videoStyle,
+                custom_style_prompt: customStylePrompt,
                 resolution,
                 aspect_ratio: aspectRatio,
                 provider: videoProvider,
@@ -410,8 +414,34 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         if (!activeSong) return;
         try {
             setIsGeneratingStory(true);
-            const scenes = await videoApi.generateStoryboard(activeSong.id, videoStyle);
+            const scenes = await videoApi.generateStoryboard(activeSong.id, videoStyle, customStylePrompt);
             if (scenes && scenes.length > 0) {
+                // If no clips exist on timeline yet, sync storyboard scenes into planResult so timeline immediately displays them
+                if (!planResult || !planResult.clips || planResult.clips.length === 0) {
+                    const clips: any[] = scenes.map((s, idx) => ({
+                        clip_index: idx + 1,
+                        start_time: idx * 15,
+                        end_time: (idx + 1) * 15,
+                        duration: 15,
+                        time_str: s.time || `${idx * 15}s - ${(idx + 1) * 15}s`,
+                        is_vocal: s.is_vocal ?? false,
+                        scene_type: (s.is_vocal ? 'VOCAL_PERFORMANCE' : 'CINEMATIC_BROLL') as any,
+                        lyrics: s.lyrics || '',
+                        prompt: s.prompt || '',
+                        camera: s.camera || 'Slow cinematic tracking crane down',
+                        lighting: s.lighting || 'Cyan and magenta anamorphic rim lighting'
+                    }));
+                    setPlanResult({
+                        status: 'ok',
+                        job_id: activeSong.id,
+                        total_clips: clips.length,
+                        vocal_clips_count: clips.filter(c => c.is_vocal).length,
+                        broll_clips_count: clips.filter(c => !c.is_vocal).length,
+                        max_clip_duration: 15,
+                        model_name: videoModel,
+                        clips
+                    });
+                }
                 toast('Storyboard sequence generated with dynamic directing prompts.', 'success');
             }
         } catch (err: any) {
@@ -434,7 +464,8 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             const res = await videoApi.retakeScene(activeSong.id, clipIndex, {
                 prompt: newPrompt,
                 camera,
-                lighting
+                lighting,
+                custom_style_prompt: customStylePrompt
             });
             if (res.keyframe_url) {
                 setKeyframes(prev => ({ ...prev, [clipIndex]: res.keyframe_url! }));
@@ -474,6 +505,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     hasVocals={hasVocals}
                     aspectRatio={aspectRatio}
                     onSelectAspectRatio={setAspectRatio}
+                    resolution={resolution}
                     isPlaying={isPlaying}
                     playingSongId={playingSongId}
                     onTogglePlayAudio={() => activeSong && onPlay(activeSong)}
@@ -492,9 +524,9 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 />
 
                 {/* ZONE 2: DUAL WORKSPACE (Center Viewport + Right Inspector Dock) */}
-                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-                    {/* Center / Left Viewport (7 Cols on desktop) */}
-                    <div className="lg:col-span-7 xl:col-span-8 space-y-4">
+                <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
+                    {/* Center / Left Viewport */}
+                    <div className="xl:col-span-7 2xl:col-span-7 space-y-4">
                         <VideoCanvasPlayer
                             activeSong={activeSong}
                             renderedVideoUrl={renderedVideoUrl}
@@ -509,11 +541,12 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             onPlanScenes={handlePlanScenes}
                             onRenderVideo={handleRenderAdvancedVideo}
                             isPlanning={isPlanning}
+                            seekTime={timelineSeekTime}
                         />
                     </div>
 
-                    {/* Right Tabbed Inspector Dock (5 Cols on desktop) */}
-                    <div className="lg:col-span-5 xl:col-span-4 min-h-[500px]">
+                    {/* Right Tabbed Inspector Dock */}
+                    <div className="xl:col-span-5 2xl:col-span-5 min-h-[500px]">
                         <VideoInspectorDock
                             videoModel={videoModel}
                             onSelectModel={selectEngine}
@@ -529,6 +562,8 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             onChangeResolution={setResolution}
                             videoStyle={videoStyle}
                             onSelectStyle={setVideoStyle}
+                            customStylePrompt={customStylePrompt}
+                            onChangeCustomStylePrompt={setCustomStylePrompt}
                             pacingBias={pacingBias}
                             onChangePacingBias={setPacingBias}
                             vocalBypass={vocalBypass}
@@ -571,6 +606,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                         activeSong={activeSong}
                         onRetakeClip={handleOpenRetakeModal}
                         onZoomKeyframe={(clipIndex, url) => setZoomKeyframe({ clipIndex, url })}
+                        onSeekToTime={(timeSec) => setTimelineSeekTime(timeSec)}
                     />
                 )}
             </div>

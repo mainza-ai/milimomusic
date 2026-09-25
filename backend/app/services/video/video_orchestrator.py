@@ -251,7 +251,8 @@ class VideoOrchestrator:
         job: Job,
         visual_style: str = "neon-cyberpunk",
         width: int = 1280,
-        height: int = 720
+        height: int = 720,
+        custom_style_prompt: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Generate visual keyframe stills for each scene in the storyboard breakdown.
@@ -260,7 +261,8 @@ class VideoOrchestrator:
         plan = video_director.segment_song(
             job=job,
             max_clip_duration=15.0,
-            visual_style=visual_style
+            visual_style=visual_style,
+            custom_style_prompt=custom_style_prompt
         )
         face_image = self.resolve_face_image(job)
 

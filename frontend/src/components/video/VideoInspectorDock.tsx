@@ -30,6 +30,8 @@ export interface VideoInspectorProps {
     // Directing & Pacing
     videoStyle: string;
     onSelectStyle: (style: any) => void;
+    customStylePrompt?: string;
+    onChangeCustomStylePrompt?: (val: string) => void;
     pacingBias: number;
     onChangePacingBias: (val: number) => void;
     vocalBypass: boolean;
@@ -60,6 +62,41 @@ export interface VideoInspectorProps {
     onChangeCharacterPromptNote?: (note: string) => void;
 }
 
+interface AestheticStyle {
+    id: string;
+    name: string;
+    category: 'cinematic' | 'retro' | 'urban_pop' | 'acoustic_moody' | 'custom';
+    desc: string;
+    swatch: string;
+}
+
+const AESTHETIC_STYLES: AestheticStyle[] = [
+    // Cinematic & Narrative
+    { id: 'film-noir-35mm', name: 'Film Noir (35mm)', category: 'cinematic', desc: '1940s B&W chiaroscuro, blinds & rain', swatch: 'from-zinc-400 to-zinc-800' },
+    { id: 'wes-anderson-pastel', name: 'Symmetrical Pastel', category: 'cinematic', desc: 'Wes Anderson symmetry, mustard & mint', swatch: 'from-amber-300 to-emerald-400' },
+    { id: 'anime-cinematic', name: 'Anime Cinematic', category: 'cinematic', desc: 'Makoto Shinkai skies, emotional glow', swatch: 'from-rose-500 to-amber-500' },
+    { id: 'hyper-scifi', name: 'Interstellar Sci-Fi', category: 'cinematic', desc: 'Monolithic titanium, nebula & cobalt glow', swatch: 'from-cyan-500 to-blue-600' },
+
+    // Retro & Analog
+    { id: 'retro-vhs', name: '80s Retro VHS', category: 'retro', desc: 'Analog tape bleeding, scanlines & synthwave', swatch: 'from-purple-500 to-pink-500' },
+    { id: 'vintage-kodak', name: '70s Kodachrome', category: 'retro', desc: 'Warm terracotta, Panavision grain & roadtrip', swatch: 'from-orange-500 to-yellow-500' },
+    { id: 'claymation-stopmo', name: 'Claymation Art', category: 'retro', desc: 'Handmade plasticine textures & stop-motion', swatch: 'from-rose-400 to-teal-500' },
+
+    // Urban & Pop
+    { id: 'neon-cyberpunk', name: 'Cyberpunk Neon', category: 'urban_pop', desc: 'Rain-slicked neon, cyan & magenta flares', swatch: 'from-teal-400 to-cyan-500' },
+    { id: 'urban-street-grime', name: 'Urban Street Grime', category: 'urban_pop', desc: '90s fisheye, brutalist concrete & sodium', swatch: 'from-yellow-500 to-zinc-600' },
+    { id: 'kpop-holographic', name: 'K-Pop Prism Gloss', category: 'urban_pop', desc: 'Iridescent LED tunnel, chromatic pop gloss', swatch: 'from-pink-500 to-violet-500' },
+    { id: 'psychedelic-surreal', name: 'Psychedelic Dream', category: 'urban_pop', desc: 'Liquid light show, morphing spectral hues', swatch: 'from-emerald-400 to-fuchsia-500' },
+
+    // Acoustic & Moody
+    { id: 'golden-hour-folk', name: 'Golden Hour Folk', category: 'acoustic_moody', desc: 'Sun-drenched dust motes, warm amber flares', swatch: 'from-amber-400 to-orange-600' },
+    { id: 'minimal-stage', name: 'Minimalist Stage', category: 'acoustic_moody', desc: 'Monochrome silhouettes, single spotlight', swatch: 'from-sky-400 to-indigo-500' },
+    { id: 'gothic-dark', name: 'Gothic Cathedral', category: 'acoustic_moody', desc: 'Candlelit vaults, obsidian velvet & crimson', swatch: 'from-red-600 to-violet-800' },
+
+    // User-Defined Custom
+    { id: 'custom', name: 'Custom Prompt', category: 'custom', desc: 'Freeform director notes, lighting & color grade', swatch: 'from-indigo-500 via-purple-500 to-pink-500' }
+];
+
 export const VideoInspectorDock: React.FC<VideoInspectorProps> = ({
     videoModel,
     onSelectModel,
@@ -75,6 +112,8 @@ export const VideoInspectorDock: React.FC<VideoInspectorProps> = ({
     onChangeResolution,
     videoStyle,
     onSelectStyle,
+    customStylePrompt = '',
+    onChangeCustomStylePrompt,
     pacingBias,
     onChangePacingBias,
     vocalBypass,
@@ -101,6 +140,7 @@ export const VideoInspectorDock: React.FC<VideoInspectorProps> = ({
     onChangeCharacterPromptNote,
 }) => {
     const [activeTab, setActiveTab] = useState<'directing' | 'engine' | 'lipsync' | 'cast'>('directing');
+    const [paletteFilter, setPaletteFilter] = useState<'all' | 'cinematic' | 'retro' | 'urban_pop' | 'acoustic_moody' | 'custom'>('all');
 
     const pacingLabels = {
         '-2': '🌊 Sweeping (-2)',
@@ -110,93 +150,150 @@ export const VideoInspectorDock: React.FC<VideoInspectorProps> = ({
         '2': '🔥 Montage (+2)'
     };
 
+    const filteredPalettes = AESTHETIC_STYLES.filter(s =>
+        paletteFilter === 'all' ? true : s.category === paletteFilter
+    );
+
     return (
-        <GlassCard className="p-4 flex flex-col h-full rounded-2xl border border-black/[0.08] dark:border-white/10 shadow-apple-lg">
-            {/* Dock Header Tabs */}
-            <div className="flex items-center space-x-1 p-1 bg-black/[0.04] dark:bg-white/5 rounded-xl border border-black/[0.06] dark:border-white/10 mb-4">
+        <GlassCard className="p-3.5 sm:p-4 flex flex-col h-full rounded-2xl border border-black/[0.08] dark:border-white/10 shadow-apple-lg">
+            {/* Dock Header Tabs (Responsive & Compact) */}
+            <div className="flex items-center space-x-1 p-1 bg-black/[0.04] dark:bg-white/5 rounded-xl border border-black/[0.06] dark:border-white/10 mb-4 overflow-x-auto scrollbar-none">
                 <button
                     type="button"
                     onClick={() => setActiveTab('directing')}
-                    className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                    className={`flex-1 min-w-0 py-1.5 px-2 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1 ${
                         activeTab === 'directing'
                             ? 'bg-white dark:bg-white/15 text-indigo-600 dark:text-indigo-400 shadow-sm'
                             : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
                     }`}
+                    title="Directing & Musical Pacing"
                 >
-                    <Sparkles size={13} />
-                    <span>Directing</span>
+                    <Sparkles size={12} className="flex-shrink-0" />
+                    <span className="truncate">Directing</span>
                 </button>
 
                 <button
                     type="button"
                     onClick={() => setActiveTab('engine')}
-                    className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                    className={`flex-1 min-w-0 py-1.5 px-2 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1 ${
                         activeTab === 'engine'
                             ? 'bg-white dark:bg-white/15 text-teal-600 dark:text-teal-400 shadow-sm'
                             : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
                     }`}
+                    title="Engine & Hardware Specs"
                 >
-                    <Cpu size={13} />
-                    <span>Engine & HW</span>
+                    <Cpu size={12} className="flex-shrink-0" />
+                    <span className="truncate">Engine</span>
                 </button>
 
                 <button
                     type="button"
                     onClick={() => setActiveTab('lipsync')}
-                    className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                    className={`flex-1 min-w-0 py-1.5 px-2 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1 ${
                         activeTab === 'lipsync'
                             ? 'bg-white dark:bg-white/15 text-cyan-600 dark:text-cyan-400 shadow-sm'
                             : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
                     }`}
+                    title="Lip-Sync & Subtitles"
                 >
-                    <Mic size={13} />
-                    <span>Lip-Sync & FX</span>
+                    <Mic size={12} className="flex-shrink-0" />
+                    <span className="truncate">Sync & FX</span>
                 </button>
 
                 <button
                     type="button"
                     onClick={() => setActiveTab('cast')}
-                    className={`flex-1 py-1.5 px-2 rounded-lg text-xs font-bold transition-all flex items-center justify-center gap-1.5 ${
+                    className={`flex-1 min-w-0 py-1.5 px-2 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1 ${
                         activeTab === 'cast'
                             ? 'bg-white dark:bg-white/15 text-purple-600 dark:text-purple-400 shadow-sm'
                             : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
                     }`}
+                    title="Cast & Seed Continuity"
                 >
-                    <Users size={13} />
-                    <span>Cast & Seeds</span>
+                    <Users size={12} className="flex-shrink-0" />
+                    <span className="truncate">Cast</span>
                 </button>
             </div>
 
             {/* Tab 1: Directing & Musical Pacing */}
             {activeTab === 'directing' && (
-                <div className="space-y-4 overflow-y-auto pr-1">
+                <div className="space-y-4 overflow-y-auto pr-1 max-h-[600px] scrollbar-thin">
                     {/* Visual Aesthetic Preset Grid */}
-                    <div className="space-y-2">
-                        <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
-                            Visual Aesthetic Palette
-                        </label>
-                        <div className="grid grid-cols-2 gap-2">
+                    <div className="space-y-2.5">
+                        <div className="flex items-center justify-between">
+                            <label className="text-[11px] font-bold uppercase tracking-wider text-slate-400">
+                                Aesthetic Palette
+                            </label>
+                            <span className="text-[10px] text-indigo-500 dark:text-indigo-400 font-bold">
+                                {AESTHETIC_STYLES.find(s => s.id === videoStyle)?.name || 'Custom'}
+                            </span>
+                        </div>
+
+                        {/* Category Filter Tabs */}
+                        <div className="flex items-center gap-1 overflow-x-auto scrollbar-none pb-0.5 text-[10px] font-bold">
                             {[
-                                { id: 'neon-cyberpunk', name: 'Cyberpunk', desc: 'Rain-slicked neon & cyan lens flares' },
-                                { id: 'anime-cinematic', name: 'Anime Cinematic', desc: 'Hand-drawn Makoto Shinkai aesthetic' },
-                                { id: 'retro-vhs', name: '80s Retro VHS', desc: 'Analog tape saturation & scanlines' },
-                                { id: 'minimal-lyrics', name: 'Minimal Stage', desc: 'High-contrast monochrome & spotlight' }
-                            ].map((style) => (
+                                { id: 'all', label: 'All' },
+                                { id: 'cinematic', label: 'Film' },
+                                { id: 'retro', label: 'Retro' },
+                                { id: 'urban_pop', label: 'Urban' },
+                                { id: 'acoustic_moody', label: 'Moody' },
+                                { id: 'custom', label: 'Custom' }
+                            ].map((cat) => (
+                                <button
+                                    key={cat.id}
+                                    type="button"
+                                    onClick={() => setPaletteFilter(cat.id as any)}
+                                    className={`px-2 py-0.5 rounded-md transition-all whitespace-nowrap ${
+                                        paletteFilter === cat.id
+                                            ? 'bg-indigo-500 text-white shadow-xs'
+                                            : 'bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
+                                    }`}
+                                >
+                                    {cat.label}
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Aesthetic Cards Grid */}
+                        <div className="grid grid-cols-2 gap-2 max-h-[220px] overflow-y-auto scrollbar-thin p-0.5">
+                            {filteredPalettes.map((style) => (
                                 <button
                                     key={style.id}
                                     type="button"
                                     onClick={() => onSelectStyle(style.id)}
-                                    className={`p-2.5 rounded-xl border text-left transition-all ${
+                                    className={`p-2 rounded-xl border text-left transition-all relative overflow-hidden group ${
                                         videoStyle === style.id
-                                            ? 'bg-indigo-500/10 border-indigo-500/40 text-indigo-700 dark:text-indigo-300 font-bold shadow-sm'
-                                            : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-600 dark:text-slate-400 hover:bg-black/[0.04]'
+                                            ? 'bg-indigo-500/10 border-indigo-500/50 text-indigo-700 dark:text-indigo-300 font-bold shadow-sm ring-1 ring-indigo-500/40'
+                                            : 'bg-black/[0.02] dark:bg-white/[0.02] border-black/[0.06] dark:border-white/[0.06] text-slate-600 dark:text-slate-400 hover:bg-black/[0.05] dark:hover:bg-white/[0.05]'
                                     }`}
                                 >
-                                    <div className="text-xs font-bold">{style.name}</div>
-                                    <div className="text-[10px] text-slate-400 font-normal mt-0.5 line-clamp-1">{style.desc}</div>
+                                    <div className="flex items-center gap-1.5">
+                                        <div className={`w-2.5 h-2.5 rounded-full bg-gradient-to-br ${style.swatch} flex-shrink-0 shadow-xs`} />
+                                        <div className="text-xs font-bold truncate">{style.name}</div>
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 font-normal mt-1 line-clamp-1">{style.desc}</div>
                                 </button>
                             ))}
                         </div>
+
+                        {/* Custom Directing Prompt Input (When Custom Style Selected) */}
+                        {videoStyle === 'custom' && (
+                            <div className="p-3 bg-indigo-500/5 dark:bg-indigo-500/10 border border-indigo-500/30 rounded-2xl space-y-1.5 animate-fade-in">
+                                <div className="flex items-center justify-between text-[11px] font-bold text-indigo-600 dark:text-indigo-400">
+                                    <span className="flex items-center gap-1">
+                                        <Wand2 size={12} />
+                                        <span>Custom Directing Prompt</span>
+                                    </span>
+                                </div>
+                                <textarea
+                                    value={customStylePrompt}
+                                    onChange={(e) => onChangeCustomStylePrompt?.(e.target.value)}
+                                    placeholder="e.g. Directed by David Fincher, emerald green tint, rain-slicked pavement, gritty 35mm film grain, anamorphic rim lighting..."
+                                    rows={3}
+                                    className="w-full text-xs rounded-xl bg-white/70 dark:bg-black/40 border border-indigo-500/20 px-3 py-2 text-slate-800 dark:text-slate-200 placeholder:text-slate-400 focus:outline-none focus:ring-2 focus:ring-indigo-500/40 resize-none font-medium"
+                                />
+                            </div>
+                        )}
                     </div>
 
                     {/* Cut Speed / Pacing Bias Slider */}

@@ -4424,12 +4424,13 @@ def export_project_studio_pack(project_id: UUID):
 @app.post("/videos/storyboard/{job_id}")
 async def generate_video_storyboard(job_id: str, body: dict = Body(default={})):
     visual_style = body.get("visual_style", "neon-cyberpunk")
+    custom_style_prompt = body.get("custom_style_prompt")
     from app.services.video_service import video_service
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
-        scenes = await video_service.generate_storyboard(job, visual_style=visual_style)
+        scenes = await video_service.generate_storyboard(job, visual_style=visual_style, custom_style_prompt=custom_style_prompt)
         return {
             "status": "ok",
             "job_id": job_id,
@@ -4590,7 +4591,8 @@ async def plan_music_video(job_id: str, req: VideoPlanRequest = Body(default=Vid
             max_clip_duration=clip_dur,
             model_name=model_name,
             bpm=req.bpm,
-            visual_style=req.visual_style or "neon-cyberpunk"
+            visual_style=req.visual_style or "neon-cyberpunk",
+            custom_style_prompt=req.custom_style_prompt
         )
         vocal_count = sum(1 for c in clips if c.get("is_vocal"))
         broll_count = len(clips) - vocal_count
@@ -4666,7 +4668,8 @@ async def generate_video_keyframes(job_id: str, req: KeyframesRequest = Body(def
         keyframes = await video_service.generate_scene_keyframes(
             job=job,
             visual_style=req.visual_style or "neon-cyberpunk",
-            width=w, height=h
+            width=w, height=h,
+            custom_style_prompt=req.custom_style_prompt
         )
         return {
             "status": "ok",
@@ -4687,13 +4690,15 @@ async def retake_video_clip_endpoint(job_id: str, clip_index: int, payload: dict
 
         prompt = payload.get("prompt")
         visual_style = payload.get("visual_style", "neon-cyberpunk")
+        custom_style_prompt = payload.get("custom_style_prompt")
         res = payload.get("resolution", "720p")
         w, h = (1920, 1080) if res == "1080p" else (1280, 720)
 
         keyframes = await video_service.generate_scene_keyframes(
             job=job,
             visual_style=visual_style,
-            width=w, height=h
+            width=w, height=h,
+            custom_style_prompt=custom_style_prompt
         )
         target_kf = None
         for kf in keyframes:

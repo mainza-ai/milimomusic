@@ -1943,3 +1943,18 @@ Executed the comprehensive production UI/UX refactor for `MusicVideosView.tsx` a
    - Fullscreen keyframe lightbox zoom via `KeyframeZoomModal.tsx`.
    - Advanced transition styling (`beat_cut`, `crossfade`, `flash`, `whip_pan`, `glitch`).
 3. Verification: Clean TypeScript frontend build (`tsc -b && vite build` passing with 0 errors), 100% backend test suite pass rate (32/32 tests passed in `pytest`), and active verified endpoints on ports 8000 & 5173.
+
+## [2026-09-24] create | Studio Layout Stabilization, 14 Visual Palettes & Playhead Seek Sync
+1. Layout Collision Resolution:
+   - Refactored `VideoTopBar.tsx` into a resilient 2-tier design: Tier 1 houses Musical Source and Track Selection; Tier 2 houses Aspect Ratio, Resolution, and Studio Action Buttons. Fully prevents component displacement and badge truncation when Composer Sidebar (~400px) is open.
+   - Refactored Zone 2 grid to `grid-cols-1 xl:grid-cols-12` (`xl:col-span-7` canvas, `xl:col-span-5` inspector dock), guaranteeing inspector dock width $\ge 400\text{px}$ across all desktop viewports.
+2. Visual Aesthetic Expansion:
+   - Expanded aesthetic palettes from 4 hardcoded styles to 14 curated high-fidelity presets: `neon-cyberpunk`, `anime-cinematic`, `retro-vhs`, `minimal-stage`, `film-noir-35mm`, `golden-hour-folk`, `hyper-scifi`, `gothic-dark`, `vintage-kodak`, `kpop-holographic`, `psychedelic-surreal`, `urban-street-grime`, `claymation-stopmo`, and `wes-anderson-pastel`.
+   - Added category filter pills (`All`, `Film`, `Retro`, `Urban`, `Moody`, `Custom`) and custom directing prompt injection across backend (`video_director.py`, `video_service.py`, `models.py`, `main.py`) and frontend (`api.ts`, `VideoInspectorDock.tsx`, `MusicVideosView.tsx`).
+3. Interactivity & Timeline Synchronization:
+   - Implemented timeline playhead click-to-seek synchronization: clicking any scene in `VideoTimelineTrack` seeks the video player (`VideoCanvasPlayer`) to that timestamp.
+   - Wired storyboard generation directly into timeline clips for immediate scene visual feedback.
+4. Verification:
+   - 100% backend pytest test suite passing (33/33 tests passed, including new aesthetic palette and custom prompt suite).
+   - Clean frontend production build (`tsc -b && vite build` passing with 0 errors).
+   - Both backend daemon (port 8000) and frontend daemon (port 5173) active and healthy.

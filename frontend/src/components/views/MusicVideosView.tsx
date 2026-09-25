@@ -3,6 +3,7 @@ import {
     type Job,
     videoApi,
     api,
+    galleryApi,
     type StoryboardScene,
     type VideoPlanResult,
     type VideoTaskStatus,
@@ -24,7 +25,8 @@ import {
     Layers,
     AlertCircle,
     RefreshCw,
-    Trash2
+    Trash2,
+    Share2
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { toast } from '../../utils/toast';
@@ -167,6 +169,15 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const [burnSubtitles, setBurnSubtitles] = useState(true);
     const [subtitleStyle, setSubtitleStyle] = useState<'neon' | 'cinematic' | 'karaoke'>('neon');
 
+    // Director Mode v2 Controls (Maestro v2.4.0)
+    const [pacingBias, setPacingBias] = useState<number>(0); // -2 (slow/cinematic) to +2 (rapid montage)
+    const [vocalBypass, setVocalBypass] = useState<boolean>(true);
+    const [fidelityRetries, setFidelityRetries] = useState<number>(1);
+    const [autoContinue, setAutoContinue] = useState<boolean>(false);
+    const [visibleCast, setVisibleCast] = useState<string[]>(['Lead Vocalist']);
+    const [splitCompareActive, setSplitCompareActive] = useState<boolean>(false);
+    const [splitRatio, setSplitRatio] = useState<number>(0.5);
+
     // Planning & Task Tracking
     const [isPlanning, setIsPlanning] = useState(false);
     const [planResult, setPlanResult] = useState<VideoPlanResult | null>(null);
@@ -246,7 +257,12 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 max_clip_duration: clipDuration,
                 bpm: 120,
                 visual_style: videoStyle,
-                provider: videoProvider
+                provider: videoProvider,
+                pacing_bias: pacingBias,
+                music_timeline_vocal_bypass: vocalBypass,
+                fidelity_retries: fidelityRetries,
+                auto_continue: autoContinue,
+                visible_cast: visibleCast,
             };
             const plan = await videoApi.planVideo(activeSong.id, params);
             setPlanResult(plan);
@@ -299,7 +315,12 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 subtitle_style: subtitleStyle,
                 transition_style: 'beat_cut',
                 max_clip_duration: clipDuration,
-                mode: 'production_multiclip'
+                mode: 'production_multiclip',
+                pacing_bias: pacingBias,
+                music_timeline_vocal_bypass: vocalBypass,
+                fidelity_retries: fidelityRetries,
+                auto_continue: autoContinue,
+                visible_cast: visibleCast,
             };
 
             const taskInit = await videoApi.renderAdvancedVideo(activeSong.id, params);
@@ -372,6 +393,22 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         if (!activeSong) return;
         applyStoredVideoConfig(activeSong);
         await handleRenderAdvancedVideo();
+    };
+
+    const [isRouting, setIsRouting] = useState(false);
+
+    const handleRouteToDirector = async () => {
+        if (!renderedVideoUrl) return;
+        setIsRouting(true);
+        try {
+            const filename = renderedVideoUrl.split('/').pop() || renderedVideoUrl;
+            await galleryApi.routeMedia(renderedVideoUrl, 'references', activeSong?.id);
+            toast(`Dispatched ${filename} to Director References!`, 'success');
+        } catch (err: any) {
+            toast(`Dispatch failed: ${err.message}`, 'error');
+        } finally {
+            setIsRouting(false);
+        }
     };
 
     const handleDeleteVideo = async () => {
@@ -631,6 +668,125 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             </div>
                         </GlassCard>
 
+                        {/* Director Mode v2 Controls (Maestro v2.4.0) */}
+                        <GlassCard className="p-4 space-y-3 border-indigo-500/20 bg-indigo-950/10">
+                            <div className="flex items-center justify-between">
+                                <label className="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
+                                    <Sparkles size={13} className="text-indigo-400" />
+                                    <span>Director Mode v2 (Beat & Cast Directing)</span>
+                                </label>
+                                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-bold">
+                                    Maestro v2.4
+                                </span>
+                            </div>
+
+                            {/* Pacing / Cut Speed Bias Slider */}
+                            <div className="space-y-1.5">
+                                <div className="flex items-center justify-between text-xs">
+                                    <span className="font-semibold text-slate-700 dark:text-slate-300">
+                                        Cut Speed / Pacing Bias
+                                    </span>
+                                    <span className="font-mono font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded text-[11px]">
+                                        {pacingBias === -2 ? '🌊 Sweeping (-2)' : pacingBias === -1 ? '🎬 Cinematic (-1)' : pacingBias === 0 ? '⚖️ Balanced (0)' : pacingBias === 1 ? '⚡ Rhythmic (+1)' : '🔥 Montage (+2)'}
+                                    </span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min={-2}
+                                    max={2}
+                                    step={1}
+                                    value={pacingBias}
+                                    onChange={(e) => setPacingBias(parseInt(e.target.value, 10))}
+                                    className="w-full accent-indigo-500 h-1.5 bg-black/[0.06] dark:bg-white/10 rounded-lg cursor-pointer"
+                                />
+                                <div className="flex justify-between text-[9px] font-mono text-slate-400">
+                                    <span>-2 Long Takes</span>
+                                    <span>0 Downbeats</span>
+                                    <span>+2 Fast Cuts</span>
+                                </div>
+                            </div>
+
+                            {/* Two-Tier Vocal Bypass Toggle */}
+                            <div className="flex items-center justify-between pt-2 border-t border-indigo-500/10">
+                                <div>
+                                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
+                                        Music Timeline Vocal Bypass
+                                    </div>
+                                    <div className="text-[10px] text-slate-400">
+                                        Locks mouth to vocal stem; suppresses dialogue hallucination
+                                    </div>
+                                </div>
+                                <input
+                                    type="checkbox"
+                                    checked={vocalBypass}
+                                    onChange={(e) => setVocalBypass(e.target.checked)}
+                                    className="rounded border-slate-700 text-indigo-500 focus:ring-indigo-500"
+                                />
+                            </div>
+
+                            {/* Fidelity Repair Retries */}
+                            <div className="pt-2 border-t border-indigo-500/10 space-y-2">
+                                <div className="flex items-center justify-between text-xs">
+                                    <span className="font-semibold text-slate-700 dark:text-slate-300">
+                                        Fidelity Repair Retries
+                                    </span>
+                                    <span className="font-mono text-indigo-400 text-xs font-bold">
+                                        {fidelityRetries} {fidelityRetries === 1 ? 'retry' : 'retries'}
+                                    </span>
+                                </div>
+                                <input
+                                    type="range"
+                                    min={0}
+                                    max={5}
+                                    step={1}
+                                    value={fidelityRetries}
+                                    onChange={(e) => setFidelityRetries(parseInt(e.target.value, 10))}
+                                    className="w-full accent-indigo-500 h-1.5 bg-black/[0.06] dark:bg-white/10 rounded-lg cursor-pointer"
+                                />
+                                <div className="flex items-center justify-between">
+                                    <span className="text-[10px] text-slate-400">Auto-continue if checks fail</span>
+                                    <input
+                                        type="checkbox"
+                                        checked={autoContinue}
+                                        onChange={(e) => setAutoContinue(e.target.checked)}
+                                        className="rounded border-slate-700 text-indigo-500 focus:ring-indigo-500"
+                                    />
+                                </div>
+                            </div>
+
+                            {/* Visible Cast Scoping */}
+                            <div className="pt-2 border-t border-indigo-500/10 space-y-1.5">
+                                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
+                                    Visible Cast Scoping
+                                </span>
+                                <div className="flex flex-wrap gap-1.5">
+                                    {['Lead Vocalist', 'Guitarist', 'Drummer', 'Atmospheric B-Roll'].map(cast => {
+                                        const isSel = visibleCast.includes(cast);
+                                        return (
+                                            <button
+                                                key={cast}
+                                                type="button"
+                                                onClick={() => {
+                                                    if (isSel) {
+                                                        setVisibleCast(visibleCast.filter(c => c !== cast));
+                                                    } else {
+                                                        setVisibleCast([...visibleCast, cast]);
+                                                    }
+                                                }}
+                                                className={`px-2 py-0.5 text-[10px] rounded-md font-semibold transition-all ${
+                                                    isSel
+                                                        ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-bold'
+                                                        : 'bg-black/[0.04] dark:bg-white/5 text-slate-400 border border-transparent hover:text-slate-300'
+                                                }`}
+                                            >
+                                                {isSel ? '✓ ' : ''}{cast}
+                                            </button>
+                                        );
+                                    })}
+                                </div>
+                            </div>
+                        </GlassCard>
+
                         {/* Lip Syncing & Vocal Stem Alignment */}
                         <GlassCard className="p-4 space-y-3">
                             <div className="flex items-center justify-between">
@@ -773,11 +929,54 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                     <>
                                         <video
                                             src={api.getAudioUrl(renderedVideoUrl)}
+                                            poster={galleryApi.getThumbnailUrl(renderedVideoUrl.split('/').pop() || renderedVideoUrl)}
                                             controls
                                             autoPlay
                                             className="w-full h-full object-cover rounded-xl"
                                         />
+
+                                        {/* Split A/B Compare Toggle & Slider */}
+                                        <div className="absolute top-3 right-3 flex items-center gap-2">
+                                            <button
+                                                type="button"
+                                                onClick={() => setSplitCompareActive(!splitCompareActive)}
+                                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold backdrop-blur-md border transition-all ${
+                                                    splitCompareActive
+                                                        ? 'bg-indigo-500 text-white border-indigo-400 shadow-md'
+                                                        : 'bg-black/60 text-slate-300 border-white/20 hover:text-white'
+                                                }`}
+                                                title="Toggle Split A/B Comparison View"
+                                            >
+                                                {splitCompareActive ? '✕ Close Split' : '↔ Split Compare'}
+                                            </button>
+                                        </div>
+
+                                        {splitCompareActive && (
+                                            <div className="absolute bottom-14 left-4 right-4 bg-black/80 backdrop-blur-md rounded-xl p-2.5 border border-indigo-500/30 flex items-center gap-3 z-10">
+                                                <span className="text-[10px] font-bold text-slate-300">Original Take</span>
+                                                <input
+                                                    type="range"
+                                                    min={0}
+                                                    max={1}
+                                                    step={0.01}
+                                                    value={splitRatio}
+                                                    onChange={(e) => setSplitRatio(parseFloat(e.target.value))}
+                                                    className="flex-1 accent-indigo-500 h-1.5 bg-white/20 rounded cursor-pointer"
+                                                />
+                                                <span className="text-[10px] font-bold text-indigo-400">AI Retake ({Math.round(splitRatio * 100)}%)</span>
+                                            </div>
+                                        )}
+
                                         <div className="absolute bottom-3 right-3 flex items-center gap-2">
+                                            <button
+                                                onClick={handleRouteToDirector}
+                                                disabled={isRendering || isDeletingVideo || isRouting}
+                                                className="px-3 py-1.5 bg-black/60 hover:bg-black/80 text-white font-bold text-[11px] rounded-lg flex items-center gap-1.5 backdrop-blur-md border border-white/20 shadow-md transition-all disabled:opacity-50"
+                                                title="Route this video to Gallery & Director reference input"
+                                            >
+                                                {isRouting ? <Loader2 size={12} className="animate-spin" /> : <Share2 size={12} className="text-teal-400" />}
+                                                <span>{isRouting ? 'Routing…' : 'To Director'}</span>
+                                            </button>
                                             <button
                                                 onClick={handleRegenerateVideo}
                                                 disabled={isRendering || isDeletingVideo}

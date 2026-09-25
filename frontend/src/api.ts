@@ -1383,6 +1383,11 @@ export interface VideoPlanParams {
     visual_style?: string;
     model_name?: string;
     provider?: string;
+    pacing_bias?: number; // -2 (slow/cinematic) to +2 (rapid montage)
+    music_timeline_vocal_bypass?: boolean;
+    fidelity_retries?: number;
+    auto_continue?: boolean;
+    visible_cast?: string[];
 }
 
 export interface VideoRenderParams {
@@ -1400,6 +1405,11 @@ export interface VideoRenderParams {
     mode?: 'production_multiclip' | 'fast_preview';
     face_image_path?: string | null;
     character_image_path?: string | null;
+    pacing_bias?: number; // -2 to +2
+    music_timeline_vocal_bypass?: boolean;
+    fidelity_retries?: number;
+    auto_continue?: boolean;
+    visible_cast?: string[];
 }
 
 export interface VideoProvider {
@@ -1470,6 +1480,14 @@ export interface SystemTelemetry {
     vram_total_mb: number;
     usage_percent: number;
     lock_held: boolean;
+    profile_id?: number;
+    profile_name?: string;
+    offload_strategy?: string;
+    quantization_preference?: string;
+    max_reference_images?: number;
+    safe_vram_allowance_mb?: number;
+    ram_total_gb?: number;
+    ram_available_gb?: number;
 }
 
 export const systemApi = {
@@ -1483,6 +1501,127 @@ export const systemApi = {
     flushMemory: async (): Promise<{ reclaimed_mb: number; current_allocated_mb: number; status: string }> => {
         const res = await axios.post(`${API_BASE_URL}/system/flush`);
         return res.data;
+    },
+};
+
+// --- Multi-Track Timeline & Editor API ---
+
+export interface ClipTransform {
+    scale?: number;
+    x_offset?: number;
+    y_offset?: number;
+    opacity?: number;
+}
+
+export interface TimelineClip {
+    clip_id: string;
+    asset_path: string;
+    start_time: number;
+    duration: number;
+    source_in?: number;
+    volume?: number;
+    transform?: ClipTransform;
+    ai_take_parent_id?: string | null;
+    take_version?: number;
+}
+
+export interface TimelineTrack {
+    track_id: string;
+    track_type: 'video' | 'audio' | 'subtitle';
+    name: string;
+    muted?: boolean;
+    solo?: boolean;
+    volume?: number;
+    clips: TimelineClip[];
+}
+
+export interface EditorProject {
+    project_id: string;
+    title: string;
+    duration: number;
+    aspect_ratio?: string;
+    resolution?: [number, number];
+    fps?: number;
+    tracks: TimelineTrack[];
+    created_at?: string;
+    updated_at?: string;
+}
+
+export const editorApi = {
+    saveProject: async (project: EditorProject): Promise<{ status: string; project: EditorProject }> => {
+        const res = await axios.post(`${API_BASE_URL}/api/editor/projects`, project);
+        return res.data;
+    },
+    getProject: async (projectId: string): Promise<{ status: string; project: EditorProject }> => {
+        const res = await axios.get(`${API_BASE_URL}/api/editor/projects/${projectId}`);
+        return res.data;
+    },
+    applyRetake: async (projectId: string, clipId: string, newAssetPath: string): Promise<{ status: string; project: EditorProject }> => {
+        const res = await axios.post(`${API_BASE_URL}/api/editor/projects/${projectId}/clip/${clipId}/retake`, {
+            new_asset_path: newAssetPath,
+        });
+        return res.data;
+    },
+    compileRender: async (projectId: string): Promise<{ status: string; command: string[]; output_path: string; encoder: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/api/editor/projects/${projectId}/compile`);
+        return res.data;
+    },
+};
+
+// --- Gallery & Media Bridge API ---
+
+export const galleryApi = {
+    routeMedia: async (
+        mediaPath: string,
+        targetSlot: 'references' | 'frames' | 'animate' | 'edit' | 'upscale' | 'lip_sync',
+        targetJobOrSessionId?: string,
+        extraParams?: Record<string, any>
+    ): Promise<{ status: string; routed: any }> => {
+        const res = await axios.post(`${API_BASE_URL}/api/gallery/route`, {
+            media_path: mediaPath,
+            target_slot: targetSlot,
+            target_job_or_session_id: targetJobOrSessionId,
+            extra_params: extraParams,
+        });
+        return res.data;
+    },
+    getThumbnailUrl: (filename: string): string => {
+        return `${API_BASE_URL}/api/v1/thumbnail/${filename}`;
+    },
+};
+
+// --- YuE2 Training Studio API ---
+
+export interface YuE2TrainingJob {
+    job_id: string;
+    dataset_name: string;
+    mode: 'auto' | 'guided';
+    current_stage: number;
+    total_stages: number;
+    status: string;
+    current_step: number;
+    total_steps: number;
+    rank?: number;
+    learning_rate?: number;
+    reconstruction_auditions?: Record<string, string>;
+    test_song_auditions?: Record<number, string>;
+    output_lora_path?: string | null;
+}
+
+export const trainingApi = {
+    createJob: async (datasetName: string, mode: 'auto' | 'guided' = 'auto', rank: number = 32): Promise<YuE2TrainingJob> => {
+        const res = await axios.post(`${API_BASE_URL}/api/training/jobs`, { dataset_name: datasetName, mode, rank });
+        return res.data;
+    },
+    getJob: async (jobId: string): Promise<YuE2TrainingJob> => {
+        const res = await axios.get(`${API_BASE_URL}/api/training/jobs/${jobId}`);
+        return res.data;
+    },
+    getAuditionAudioUrl: (relPath: string): string => {
+        if (!relPath) return '';
+        if (relPath.startsWith('http://') || relPath.startsWith('https://')) return relPath;
+        const clean = relPath.startsWith('/') ? relPath.slice(1) : relPath;
+        return `${API_BASE_URL}/${clean}`;
     },
 };
 

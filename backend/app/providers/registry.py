@@ -26,6 +26,14 @@ class ProviderRegistry:
         minimax = MiniMaxMusic3Provider()
         self.register_provider("minimax_music3", minimax)
         try:
+            from app.providers.heartmula_provider import HeartMuLaProvider
+            heartmula = HeartMuLaProvider()
+            self.register_provider("heartmula", heartmula)
+            self.register_provider("heartmula_3b", heartmula)
+        except Exception as e:
+            logger.warning(f"HeartMuLaProvider registration deferred: {e}")
+
+        try:
             from app.providers.yue2_provider import YuE2Provider
             self.register_provider("yue2", YuE2Provider())
         except Exception as e:

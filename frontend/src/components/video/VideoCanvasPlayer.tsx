@@ -8,7 +8,8 @@ import {
     AlertCircle,
     CheckCircle2,
     Layers,
-    Video
+    Video,
+    X
 } from 'lucide-react';
 import { api, galleryApi, type Job, type VideoTaskStatus } from '../../api';
 import type { AspectRatioType } from './VideoTopBar';
@@ -28,6 +29,7 @@ interface VideoCanvasPlayerProps {
     onRenderVideo?: () => void;
     isPlanning?: boolean;
     seekTime?: number | null;
+    onDismissTask?: () => void;
 }
 
 const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
@@ -45,6 +47,7 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
     onRenderVideo,
     isPlanning = false,
     seekTime,
+    onDismissTask,
 }) => {
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -287,9 +290,20 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                                 Pipeline Stage: <strong className="uppercase font-mono text-teal-600 dark:text-teal-400">{activeTask.step.replace(/_/g, ' ')}</strong>
                             </span>
                         </span>
-                        <span className="font-mono text-xs font-bold text-slate-700 dark:text-slate-300">
-                            {activeTask.progress}%
-                        </span>
+                        <div className="flex items-center gap-3">
+                            <span className="font-mono text-xs font-bold text-slate-700 dark:text-slate-300">
+                                {activeTask.progress}%
+                            </span>
+                            {onDismissTask && (activeTask.status === 'error' || activeTask.status === 'completed') && (
+                                <button
+                                    onClick={onDismissTask}
+                                    title="Dismiss status"
+                                    className="p-0.5 rounded-md hover:bg-black/10 dark:hover:bg-white/10 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+                                >
+                                    <X size={13} />
+                                </button>
+                            )}
+                        </div>
                     </div>
 
                     {/* Progress Bar */}

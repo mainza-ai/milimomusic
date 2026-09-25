@@ -15,7 +15,10 @@ import threading
 from typing import List, Dict, Optional, Any, Tuple
 
 from app.models import Job
-from app.core.paths import get_generated_audio_dir, get_data_dir
+from app.core.paths import (
+    get_generated_audio_dir, get_data_dir,
+    resolve_audio_file, resolve_stem_file, resolve_image_file
+)
 from app.transcription.karaoke import lyric_sync_engine
 from app.services.video.types import (
     SceneClip, SceneType, VideoPlan, VideoTaskStatusInfo,
@@ -41,7 +44,7 @@ VIDEO_DIR = str(get_generated_audio_dir() / "videos")
 os.makedirs(VIDEO_DIR, exist_ok=True)
 TEMP_DIR = str(get_data_dir() / "video_cache")
 os.makedirs(TEMP_DIR, exist_ok=True)
-KEYFRAMES_DIR = str(get_data_dir() / "video_cache" / "keyframes")
+KEYFRAMES_DIR = str(get_generated_audio_dir() / "videos" / "keyframes")
 os.makedirs(KEYFRAMES_DIR, exist_ok=True)
 
 
@@ -97,52 +100,25 @@ class VideoOrchestrator:
             logger.debug(f"Failed to sync task {task_id} to durable queue: {e}")
 
     def resolve_audio_path(self, path: Optional[str]) -> Optional[str]:
-        if not path:
-            return None
-        candidates = [
-            path,
-            path.lstrip("/"),
-            path.replace("/audio/", "generated_audio/"),
-            os.path.join("generated_audio", os.path.basename(path))
-        ]
-        for c in candidates:
-            if os.path.isfile(c) and os.path.getsize(c) > 0:
-                return os.path.abspath(c)
-        return None
+        return resolve_audio_file(path)
 
     def resolve_vocals_stem(self, job: Job) -> Optional[str]:
-        stems_json = getattr(job, "stems_json", None)
-        if stems_json:
-            try:
-                data = json.loads(stems_json) if isinstance(stems_json, str) else stems_json
-                if isinstance(data, dict) and data.get("vocals"):
-                    p = self.resolve_audio_path(data["vocals"])
-                    if p: return p
-            except Exception:
-                pass
+        stems_val = getattr(job, "stems_json", None) or getattr(job, "stem_paths", None)
+        return resolve_stem_file(job.id, "vocals", stems_val)
 
-        for ext in [".mp3", ".wav"]:
-            cand = os.path.join("generated_audio", "stems", str(job.id), f"vocals{ext}")
-            if os.path.isfile(cand) and os.path.getsize(cand) > 0:
-                return os.path.abspath(cand)
-        return None
+    def resolve_stem(self, job: Job, stem_name: str) -> Optional[str]:
+        stems_val = getattr(job, "stems_json", None) or getattr(job, "stem_paths", None)
+        return resolve_stem_file(job.id, stem_name, stems_val)
 
     def resolve_face_image(self, job: Job, custom_image: Optional[str] = None) -> Optional[str]:
         if custom_image:
-            cand = self.resolve_audio_path(custom_image) or os.path.join("data", "covers", os.path.basename(custom_image))
-            if os.path.isfile(cand) and os.path.getsize(cand) > 0:
-                return os.path.abspath(cand)
-
+            img = resolve_image_file(custom_image) or resolve_audio_file(custom_image)
+            if img:
+                return img
         if job.cover_image_path:
-            candidates = [
-                job.cover_image_path,
-                job.cover_image_path.lstrip("/"),
-                os.path.join("data", "covers", os.path.basename(job.cover_image_path)),
-                os.path.join("generated_audio", os.path.basename(job.cover_image_path))
-            ]
-            for c in candidates:
-                if os.path.isfile(c) and os.path.getsize(c) > 0:
-                    return os.path.abspath(c)
+            img = resolve_image_file(job.cover_image_path) or resolve_audio_file(job.cover_image_path)
+            if img:
+                return img
         return None
 
     def get_video_providers(self) -> List[Dict[str, Any]]:
@@ -338,7 +314,6 @@ class VideoOrchestrator:
             logger.warning(f"Failed persisting task {task_id} to SQLite queue: {e}")
 
         rendered_clips: List[str] = []
-        hardware_acquired = False
         try:
             resolved_master = self.resolve_audio_path(job.audio_path)
             if not resolved_master:
@@ -372,15 +347,10 @@ class VideoOrchestrator:
             # Extract stem audio reactive curves for lip-sync and dynamic camera pulse
             stem_reactivity = None
             try:
-                drums_stem = None
-                bass_stem = None
-                if hasattr(job, "stem_paths") and job.stem_paths:
-                    stems = json.loads(job.stem_paths) if isinstance(job.stem_paths, str) else job.stem_paths
-                    if isinstance(stems, dict):
-                        drums_stem = stems.get("drums")
-                        bass_stem = stems.get("bass")
+                drums_stem = self.resolve_stem(job, "drums")
+                bass_stem = self.resolve_stem(job, "bass")
                 stem_reactivity = extract_stem_reactive_modulation(
-                    vocal_stem_path=vocal_stem,
+                    vocal_stem_path=vocal_stem or resolved_master,
                     drums_stem_path=drums_stem,
                     bass_stem_path=bass_stem,
                     fps=24
@@ -394,7 +364,7 @@ class VideoOrchestrator:
                 model_name=model_name,
                 bpm=config.get("bpm"),
                 visual_style=style,
-                vocal_stem_path=vocal_stem
+                vocal_stem_path=vocal_stem or resolved_master
             )
             total_clips = plan.total_clips
             self.update_task(task_id, total_clips=total_clips, clips=[c.to_dict() for c in plan.clips])
@@ -415,12 +385,9 @@ class VideoOrchestrator:
                 else:
                     video_generator = self._local_wan_14b
 
-                # Acquire exclusive accelerator hardware lock for local video rendering
-                await GlobalHardwareCoordinator.acquire_device("Wan 2.1 Video Director")
-                hardware_acquired = True
-
             # Step 2: Render individual scene clips
             self.update_task(task_id, step="Rendering Video Scenes & Lip-Sync Performance", progress=20)
+            is_local = (provider_type not in ("cloud_fal", "cloud_replicate"))
 
             for idx, clip in enumerate(plan.clips):
                 clip_file = os.path.join(TEMP_DIR, f"clip_{task_id}_{idx:03d}.mp4")
@@ -432,65 +399,74 @@ class VideoOrchestrator:
                     progress=20 + int(60 * (idx / total_clips))
                 )
 
-                # Vocal Singing Scene
-                if clip.is_vocal and enable_lip_sync and face_image and vocal_stem:
-                    logger.info(f"Rendering singing performance for Scene {idx + 1} with {lipsync_provider.name}...")
-                    success = await lipsync_provider.render_lip_sync(
-                        face_image_path=face_image,
-                        vocal_audio_path=vocal_stem,
-                        start_time=clip.start_time,
-                        duration=clip.duration,
-                        out_path=clip_file,
-                        width=w, height=h
-                    )
-                    if not success or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
-                        # Fallback to smooth provider
-                        await self._fallback_lipsync.render_lip_sync(
+                async def _render_clip():
+                    # Vocal Singing Scene
+                    # Prefer isolated vocal stem; fall back to resolved master audio so lip-sync succeeds even without stem separation
+                    vocal_audio_source = vocal_stem or resolved_master
+                    if clip.is_vocal and enable_lip_sync and face_image and vocal_audio_source:
+                        logger.info(f"Rendering singing performance for Scene {idx + 1} with {lipsync_provider.name} (audio: {os.path.basename(vocal_audio_source)})...")
+                        success = await lipsync_provider.render_lip_sync(
                             face_image_path=face_image,
-                            vocal_audio_path=vocal_stem,
+                            vocal_audio_path=vocal_audio_source,
                             start_time=clip.start_time,
                             duration=clip.duration,
                             out_path=clip_file,
                             width=w, height=h
                         )
+                        if not success or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
+                            # Fallback to smooth provider
+                            await self._fallback_lipsync.render_lip_sync(
+                                face_image_path=face_image,
+                                vocal_audio_path=vocal_audio_source,
+                                start_time=clip.start_time,
+                                duration=clip.duration,
+                                out_path=clip_file,
+                                width=w, height=h
+                            )
 
-                # Cinematic B-Roll Scene
-                else:
-                    logger.info(f"Rendering B-roll video for Scene {idx + 1} with {video_generator.name}...")
-                    # Generate scene keyframe image
-                    scene_bg = None
-                    try:
-                        from app.services.image_service import image_service
-                        bg = image_service.generate_scene_background(
-                            prompt=clip.prompt,
-                            style=style,
-                            width=w, height=h
-                        )
-                        if bg.get("ok") and bg.get("dest_path") and os.path.isfile(bg["dest_path"]):
-                            scene_bg = bg["dest_path"]
-                    except Exception as e:
-                        logger.warning(f"Keyframe image generation skipped ({e})")
-                        scene_bg = face_image
+                    # Cinematic B-Roll Scene
+                    else:
+                        logger.info(f"Rendering B-roll video for Scene {idx + 1} with {video_generator.name}...")
+                        # Generate scene keyframe image
+                        scene_bg = None
+                        try:
+                            from app.services.image_service import image_service
+                            bg = image_service.generate_scene_background(
+                                prompt=clip.prompt,
+                                style=style,
+                                width=w, height=h
+                            )
+                            if bg.get("ok") and bg.get("dest_path") and os.path.isfile(bg["dest_path"]):
+                                scene_bg = bg["dest_path"]
+                        except Exception as e:
+                            logger.warning(f"Keyframe image generation skipped ({e})")
+                            scene_bg = face_image
 
-                    success = await video_generator.generate_clip(
-                        prompt=clip.prompt,
-                        duration=clip.duration,
-                        out_path=clip_file,
-                        width=w, height=h,
-                        image_path=scene_bg,
-                        negative_prompt=clip.negative_prompt,
-                        visual_style=style
-                    )
-                    if not success or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
-                        # Fallback to procedural generator
-                        await self._procedural.generate_clip(
+                        success = await video_generator.generate_clip(
                             prompt=clip.prompt,
                             duration=clip.duration,
                             out_path=clip_file,
                             width=w, height=h,
                             image_path=scene_bg,
+                            negative_prompt=clip.negative_prompt,
                             visual_style=style
                         )
+                        if not success or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
+                            # Fallback to procedural generator
+                            await self._procedural.generate_clip(
+                                prompt=clip.prompt,
+                                duration=clip.duration,
+                                out_path=clip_file,
+                                width=w, height=h,
+                                image_path=scene_bg,
+                                visual_style=style
+                            )
+
+                if is_local:
+                    async with GlobalHardwareCoordinator.scoped_device(f"Wan 2.1 Video Clip {idx + 1}/{total_clips}"):
+                        await _render_clip()
+                else:
+                    await _render_clip()
 
                 if os.path.isfile(clip_file) and os.path.getsize(clip_file) > 0:
                     rendered_clips.append(clip_file)
@@ -534,7 +510,7 @@ class VideoOrchestrator:
                     timed_lines = lyric_sync_engine.align_lyrics(
                         lyrics=job.lyrics,
                         duration_sec=float((job.duration_ms or 180000) / 1000.0),
-                        vocal_stem_path=vocal_stem
+                        vocal_stem_path=vocal_stem or resolved_master
                     )
                     ass_content = self.generate_karaoke_ass(
                         timed_lines=timed_lines,
@@ -613,8 +589,6 @@ class VideoOrchestrator:
             self.update_task(task_id, status="error", error=str(e), step=f"Error: {str(e)[:120]}")
             raise e
         finally:
-            if hardware_acquired:
-                GlobalHardwareCoordinator.release_device("Wan 2.1 Video Director")
             # Clean up temp files
             for cf in rendered_clips:
                 if os.path.isfile(cf):

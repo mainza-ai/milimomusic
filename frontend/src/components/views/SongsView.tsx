@@ -18,6 +18,9 @@ interface SongsViewProps {
     onOpenVideo?: (job: Job) => void;
 }
 
+// Module-level cache for project lookup in song rows/cards
+let cachedSongsProjects: Project[] = [];
+
 export const SongsView: React.FC<SongsViewProps> = ({
     songs,
     currentJobId,
@@ -36,10 +39,13 @@ export const SongsView: React.FC<SongsViewProps> = ({
     const [selectedLyricsSong, setSelectedLyricsSong] = useState<Job | null>(null);
     const { openCoverStudio } = useModalStore();
     const [copiedId, setCopiedId] = useState<string | null>(null);
-    const [projects, setProjects] = useState<Project[]>([]);
+    const [projects, setProjects] = useState<Project[]>(cachedSongsProjects);
 
     useEffect(() => {
-        projectApi.listProjects().then(setProjects).catch(console.error);
+        projectApi.listProjects().then(list => {
+            cachedSongsProjects = list;
+            setProjects(list);
+        }).catch(console.error);
     }, []);
 
     const projectMap = useMemo(() => {

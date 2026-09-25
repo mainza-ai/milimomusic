@@ -300,3 +300,49 @@ async def test_active_video_engine_api_sync(client):
     assert restore_res.json()["model_id"] == "wan2_1_t2v_14b"
 
 
+def test_canonical_audio_and_stem_resolution_regression(tmp_path):
+    """Regression test verifying resolve_audio_file and resolve_stem_file handle /audio/ paths and stems."""
+    from app.core.paths import get_generated_audio_dir, resolve_audio_file, resolve_stem_file, resolve_image_file
+    from app.services.video.video_orchestrator import video_orchestrator
+
+    gen_dir = get_generated_audio_dir()
+    test_uuid = uuid.uuid4()
+    test_wav = gen_dir / f"{test_uuid}.wav"
+    test_wav.write_bytes(b"\x00" * 2048)
+
+    stems_dir = gen_dir / "stems"
+    stems_dir.mkdir(parents=True, exist_ok=True)
+    test_vocals = stems_dir / f"{test_uuid}_vocals.wav"
+    test_vocals.write_bytes(b"\x00" * 2048)
+
+    try:
+        # Test URL-style path resolution
+        resolved = resolve_audio_file(f"/audio/{test_uuid}.wav")
+        assert resolved is not None
+        assert os.path.isfile(resolved)
+        assert os.path.basename(resolved) == f"{test_uuid}.wav"
+
+        # Test video_orchestrator delegation
+        orch_resolved = video_orchestrator.resolve_audio_path(f"/audio/{test_uuid}.wav")
+        assert orch_resolved is not None
+        assert orch_resolved == resolved
+
+        # Test stem resolution from disk without stems_json
+        stem_resolved = resolve_stem_file(test_uuid, "vocals")
+        assert stem_resolved is not None
+        assert os.path.isfile(stem_resolved)
+        assert f"{test_uuid}_vocals.wav" in stem_resolved
+
+        # Test stem resolution via mock Job
+        mock_job = Job(id=test_uuid, title="Test Track", prompt="test", status=JobStatus.COMPLETED, audio_path=f"/audio/{test_uuid}.wav")
+        vocal_path = video_orchestrator.resolve_vocals_stem(mock_job)
+        assert vocal_path is not None
+        assert os.path.isfile(vocal_path)
+
+    finally:
+        if test_wav.exists():
+            test_wav.unlink()
+        if test_vocals.exists():
+            test_vocals.unlink()
+
+

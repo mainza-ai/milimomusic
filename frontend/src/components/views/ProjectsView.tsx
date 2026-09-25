@@ -35,6 +35,10 @@ interface ProjectsViewProps {
   onSelectTrack?: (job: Job) => void;
 }
 
+// Module-level SWR cache for instant navigation without pulsing skeletons
+let cachedProjects: Project[] = [];
+let hasLoadedProjectsOnce = false;
+
 export const ProjectsView: React.FC<ProjectsViewProps> = ({
   allJobs,
   onOpenWorkspace,
@@ -44,9 +48,9 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   onGenerateInProject,
   onSelectTrack
 }) => {
-  const [projects, setProjects] = useState<Project[]>([]);
+  const [projects, setProjects] = useState<Project[]>(cachedProjects);
   const [activeProject, setActiveProject] = useState<Project | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
+  const [isLoading, setIsLoading] = useState(!hasLoadedProjectsOnce && cachedProjects.length === 0);
 
   // Modals
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
@@ -91,8 +95,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
 
   const loadProjects = async () => {
     try {
-      setIsLoading(true);
+      if (!hasLoadedProjectsOnce && cachedProjects.length === 0) {
+        setIsLoading(true);
+      }
       const list = await projectApi.listProjects();
+      cachedProjects = list;
+      hasLoadedProjectsOnce = true;
       setProjects(list);
       if (activeProject) {
         const refreshed = await projectApi.getProject(activeProject.id);
@@ -326,7 +334,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
     const colorStyle = getColorClasses(activeProject.color);
 
     return (
-      <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 animate-fade-in">
+      <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
         {/* Breadcrumb & Top Actions */}
         <div className="flex flex-wrap items-center justify-between gap-4">
           <button
@@ -890,7 +898,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   // VIEW 2: TOP LEVEL PROJECTS FOLDER BROWSER
   // -------------------------------------------------------------
   return (
-    <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6 animate-fade-in">
+    <div className="flex-1 overflow-y-auto p-6 md:p-8 space-y-6">
       {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
         <div>

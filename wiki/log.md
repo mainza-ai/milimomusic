@@ -2,7 +2,7 @@
 title: Wiki Log
 type: log
 created: 2026-08-19
-updated: 2026-09-24
+updated: 2026-09-25
 ---
 
 # Wiki Log
@@ -2080,3 +2080,51 @@ Resolved taxonomy mismatch and synchronization disconnection between the Models 
    - Added unit tests in `backend/tests/test_video_service.py` verifying model resolution, registry keys, and bidirectional GET/POST active-engine API sync.
    - 18 video tests passing in Pytest (`pytest backend/tests/test_video*.py`).
    - Frontend production build (`npm run build`) passing with 0 errors.
+
+## [2026-09-25] remediate | UI Flickering, Layout Shifts & Visual Stutter Elimination
+Comprehensive audit and forensic remediation of UI flickering, empty-array flashes, layout jumping, and GPU compositor thrashing across all views:
+1. Models & Hardware Hub (`ModelsManagerModal.tsx`):
+   - Eliminated initial empty array / tab count jumping via module-level SWR cache (`cachedModels`, `cachedHardware`), rendering instant badges, hardware profiler card, and model lists on open.
+   - Eliminated card swapping and teleportation by preserving stable catalog sort order instead of dynamically sorting by `is_active`.
+   - Added optimistic UI updates on model activation so the active badge transitions in-place with zero latency.
+   - Removed nested Gaussian blur conflicts (`backdrop-blur-md` overlay + `backdrop-blur-2xl` container) and replaced card `transition-all` with targeted `transition-colors duration-150 transform-gpu`.
+2. Hardware Telemetry & Header (`HardwareTelemetryBar.tsx`, `EngineSwitcherModal.tsx`):
+   - Added initial telemetry caching with localStorage fallback and layout-stable fixed-dimension skeleton pill (`w-[185px] h-[28px]`), eliminating the ~240px header button layout shift on initial load (CLS = 0).
+   - Wrapped `HardwareTelemetryBar` in `React.memo` and guarded `setTelemetry` to prevent unnecessary re-render propagation from 4s polling.
+   - Guarded `EngineSwitcherModal.tsx` 3s polling loop to prevent repeated modal re-renders, and safely guarded `telemetry.active_consumer` checks.
+3. Card Component & Framework Motion (`GlassCard.tsx`):
+   - Changed default `animateEntry` from `true` to `false` in `GlassCard.tsx`, eliminating framer-motion `opacity: 0, y: 20` entrance animations from triggering across SongsView, ProjectsView, ProfileView, and modal cards on every mount and filter change.
+4. Instant Navigation in Views (`ProjectsView.tsx`, `ArtistsView.tsx`, `SongsView.tsx`):
+   - Added module-level SWR caches for `cachedProjects`, `cachedArtistsList`, `cachedArtistsStats`, and `cachedSongsProjects`, eliminating the 3-box and 6-box pulsating skeleton flashes when navigating between views.
+   - Removed jarring `animate-fade-in` transitions from `ProjectsView`, `ArtistsView`, and `TrackDetailView` tab panes for instant 60 FPS transitions.
+5. Vocal Studio & Music Videos Stabilization (`VocalStudioView.tsx`, `MusicVideosView.tsx`):
+   - Fixed critical conversion output wipe bug in `VocalStudioView.tsx` where setting the newly converted derivative track triggered an un-guarded `[selectedTrack?.id]` reset effect, wiping the converted vocal and remix URLs.
+   - Added module-level cache for `voiceProfiles`.
+   - Wrapped all passed callback props in `MusicVideosView.tsx` (`handleTogglePlayAudio`, `handleDownloadVideo`, `handleSelectInspectorModel`) in `useCallback` to preserve `React.memo` isolation in `VideoTopBar` and `VideoInspectorDock`.
+6. Verification:
+   - Full frontend production build (`npm run build`) passing with 0 errors.
+   - Backend test suite passing (14 video service tests passed in pytest).
+
+## [2026-09-25] remediate | Canonical Audio, Stem & Video Asset Path Resolution
+Forensic audit and architectural fix for master audio, stem, and keyframe asset resolution in the video generation and DAW export pipelines:
+1. Canonical Path Resolution Layer (`backend/app/core/paths.py`):
+   - Implemented `resolve_audio_file(path)`: handles static URLs (`/audio/...`, `http://.../audio/...`), absolute paths, and relative paths across both repo root and `backend/` working directories, evaluating alternate audio extensions (`.wav`, `.mp3`, `.flac`, `.ogg`, `.m4a`).
+   - Implemented `resolve_stem_file(job_id, stem_name, stems_json)`: queries `stems_json` payloads and searches canonical stems directories for `<job_id>_<stem>.<ext>`, `<job_id_hex>_<stem>.<ext>`, and `<job_id>/<stem>.<ext>`.
+   - Implemented `resolve_image_file(path)`: resolves cover artwork, character avatars, and keyframe images across `data/covers/` and `generated_audio/videos/keyframes/`.
+2. Video Pipeline Modernization (`video_orchestrator.py`, `video_service.py`):
+   - Refactored `resolve_audio_path`, `resolve_vocals_stem`, and `resolve_face_image` to delegate directly to canonical resolvers, resolving tracks like `/audio/50990d8d-12d7-44c3-bc12-3b5a71c63878.wav`.
+   - Added `resolve_stem` method and updated audio-reactivity analysis to check `drums` and `bass` stems properly.
+   - Pointed `KEYFRAMES_DIR` to `generated_audio/videos/keyframes/`, eliminating 404 errors on `/audio/videos/keyframes/...` storyboard requests.
+   - Added graceful master-audio fallback (`vocal_stem or resolved_master`) for lip-sync avatar animation and lyric alignment when isolated stems have not been separated.
+3. Export & Static Mount Route Integrity (`backend/app/main.py`):
+   - Added automatic creation of `videos/keyframes/` inside `get_generated_audio_dir()`.
+   - Upgraded MIDI and MusicXML export endpoints (`/export/{job_id}/{export_format}`) to use `resolve_audio_file`.
+   - Upgraded stem zip export (`/export/{job_id}/stems`) to resolve neural stems, MuScriptor parts, and disk fallbacks.
+4. Frontend Video Studio HUD & Error Feedback (`MusicVideosView.tsx`, `VideoCanvasPlayer.tsx`):
+   - Added immediate toast error notifications on background video task failures.
+   - Added dismiss button (`X`) on the multi-stage pipeline HUD banner so users can clear completed/failed states.
+5. Verification:
+   - Added regression test `test_canonical_audio_and_stem_resolution_regression` in `test_video_service.py`.
+   - 15 video service tests passing in Pytest.
+   - Frontend Vite build passing cleanly (0 errors).
+

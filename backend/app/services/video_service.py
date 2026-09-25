@@ -36,7 +36,10 @@ from app.models import Job
 from app.services.llm_service import LLMService
 from app.transcription.karaoke import lyric_sync_engine
 
-from app.core.paths import get_generated_audio_dir, get_data_dir
+from app.core.paths import (
+    get_generated_audio_dir, get_data_dir,
+    resolve_audio_file, resolve_stem_file, resolve_image_file
+)
 
 logger = logging.getLogger(__name__)
 
@@ -350,57 +353,28 @@ class VideoService:
 
     def resolve_audio_path(self, path: Optional[str]) -> Optional[str]:
         """Find readable audio file on disk."""
-        if not path:
-            return None
-        candidates = [
-            path,
-            path.lstrip("/"),
-            path.replace("/audio/", "generated_audio/"),
-            os.path.join("generated_audio", os.path.basename(path))
-        ]
-        for c in candidates:
-            if os.path.isfile(c) and os.path.getsize(c) > 0:
-                return os.path.abspath(c)
-        return None
+        return resolve_audio_file(path)
 
     def resolve_vocals_stem(self, job: Job) -> Optional[str]:
         """Locate isolated vocals stem or return None."""
-        stems_json = getattr(job, "stems_json", None)
-        if stems_json:
-            try:
-                data = json.loads(stems_json) if isinstance(stems_json, str) else stems_json
-                if isinstance(data, dict) and data.get("vocals"):
-                    p = self.resolve_audio_path(data["vocals"])
-                    if p:
-                        return p
-            except Exception:
-                pass
+        stems_val = getattr(job, "stems_json", None) or getattr(job, "stem_paths", None)
+        return resolve_stem_file(job.id, "vocals", stems_val)
 
-        # Look in generated_audio/stems/{job.id}/vocals.mp3 or .wav
-        for ext in [".mp3", ".wav"]:
-            cand = os.path.join("generated_audio", "stems", str(job.id), f"vocals{ext}")
-            if os.path.isfile(cand) and os.path.getsize(cand) > 0:
-                return os.path.abspath(cand)
-
-        return None
+    def resolve_stem(self, job: Job, stem_name: str) -> Optional[str]:
+        """Locate any stem (vocals, drums, bass, other, instrumental) on disk."""
+        stems_val = getattr(job, "stems_json", None) or getattr(job, "stem_paths", None)
+        return resolve_stem_file(job.id, stem_name, stems_val)
 
     def resolve_face_image(self, job: Job, custom_image: Optional[str] = None) -> Optional[str]:
         """Locate character or artist face image."""
         if custom_image:
-            cand = self.resolve_audio_path(custom_image) or os.path.join("data", "covers", os.path.basename(custom_image))
-            if os.path.isfile(cand) and os.path.getsize(cand) > 0:
-                return os.path.abspath(cand)
-
+            img = resolve_image_file(custom_image) or resolve_audio_file(custom_image)
+            if img:
+                return img
         if job.cover_image_path:
-            candidates = [
-                job.cover_image_path,
-                job.cover_image_path.lstrip("/"),
-                os.path.join("data", "covers", os.path.basename(job.cover_image_path)),
-                os.path.join("generated_audio", os.path.basename(job.cover_image_path))
-            ]
-            for c in candidates:
-                if os.path.isfile(c) and os.path.getsize(c) > 0:
-                    return os.path.abspath(c)
+            img = resolve_image_file(job.cover_image_path) or resolve_audio_file(job.cover_image_path)
+            if img:
+                return img
         return None
 
     def segment_song_for_video(

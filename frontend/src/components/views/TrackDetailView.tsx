@@ -550,7 +550,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
     const derivativeTracks = allJobs.filter(j => j.parent_job_id === track.id);
 
     return (
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 space-y-6 max-w-6xl mx-auto w-full min-w-0 animate-fade-in">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 space-y-6 max-w-6xl mx-auto w-full min-w-0">
             {/* Top Navigation & Breadcrumb */}
             <div className="flex items-center justify-between gap-4">
                 <button
@@ -1052,7 +1052,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
             <div className="space-y-4">
                 {/* 1. STEMS MATRIX TAB */}
                 {activeTab === 'stems' && (
-                    <div className="space-y-4 animate-fade-in">
+                    <div className="space-y-4">
                         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 pb-2">
                             <div>
                                 <h3 className="text-sm font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -1217,7 +1217,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
 
                 {/* 2. NEURAL SCORE & MIDI TAB */}
                 {activeTab === 'score' && (
-                    <div className="space-y-4 animate-fade-in">
+                    <div className="space-y-4">
                         <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
                             <div className="p-3.5 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/10 shadow-apple-sm text-center">
                                 <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider block">
@@ -1407,7 +1407,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
 
                 {/* 3. VOCAL & LYRICS TAB */}
                 {activeTab === 'lyrics' && (
-                    <div className="space-y-4 animate-fade-in">
+                    <div className="space-y-4">
                         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
                             {/* Karaoke / Lyrics Viewer */}
                             <div className="lg:col-span-2 p-5 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/10 shadow-apple-sm space-y-4">
@@ -1645,7 +1645,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
 
                 {/* 4. AI GENERATION PROVENANCE TAB */}
                 {activeTab === 'provenance' && (
-                    <div className="space-y-4 animate-fade-in">
+                    <div className="space-y-4">
                         <div className="p-5 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/10 shadow-apple-sm space-y-4">
                             <div className="flex items-center justify-between pb-2 border-b border-black/[0.04] dark:border-white/5">
                                 <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
@@ -1720,7 +1720,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
 
                 {/* 5. VERSION HISTORY & LINEAGE TAB */}
                 {activeTab === 'lineage' && (
-                    <div className="space-y-4 animate-fade-in">
+                    <div className="space-y-4">
                         <div className="p-5 rounded-2xl bg-white/70 dark:bg-[#141620]/80 border border-black/[0.06] dark:border-white/10 shadow-apple-sm space-y-4">
                             <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider flex items-center gap-2">
                                 <GitFork size={14} className="text-teal-500" />

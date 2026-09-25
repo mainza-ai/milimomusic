@@ -70,9 +70,11 @@ const ENGINES: EngineCard[] = [
     },
 ];
 
+let cachedEngineTelemetry: SystemTelemetry | null = null;
+
 export const EngineSwitcherModal: React.FC = () => {
     const { isEngineSwitcherOpen, closeEngineSwitcher } = useModalStore();
-    const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(null);
+    const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(cachedEngineTelemetry);
     const [isFlushing, setIsFlushing] = useState(false);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -80,7 +82,16 @@ export const EngineSwitcherModal: React.FC = () => {
         try {
             const data = await systemApi.getTelemetry();
             if (data && typeof data === 'object' && typeof data.device_type === 'string') {
-                setTelemetry(data);
+                cachedEngineTelemetry = data;
+                setTelemetry(prev => {
+                    if (prev && prev.device_type === data.device_type &&
+                        prev.vram_allocated_mb === data.vram_allocated_mb &&
+                        prev.usage_percent === data.usage_percent &&
+                        prev.active_consumer === data.active_consumer) {
+                        return prev;
+                    }
+                    return data;
+                });
             }
         } catch {
             // ignore
@@ -90,7 +101,7 @@ export const EngineSwitcherModal: React.FC = () => {
     useEffect(() => {
         if (isEngineSwitcherOpen) {
             loadTelemetry();
-            const timer = setInterval(loadTelemetry, 2500);
+            const timer = setInterval(loadTelemetry, 3000);
             return () => clearInterval(timer);
         }
     }, [isEngineSwitcherOpen]);
@@ -123,9 +134,9 @@ export const EngineSwitcherModal: React.FC = () => {
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/75">
             <div
-                className="w-full max-w-2xl bg-white dark:bg-[#141622] rounded-2xl border border-black/10 dark:border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]"
+                className="w-full max-w-2xl bg-white dark:bg-[#141622] rounded-2xl border border-black/10 dark:border-white/10 shadow-2xl overflow-hidden flex flex-col max-h-[90vh] transform-gpu"
                 onClick={(e) => e.stopPropagation()}
             >
                 {/* Header */}
@@ -221,7 +232,7 @@ export const EngineSwitcherModal: React.FC = () => {
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                         {ENGINES.map((eng) => {
                             const Icon = eng.icon;
-                            const isActive = telemetry?.active_consumer.toLowerCase().includes(eng.id);
+                            const isActive = Boolean(telemetry?.active_consumer?.toLowerCase().includes(eng.id));
 
                             return (
                                 <div

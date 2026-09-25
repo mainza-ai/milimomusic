@@ -1958,3 +1958,18 @@ Executed the comprehensive production UI/UX refactor for `MusicVideosView.tsx` a
    - 100% backend pytest test suite passing (33/33 tests passed, including new aesthetic palette and custom prompt suite).
    - Clean frontend production build (`tsc -b && vite build` passing with 0 errors).
    - Both backend daemon (port 8000) and frontend daemon (port 5173) active and healthy.
+
+## [2026-09-24] create | Vocal Studio 3-Zone Workstation, Live Vocal Booth & DAW Integration
+1. Resolved Broken DAW Timeline Integration:
+   - Connected `isVoiceConvertOpen`, `voiceConvertTrack`, and `voiceConvertStemPath` in `useModalStore` directly to `VoiceStudioModal.tsx` in `App.tsx`, resolving the previous dead click when users clicked "Voice Convert" in the DAW Arrange Timeline.
+2. Elevated to First-Class Studio View:
+   - Added `'vocal-studio'` to `NavView` and created left navigation rail button and ⌘K Command Palette shortcut (`AI Vocal Studio & Voice Cloning`).
+3. In-Browser Vocal Booth (`VocalBoothRecorder.tsx`):
+   - Implemented direct in-browser microphone capture with Web Audio API `AudioContext` and `AnalyserNode` frequency peak meter bars, countdown timer, duration limits, take review playback, and direct generation of `File` payloads for instant voice profile creation.
+4. Singing Voice Conversion Rack (`VocalDSPRack.tsx`):
+   - Integrated musical semitone pitch transposition (-12 to +12) with quick presets (+12 octave up M→F, -12 octave down F→M, +3 minor 3rd, +7 perfect 5th), phase-locked formant preservation toggle, 0–100% wet/dry mix, and F0 pitch extraction algorithms (`rmvpe`, `crepe`, `harvest`, `pm`).
+5. Tri-State A/B Audition Player (`VocalAuditionPlayer.tsx`):
+   - Implemented A/B comparison transport allowing instant switching between `Converted Vocal`, `Original Vocal Stem`, and `Full Master Remix` with audio scrub bar, skip controls, WAV export, and 1-click handoff to DAW `SessionWorkspace.tsx`.
+6. Verification:
+   - 100% test pass rate across all backend pytest suites (`pytest tests/test_production_v2.py -k "voice"`, `pytest tests/test_neural_svc.py`, `pytest tests/test_phase* tests/test_v2_core.py`).
+   - Clean frontend production build (`npm run build` passing with 0 errors).

@@ -15,13 +15,13 @@ from app.services.video.generators.procedural import ProceduralVideoGenerator
 
 logger = logging.getLogger(__name__)
 
+_WAN_PIPELINE_CACHE: Dict[str, Any] = {}
+
 
 class DiffusersWanGenerator(BaseVideoGenerator):
     def __init__(self, model_size: str = "14b"):
         self.model_size = model_size.lower()
         self._fallback = ProceduralVideoGenerator()
-        self._pipe_t2v = None
-        self._pipe_i2v = None
 
     @property
     def name(self) -> str:
@@ -84,7 +84,24 @@ class DiffusersWanGenerator(BaseVideoGenerator):
                 from diffusers import WanImageToVideoPipeline, AutoencoderKLWan
 
                 model_id = self._resolve_model_path(mode="i2v")
-                logger.info(f"Loading Wan 2.1 I2V ({self.model_size}) from {model_id} on {device}...")
+                cache_key = f"i2v:{model_id}"
+
+                if cache_key in _WAN_PIPELINE_CACHE:
+                    logger.info(f"Reusing cached Wan 2.1 I2V pipeline ({model_id}).")
+                    pipe = _WAN_PIPELINE_CACHE[cache_key]
+                else:
+                    logger.info(f"Loading Wan 2.1 I2V ({self.model_size}) from {model_id} on {device}...")
+                    pipe = WanImageToVideoPipeline.from_pretrained(model_id, torch_dtype=dtype)
+                    if device == "cuda":
+                        try:
+                            pipe.enable_model_cpu_offload()
+                            logger.info("Enabled model CPU offload for Wan 2.1 I2V on CUDA.")
+                        except Exception as e:
+                            logger.warning(f"Could not enable model CPU offload: {e}. Moving to {device}.")
+                            pipe.to(device)
+                    else:
+                        pipe.to(device)
+                    _WAN_PIPELINE_CACHE[cache_key] = pipe
 
                 ref_img = load_image(image_path)
                 # Compute aspect ratio dimensions conforming to VAE patch size
@@ -92,9 +109,6 @@ class DiffusersWanGenerator(BaseVideoGenerator):
                 target_w = (width // mod_value) * mod_value
                 target_h = (height // mod_value) * mod_value
                 ref_img = ref_img.resize((target_w, target_h))
-
-                pipe = WanImageToVideoPipeline.from_pretrained(model_id, torch_dtype=dtype)
-                pipe.to(device)
 
                 logger.info(f"Diffusing I2V video: prompt='{prompt[:60]}...', frames={num_frames}, size={target_w}x{target_h}")
                 output = pipe(
@@ -109,22 +123,35 @@ class DiffusersWanGenerator(BaseVideoGenerator):
                 ).frames[0]
 
                 export_to_video(output, out_path, fps=target_fps)
-                return os.path.isfile(out_path) and os.path.getsize(out_path) > 0
 
             else:
                 from diffusers import WanPipeline
 
                 model_id = self._resolve_model_path(mode="t2v")
-                logger.info(f"Loading Wan 2.1 T2V ({self.model_size}) from {model_id} on {device}...")
+                cache_key = f"t2v:{model_id}"
 
-                pipe = WanPipeline.from_pretrained(model_id, torch_dtype=dtype)
-                pipe.to(device)
+                if cache_key in _WAN_PIPELINE_CACHE:
+                    logger.info(f"Reusing cached Wan 2.1 T2V pipeline ({model_id}).")
+                    pipe = _WAN_PIPELINE_CACHE[cache_key]
+                else:
+                    logger.info(f"Loading Wan 2.1 T2V ({self.model_size}) from {model_id} on {device}...")
+                    pipe = WanPipeline.from_pretrained(model_id, torch_dtype=dtype)
+                    if device == "cuda":
+                        try:
+                            pipe.enable_model_cpu_offload()
+                            logger.info("Enabled model CPU offload for Wan 2.1 T2V on CUDA.")
+                        except Exception as e:
+                            logger.warning(f"Could not enable model CPU offload: {e}. Moving to {device}.")
+                            pipe.to(device)
+                    else:
+                        pipe.to(device)
+                    _WAN_PIPELINE_CACHE[cache_key] = pipe
 
                 mod_value = 16
                 target_w = (width // mod_value) * mod_value
                 target_h = (height // mod_value) * mod_value
 
-                logger.info(f"Diffusing T2V video: prompt='{prompt[:60]}...', frames={num_frames}")
+                logger.info(f"Diffusing T2V video: prompt='{prompt[:60]}...', frames={num_frames}, size={target_w}x{target_h}")
                 output = pipe(
                     prompt=prompt,
                     negative_prompt=negative_prompt or "blurry, low quality, distorted, watermark",
@@ -136,7 +163,17 @@ class DiffusersWanGenerator(BaseVideoGenerator):
                 ).frames[0]
 
                 export_to_video(output, out_path, fps=target_fps)
-                return os.path.isfile(out_path) and os.path.getsize(out_path) > 0
+
+            # Evict working activation tensors after generation
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
+            elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available():
+                try:
+                    torch.mps.empty_cache()
+                except Exception:
+                    pass
+
+            return os.path.isfile(out_path) and os.path.getsize(out_path) > 0
 
         except Exception as e:
             logger.warning(f"Wan 2.1 local diffusion error or offline weights ({e}). Falling back to cinematic procedural scene generation.")

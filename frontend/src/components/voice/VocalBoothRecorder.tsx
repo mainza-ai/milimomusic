@@ -38,11 +38,16 @@ export const VocalBoothRecorder: React.FC<VocalBoothRecorderProps> = ({
     const analyserRef = useRef<AnalyserNode | null>(null);
     const animFrameRef = useRef<number | null>(null);
     const timerIntervalRef = useRef<number | null>(null);
+    const countdownIntervalRef = useRef<number | null>(null);
     const audioChunksRef = useRef<Blob[]>([]);
     const previewAudioRef = useRef<HTMLAudioElement | null>(null);
 
     // Clean up all resources on unmount
     const cleanupAudio = useCallback(() => {
+        if (countdownIntervalRef.current) {
+            window.clearInterval(countdownIntervalRef.current);
+            countdownIntervalRef.current = null;
+        }
         if (animFrameRef.current) {
             cancelAnimationFrame(animFrameRef.current);
             animFrameRef.current = null;
@@ -73,6 +78,24 @@ export const VocalBoothRecorder: React.FC<VocalBoothRecorderProps> = ({
             }
         };
     }, [cleanupAudio, audioUrl]);
+
+    // External audio bus listener
+    useEffect(() => {
+        const handleExternalAudioPlay = (e: Event) => {
+            const customEvent = e as CustomEvent<{ source?: string }>;
+            if (customEvent.detail?.source && customEvent.detail.source !== 'vocal-booth-preview') {
+                if (previewAudioRef.current && !previewAudioRef.current.paused) {
+                    previewAudioRef.current.pause();
+                    setIsPlaying(false);
+                }
+            }
+        };
+
+        window.addEventListener('milimo:audio-play', handleExternalAudioPlay);
+        return () => {
+            window.removeEventListener('milimo:audio-play', handleExternalAudioPlay);
+        };
+    }, []);
 
     // Live level visualizer loop
     const updateMeter = useCallback(() => {
@@ -146,12 +169,15 @@ export const VocalBoothRecorder: React.FC<VocalBoothRecorderProps> = ({
             setCountdown(3);
 
             let count = 3;
-            const countdownTimer = window.setInterval(() => {
+            countdownIntervalRef.current = window.setInterval(() => {
                 count -= 1;
                 if (count > 0) {
                     setCountdown(count);
                 } else {
-                    window.clearInterval(countdownTimer);
+                    if (countdownIntervalRef.current) {
+                        window.clearInterval(countdownIntervalRef.current);
+                        countdownIntervalRef.current = null;
+                    }
                     setState('recording');
                     setElapsedSec(0);
                     recorder.start(250);
@@ -194,6 +220,7 @@ export const VocalBoothRecorder: React.FC<VocalBoothRecorderProps> = ({
             previewAudioRef.current.pause();
             setIsPlaying(false);
         } else {
+            window.dispatchEvent(new CustomEvent('milimo:audio-play', { detail: { source: 'vocal-booth-preview' } }));
             previewAudioRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
         }
     };

@@ -197,6 +197,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             }
 
             try {
+                window.dispatchEvent(new CustomEvent('milimo:audio-play', { detail: { source: 'global-player' } }));
                 await audioRef.current.play();
                 setIsPlaying(true);
                 // Same-source restart with a queued position: metadata won't
@@ -237,6 +238,7 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             await unlockAudioContext();
             ensureAudioGraph();
             try {
+                window.dispatchEvent(new CustomEvent('milimo:audio-play', { detail: { source: 'global-player' } }));
                 await audioRef.current.play();
                 setIsPlaying(true);
                 setPlaybackError(null);
@@ -517,6 +519,25 @@ export const AudioEngineProvider: React.FC<{ children: React.ReactNode }> = ({ c
             }
         };
     }, [currentTrack, isPlaying, resume, pause, prevTrackOrRestart, nextTrack, seek]);
+
+    // External audio bus listener: auto-pause GlobalAudioPlayer if any external player (DAW, Vocal Studio, Booth, Audition) plays
+    useEffect(() => {
+        const handleExternalAudioPlay = (e: Event) => {
+            const customEvent = e as CustomEvent<{ source?: string }>;
+            if (customEvent.detail?.source && customEvent.detail.source !== 'global-player') {
+                if (audioRef.current && !audioRef.current.paused) {
+                    audioRef.current.pause();
+                    setIsPlaying(false);
+                    setIsBuffering(false);
+                }
+            }
+        };
+
+        window.addEventListener('milimo:audio-play', handleExternalAudioPlay);
+        return () => {
+            window.removeEventListener('milimo:audio-play', handleExternalAudioPlay);
+        };
+    }, []);
 
     // Global Keyboard Hotkeys Listener
     useEffect(() => {

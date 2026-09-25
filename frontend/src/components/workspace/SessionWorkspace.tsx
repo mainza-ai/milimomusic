@@ -924,6 +924,23 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // External audio bus listener: auto-pause DAW transport if any other player starts
+    useEffect(() => {
+        const handleExternalAudioPlay = (e: Event) => {
+            const customEvent = e as CustomEvent<{ source?: string }>;
+            if (customEvent.detail?.source && customEvent.detail.source !== 'daw-workspace') {
+                if (isPlayingRef.current) {
+                    pauseAll();
+                }
+            }
+        };
+
+        window.addEventListener('milimo:audio-play', handleExternalAudioPlay);
+        return () => {
+            window.removeEventListener('milimo:audio-play', handleExternalAudioPlay);
+        };
+    }, []); // eslint-disable-line react-hooks/exhaustive-deps
+
     const togglePlay = () => {
         if (isPlaying) {
             pauseAll();
@@ -936,7 +953,8 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         const ctx = audioCtxRef.current || ensureAudioContext();
         if (!ctx) return;
         
-        // 1. Pause global engine to enforce single-stream playback (never two engines playing)
+        // 1. Pause global engine and notify audio bus to enforce single-stream playback
+        window.dispatchEvent(new CustomEvent('milimo:audio-play', { detail: { source: 'daw-workspace' } }));
         try { enginePause(); } catch { /* ignore */ }
 
         // 2. Ensure AudioContext is actively running (browser autoplay / resume policy)

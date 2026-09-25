@@ -82,9 +82,28 @@ export const VocalAuditionPlayer: React.FC<VocalAuditionPlayerProps> = ({
         }
 
         if (wasPlaying) {
+            window.dispatchEvent(new CustomEvent('milimo:audio-play', { detail: { source: 'vocal-audition' } }));
             audioRef.current.play().catch(() => setIsPlaying(false));
         }
     }, [activeUrl]);
+
+    // External audio bus listener
+    useEffect(() => {
+        const handleExternalAudioPlay = (e: Event) => {
+            const customEvent = e as CustomEvent<{ source?: string }>;
+            if (customEvent.detail?.source && customEvent.detail.source !== 'vocal-audition') {
+                if (audioRef.current && !audioRef.current.paused) {
+                    audioRef.current.pause();
+                    setIsPlaying(false);
+                }
+            }
+        };
+
+        window.addEventListener('milimo:audio-play', handleExternalAudioPlay);
+        return () => {
+            window.removeEventListener('milimo:audio-play', handleExternalAudioPlay);
+        };
+    }, []);
 
     const togglePlay = () => {
         if (!audioRef.current || !activeUrl) return;
@@ -92,6 +111,7 @@ export const VocalAuditionPlayer: React.FC<VocalAuditionPlayerProps> = ({
             audioRef.current.pause();
             setIsPlaying(false);
         } else {
+            window.dispatchEvent(new CustomEvent('milimo:audio-play', { detail: { source: 'vocal-audition' } }));
             audioRef.current.play().then(() => setIsPlaying(true)).catch(() => setIsPlaying(false));
         }
     };

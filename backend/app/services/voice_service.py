@@ -357,7 +357,8 @@ class VoiceService:
         pitch_shift: int = 0,
         profile: Optional[str] = None,
         dry_wet: float = 1.0,
-        formant_preserve: bool = True
+        formant_preserve: bool = True,
+        f0_method: Optional[str] = None
     ) -> str:
         """
         Run Singing Voice Conversion on isolated vocal stem using target Voice Profile.
@@ -369,6 +370,7 @@ class VoiceService:
         resolved_profile = self.get_profile(target_profile_id) or self.get_profile(f"default_{target_profile_id}")
         effective_profile_id = resolved_profile["id"] if resolved_profile else target_profile_id
         effective_job_id = job_id or f"job_{uuid.uuid4().hex[:8]}"
+        effective_f0 = f0_method or (resolved_profile.get("f0_method") if resolved_profile else "rmvpe") or "rmvpe"
 
         output_filename = f"{effective_job_id}_voice_{effective_profile_id}.wav"
         output_path = os.path.join(CONVERTED_DIR, output_filename)
@@ -400,9 +402,10 @@ class VoiceService:
                 pitch_shift=pitch_shift,
                 formant_shift=1.0,
                 dry_wet=dry_wet,
+                f0_method=effective_f0,
             )
             converted_successfully = True
-            logger.info(f"True Neural SVC conversion completed for profile {effective_profile_id}")
+            logger.info(f"True Neural SVC conversion completed for profile {effective_profile_id} (F0: {effective_f0})")
         except Exception as e:
             logger.warning(f"Neural SVC conversion failed: {e}. Falling back to acoustic timbre shaping.")
 
@@ -561,14 +564,19 @@ class VoiceService:
                 pad_master = torch.zeros((2, max_len), dtype=master_wave.dtype)
                 pad_master[:, :master_wave.shape[1]] = master_wave
 
-                # Balanced summing
-                mixed = (pad_master * 0.65) + (pad_vocal * 0.75)
+                # Suppress original vocal mid-frequencies in master to prevent double-vocal flanging
+                import torchaudio.functional as F
+                notched_master = F.equalizer_biquad(pad_master, target_sr, center_freq=1000.0, gain=-14.0, Q=0.5)
+                notched_master = F.equalizer_biquad(notched_master, target_sr, center_freq=2500.0, gain=-10.0, Q=0.8)
+
+                # Balanced summing with converted vocals placed cleanly on top
+                mixed = (notched_master * 0.70) + (pad_vocal * 0.85)
                 peak = torch.max(torch.abs(mixed))
                 if peak > 0:
                     mixed = mixed / peak * 0.95
 
                 _save_audio_tensor(out_dest, mixed, target_sr)
-                logger.info(f"Remixed converted vocals with master audio into {out_dest}.")
+                logger.info(f"Remixed converted vocals with vocal-notched master audio into {out_dest}.")
                 return f"/audio/{output_filename}"
             except Exception as e:
                 logger.warning(f"Failed to remix master with original audio: {e}")

@@ -51,6 +51,7 @@ from sqlmodel import SQLModel, Session, create_engine, select, or_, text
 from typing import List, Optional, Dict, Any, Sequence
 from uuid import UUID
 
+from app.core.hardware_lock import GlobalHardwareCoordinator
 from app.services.music_service import music_service, event_manager
 from app.services.llm_service import LLMService
 from app.services.model_manager import model_manager
@@ -151,6 +152,7 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.execute("PRAGMA busy_timeout=10000")
+    cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
 
 
@@ -158,6 +160,7 @@ def create_db_and_tables():
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         session.exec(text("PRAGMA journal_mode=WAL;"))
+        session.exec(text("PRAGMA foreign_keys=ON;"))
         
         # Automatic Migration: check and add missing columns to job table
         existing_cols = {row[1] for row in session.exec(text("PRAGMA table_info(job);")).all()}
@@ -379,8 +382,11 @@ async def lifespan(app: FastAPI):
         pruned = prune_agent_runs(_retention_days)
         if pruned:
             logger.info(f"Ledger retention: pruned {pruned} run(s) older than {_retention_days}d.")
+    from app.core.storage_gc import start_storage_gc, stop_storage_gc
+    start_storage_gc()
     await music_service.initialize()
     yield
+    stop_storage_gc()
     run_registry.shutdown_all()
     active = music_service.shutdown_all()
     if active:
@@ -696,16 +702,16 @@ async def transcribe_uploaded_audio(file: UploadFile = File(...)):
     from app.core.uploads import save_upload
     upload_path, safe_name = await save_upload(file, "generated_audio", kind="audio")
 
-    # 1. Real neural source separation (BS-Roformer) on the uploaded audio
+    # 1. Real neural source separation (BS-Roformer) & MuScriptor transcription under GPU device lock
     loop = asyncio.get_running_loop()
-    separation_res = await loop.run_in_executor(
-        None, separate_sources, upload_path, "generated_audio/stems", job_id, 1
-    )
+    async with GlobalHardwareCoordinator.scoped_device("transcribe_upload"):
+        separation_res = await loop.run_in_executor(
+            None, separate_sources, upload_path, "generated_audio/stems", job_id, 1
+        )
+        transcription = await muscriptor_provider.transcribe(upload_path, job_id)
+
     real_stems = dict(separation_res.stems) if hasattr(separation_res, "stems") else dict(separation_res)
     stems_source_id = getattr(separation_res, "source_id", "bs_roformer_6stem")
-
-    # 2. MuScriptor transcription
-    transcription = await muscriptor_provider.transcribe(upload_path, job_id)
 
     # 2b. MuScriptor-derived per-instrument stems (dynamic instrument parts + GM programs)
     instrument_parts: dict[str, str] = {}
@@ -2542,17 +2548,32 @@ async def separate_track_stems(job_id: str):
 
 
 @app.post("/workspace/{job_id}/notes")
-def save_workspace_notes(job_id: UUID, notes: List[Dict[str, Any]] = Body(...)):
-    """Save edited note events from the Piano Roll editor."""
+async def save_workspace_notes(job_id: str, notes: List[Dict[str, Any]] = Body(...)):
+    """Save edited note events from the Piano Roll editor and synchronize MIDI + MusicXML on disk."""
     with Session(engine) as session:
-        job = session.get(Job, job_id)
+        job = get_job_by_id(session, job_id)
         if not job:
-            raise HTTPException(status_code=404, detail="Job not found")
+            raise HTTPException(status_code=404, detail="Track not found")
 
-        job.notes_json = json.dumps(notes)
+        clean_id = str(job.id).replace("-", "")
+        bg = json.loads(job.beat_grid_json) if job.beat_grid_json else {}
+        bpm = float(bg.get("bpm", 120.0))
+
+        result = await muscriptor_provider.update_midi_notes(clean_id, notes, bpm=bpm)
+        job.notes_json = result.notes_json
+        job.midi_path = result.midi_path
+        job.musicxml_path = result.musicxml_path
+
         session.add(job)
         session.commit()
-        return {"status": "saved", "note_count": len(notes)}
+        session.refresh(job)
+        return {
+            "status": "saved",
+            "note_count": len(notes),
+            "midi_path": result.midi_path,
+            "musicxml_path": result.musicxml_path,
+            "job": job
+        }
 
 
 # --- LLM Config & Co-Writer Endpoints ---
@@ -3914,14 +3935,15 @@ async def voice_convert_job(job_id: str, body: dict = Body(...)):
         target_vocal = stems.get("vocals", job.audio_path).lstrip("/")
         
         try:
-            converted_audio_url = await voice_service.convert_vocals(
-                vocal_stem_path=target_vocal,
-                profile_id=voice_profile_id,
-                job_id=f"{job.id}_{uuid.uuid4().hex[:4]}",
-                pitch_shift=pitch_shift,
-                dry_wet=dry_wet,
-                formant_preserve=formant_preserve
-            )
+            async with GlobalHardwareCoordinator.scoped_device("voice_convert"):
+                converted_audio_url = await voice_service.convert_vocals(
+                    vocal_stem_path=target_vocal,
+                    profile_id=voice_profile_id,
+                    job_id=f"{job.id}_{uuid.uuid4().hex[:4]}",
+                    pitch_shift=pitch_shift,
+                    dry_wet=dry_wet,
+                    formant_preserve=formant_preserve
+                )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Voice conversion failed: {str(e)}")
         

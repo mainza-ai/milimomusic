@@ -74,10 +74,10 @@ class CloudLipSyncProvider(BaseLipSyncProvider):
                     "source_image_url": img_b64,
                     "driving_audio_url": audio_b64
                 }
-                async with httpx.AsyncClient(timeout=180.0) as client:
+                async with httpx.AsyncClient(timeout=300.0) as client:
                     resp = await client.post("https://queue.fal.run/fal-ai/live-portrait", json=payload, headers=headers)
                     if resp.status_code not in (200, 201):
-                        logger.error(f"Fal.ai lip-sync error: {resp.text}")
+                        logger.error(f"Fal.ai lip-sync queue error ({resp.status_code}): {resp.text}")
                         return False
 
                     data = resp.json()
@@ -89,7 +89,45 @@ class CloudLipSyncProvider(BaseLipSyncProvider):
                                 f_out.write(vid_resp.content)
                             return True
 
-            return False
+                    request_id = data.get("request_id")
+                    if not request_id:
+                        logger.error(f"Fal.ai lip-sync response missing request_id: {data}")
+                        return False
+
+                    status_url = data.get("status_url") or f"https://queue.fal.run/fal-ai/live-portrait/requests/{request_id}/status"
+                    response_url = data.get("response_url") or f"https://queue.fal.run/fal-ai/live-portrait/requests/{request_id}"
+
+                    start_time = asyncio.get_event_loop().time()
+                    poll_interval = 2.0
+                    while (asyncio.get_event_loop().time() - start_time) < 240.0:
+                        await asyncio.sleep(poll_interval)
+                        poll_interval = min(5.0, poll_interval * 1.2)
+                        try:
+                            poll_resp = await client.get(status_url, headers=headers)
+                            if poll_resp.status_code != 200:
+                                continue
+                            status_data = poll_resp.json()
+                            status = status_data.get("status")
+                            if status == "COMPLETED":
+                                res_resp = await client.get(response_url, headers=headers)
+                                if res_resp.status_code == 200:
+                                    res_data = res_resp.json()
+                                    v_url = res_data.get("video", {}).get("url")
+                                    if v_url:
+                                        vid_resp = await client.get(v_url)
+                                        if vid_resp.status_code == 200:
+                                            with open(out_path, "wb") as f_out:
+                                                f_out.write(vid_resp.content)
+                                            return True
+                                return False
+                            elif status in ("FAILED", "ERROR"):
+                                logger.error(f"Fal.ai lip-sync failed: {status_data}")
+                                return False
+                        except Exception as poll_e:
+                            logger.warning(f"Error polling Fal.ai lip-sync: {poll_e}")
+
+                    logger.error(f"Fal.ai lip-sync request {request_id} timed out")
+                    return False
 
         except Exception as e:
             logger.error(f"CloudLipSyncProvider request failed: {e}", exc_info=True)

@@ -46,8 +46,18 @@ RUN uv pip install --system --no-cache -e /app/mulacover
 # Copy compiled frontend from Stage 1 into /app/frontend/dist
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
-# Persistent data directories
-RUN mkdir -p /app/data /app/data/covers /app/data/voice_profiles /app/generated_audio /app/generated_audio/converted_vocals /app/generated_audio/voice_previews /app/generated_audio/videos /app/generated_midi /app/models
+# Persistent data directories and non-root execution
+RUN mkdir -p /app/data /app/data/covers /app/data/voice_profiles /app/generated_audio /app/generated_audio/converted_vocals /app/generated_audio/voice_previews /app/generated_audio/videos /app/generated_midi /app/models /home/milimo/.cache/huggingface
+
+# Create dedicated non-root application user
+RUN groupadd -g 1000 milimo && \
+    useradd -u 1000 -g milimo -s /bin/bash -m milimo && \
+    chown -R milimo:milimo /app /home/milimo
+
+ENV HF_HOME=/home/milimo/.cache/huggingface \
+    HOME=/home/milimo
+
+USER milimo
 
 EXPOSE 8000
 

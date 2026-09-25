@@ -412,12 +412,15 @@ The backend enforces an instance lock to prevent GPU and database contention:
 ### Environment Reference
 | Variable | Default | Purpose |
 |---|---|---|
-| `MILIMO_AUTH_TOKEN` | unset (open localhost) | Optional bearer-token auth for the API |
+| `MILIMO_AUTH_TOKEN` | unset (open localhost) | Optional bearer-token auth for the API (enforces constant-time `hmac.compare_digest`) |
 | `MILIMO_CORS_ORIGINS` | localhost allowlist | Explicit CORS origin list |
 | `MILIMO_AGENT_TIMEOUT` | `60` | Per-attempt ceiling (s) for agent LLM calls |
 | `MILIMO_RUN_RETENTION_DAYS` | `30` | Agent-ledger retention sweep at boot (`0` disables) |
 | `MILIMO_MAX_DURATION_S` | `240` | Hard cap on generated track duration (s) |
-| `MILIMO_STRICT_INFERENCE` | `1` | Enforces genuine neural inference (fails loudly if unavailable) |
+| `MILIMO_STRICT_INFERENCE` | `1` | Enforces genuine neural inference (fails loudly if weights/snapshot missing) |
+| `FAL_KEY` | unset | Optional Fal.ai API key for cloud Wan 2.1 video & LivePortrait queue offloading |
+| `REPLICATE_API_TOKEN` | unset | Optional Replicate token for cloud Wan 2.1 14B generation |
+| `MILIMO_STORAGE_GC_MAX_AGE_S` | `86400` | Prunes intermediate video/audio caches older than 24 hours |
 | `MILIMO_LOCK_FILE` | `.milimo.lock` | Instance-lock file path |
 | `MILIMO_ALLOW_MULTI_INSTANCE` | unset | Set to `1` to bypass the boot lock |
 | `MILIMO_DB_NAME` | `jobs.db` | SQLite database file name (or set `MILIMO_DATABASE_URL`) |

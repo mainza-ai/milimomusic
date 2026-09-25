@@ -171,9 +171,14 @@ def separate_sources(
         t0 = time.time()
         model = get_model("htdemucs_6s" if False else "htdemucs")
         
-        # Demucs conv1d op device placement
-        demucs_device = "cuda" if torch.cuda.is_available() else "cpu"
-        model = model.to(demucs_device)
+        # Demucs device placement: CUDA -> MPS -> CPU
+        demucs_device = _get_best_device()
+        try:
+            model = model.to(demucs_device)
+        except Exception as dev_err:
+            logger.warning(f"Could not place Demucs on {demucs_device} ({dev_err}); using cpu.")
+            demucs_device = "cpu"
+            model = model.to("cpu")
         model.eval()
 
         wav, sr = torchaudio.load(master_wav_path)
@@ -182,7 +187,17 @@ def separate_sources(
         if sr != model.samplerate:
             wav = torchaudio.functional.resample(wav, sr, model.samplerate)
 
-        sources = apply_model(model, wav[None], device=torch.device(demucs_device), shifts=shifts)
+        try:
+            sources = apply_model(model, wav[None], device=torch.device(demucs_device), shifts=shifts)
+        except Exception as apply_err:
+            if demucs_device != "cpu":
+                logger.warning(f"Demucs execution on {demucs_device} failed ({apply_err}); retrying on CPU.")
+                demucs_device = "cpu"
+                model = model.to("cpu")
+                sources = apply_model(model, wav[None], device=torch.device("cpu"), shifts=shifts)
+            else:
+                raise apply_err
+
         tensor_stems = sources[0]
         names = list(model.sources)
 

@@ -9,6 +9,7 @@ import asyncio
 import gc
 import logging
 import time
+from contextlib import asynccontextmanager
 from typing import Any, Dict, Optional
 
 logger = logging.getLogger("milimo.hardware_lock")
@@ -56,6 +57,16 @@ class GlobalHardwareCoordinator:
             except RuntimeError:
                 pass
         logger.info(f"Hardware lock RELEASED by: {consumer}")
+
+    @classmethod
+    @asynccontextmanager
+    async def scoped_device(cls, consumer: str, timeout: Optional[float] = 600.0):
+        """Async context manager to safely acquire and release the accelerator device."""
+        await cls.acquire_device(consumer, timeout=timeout)
+        try:
+            yield
+        finally:
+            cls.release_device(consumer)
 
     @classmethod
     def flush_memory(cls) -> Dict[str, Any]:

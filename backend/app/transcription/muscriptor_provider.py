@@ -285,25 +285,31 @@ class MuScriptorProvider:
             track.append(mido.MetaMessage('set_tempo', tempo=tempo, time=0))
             track.append(mido.MetaMessage('track_name', name='Milimo Master Track', time=0))
 
-            # Sort notes by start_time
-            sorted_notes = sorted(notes, key=lambda n: n.get('start_time', 0.0))
-            current_tick = 0
+            # Event-based delta time reconstruction for authentic polyphony
+            # Discrete events: (tick, priority, type, pitch, velocity)
+            # Priority: note_off (0) before note_on (1) at identical tick to avoid note-stealing
+            events = []
+            for n in notes:
+                p = max(0, min(127, int(n.get('pitch', 60))))
+                vel = max(1, min(127, int(n.get('velocity', 85))))
+                start_s = max(0.0, float(n.get('start_time', 0.0)))
+                dur_s = max(0.01, float(n.get('duration', 0.5)))
 
-            for n in sorted_notes:
-                p = int(n.get('pitch', 60))
-                vel = int(n.get('velocity', 85))
-                start_s = float(n.get('start_time', 0.0))
-                dur_s = float(n.get('duration', 0.5))
+                start_tick = int(round(start_s * 480 * (bpm / 60)))
+                dur_tick = max(1, int(round(dur_s * 480 * (bpm / 60))))
+                end_tick = start_tick + dur_tick
 
-                start_tick = int(start_s * 480 * (bpm / 60))
-                dur_tick = int(dur_s * 480 * (bpm / 60))
+                events.append((start_tick, 1, 'note_on', p, vel))
+                events.append((end_tick, 0, 'note_off', p, 0))
 
-                delta_on = max(0, start_tick - current_tick)
-                track.append(mido.Message('note_on', note=p, velocity=vel, time=delta_on))
-                current_tick = start_tick
+            # Sort by tick ascending, then note_off before note_on
+            events.sort(key=lambda e: (e[0], e[1]))
 
-                track.append(mido.Message('note_off', note=p, velocity=0, time=dur_tick))
-                current_tick += dur_tick
+            last_tick = 0
+            for tick, _, msg_type, pitch, velocity in events:
+                delta_tick = max(0, tick - last_tick)
+                track.append(mido.Message(msg_type, note=pitch, velocity=velocity, time=delta_tick))
+                last_tick = tick
 
             mid.save(midi_file)
         except Exception as e:

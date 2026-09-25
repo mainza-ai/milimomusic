@@ -81,6 +81,23 @@ function parseSections(job?: Job, totalDurationSec: number = 180): SongSection[]
     return sections;
 }
 
+function getShotIntentBadge(sceneType?: string) {
+    switch (sceneType) {
+        case 'VOCAL_PERFORMANCE':
+            return { label: '🎤 Vocal', cls: 'bg-teal-500/20 text-teal-400 border-teal-500/30' };
+        case 'NARRATIVE_STORY':
+            return { label: '🎭 Narrative', cls: 'bg-amber-500/20 text-amber-400 border-amber-500/30' };
+        case 'METAPHORICAL_VISUAL':
+            return { label: '🌌 Metaphor', cls: 'bg-indigo-500/20 text-indigo-400 border-indigo-500/30' };
+        case 'INSTRUMENTAL_FOCUS':
+            return { label: '🎸 Solo', cls: 'bg-rose-500/20 text-rose-400 border-rose-500/30' };
+        case 'ENVIRONMENTAL_BROLL':
+        case 'CINEMATIC_BROLL':
+        default:
+            return { label: '🏙️ B-Roll', cls: 'bg-purple-500/20 text-purple-400 border-purple-500/30' };
+    }
+}
+
 interface VideoTimelineTrackProps {
     clips: VideoClipSegment[];
     keyframes: Record<number, string>;
@@ -186,16 +203,13 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                     <div className="flex gap-2 min-w-max pb-1">
                         {clips.map((clip) => {
                             const kfUrl = keyframes[clip.clip_index];
-                            const isVocal = clip.scene_type === 'VOCAL_PERFORMANCE';
+                            const badge = getShotIntentBadge(clip.scene_type);
+                            const energyDots = clip.musical_energy ? '⚡'.repeat(Math.min(5, Math.max(1, clip.musical_energy))) : null;
                             return (
                                 <div
                                     key={clip.clip_index}
                                     onClick={() => onSeekToTime?.(clip.start_time)}
-                                    className={`w-52 flex-shrink-0 p-2.5 rounded-2xl border transition-all flex flex-col justify-between group relative overflow-hidden cursor-pointer select-none ${
-                                        isVocal
-                                            ? 'bg-teal-500/[0.03] dark:bg-teal-500/[0.05] border-teal-500/20 hover:border-teal-500/50 hover:shadow-md'
-                                            : 'bg-purple-500/[0.03] dark:bg-purple-500/[0.05] border-purple-500/20 hover:border-purple-500/50 hover:shadow-md'
-                                    }`}
+                                    className={`w-60 flex-shrink-0 p-2.5 rounded-2xl border transition-all flex flex-col justify-between group relative overflow-hidden cursor-pointer select-none bg-black/[0.02] dark:bg-white/[0.03] border-black/[0.08] dark:border-white/10 hover:border-teal-500/50 hover:shadow-md`}
                                     title={`Click to jump playhead to ${clip.time_str}`}
                                 >
                                     {/* Keyframe / Poster Image */}
@@ -214,9 +228,19 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                         )}
 
                                         {/* Floating Badge on Thumbnail */}
-                                        <div className="absolute top-1 left-1 bg-black/70 backdrop-blur-md px-1.5 py-0.5 rounded text-[9px] font-mono font-bold text-white">
-                                            #{clip.clip_index}
+                                        <div className="absolute top-1 left-1 bg-black/70 backdrop-blur-md px-1.5 py-0.5 rounded text-[9px] font-mono font-bold text-white flex items-center gap-1">
+                                            <span>#{clip.clip_index}</span>
+                                            {clip.section_label && (
+                                                <span className="text-teal-300 font-normal">· {clip.section_label}</span>
+                                            )}
                                         </div>
+
+                                        {/* Musical Energy Badge */}
+                                        {energyDots && (
+                                            <div className="absolute top-1 right-1 bg-black/70 backdrop-blur-md px-1 py-0.5 rounded text-[8px] text-amber-300" title={`Musical Energy: ${clip.musical_energy}/5`}>
+                                                {energyDots}
+                                            </div>
+                                        )}
 
                                         {/* Hover Overlay Action: Zoom Keyframe */}
                                         {kfUrl && (
@@ -242,24 +266,32 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                                     {clip.time_str} ({clip.duration.toFixed(1)}s)
                                                 </span>
                                                 <span
-                                                    className={`px-1.5 py-0.2 rounded font-bold uppercase tracking-wider text-[8px] ${
-                                                        isVocal
-                                                            ? 'bg-teal-500/20 text-teal-400'
-                                                            : 'bg-purple-500/20 text-purple-400'
-                                                    }`}
+                                                    className={`px-1.5 py-0.5 rounded border font-bold uppercase tracking-wider text-[8px] ${badge.cls}`}
                                                 >
-                                                    {isVocal ? '🎤 Vocal' : '🎥 B-Roll'}
+                                                    {badge.label}
                                                 </span>
                                             </div>
 
-                                            <p className="text-[11px] text-slate-800 dark:text-slate-200 font-medium line-clamp-2 mt-1">
-                                                {clip.prompt}
-                                            </p>
+                                            {clip.visual_action ? (
+                                                <p className="text-[11px] text-slate-800 dark:text-slate-200 font-medium line-clamp-2 mt-1">
+                                                    <span className="font-bold text-teal-600 dark:text-teal-400">Action:</span> {clip.visual_action}
+                                                </p>
+                                            ) : (
+                                                <p className="text-[11px] text-slate-800 dark:text-slate-200 font-medium line-clamp-2 mt-1">
+                                                    {clip.prompt}
+                                                </p>
+                                            )}
+
+                                            {clip.directors_note && (
+                                                <div className="mt-1 px-1.5 py-0.5 rounded bg-black/[0.03] dark:bg-white/[0.04] text-[9px] text-slate-500 italic truncate" title={clip.directors_note}>
+                                                    🎬 Note: {clip.directors_note}
+                                                </div>
+                                            )}
                                         </div>
 
                                         {/* Lyrics or Camera Tag */}
                                         <div className="pt-1.5 border-t border-black/[0.04] dark:border-white/5 flex items-center justify-between text-[9px] font-mono text-slate-400">
-                                            <span className="truncate max-w-[120px] flex items-center gap-1">
+                                            <span className="truncate max-w-[120px] flex items-center gap-1" title={clip.camera}>
                                                 <Camera size={10} />
                                                 <span>{clip.camera?.split(' ')[0] || 'Camera'}</span>
                                             </span>
@@ -288,7 +320,8 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3 max-h-96 overflow-y-auto pr-1">
                     {clips.map((clip) => {
                         const kfUrl = keyframes[clip.clip_index];
-                        const isVocal = clip.scene_type === 'VOCAL_PERFORMANCE';
+                        const badge = getShotIntentBadge(clip.scene_type);
+                        const energyDots = clip.musical_energy ? '⚡'.repeat(Math.min(5, Math.max(1, clip.musical_energy))) : null;
                         return (
                             <div
                                 key={clip.clip_index}
@@ -319,21 +352,39 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                             <span className="text-[10px] font-mono font-bold text-teal-600 dark:text-teal-400 bg-teal-500/10 px-1.5 py-0.5 rounded">
                                                 {clip.time_str}
                                             </span>
+                                            {clip.section_label && (
+                                                <span className="text-[9px] font-mono font-bold text-slate-400 bg-black/[0.04] dark:bg-white/[0.05] px-1.5 py-0.5 rounded">
+                                                    [{clip.section_label}]
+                                                </span>
+                                            )}
                                             <span
-                                                className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${
-                                                    isVocal
-                                                        ? 'bg-teal-500/20 text-teal-300'
-                                                        : 'bg-purple-500/20 text-purple-300'
-                                                }`}
+                                                className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${badge.cls}`}
                                             >
-                                                {isVocal ? '🎤 Vocal' : '🎥 B-Roll'}
+                                                {badge.label}
                                             </span>
+                                            {energyDots && (
+                                                <span className="text-[9px] text-amber-300 font-mono ml-auto" title={`Energy: ${clip.musical_energy}/5`}>
+                                                    {energyDots}
+                                                </span>
+                                            )}
                                         </div>
-                                        <p className="text-[11px] text-slate-800 dark:text-slate-200 font-medium line-clamp-2">
-                                            {clip.prompt}
-                                        </p>
+                                        {clip.visual_action ? (
+                                            <p className="text-[11px] text-slate-800 dark:text-slate-200 font-medium line-clamp-2">
+                                                <span className="font-bold text-teal-600 dark:text-teal-400">Action:</span> {clip.visual_action}
+                                            </p>
+                                        ) : (
+                                            <p className="text-[11px] text-slate-800 dark:text-slate-200 font-medium line-clamp-2">
+                                                {clip.prompt}
+                                            </p>
+                                        )}
                                     </div>
                                 </div>
+
+                                {clip.directors_note && (
+                                    <div className="px-2 py-0.5 rounded bg-black/[0.03] dark:bg-white/[0.04] text-[9px] text-slate-500 italic truncate" title={clip.directors_note}>
+                                        🎬 Note: {clip.directors_note}
+                                    </div>
+                                )}
 
                                 {clip.lyrics && (
                                     <p className="text-[10px] italic text-cyan-600 dark:text-cyan-400 truncate">
@@ -342,7 +393,7 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                 )}
 
                                 <div className="flex items-center justify-between pt-1 border-t border-black/[0.04] dark:border-white/5 text-[10px] font-mono text-slate-400">
-                                    <span>🎥 {clip.camera}</span>
+                                    <span className="truncate max-w-[140px]" title={clip.camera}>🎥 {clip.camera}</span>
                                     <button
                                         type="button"
                                         onClick={(e) => {

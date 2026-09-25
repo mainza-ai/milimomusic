@@ -47,6 +47,8 @@ VIDEO_DIR = str(get_generated_audio_dir() / "videos")
 os.makedirs(VIDEO_DIR, exist_ok=True)
 TEMP_DIR = str(get_data_dir() / "video_cache")
 os.makedirs(TEMP_DIR, exist_ok=True)
+KEYFRAMES_DIR = str(get_generated_audio_dir() / "videos" / "keyframes")
+os.makedirs(KEYFRAMES_DIR, exist_ok=True)
 
 from app.services.video.video_director import STYLE_PALETTES
 
@@ -384,105 +386,83 @@ class VideoService:
         model_name: Optional[str] = "wan_14b",
         bpm: Optional[float] = None,
         visual_style: str = "neon-cyberpunk",
-        custom_style_prompt: Optional[str] = None
+        custom_style_prompt: Optional[str] = None,
+        pacing_bias: int = 0,
+        character_desc: Optional[str] = None,
+        visible_cast: Optional[List[str]] = None,
+        user_scenes: Optional[List[Dict[str, Any]]] = None
     ) -> List[Dict[str, Any]]:
         """
-        Segment the entire song into consecutive clips respecting model duration constraints.
-        Snaps cuts to musical bars and lyric pauses, and tags scenes as VOCAL vs CINEMATIC B-ROLL.
+        Segment the song into clips respecting model constraints and musical downbeats.
+        Delegates to video_director with AI Visual Director and intelligent fallback.
         """
-        total_duration = float((job.duration_ms or 180000) / 1000.0)
-        track_bpm = float(bpm or 120.0)
-        seconds_per_bar = (60.0 / track_bpm) * 4.0
-
-        model_max = self.get_model_max_duration(model_name)
-        if max_clip_duration is None or max_clip_duration <= 0:
-            effective_max = model_max
-        else:
-            effective_max = max(1.0, min(float(max_clip_duration), model_max))
-
-        # Calculate target clip duration clamped to musical bars
-        bars_per_clip = max(1, int(round(effective_max / seconds_per_bar)))
-        target_clip_len = bars_per_clip * seconds_per_bar
-        if target_clip_len > effective_max and bars_per_clip > 1:
-            target_clip_len = (bars_per_clip - 1) * seconds_per_bar
-        target_clip_len = max(1.5, min(target_clip_len, effective_max))
-
-        # Retrieve timed lyrics via lyric_sync_engine
+        from app.services.video.video_director import video_director
         vocals_path = self.resolve_vocals_stem(job)
-        timed_lines = lyric_sync_engine.align_lyrics(
-            lyrics=job.lyrics or "",
-            duration_sec=total_duration,
+        plan = video_director.segment_song(
+            job=job,
+            max_clip_duration=max_clip_duration,
+            model_name=model_name,
+            bpm=bpm,
+            visual_style=visual_style,
+            vocal_stem_path=vocals_path,
+            character_desc=character_desc,
+            custom_style_prompt=custom_style_prompt,
+            pacing_bias=pacing_bias,
+            visible_cast=visible_cast,
+            user_scenes=user_scenes
+        )
+        return [c.to_dict() for c in plan.clips]
+
+    def generate_director_treatment(
+        self,
+        job: Job,
+        model_name: Optional[str] = "wan_14b",
+        max_clip_duration: Optional[float] = None,
+        visual_style: str = "neon-cyberpunk",
+        custom_style_prompt: Optional[str] = None,
+        pacing_bias: int = 0,
+        visible_cast: Optional[List[str]] = None,
+        character_desc: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Conceptualize and script an entire music video treatment with the AI Visual Director.
+        """
+        from app.services.video.video_director import video_director
+        vocals_path = self.resolve_vocals_stem(job)
+        treatment = video_director.generate_director_treatment(
+            job=job,
+            model_name=model_name,
+            max_clip_duration=max_clip_duration,
+            visual_style=visual_style,
+            custom_style_prompt=custom_style_prompt,
+            pacing_bias=pacing_bias,
+            visible_cast=visible_cast,
+            character_desc=character_desc,
             vocal_stem_path=vocals_path
         )
+        return treatment.to_dict()
 
-        clips: List[Dict[str, Any]] = []
-        cur_time = 0.0
-        clip_idx = 1
-        if custom_style_prompt and custom_style_prompt.strip():
-            palette = {
-                "colors": "0x14b8a6|0x06b6d4",
-                "bg": "0x0a0f1d",
-                "primary_color": (20, 184, 166),
-                "accent_color": (6, 182, 212),
-                "desc": "Custom Directing",
-                "atmosphere": custom_style_prompt.strip(),
-                "negative": "blurry, low resolution, watermark, bad hands, distorted anatomy"
-            }
-        else:
-            palette = STYLE_PALETTES.get(visual_style, STYLE_PALETTES["neon-cyberpunk"])
-
-        cameras = [
-            "Medium orbital shot focusing on performer",
-            "Slow cinematic tracking crane down",
-            "Wide atmospheric environmental sweep",
-            "Dutch angle low push-in with rim light flare",
-            "Tight emotive close-up with soft depth of field"
-        ]
-
-        while cur_time < total_duration:
-            clip_end = min(cur_time + target_clip_len, total_duration)
-            if (total_duration - clip_end) < 2.0:
-                clip_end = total_duration
-
-            # Check for active lyrics in this window
-            overlapping_lyrics = []
-            for line in timed_lines:
-                l_start = line.get("start", 0.0)
-                l_end = line.get("end", 0.0)
-                if max(cur_time, l_start) < min(clip_end, l_end):
-                    overlapping_lyrics.append(line.get("text", "").strip())
-
-            has_vocals = len(overlapping_lyrics) > 0
-            scene_type = "VOCAL_PERFORMANCE" if has_vocals else "CINEMATIC_BROLL"
-            lyric_snippet = " / ".join(overlapping_lyrics) if overlapping_lyrics else ""
-
-            s_m, s_s = int(cur_time // 60), int(cur_time % 60)
-            e_m, e_s = int(clip_end // 60), int(clip_end % 60)
-            time_label = f"{s_m}:{s_s:02d} - {e_m}:{e_s:02d}"
-
-            if has_vocals:
-                prompt = f"{palette['desc']}: Singer performing passionately in {job.tags or 'urban studio'}. Lyrics: \"{lyric_snippet[:60]}\". Volumetric lighting and particle atmosphere."
-            else:
-                prompt = f"{palette['desc']}: Cinematic B-roll scenery, sonic wave pulse through cityscape, rhythmic strobe reflections and atmospheric haze."
-
-            clips.append({
-                "clip_index": clip_idx,
-                "start_time": round(cur_time, 2),
-                "end_time": round(clip_end, 2),
-                "duration": round(clip_end - cur_time, 2),
-                "time_str": time_label,
-                "is_vocal": has_vocals,
-                "scene_type": scene_type,
-                "lyrics": lyric_snippet,
-                "prompt": prompt,
-                "camera": cameras[(clip_idx - 1) % len(cameras)],
-                "lighting": "Cyan and magenta anamorphic rim lighting"
-            })
-
-            clip_idx += 1
-            cur_time = clip_end
-
-        return clips
+    def reimagine_scene(
+        self,
+        job: Job,
+        clip_index: int,
+        current_scene: Dict[str, Any],
+        user_instruction: Optional[str] = None,
+        visual_style: str = "neon-cyberpunk",
+        character_desc: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Request AI Visual Director to re-conceive a single scene with alternate direction.
+        """
+        from app.services.video.video_director import video_director
+        return video_director.reimagine_scene(
+            job=job,
+            clip_index=clip_index,
+            current_scene=current_scene,
+            user_instruction=user_instruction,
+            visual_style=visual_style,
+            character_desc=character_desc
+        )
 
     def generate_karaoke_ass(
         self,
@@ -837,10 +817,18 @@ class VideoService:
         scenes = []
         for c in clips:
             scenes.append({
-                "time": c["time_str"],
-                "prompt": c["prompt"],
-                "camera": c["camera"],
-                "lighting": c.get("lighting", "Cyan and magenta anamorphic rim lighting")
+                "clip_index": c.get("clip_index"),
+                "time": c.get("time_str"),
+                "prompt": c.get("prompt"),
+                "camera": c.get("camera"),
+                "lighting": c.get("lighting", "Cyan and magenta anamorphic rim lighting"),
+                "scene_type": c.get("scene_type"),
+                "section_label": c.get("section_label", "Verse"),
+                "musical_energy": c.get("musical_energy", 3),
+                "visual_action": c.get("visual_action", ""),
+                "directors_note": c.get("directors_note", ""),
+                "is_vocal": c.get("is_vocal", False),
+                "lyrics": c.get("lyrics", "")
             })
         return scenes
 

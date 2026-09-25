@@ -9,6 +9,8 @@ interface ClipRetakeModalProps {
     clipSegment?: VideoClipSegment;
     onConfirmRetake: (clipIndex: number, newPrompt: string, camera: string, lighting: string) => Promise<void>;
     isRetaking: boolean;
+    onReimagineScene?: (clipIndex: number, instruction?: string) => Promise<VideoClipSegment | undefined>;
+    isReimagining?: boolean;
 }
 
 export const ClipRetakeModal: React.FC<ClipRetakeModalProps> = ({
@@ -18,10 +20,14 @@ export const ClipRetakeModal: React.FC<ClipRetakeModalProps> = ({
     clipSegment,
     onConfirmRetake,
     isRetaking,
+    onReimagineScene,
+    isReimagining = false,
 }) => {
     const [prompt, setPrompt] = useState('');
     const [camera, setCamera] = useState('Medium cinematic focus');
     const [lighting, setLighting] = useState('Atmospheric rim light');
+    const [directorInstruction, setDirectorInstruction] = useState('');
+    const [isLocalReimagining, setIsLocalReimagining] = useState(false);
 
     useEffect(() => {
         if (clipSegment) {
@@ -32,6 +38,21 @@ export const ClipRetakeModal: React.FC<ClipRetakeModalProps> = ({
     }, [clipSegment]);
 
     if (!isOpen || clipIndex === null) return null;
+
+    const handleReimagine = async () => {
+        if (!onReimagineScene || clipIndex === null) return;
+        setIsLocalReimagining(true);
+        try {
+            const reimagined = await onReimagineScene(clipIndex, directorInstruction);
+            if (reimagined) {
+                setPrompt(reimagined.prompt);
+                if (reimagined.camera) setCamera(reimagined.camera);
+                if (reimagined.lighting) setLighting(reimagined.lighting);
+            }
+        } finally {
+            setIsLocalReimagining(false);
+        }
+    };
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
@@ -71,6 +92,34 @@ export const ClipRetakeModal: React.FC<ClipRetakeModalProps> = ({
                     {clipSegment?.lyrics && (
                         <div className="p-3 bg-cyan-500/10 border border-cyan-500/20 rounded-xl text-xs text-cyan-700 dark:text-cyan-300 italic">
                             "{clipSegment.lyrics}"
+                        </div>
+                    )}
+
+                    {/* AI Director Re-imagination */}
+                    {onReimagineScene && (
+                        <div className="p-3 bg-indigo-500/10 border border-indigo-500/20 rounded-2xl space-y-2">
+                            <div className="flex items-center justify-between text-xs font-semibold text-indigo-700 dark:text-indigo-300">
+                                <span className="flex items-center gap-1.5">
+                                    <Sparkles size={13} className="text-indigo-500" />
+                                    <span>AI Director Re-imagination</span>
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={handleReimagine}
+                                    disabled={isReimagining || isLocalReimagining}
+                                    className="px-2.5 py-1 rounded-lg bg-indigo-500/20 hover:bg-indigo-500/30 text-indigo-600 dark:text-indigo-300 text-[10px] font-bold flex items-center gap-1 transition-all disabled:opacity-50"
+                                >
+                                    {isReimagining || isLocalReimagining ? <Loader2 size={11} className="animate-spin" /> : <Sparkles size={11} />}
+                                    <span>{isReimagining || isLocalReimagining ? 'Directing Scene…' : '✨ Re-imagine Scene'}</span>
+                                </button>
+                            </div>
+                            <input
+                                type="text"
+                                value={directorInstruction}
+                                onChange={(e) => setDirectorInstruction(e.target.value)}
+                                placeholder="Custom direction (e.g. explosive upward rain, slow tilt)..."
+                                className="w-full text-[11px] apple-input rounded-xl px-2.5 py-1.5"
+                            />
                         </div>
                     )}
 

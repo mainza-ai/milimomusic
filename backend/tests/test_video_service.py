@@ -346,3 +346,87 @@ def test_canonical_audio_and_stem_resolution_regression(tmp_path):
             test_vocals.unlink()
 
 
+@pytest.mark.asyncio
+async def test_director_treatment_endpoints(client, sample_job):
+    """Test generating and retrieving AI Visual Director treatment via REST API."""
+    # 1. Generate treatment
+    post_res = await client.post(
+        f"/videos/director-treatment/{sample_job.id}",
+        json={
+            "visual_style": "film-noir-35mm",
+            "model_name": "wan_14b",
+            "pacing_bias": 1,
+            "character_desc": "Detective in trench coat"
+        }
+    )
+    assert post_res.status_code == 200
+    data = post_res.json()
+    assert data["status"] == "ok"
+    assert "treatment" in data
+    treatment = data["treatment"]
+    assert "concept_title" in treatment
+    assert "visual_metaphor" in treatment
+    assert "character_profile" in treatment
+    assert len(treatment["scenes"]) >= 3
+
+    for s in treatment["scenes"]:
+        assert "visual_action" in s
+        assert "prompt" in s
+        assert "camera" in s
+        assert "lighting" in s
+        assert "section_label" in s
+        assert "musical_energy" in s
+
+    # 2. Retrieve cached treatment
+    get_res = await client.get(f"/videos/director-treatment/{sample_job.id}")
+    assert get_res.status_code == 200
+    cached = get_res.json()
+    assert cached["status"] == "ok"
+    assert cached["treatment"]["concept_title"] == treatment["concept_title"]
+
+
+@pytest.mark.asyncio
+async def test_reimagine_scene_endpoint(client, sample_job):
+    """Test requesting AI Director to re-conceive an individual scene."""
+    res = await client.post(
+        f"/videos/director-treatment/{sample_job.id}/re-imagine-scene/2",
+        json={
+            "user_instruction": "Explosive slow-motion rain falling upward into neon clouds",
+            "visual_style": "neon-cyberpunk",
+            "current_scene": {
+                "clip_index": 2,
+                "scene_type": "METAPHORICAL_VISUAL",
+                "musical_energy": 4
+            }
+        }
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "ok"
+    assert data["clip_index"] == 2
+    scene = data["scene"]
+    assert "prompt" in scene
+    assert "camera" in scene
+    assert "lighting" in scene
+
+
+@pytest.mark.asyncio
+async def test_retake_clip_custom_prompt_keyframe(client, sample_job):
+    """Test retake endpoint accepts custom prompt and returns keyframe url."""
+    res = await client.post(
+        f"/videos/retake-clip/{sample_job.id}/1",
+        json={
+            "prompt": "An extreme close up of cyberpunk glasses reflecting laser grids",
+            "visual_style": "neon-cyberpunk",
+            "resolution": "720p"
+        }
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "ok"
+    assert data["clip_index"] == 1
+    assert "keyframe_url" in data
+    assert data["prompt"] == "An extreme close up of cyberpunk glasses reflecting laser grids"
+
+
+

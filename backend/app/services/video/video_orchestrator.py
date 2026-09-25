@@ -364,7 +364,12 @@ class VideoOrchestrator:
                 model_name=model_name,
                 bpm=config.get("bpm"),
                 visual_style=style,
-                vocal_stem_path=vocal_stem or resolved_master
+                vocal_stem_path=vocal_stem or resolved_master,
+                character_desc=config.get("character_desc") or config.get("characterPromptNote"),
+                custom_style_prompt=config.get("custom_style_prompt"),
+                pacing_bias=int(config.get("pacing_bias", 0)),
+                visible_cast=config.get("visible_cast"),
+                user_scenes=config.get("scenes") or config.get("clips")
             )
             total_clips = plan.total_clips
             self.update_task(task_id, total_clips=total_clips, clips=[c.to_dict() for c in plan.clips])

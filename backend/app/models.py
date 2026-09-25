@@ -224,6 +224,10 @@ class VideoPlanRequest(SQLModel):
     custom_style_prompt: Optional[str] = None
     bpm: Optional[float] = None
     provider: Optional[str] = "local"
+    pacing_bias: Optional[int] = 0
+    visible_cast: Optional[List[str]] = None
+    character_desc: Optional[str] = None
+    scenes: Optional[List[Dict[str, Any]]] = None
 
 
 class VideoRenderRequest(SQLModel):
@@ -242,6 +246,29 @@ class VideoRenderRequest(SQLModel):
     mode: Optional[str] = "production_multiclip"
     face_image_path: Optional[str] = None
     character_image_path: Optional[str] = None
+    pacing_bias: Optional[int] = 0
+    visible_cast: Optional[List[str]] = None
+    character_desc: Optional[str] = None
+    characterPromptNote: Optional[str] = None
+    scenes: Optional[List[Dict[str, Any]]] = None
+    clips: Optional[List[Dict[str, Any]]] = None
+
+
+class DirectorTreatmentRequest(SQLModel):
+    model_name: Optional[str] = "wan_14b"
+    max_clip_duration: Optional[float] = None
+    visual_style: Optional[str] = "neon-cyberpunk"
+    custom_style_prompt: Optional[str] = None
+    pacing_bias: Optional[int] = 0
+    visible_cast: Optional[List[str]] = None
+    character_desc: Optional[str] = None
+
+
+class ReimagineSceneRequest(SQLModel):
+    user_instruction: Optional[str] = None
+    visual_style: Optional[str] = "neon-cyberpunk"
+    current_scene: Optional[Dict[str, Any]] = None
+    character_desc: Optional[str] = None
 
 
 class KeyframesRequest(SQLModel):

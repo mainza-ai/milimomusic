@@ -276,10 +276,10 @@ class AudioSignalAnalyzer:
         return cues
 
     @classmethod
-    def _fallback_analysis(cls, audio_path: str) -> AudioAnalysisResult:
+    def _fallback_analysis(cls, audio_path: str, duration_sec: Optional[float] = None) -> AudioAnalysisResult:
         """Synthetic fallback when audio packages or files are unavailable."""
-        dur = 30.0
-        if sf is not None and os.path.exists(audio_path):
+        dur = float(duration_sec or 60.0)
+        if audio_path and sf is not None and os.path.exists(audio_path):
             try:
                 info = sf.info(audio_path)
                 dur = float(info.duration)
@@ -287,19 +287,23 @@ class AudioSignalAnalyzer:
                 pass
 
         step = 0.5  # 120 BPM
-        beats = [round(i * step, 3) for i in range(int(dur / step))]
-        downbeats = [round(i * step * 4, 3) for i in range(int(dur / (step * 4)))]
+        beats = [round(i * step, 3) for i in range(max(1, int(dur / step)))]
+        downbeats = [round(i * step * 4, 3) for i in range(max(1, int(dur / (step * 4))))]
+
+        v1_end = min(dur, max(8.0, dur * 0.4))
+        ch_end = min(dur, max(v1_end + 4.0, dur * 0.8))
 
         return AudioAnalysisResult(
-            duration_sec=dur,
+            duration_sec=round(dur, 3),
             tempo_bpm=120.0,
             beats=beats,
             downbeats=downbeats,
             sections=[
                 {"label": "Intro", "start": 0.0, "end": min(dur, 8.0), "energy": 0.4},
-                {"label": "Verse", "start": min(dur, 8.0), "end": min(dur, 20.0), "energy": 0.6},
-                {"label": "Chorus", "start": min(dur, 20.0), "end": dur, "energy": 0.8},
+                {"label": "Verse", "start": min(dur, 8.0), "end": v1_end, "energy": 0.6},
+                {"label": "Chorus", "start": v1_end, "end": ch_end, "energy": 0.85},
+                {"label": "Outro", "start": ch_end, "end": dur, "energy": 0.3},
             ],
-            vocal_intervals=[(2.0, min(dur, 28.0))],
+            vocal_intervals=[(2.0, min(dur, dur - 2.0))],
             percussion_cues=[],
         )

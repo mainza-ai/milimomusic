@@ -7,12 +7,18 @@ import {
     Type,
     Film,
     Wand2,
-    Check
+    Check,
+    Clapperboard
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import type { VideoModelKey } from '../views/MusicVideosView';
+import type { DirectorTreatment } from '../../api';
 
 export interface VideoInspectorProps {
+    // LLM Visual Director & Cinematographer
+    directorTreatment?: DirectorTreatment | null;
+    onGenerateTreatment?: () => void;
+    isGeneratingTreatment?: boolean;
     // Engine & Hardware
     videoModel: VideoModelKey;
     onSelectModel: (m: VideoModelKey) => void;
@@ -98,6 +104,9 @@ const AESTHETIC_STYLES: AestheticStyle[] = [
 ];
 
 const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
+    directorTreatment,
+    onGenerateTreatment,
+    isGeneratingTreatment = false,
     videoModel,
     onSelectModel,
     modelConstraints,
@@ -368,6 +377,58 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                                 className="w-3.5 h-3.5 rounded border-slate-700 text-indigo-500 cursor-pointer accent-indigo-500"
                             />
                         </div>
+                    </div>
+
+                    {/* AI Director Treatment & Narrative Arc */}
+                    <div className="p-3.5 bg-black/[0.02] dark:bg-white/5 border border-black/[0.06] dark:border-white/10 rounded-2xl space-y-3">
+                        <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                                <Clapperboard size={14} className="text-indigo-500" />
+                                <span className="text-xs font-semibold text-slate-800 dark:text-slate-200">
+                                    AI Director Treatment
+                                </span>
+                            </div>
+                            {onGenerateTreatment && (
+                                <button
+                                    type="button"
+                                    onClick={onGenerateTreatment}
+                                    disabled={isGeneratingTreatment}
+                                    className="px-2.5 py-1 rounded-lg bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-600 dark:text-indigo-400 text-[10px] font-bold flex items-center gap-1 transition-all disabled:opacity-50"
+                                >
+                                    <Sparkles size={11} className={isGeneratingTreatment ? 'animate-spin' : ''} />
+                                    <span>{isGeneratingTreatment ? 'Conceiving Arc…' : (directorTreatment ? 'Re-conceive' : 'Generate Arc')}</span>
+                                </button>
+                            )}
+                        </div>
+
+                        {directorTreatment ? (
+                            <div className="space-y-2 text-[11px] pt-1 border-t border-black/[0.04] dark:border-white/5">
+                                <div>
+                                    <span className="font-bold text-slate-700 dark:text-slate-300">Title: </span>
+                                    <span className="text-indigo-600 dark:text-indigo-300 font-semibold">{directorTreatment.concept_title}</span>
+                                </div>
+                                <div className="text-slate-600 dark:text-slate-300">
+                                    <span className="font-bold">Logline: </span>
+                                    <span>{directorTreatment.logline}</span>
+                                </div>
+                                {directorTreatment.visual_metaphor && (
+                                    <div className="text-slate-500 dark:text-slate-400 italic">
+                                        <span className="font-bold not-italic">Metaphor: </span>
+                                        "{directorTreatment.visual_metaphor}"
+                                    </div>
+                                )}
+                                {directorTreatment.character_profile && (
+                                    <div className="text-slate-600 dark:text-slate-400 text-[10px] bg-black/[0.02] dark:bg-white/[0.02] p-2 rounded-xl">
+                                        <span className="font-bold text-slate-700 dark:text-slate-300">Character: </span>
+                                        {directorTreatment.character_profile}
+                                    </div>
+                                )}
+                            </div>
+                        ) : (
+                            <p className="text-[10px] text-slate-400 italic">
+                                No narrative treatment generated yet. Click "Generate Arc" to have the LLM Director analyze lyrics, musical energy, and acoustic pacing.
+                            </p>
+                        )}
                     </div>
 
                     {/* Storyboard Notes Trigger */}

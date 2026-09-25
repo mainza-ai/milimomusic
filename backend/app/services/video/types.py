@@ -10,6 +10,10 @@ from enum import Enum
 class SceneType(str, Enum):
     VOCAL_PERFORMANCE = "VOCAL_PERFORMANCE"
     CINEMATIC_BROLL = "CINEMATIC_BROLL"
+    NARRATIVE_STORY = "NARRATIVE_STORY"
+    METAPHORICAL_VISUAL = "METAPHORICAL_VISUAL"
+    INSTRUMENTAL_FOCUS = "INSTRUMENTAL_FOCUS"
+    ENVIRONMENTAL_BROLL = "ENVIRONMENTAL_BROLL"
 
 
 class VideoProviderType(str, Enum):
@@ -48,9 +52,31 @@ class SceneClip:
     negative_prompt: str = ""
     camera: str = ""
     lighting: str = ""
+    section_label: str = "Verse"
+    musical_energy: int = 3
+    visual_action: str = ""
+    directors_note: str = ""
     keyframe_image_path: Optional[str] = None
     rendered_clip_path: Optional[str] = None
     status: str = "pending"  # pending, rendering, completed, failed
+
+    def to_dict(self) -> Dict[str, Any]:
+        return asdict(self)
+
+
+@dataclass
+class VideoDirectorTreatment:
+    """Holistic visual concept and scene-by-scene script conceived by the AI Visual Director."""
+    job_id: str
+    concept_title: str
+    logline: str
+    visual_metaphor: str
+    color_palette_arc: str
+    character_profile: str
+    scenes: List[Dict[str, Any]] = field(default_factory=list)
+    llm_used: bool = True
+    provider: Optional[str] = None
+    model: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -67,6 +93,10 @@ class VideoPlan:
     model_name: str
     bpm: float
     visual_style: str
+    concept_title: Optional[str] = None
+    logline: Optional[str] = None
+    visual_metaphor: Optional[str] = None
+    character_profile: Optional[str] = None
     clips: List[SceneClip] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:

@@ -108,6 +108,8 @@ from app.models import (
     StudioUserProfileUpdate,
     VideoPlanRequest,
     VideoRenderRequest,
+    DirectorTreatmentRequest,
+    ReimagineSceneRequest,
     KeyframesRequest,
     SceneRegenerateRequest,
     CoverGenerationRequest,
@@ -4651,7 +4653,7 @@ def get_music_video(job_id: str):
 
 @app.post("/videos/plan/{job_id}")
 async def plan_music_video(job_id: str, req: VideoPlanRequest = Body(default=VideoPlanRequest())):
-    """Plan multi-scene video clips respecting model duration constraints (e.g. Wan2.1 5s, CogVideoX 6s, H3 8s)."""
+    """Plan multi-scene video clips respecting model duration constraints and AI Director styling."""
     from app.services.video_service import video_service
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)
@@ -4670,7 +4672,11 @@ async def plan_music_video(job_id: str, req: VideoPlanRequest = Body(default=Vid
             model_name=model_name,
             bpm=req.bpm,
             visual_style=req.visual_style or "neon-cyberpunk",
-            custom_style_prompt=req.custom_style_prompt
+            custom_style_prompt=req.custom_style_prompt,
+            pacing_bias=req.pacing_bias or 0,
+            character_desc=req.character_desc,
+            visible_cast=req.visible_cast,
+            user_scenes=req.scenes
         )
         vocal_count = sum(1 for c in clips if c.get("is_vocal"))
         broll_count = len(clips) - vocal_count
@@ -4684,6 +4690,98 @@ async def plan_music_video(job_id: str, req: VideoPlanRequest = Body(default=Vid
             "model_max_duration": model_max,
             "model_name": model_name,
             "clips": clips
+        }
+
+
+@app.post("/videos/director-treatment/{job_id}")
+async def generate_director_treatment_endpoint(
+    job_id: str,
+    req: DirectorTreatmentRequest = Body(default=DirectorTreatmentRequest())
+):
+    """Conceive a full narrative and visual treatment with scene-by-scene cinematography using the AI Visual Director."""
+    from app.services.video_service import video_service
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        treatment = video_service.generate_director_treatment(
+            job=job,
+            model_name=req.model_name or "wan_14b",
+            max_clip_duration=req.max_clip_duration,
+            visual_style=req.visual_style or "neon-cyberpunk",
+            custom_style_prompt=req.custom_style_prompt,
+            pacing_bias=req.pacing_bias or 0,
+            visible_cast=req.visible_cast,
+            character_desc=req.character_desc
+        )
+
+        existing_cfg = {}
+        if job.video_config_json:
+            try:
+                existing_cfg = json.loads(job.video_config_json)
+            except Exception:
+                pass
+        existing_cfg.update({
+            "director_treatment": treatment,
+            "visual_style": req.visual_style,
+            "model_name": req.model_name
+        })
+        job.video_config_json = json.dumps(existing_cfg, default=str)
+        session.add(job)
+        session.commit()
+
+        return {
+            "status": "ok",
+            "job_id": job_id,
+            "treatment": treatment
+        }
+
+
+@app.get("/videos/director-treatment/{job_id}")
+def get_director_treatment_endpoint(job_id: str):
+    """Retrieve existing saved AI Director Treatment for a job."""
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if job.video_config_json:
+            try:
+                cfg = json.loads(job.video_config_json)
+                treatment = cfg.get("director_treatment")
+                if treatment:
+                    return {"status": "ok", "job_id": job_id, "treatment": treatment}
+            except Exception:
+                pass
+        return {"status": "none", "job_id": job_id, "treatment": None}
+
+
+@app.post("/videos/director-treatment/{job_id}/re-imagine-scene/{clip_index}")
+async def reimagine_scene_endpoint(
+    job_id: str,
+    clip_index: int,
+    req: ReimagineSceneRequest = Body(default=ReimagineSceneRequest())
+):
+    """Re-imagine a single scene with alternate cinematography or user creative direction."""
+    from app.services.video_service import video_service
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        scene_res = video_service.reimagine_scene(
+            job=job,
+            clip_index=clip_index,
+            current_scene=req.current_scene or {},
+            user_instruction=req.user_instruction,
+            visual_style=req.visual_style or "neon-cyberpunk",
+            character_desc=req.character_desc
+        )
+        return {
+            "status": "ok",
+            "job_id": job_id,
+            "clip_index": clip_index,
+            "scene": scene_res
         }
 
 
@@ -4759,8 +4857,9 @@ async def generate_video_keyframes(job_id: str, req: KeyframesRequest = Body(def
 
 @app.post("/videos/retake-clip/{job_id}/{clip_index}")
 async def retake_video_clip_endpoint(job_id: str, clip_index: int, payload: dict = Body(default={})):
-    """Generate a visual retake for a specific planned scene clip."""
-    from app.services.video_service import video_service
+    """Generate a visual retake for a specific planned scene clip with a fresh keyframe."""
+    from app.services.video_service import KEYFRAMES_DIR
+    from app.services.image_service import image_service
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)
         if not job:
@@ -4768,30 +4867,34 @@ async def retake_video_clip_endpoint(job_id: str, clip_index: int, payload: dict
 
         prompt = payload.get("prompt")
         visual_style = payload.get("visual_style", "neon-cyberpunk")
-        custom_style_prompt = payload.get("custom_style_prompt")
         res = payload.get("resolution", "720p")
         w, h = (1920, 1080) if res == "1080p" else (1280, 720)
 
-        keyframes = await video_service.generate_scene_keyframes(
-            job=job,
-            visual_style=visual_style,
-            width=w, height=h,
-            custom_style_prompt=custom_style_prompt
-        )
-        target_kf = None
-        for kf in keyframes:
-            if kf.get("clip_index") == clip_index:
-                target_kf = kf
-                break
-        if not target_kf and keyframes:
-            target_kf = keyframes[0]
+        kf_filename = f"keyframe_{job.id}_{clip_index:03d}.png"
+        kf_path = os.path.join(KEYFRAMES_DIR, kf_filename)
+        os.makedirs(KEYFRAMES_DIR, exist_ok=True)
+
+        if prompt and prompt.strip():
+            try:
+                gen = image_service.generate_scene_background(
+                    prompt=prompt.strip(),
+                    style=visual_style,
+                    width=w,
+                    height=h
+                )
+                if gen.get("ok") and gen.get("dest_path") and os.path.isfile(gen["dest_path"]):
+                    shutil.copy(gen["dest_path"], kf_path)
+            except Exception as e:
+                logger.warning(f"Could not generate retake keyframe: {e}")
+
+        kf_url = f"/audio/videos/keyframes/{kf_filename}" if os.path.isfile(kf_path) else None
 
         return {
             "status": "ok",
             "job_id": job_id,
             "clip_index": clip_index,
-            "keyframe_url": target_kf.get("keyframe_url") if target_kf else None,
-            "prompt": prompt or (target_kf.get("prompt") if target_kf else ""),
+            "keyframe_url": kf_url,
+            "prompt": prompt or "",
         }
 
 

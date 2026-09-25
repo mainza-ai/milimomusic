@@ -1992,3 +1992,12 @@ Executed the comprehensive production UI/UX refactor for `MusicVideosView.tsx` a
    - Updated `docker-compose.yml` and `docker-compose.cpu.yml` to import optional `.env` file via `env_file` and enforce `MILIMO_DATABASE_URL` and `milimo-models` volume mapping.
    - Updated `.env.example` with video offloading keys (`FAL_KEY`, `REPLICATE_API_TOKEN`, `MINIMAX_API_KEY`) and database path configurations.
    - Synchronized `wiki/entities/docker-deployment.md`.
+
+## [2026-09-24] fix | SQLModel UTCDateTime Timezone Validation in Release & Profile Updates
+1. Root Cause:
+   - Modern SQLModel (0.0.21+) enforces `UTCDateTime` on all datetime columns, rejecting naive datetimes without timezone information (`ValueError: Datetime values must have timezone information. Use datetime.now(timezone.utc)`).
+   - In `backend/app/experiencer_bridge.py` and `backend/app/main.py` (`upload_artist_cover`, `generate_lore`, `patch_release`, `reorder_release_tracks`), `updated_at` was assigned `datetime.now(timezone.utc).replace(tzinfo=None)`.
+2. Resolution:
+   - Removed `.replace(tzinfo=None)` and standardized all model updates on `datetime.now(timezone.utc)`.
+3. Verification:
+   - Full test suite passed (53/53 tests across `test_artist_lifecycle.py` and `test_production_v2.py`).

@@ -78,9 +78,13 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
     const handleActivateModel = async (modelId: string) => {
         try {
             setActivatingId(modelId);
-            await modelsApi.selectActiveModel(modelId);
+            const res = await modelsApi.selectActiveModel(modelId);
             await loadData();
-            window.dispatchEvent(new CustomEvent('milimo:model-activated'));
+            const targetModel = models.find(m => m.id === modelId) || res?.active_model;
+            const category = targetModel?.category || 'audio';
+            window.dispatchEvent(new CustomEvent('milimo:model-activated', {
+                detail: { modelId, category, model: targetModel }
+            }));
             onModelActivated?.();
         } catch (e: any) {
             console.error('Failed to activate model:', e);
@@ -93,7 +97,9 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
         try {
             await modelsApi.updateCustomModel(modelId, { category: newCategory });
             await loadData();
-            window.dispatchEvent(new CustomEvent('milimo:model-activated'));
+            window.dispatchEvent(new CustomEvent('milimo:model-activated', {
+                detail: { modelId, category: newCategory }
+            }));
             onModelActivated?.();
         } catch (e) {
             console.error('Failed to update custom model category:', e);

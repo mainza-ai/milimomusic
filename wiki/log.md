@@ -2043,4 +2043,40 @@ Completed execution of the forensic remediation plan addressing identified gaps:
 3. Verification:
    - Full Pytest suite passing with 279 passed tests.
    - Frontend production build (`npm run build`) passing with 0 errors.
+## [2026-09-25] remediate | UI Performance, Refresh & Flickering Elimination Pass
+Executed 4-phase frontend performance and rendering stabilization pass across Music Video Studio and Voice Studio:
+1. GlassCard GPU Layering & Entrance Discipline:
+   - Added `animateEntry?: boolean` prop to `GlassCard.tsx` (defaults to true; set to false for interactive docks, tabs, and inspector panels to eliminate the 500ms opacity/translate-y entrance reset flash).
+   - Replaced general `transition-all duration-300` on base card with scoped `transition-shadow duration-200` and `transform-gpu` to prevent GPU compositor layer invalidation on child layout changes.
+2. 60 FPS Direct Rendering in Live Vocal Booth:
+   - Refactored `VocalBoothRecorder.tsx` 16-band live VU meter: eliminated 60Hz React state updates (`setMeterLevels(levels)` in `requestAnimationFrame`), dropping React reconciliation passes during microphone capture from 60/sec to 0/sec.
+   - Implemented direct HTML5 `<canvas>` rendering pipeline with hardware-accelerated 2D context updates, removing CSS transition thrashing.
+3. Component Memoization & Callback Stabilization:
+   - Wrapped `VideoInspectorDock`, `VideoCanvasPlayer`, `VideoTimelineTrack`, `VideoTopBar`, `VocalDSPRack`, and `VocalAuditionPlayer` in `React.memo`.
+   - Stabilized over 25 callback handlers across `MusicVideosView.tsx` (`handleClipDurationChange`, `handleResetDurationToMax`, `handleToggleCastMember`, `handleZoomKeyframe`, `handleSeekTimeline`) with `useCallback`.
+4. Audio Decoding & Timeline Seek Stabilization:
+   - Memoized `activeUrl` in `VocalAuditionPlayer.tsx` with `useMemo` and guarded `audioRef.current.load()` so the HTML5 media decoder only reinitializes when the audio URL actually changes, preventing audio dropouts and UI thread freezing on DSP slider movements.
+   - Guarded timeline video playback promises in `VideoCanvasPlayer.tsx` on seek.
+   - Connected centralized track cache from `App.tsx`: passed `songs={history}` to `VocalStudioView.tsx`, bypassing redundant initial HTTP history fetching and eliminating the loading flash upon view navigation.
+5. Verification:
+   - `npm run build` (`tsc -b && vite build`) passing with 0 errors.
 
+## [2026-09-25] remediate | Video Model Selection & Bidirectional Synchronization
+Resolved taxonomy mismatch and synchronization disconnection between the Models & HW Hub and Music Videos Studio:
+1. Taxonomy Harmonization & Key Alignment:
+   - Updated `VIDEO_ENGINE_HINTS` in `backend/app/services/video_service.py` to distinguish `wan_14b` from `wan_1.3b`, and added explicit recognition for `ltx_video`.
+   - Updated `MODEL_MAX_DURATIONS` in `backend/app/services/video_service.py` to support `wan_14b`, `wan_1.3b`, and `ltx_video` alongside `cogvideox`, `hailuo_h3`, `hunyuan`, and `audioreactive`, preserving `wan2.1` as a legacy normalization alias.
+   - Updated `resolve_engine_for_video_model()` to resolve exact `VideoModelKey` identifiers matching the frontend constraints.
+2. Dynamic Video Model Registry:
+   - Refactored `get_available_video_models()` in `video_service.py` to dynamically inspect `model_manager.get_model_tree()`, reporting actual `local_weights_present` status on disk for Wan 14B, Wan 1.3B, H3, CogVideoX, and LTX.
+3. Bidirectional Engine Activation API:
+   - Added `POST /videos/active-engine` endpoint in `backend/app/main.py` and `VideoService.set_active_video_engine()`, allowing the Music Video Studio to activate and persist models directly into `model_manager`'s `active_models.json`.
+4. Frontend Normalization & Real-Time Sync:
+   - Added `videoApi.setActiveVideoEngine(engine)` in `frontend/src/api.ts`.
+   - Added `normalizeVideoEngine()` fallback helper in `MusicVideosView.tsx`, gracefully mapping legacy strings (`wan2.1`, `wan2_1_t2v_14b`, `wan2_1_t2v_1_3b`) to canonical `VideoModelKey`.
+   - Wired `selectEngine(canonical, persistToBackend=true)` in `MusicVideosView.tsx` when selected via `VideoInspectorDock`, synchronizing the `● Active` badge and updating the backend.
+   - Enriched `milimo:model-activated` custom event in `ModelsManagerModal.tsx` with `{ detail: { modelId, category } }` for immediate zero-latency UI updates.
+5. Verification:
+   - Added unit tests in `backend/tests/test_video_service.py` verifying model resolution, registry keys, and bidirectional GET/POST active-engine API sync.
+   - 18 video tests passing in Pytest (`pytest backend/tests/test_video*.py`).
+   - Frontend production build (`npm run build`) passing with 0 errors.

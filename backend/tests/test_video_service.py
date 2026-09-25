@@ -241,3 +241,62 @@ async def test_ass_karaoke_subtitle_generation(sample_job, tmp_path):
     assert "Format: Layer, Start, End, Style" in ass_content
     assert "Driving through the neon night" in ass_content
 
+
+def test_resolve_engine_for_video_model():
+    """Verify video model mapping precisely separates Wan 14B vs 1.3B, LTX, H3, and CogVideoX."""
+    from app.services.video_service import resolve_engine_for_video_model
+
+    assert resolve_engine_for_video_model({"id": "wan2_1_t2v_14b", "name": "Wan2.1 T2V (14B Open Flagship)"}) == "wan_14b"
+    assert resolve_engine_for_video_model({"id": "wan2_1_t2v_1_3b", "name": "Wan2.1 T2V (1.3B Open Lightweight)"}) == "wan_1.3b"
+    assert resolve_engine_for_video_model({"id": "minimax_h3", "name": "MiniMax Hailuo 3"}) == "hailuo_h3"
+    assert resolve_engine_for_video_model({"id": "minimax_h3_mlx_8bit", "name": "MiniMax Hailuo 3 MLX"}) == "hailuo_h3"
+    assert resolve_engine_for_video_model({"id": "cogvideox_5b", "name": "CogVideoX-1.5-5B"}) == "cogvideox"
+    assert resolve_engine_for_video_model({"id": "hunyuan_video", "name": "Tencent HunyuanVideo"}) == "hunyuan"
+    assert resolve_engine_for_video_model({"id": "custom_ltx", "repo_id": "Lightricks/LTX-Video", "name": "LTX-Video 0.9B"}) == "ltx_video"
+    # Legacy alias normalization
+    assert resolve_engine_for_video_model({"id": "wan2.1"}) == "wan_14b"
+
+
+def test_get_available_video_models_registry():
+    """Verify get_available_video_models returns canonical VideoModelKey entries matching frontend expectations."""
+    from app.services.video_service import video_service
+
+    models = video_service.get_available_video_models()
+    expected_keys = {"wan_14b", "wan_1.3b", "ltx_video", "cogvideox", "hailuo_h3", "hunyuan", "audioreactive"}
+    for key in expected_keys:
+        assert key in models, f"Expected key '{key}' missing from get_available_video_models()"
+        assert "max_duration" in models[key]
+        assert "local_weights_present" in models[key]
+        assert isinstance(models[key]["local_weights_present"], bool)
+
+
+@pytest.mark.asyncio
+async def test_active_video_engine_api_sync(client):
+    """Test GET and POST /videos/active-engine bidirectional synchronization."""
+    # 1. Read current active engine
+    res = await client.get("/videos/active-engine")
+    assert res.status_code == 200
+    data = res.json()
+    assert "engine" in data
+    assert "model_id" in data
+
+    # 2. Switch to wan_1.3b
+    switch_res = await client.post("/videos/active-engine", json={"engine": "wan_1.3b"})
+    assert switch_res.status_code == 200
+    switch_data = switch_res.json()
+    assert switch_data["status"] == "ok"
+    assert switch_data["engine"] == "wan_1.3b"
+    assert switch_data["model_id"] == "wan2_1_t2v_1_3b"
+
+    # 3. Verify GET reflects new active engine
+    verify_res = await client.get("/videos/active-engine")
+    assert verify_res.status_code == 200
+    assert verify_res.json()["engine"] == "wan_1.3b"
+
+    # 4. Switch back to wan_14b
+    restore_res = await client.post("/videos/active-engine", json={"engine": "wan_14b"})
+    assert restore_res.status_code == 200
+    assert restore_res.json()["engine"] == "wan_14b"
+    assert restore_res.json()["model_id"] == "wan2_1_t2v_14b"
+
+

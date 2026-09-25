@@ -40,7 +40,21 @@ export const MODEL_CONSTRAINTS: Record<string, { label: string; minSec: number; 
     'audioreactive': { label: 'Audio-Reactive Full', minSec: 5.0, maxSec: 120.0, defaultSec: 120.0, desc: 'Continuous full-timeline audio reactive spectrum & waveform visualizer' },
 };
 
-export const isValidVideoEngine = (e: string): e is VideoModelKey => e in MODEL_CONSTRAINTS;
+export function normalizeVideoEngine(raw?: string | null): VideoModelKey {
+    if (!raw) return 'wan_14b';
+    const l = raw.toLowerCase().trim();
+    if (l in MODEL_CONSTRAINTS) return l as VideoModelKey;
+    if (l.includes('1.3') || l.includes('1_3')) return 'wan_1.3b';
+    if (l.includes('wan') || l === 'wan2.1') return 'wan_14b';
+    if (l.includes('ltx')) return 'ltx_video';
+    if (l.includes('cog')) return 'cogvideox';
+    if (l.includes('hailuo') || l.includes('minimax') || l.includes('h3')) return 'hailuo_h3';
+    if (l.includes('hunyuan')) return 'hunyuan';
+    if (l.includes('reactive')) return 'audioreactive';
+    return 'wan_14b';
+}
+
+export const isValidVideoEngine = (e: string): e is VideoModelKey => e in MODEL_CONSTRAINTS || e === 'wan2.1';
 
 /** Window event dispatched when Models & HW activation changes (see ModelsManagerModal). */
 export const VIDEO_ACTIVE_MODEL_EVENT = 'milimo:model-activated';
@@ -79,7 +93,10 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const activeSong = completedSongs.find(s => s.id === selectedSongId);
 
     // Style & Model Engine settings
-    const [videoModel, setVideoModel] = useState<VideoModelKey>('wan_14b');
+    const [videoModel, setVideoModel] = useState<VideoModelKey>(() => {
+        const saved = localStorage.getItem('milimo_active_video_engine');
+        return saved ? normalizeVideoEngine(saved) : 'wan_14b';
+    });
     const [videoProvider, setVideoProvider] = useState<'local' | 'cloud_fal' | 'cloud_replicate'>('local');
     const [lipSyncEngine, setLipSyncEngine] = useState<'live_portrait' | 'fallback'>('live_portrait');
     const [aspectRatio, setAspectRatio] = useState<AspectRatioType>('16:9');
@@ -94,35 +111,71 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         return saved ? Math.min(5.0, Math.max(2.0, parseFloat(saved))) : 5.0;
     });
 
-    const selectEngine = useCallback((model: VideoModelKey) => {
-        const canonical = model === ('wan2.1' as any) ? 'wan_14b' : model;
+    const selectEngine = useCallback((model: VideoModelKey, persistToBackend = false) => {
+        const canonical = normalizeVideoEngine(model);
         setVideoModel(canonical);
         const conf = MODEL_CONSTRAINTS[canonical] || MODEL_CONSTRAINTS['wan_14b'];
         const saved = localStorage.getItem(`milimo_video_clip_len_${canonical}`);
         const resolved = saved ? Math.min(conf.maxSec, Math.max(conf.minSec, parseFloat(saved))) : conf.defaultSec;
         setClipDuration(resolved);
+        localStorage.setItem('milimo_active_video_engine', canonical);
+
+        if (persistToBackend) {
+            setActiveVideoEngine(canonical);
+            videoApi.setActiveVideoEngine(canonical)
+                .then(() => {
+                    toast(`Active video model switched to ${conf.label}`, 'info');
+                })
+                .catch((e) => {
+                    console.error('Failed to persist active video engine:', e);
+                });
+        }
     }, []);
 
     useEffect(() => {
         let alive = true;
-        videoApi.getVideoModels().then((reg) => { if (alive) setModelRegistry(reg); }).catch(() => {});
+        const refreshModels = () => {
+            videoApi.getVideoModels().then((reg) => { if (alive) setModelRegistry(reg); }).catch(() => {});
+        };
+        refreshModels();
 
-        const applyActiveEngine = () => {
+        const applyActiveEngine = (overrideEngineOrModel?: string) => {
+            if (overrideEngineOrModel) {
+                const canonical = normalizeVideoEngine(overrideEngineOrModel);
+                if (!alive) return;
+                setActiveVideoEngine(canonical);
+                selectEngine(canonical, false);
+                return;
+            }
             videoApi.getActiveVideoEngine()
                 .then((r) => {
                     if (!alive) return;
-                    if (r.engine && isValidVideoEngine(r.engine)) {
-                        setActiveVideoEngine(r.engine);
-                        selectEngine(r.engine);
-                    }
+                    const canonical = normalizeVideoEngine(r.engine || r.model_id);
+                    setActiveVideoEngine(canonical);
+                    selectEngine(canonical, false);
                 })
                 .catch(() => {});
         };
+
         applyActiveEngine();
-        window.addEventListener(VIDEO_ACTIVE_MODEL_EVENT, applyActiveEngine);
+
+        const handleActivatedEvent = (e: Event) => {
+            const customEvt = e as CustomEvent<{ modelId?: string; engine?: string; category?: string }>;
+            if (customEvt.detail?.category && customEvt.detail.category !== 'video') {
+                return;
+            }
+            refreshModels();
+            if (customEvt.detail?.engine || customEvt.detail?.modelId) {
+                applyActiveEngine(customEvt.detail.engine || customEvt.detail.modelId);
+            } else {
+                applyActiveEngine();
+            }
+        };
+
+        window.addEventListener(VIDEO_ACTIVE_MODEL_EVENT, handleActivatedEvent);
         return () => {
             alive = false;
-            window.removeEventListener(VIDEO_ACTIVE_MODEL_EVENT, applyActiveEngine);
+            window.removeEventListener(VIDEO_ACTIVE_MODEL_EVENT, handleActivatedEvent);
         };
     }, [selectEngine]);
 
@@ -133,18 +186,30 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const [transitionStyle, setTransitionStyle] = useState<'beat_cut' | 'crossfade' | 'flash' | 'whip_pan' | 'glitch'>('beat_cut');
     const [isDeletingVideo, setIsDeletingVideo] = useState(false);
 
-    const handleClipDurationChange = (val: number) => {
+    const handleClipDurationChange = useCallback((val: number) => {
         const conf = MODEL_CONSTRAINTS[videoModel] || MODEL_CONSTRAINTS['wan_14b'];
         const clamped = Math.min(conf.maxSec, Math.max(conf.minSec, val));
         setClipDuration(clamped);
         localStorage.setItem(`milimo_video_clip_len_${videoModel}`, clamped.toString());
-    };
+    }, [videoModel]);
 
-    const handleResetDurationToMax = () => {
+    const handleResetDurationToMax = useCallback(() => {
         const conf = MODEL_CONSTRAINTS[videoModel] || MODEL_CONSTRAINTS['wan_14b'];
         setClipDuration(conf.maxSec);
         localStorage.setItem(`milimo_video_clip_len_${videoModel}`, conf.maxSec.toString());
-    };
+    }, [videoModel]);
+
+    const handleToggleCastMember = useCallback((cast: string) => {
+        setVisibleCast(prev => prev.includes(cast) ? prev.filter(c => c !== cast) : [...prev, cast]);
+    }, []);
+
+    const handleZoomKeyframe = useCallback((clipIndex: number, url: string) => {
+        setZoomKeyframe({ clipIndex, url });
+    }, []);
+
+    const handleSeekTimeline = useCallback((timeSec: number) => {
+        setTimelineSeekTime(timeSec);
+    }, []);
 
     useEffect(() => {
         if (initialSelectedSongId) {
@@ -549,7 +614,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     <div className="xl:col-span-5 2xl:col-span-5 min-h-[500px]">
                         <VideoInspectorDock
                             videoModel={videoModel}
-                            onSelectModel={selectEngine}
+                            onSelectModel={(m) => selectEngine(m, true)}
                             modelConstraints={MODEL_CONSTRAINTS}
                             modelRegistry={modelRegistry}
                             activeVideoEngine={activeVideoEngine}
@@ -585,13 +650,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             transitionStyle={transitionStyle}
                             onChangeTransitionStyle={setTransitionStyle}
                             visibleCast={visibleCast}
-                            onToggleCastMember={(cast) => {
-                                if (visibleCast.includes(cast)) {
-                                    setVisibleCast(visibleCast.filter(c => c !== cast));
-                                } else {
-                                    setVisibleCast([...visibleCast, cast]);
-                                }
-                            }}
+                            onToggleCastMember={handleToggleCastMember}
                             characterPromptNote={characterPromptNote}
                             onChangeCharacterPromptNote={setCharacterPromptNote}
                         />
@@ -605,8 +664,8 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                         keyframes={keyframes}
                         activeSong={activeSong}
                         onRetakeClip={handleOpenRetakeModal}
-                        onZoomKeyframe={(clipIndex, url) => setZoomKeyframe({ clipIndex, url })}
-                        onSeekToTime={(timeSec) => setTimelineSeekTime(timeSec)}
+                        onZoomKeyframe={handleZoomKeyframe}
+                        onSeekToTime={handleSeekTimeline}
                     />
                 )}
             </div>

@@ -1831,6 +1831,7 @@ function App() {
           />
         ) : currentNav === 'vocal-studio' ? (
           <VocalStudioView
+            songs={history}
             onOpenWorkspace={handleOpenWorkspace}
           />
         ) : currentNav === 'profile' ? (

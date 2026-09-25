@@ -54,24 +54,29 @@ SCENE_STYLE_DESCRIPTORS: Dict[str, str] = {
 }
 
 MODEL_MAX_DURATIONS: Dict[str, float] = {
+    "wan_14b": 5.0,
+    "wan_1.3b": 5.0,
+    "wan2.1": 5.0,  # backwards compatibility alias
+    "ltx_video": 10.0,
+    "cogvideox": 10.0,
     "hailuo_h3": 15.0,
     "hunyuan": 15.0,
-    "cogvideox": 10.0,
-    "wan2.1": 5.0,
     "audioreactive": 120.0,
 }
 
-# Model-manager video model -> Music Videos page engine key. Catalog ids AND
-# repo ids/names are keyword-matched so user-downloaded (custom_*) models map
-# too. Mirrors modality.py's keyword rules; audioreactive has no model entry.
+# Model-manager video model -> Music Videos page engine key.
+# Specific variants (1.3b, 14b, ltx) are matched first to ensure precision.
 VIDEO_ENGINE_HINTS = (
+    ("wan_1.3b", ("1.3b", "1_3b", "t2v-1.3b", "t2v_1_3b", "1.3")),
+    ("wan_14b", ("14b", "14-b", "t2v-14b", "t2v_14b", "wan2", "wan-2", "wanvideo", "wan_2", "wan")),
+    ("ltx_video", ("ltx", "lightricks")),
+    ("cogvideox", ("cogvideo", "cogvideox")),
     ("hailuo_h3", ("hailuo", "h3", "minimax")),
     ("hunyuan", ("hunyuan",)),
-    ("cogvideox", ("cogvideo", "cogvideox")),
-    ("wan2.1", ("wan2", "wan-2", "wanvideo", "wan_2")),
+    ("audioreactive", ("audioreactive", "reactive")),
 )
 
-DEFAULT_VIDEO_ENGINE = "hailuo_h3"
+DEFAULT_VIDEO_ENGINE = "wan_14b"
 
 
 def resolve_engine_for_video_model(model_info: Optional[Dict[str, Any]]) -> str:
@@ -82,12 +87,24 @@ def resolve_engine_for_video_model(model_info: Optional[Dict[str, Any]]) -> str:
     """
     if not model_info:
         return DEFAULT_VIDEO_ENGINE
+
+    model_id = str(model_info.get("id") or "").lower()
+    if model_id in MODEL_MAX_DURATIONS:
+        return "wan_14b" if model_id == "wan2.1" else model_id
+
     blob = " ".join(
         str(model_info.get(k) or "")
         for k in ("id", "repo_id", "name", "local_path")
     ).lower()
     if not blob.strip():
         return DEFAULT_VIDEO_ENGINE
+
+    # Explicit Wan discrimination
+    if "wan" in blob:
+        if "1.3" in blob or "1_3" in blob:
+            return "wan_1.3b"
+        return "wan_14b"
+
     for engine, keywords in VIDEO_ENGINE_HINTS:
         if any(k in blob for k in keywords):
             return engine
@@ -106,16 +123,18 @@ class VideoService:
 
     @classmethod
     def get_model_max_duration(cls, model_name: Optional[str] = None) -> float:
-        """Resolve maximum architectural clip duration for a video model (e.g. H3 15s, Hunyuan 15s, CogVideoX 10s, Wan2.1 5s)."""
+        """Resolve maximum architectural clip duration for a video model (e.g. H3 15s, Hunyuan 15s, CogVideoX 10s, Wan 5s)."""
         if not model_name:
             return 5.0
         m = model_name.lower().strip()
+        if "ltx" in m:
+            return 10.0
+        if "cog" in m:
+            return 10.0
         if "hailuo" in m or "h3" in m or "minimax" in m:
             return 15.0
         if "hunyuan" in m:
             return 15.0
-        if "cog" in m:
-            return 10.0
         if "audioreactive" in m or "reactive" in m:
             return 120.0
         if "wan" in m:
@@ -124,17 +143,73 @@ class VideoService:
 
     @classmethod
     def get_available_video_models(cls) -> Dict[str, Any]:
-        """Detect local video model weights in models/video/ and return model registry."""
-        base_models_dir = os.path.join(os.getcwd(), "models", "video")
-        h3_path = os.path.join(base_models_dir, "pipenetwork__MiniMax-H3-MLX-8bit")
-        has_h3 = os.path.isdir(h3_path) and any(f.endswith(".safetensors") for f in os.listdir(h3_path) if os.path.isfile(os.path.join(h3_path, f)))
-        return {
+        """Query model_manager for installed weights and return dynamic model registry."""
+        from app.services.model_manager import model_manager
+
+        installed_models: Dict[str, Dict[str, Any]] = {}
+        try:
+            tree = model_manager.get_model_tree()
+            for m in tree:
+                if m.get("category") == "video":
+                    installed_models[m["id"]] = m
+        except Exception as e:
+            logger.warning(f"Could not query model tree for video models: {e}")
+
+        def is_installed(*model_ids: str) -> bool:
+            for mid in model_ids:
+                item = installed_models.get(mid)
+                if item and item.get("is_installed"):
+                    return True
+            return False
+
+        has_wan_14b = is_installed("wan2_1_t2v_14b")
+        has_wan_1_3b = is_installed("wan2_1_t2v_1_3b")
+        has_h3 = is_installed("minimax_h3", "minimax_h3_gguf", "minimax_h3_mlx_8bit")
+        has_cog = is_installed("cogvideox_5b")
+        has_hunyuan = is_installed("hunyuan_video")
+        has_ltx = any("ltx" in mid.lower() and m.get("is_installed") for mid, m in installed_models.items())
+
+        catalog = {
+            "wan_14b": {
+                "id": "wan_14b",
+                "name": "Wan 2.1 14B Flagship",
+                "max_duration": 5.0,
+                "local_weights_present": has_wan_14b,
+                "weights_path": (installed_models.get("wan2_1_t2v_14b") or {}).get("local_path"),
+                "family": "dit",
+                "description": "Alibaba Wan 2.1 14B DiT with 3D temporal diffusion & keyframe I2V"
+            },
+            "wan_1.3b": {
+                "id": "wan_1.3b",
+                "name": "Wan 2.1 1.3B Fast",
+                "max_duration": 5.0,
+                "local_weights_present": has_wan_1_3b,
+                "weights_path": (installed_models.get("wan2_1_t2v_1_3b") or {}).get("local_path"),
+                "family": "t2v",
+                "description": "Lightweight text-to-video diffusion for rapid local preview"
+            },
+            "ltx_video": {
+                "id": "ltx_video",
+                "name": "LTX-Video 0.9B Realtime",
+                "max_duration": 10.0,
+                "local_weights_present": has_ltx,
+                "family": "dit",
+                "description": "Lightricks 0.9B real-time DiT (24 fps) for quick scene rendering"
+            },
+            "cogvideox": {
+                "id": "cogvideox",
+                "name": "THUDM CogVideoX 1.5 (5B)",
+                "max_duration": 10.0,
+                "local_weights_present": has_cog,
+                "family": "3d-vae",
+                "description": "5B 3D causal VAE model with emotive cinematic depth zooms"
+            },
             "hailuo_h3": {
                 "id": "hailuo_h3",
                 "name": "MiniMax Hailuo H3 (33B DiT)",
                 "max_duration": 15.0,
                 "local_weights_present": has_h3,
-                "weights_path": h3_path if has_h3 else None,
+                "weights_path": (installed_models.get("minimax_h3_mlx_8bit") or installed_models.get("minimax_h3") or {}).get("local_path"),
                 "family": "dit",
                 "description": "33B Omni-Modal DiT flagship with high visual fidelity and beat-matched rhythm"
             },
@@ -142,35 +217,29 @@ class VideoService:
                 "id": "hunyuan",
                 "name": "Tencent HunyuanVideo (13B DiT)",
                 "max_duration": 15.0,
-                "local_weights_present": False,
+                "local_weights_present": has_hunyuan,
                 "family": "dit",
                 "description": "Open-source 13B visual DiT sequence renderer with wide panoramic sweeps"
             },
-            "cogvideox": {
-                "id": "cogvideox",
-                "name": "THUDM CogVideoX 1.5 (5B)",
-                "max_duration": 10.0,
-                "local_weights_present": False,
-                "family": "3d-vae",
-                "description": "5B 3D causal VAE model with emotive cinematic depth zooms"
-            },
-            "wan2.1": {
-                "id": "wan2.1",
-                "name": "Wan-AI Wan 2.1 (1.3B/14B)",
-                "max_duration": 5.0,
-                "local_weights_present": False,
-                "family": "t2v",
-                "description": "Lightweight text-to-video diffusion with rapid tempo cuts"
-            },
             "audioreactive": {
                 "id": "audioreactive",
-                "name": "Audio-Reactive Synth Visualizer",
+                "name": "Audio-Reactive Full Visualizer",
                 "max_duration": 120.0,
                 "local_weights_present": True,
                 "family": "procedural",
-                "description": "Real-time procedural waveform, frequency spectrum, and chromatic plasma synthesis"
+                "description": "Continuous full-timeline audio reactive spectrum & waveform visualizer"
+            },
+            # Backwards compatibility alias
+            "wan2.1": {
+                "id": "wan_14b",
+                "name": "Wan-AI Wan 2.1 (1.3B/14B)",
+                "max_duration": 5.0,
+                "local_weights_present": has_wan_14b or has_wan_1_3b,
+                "family": "t2v",
+                "description": "Wan 2.1 text-to-video diffusion"
             }
         }
+        return catalog
 
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         from app.services.video.video_orchestrator import video_orchestrator
@@ -212,6 +281,67 @@ class VideoService:
             "name": (active or {}).get("name"),
             "weights_present": bool(active and active.get("is_installed")),
         }
+
+    @classmethod
+    def set_active_video_engine(cls, engine_or_model_id: str) -> Dict[str, Any]:
+        """Activate a video engine and persist selection to active_models.json."""
+        from app.services.model_manager import model_manager
+
+        target = (engine_or_model_id or "").strip().lower()
+
+        # Engine to catalog ID mapping
+        engine_to_model_map = {
+            "wan_14b": "wan2_1_t2v_14b",
+            "wan_1.3b": "wan2_1_t2v_1_3b",
+            "wan2.1": "wan2_1_t2v_14b",
+            "cogvideox": "cogvideox_5b",
+            "hailuo_h3": "minimax_h3",
+            "hunyuan": "hunyuan_video",
+        }
+
+        model_id = engine_to_model_map.get(target, target)
+
+        tree = model_manager.get_model_tree()
+        match = next((m for m in tree if m["id"] == model_id or m.get("repo_id") == model_id), None)
+
+        if not match:
+            video_models = [m for m in tree if m.get("category") == "video"]
+            if "1.3" in target:
+                match = next((m for m in video_models if "1_3" in m["id"] or "1.3" in m["id"]), None)
+            elif "wan" in target:
+                match = next((m for m in video_models if "14" in m["id"] or "wan" in m["id"]), None)
+            elif "cog" in target:
+                match = next((m for m in video_models if "cog" in m["id"]), None)
+            elif "h3" in target or "hailuo" in target or "minimax" in target:
+                match = next((m for m in video_models if "h3" in m["id"] or "minimax" in m["id"]), None)
+            elif "hunyuan" in target:
+                match = next((m for m in video_models if "hunyuan" in m["id"]), None)
+            elif "ltx" in target:
+                match = next((m for m in video_models if "ltx" in m["id"]), None)
+
+        if match:
+            model_manager.set_active_model(match["id"])
+            resolved_engine = resolve_engine_for_video_model(match)
+            return {
+                "status": "ok",
+                "engine": resolved_engine,
+                "model_id": match["id"],
+                "name": match["name"],
+                "weights_present": bool(match.get("is_installed")),
+            }
+        else:
+            if "reactive" in target:
+                active_dict = model_manager._load_active_models()
+                active_dict["video"] = "audioreactive"
+                model_manager._save_active_models(active_dict)
+                return {
+                    "status": "ok",
+                    "engine": "audioreactive",
+                    "model_id": "audioreactive",
+                    "name": "Audio-Reactive Full Visualizer",
+                    "weights_present": True,
+                }
+            raise ValueError(f"Unknown video model or engine: '{engine_or_model_id}'")
 
     def _update_task(self, task_id: str, **kwargs):
         with self._lock:
@@ -277,7 +407,7 @@ class VideoService:
         self,
         job: Job,
         max_clip_duration: Optional[float] = None,
-        model_name: Optional[str] = "wan2.1",
+        model_name: Optional[str] = "wan_14b",
         bpm: Optional[float] = None,
         visual_style: str = "neon-cyberpunk",
         custom_style_prompt: Optional[str] = None

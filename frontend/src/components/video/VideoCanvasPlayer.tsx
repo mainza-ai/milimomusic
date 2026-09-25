@@ -30,7 +30,7 @@ interface VideoCanvasPlayerProps {
     seekTime?: number | null;
 }
 
-export const VideoCanvasPlayer: React.FC<VideoCanvasPlayerProps> = ({
+const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
     activeSong,
     renderedVideoUrl,
     aspectRatio,
@@ -54,11 +54,13 @@ export const VideoCanvasPlayer: React.FC<VideoCanvasPlayerProps> = ({
     const [splitRatio, setSplitRatio] = useState(0.5); // 0 to 1
     const [isDraggingSplit, setIsDraggingSplit] = useState(false);
 
-    // Sync playhead when seeking from timeline
+    // Sync playhead when seeking from timeline with settle guard
     useEffect(() => {
         if (seekTime !== undefined && seekTime !== null && videoRef.current) {
             videoRef.current.currentTime = seekTime;
-            videoRef.current.play().catch(() => {});
+            if (videoRef.current.paused) {
+                videoRef.current.play().catch(() => {});
+            }
         }
     }, [seekTime]);
 
@@ -309,3 +311,5 @@ export const VideoCanvasPlayer: React.FC<VideoCanvasPlayerProps> = ({
         </div>
     );
 };
+
+export const VideoCanvasPlayer = React.memo(VideoCanvasPlayerComponent);

@@ -90,7 +90,7 @@ interface VideoTimelineTrackProps {
     onSeekToTime?: (timeSec: number) => void;
 }
 
-export const VideoTimelineTrack: React.FC<VideoTimelineTrackProps> = ({
+const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
     clips,
     keyframes,
     activeSong,
@@ -363,3 +363,5 @@ export const VideoTimelineTrack: React.FC<VideoTimelineTrackProps> = ({
         </section>
     );
 };
+
+export const VideoTimelineTrack = React.memo(VideoTimelineTrackComponent);

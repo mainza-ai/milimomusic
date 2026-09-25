@@ -33,6 +33,7 @@ import { toast } from '../../utils/toast';
 export type VocalStudioMode = 'conversion' | 'library' | 'booth';
 
 interface VocalStudioViewProps {
+    songs?: Job[];
     initialTrack?: Job | null;
     initialStemPath?: string;
     onOpenWorkspace?: (job: Job) => void;
@@ -41,6 +42,7 @@ interface VocalStudioViewProps {
 }
 
 export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
+    songs: songsProp,
     initialTrack,
     initialStemPath,
     onOpenWorkspace,
@@ -50,10 +52,22 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
     // Mode State
     const [mode, setMode] = useState<VocalStudioMode>('conversion');
 
-    // Library Songs & Active Track Selection
-    const [songs, setSongs] = useState<Job[]>([]);
+    // Library Songs & Active Track Selection (use songsProp directly if available)
+    const [songs, setSongs] = useState<Job[]>(() => {
+        if (songsProp && songsProp.length > 0) {
+            return songsProp.filter((j) => (j.status || '').toLowerCase() === 'completed');
+        }
+        return [];
+    });
     const [, setIsLoadingSongs] = useState(false);
-    const [selectedTrack, setSelectedTrack] = useState<Job | null>(initialTrack || null);
+    const [selectedTrack, setSelectedTrack] = useState<Job | null>(() => {
+        if (initialTrack) return initialTrack;
+        if (songsProp && songsProp.length > 0) {
+            const completed = songsProp.filter((j) => (j.status || '').toLowerCase() === 'completed');
+            return completed[0] || null;
+        }
+        return null;
+    });
 
     // Voice Profiles State
     const [profiles, setProfiles] = useState<VoiceProfile[]>([]);
@@ -81,8 +95,16 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
     const [uploadFile, setUploadFile] = useState<File | null>(null);
     const [isSubmittingProfile, setIsSubmittingProfile] = useState(false);
 
-    // Load available songs
+    // Load available songs (bypassed if songsProp is provided)
     const loadSongs = async () => {
+        if (songsProp && songsProp.length > 0) {
+            const completed = songsProp.filter((j) => (j.status || '').toLowerCase() === 'completed');
+            setSongs(completed);
+            if (!selectedTrack && completed.length > 0) {
+                setSelectedTrack(initialTrack || completed[0]);
+            }
+            return;
+        }
         setIsLoadingSongs(true);
         try {
             const raw = await api.getHistory(50, 0, 'all', '');
@@ -116,6 +138,17 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
         loadSongs();
         loadProfiles();
     }, []);
+
+    // Sync when songsProp updates
+    useEffect(() => {
+        if (songsProp && songsProp.length > 0) {
+            const completed = songsProp.filter((j) => (j.status || '').toLowerCase() === 'completed');
+            setSongs(completed);
+            if (!selectedTrack && completed.length > 0) {
+                setSelectedTrack(initialTrack || completed[0]);
+            }
+        }
+    }, [songsProp]);
 
     // Sync initial track update if prop changes
     useEffect(() => {
@@ -325,7 +358,7 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
         <div className={`flex flex-col justify-between ${isModal ? 'h-full overflow-y-auto' : 'min-h-full p-4 md:p-6 pb-28 sm:pb-32 space-y-6'}`}>
             <div className="space-y-6 max-w-[1600px] mx-auto w-full">
                 {/* ZONE 1: TOP MASTER STUDIO BAR */}
-                <GlassCard className="p-4 border border-black/[0.08] dark:border-white/10 space-y-3">
+                <GlassCard animateEntry={false} className="p-4 border border-black/[0.08] dark:border-white/10 space-y-3">
                     <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
                         {/* Title & Navigation */}
                         <div className="flex items-center space-x-3">
@@ -446,7 +479,7 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
                     <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 items-start">
                         {/* Left Side: Available Voice Identities (5 cols) */}
                         <div className="xl:col-span-5 space-y-4">
-                            <GlassCard className="p-5 border border-black/[0.08] dark:border-white/10 space-y-4">
+                            <GlassCard animateEntry={false} className="p-5 border border-black/[0.08] dark:border-white/10 space-y-4">
                                 <div className="flex items-center justify-between pb-2 border-b border-black/[0.06] dark:border-white/10">
                                     <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200 flex items-center gap-2">
                                         <Users size={14} className="text-teal-500" />
@@ -577,7 +610,7 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
                         {/* Left: Create / Train Voice Profile */}
                         <div className="xl:col-span-5 space-y-4">
                             <form onSubmit={handleCreateProfile}>
-                                <GlassCard className="p-5 border border-black/[0.08] dark:border-white/10 space-y-4">
+                                <GlassCard animateEntry={false} className="p-5 border border-black/[0.08] dark:border-white/10 space-y-4">
                                     <div className="flex items-center justify-between pb-2 border-b border-black/[0.06] dark:border-white/10">
                                         <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
                                             Train New Voice Identity
@@ -677,7 +710,7 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
 
                         {/* Right: Existing Profiles Grid */}
                         <div className="xl:col-span-7 space-y-4">
-                            <GlassCard className="p-5 border border-black/[0.08] dark:border-white/10 space-y-4">
+                            <GlassCard animateEntry={false} className="p-5 border border-black/[0.08] dark:border-white/10 space-y-4">
                                 <h4 className="text-xs font-bold uppercase tracking-wider text-slate-800 dark:text-slate-200">
                                     Saved Voice Profiles ({profiles.length})
                                 </h4>

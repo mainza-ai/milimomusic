@@ -2,7 +2,7 @@
 title: Frontend
 type: entity
 created: 2026-08-19
-updated: 2026-08-29
+updated: 2026-09-24
 sources: [sources/readme.md, sources/v2-refactor-plan.md]
 tags: [frontend, react, vite, tailwind, ui, daw]
 aliases: [Web UI, Frontend app]
@@ -40,8 +40,14 @@ Suno-style **reference IA** plus a full web **DAW workspace**.
   per-track DAW edit (client-side only, no backend playlist API).
 - **ProjectsView** — [project folders](backend-api.md) (BPM, key signature, color); project
   stats, "Generate in this Project", "Add Existing Track", DAW open.
-- **MusicVideosView** — AI music-video studio (aesthetic presets, simulated storyboard,
-  "WhisperX Aligned") — marked as "In Dev".
+- **MusicVideosView** — AI music-video studio featuring refactored 2-tier master bar, 14 curated high-fidelity visual aesthetic presets across 5 cinematic families (Film & Cinema, Animation & Anime, Digital Art & Surreal, Retro & Vintage, Modern & Experimental), custom directing prompt injection, multi-aspect ratio rendering (16:9, 9:16, 1:1), and interactive playhead scrub bar.
+- **VocalStudioView** — dedicated 3-zone vocal production suite:
+  - **Zone 1: Master Track Header**: active stem selection, vocal stem isolation detection badge, and mode selector (`neural-conversion`, `voice-library`, `vocal-booth`).
+  - **Zone 2: Dual Workspaces**:
+    - **Voice Library / Identity**: voice card selection, profile preview audition, and voice creation workflow.
+    - **Vocal DSP Rack (`VocalDSPRack.tsx`)**: musical semitone transposition (-12 to +12) with quick presets (`+12` Octave Up M→F, `-12` Octave Down F→M, `+3` Minor 3rd, `+7` Perfect 5th), phase-locked formant preservation toggle, 0–100% dry/wet mix slider, and F0 pitch extraction algorithms (`rmvpe`, `crepe`, `harvest`, `pm`).
+    - **Live Vocal Booth (`VocalBoothRecorder.tsx`)**: in-browser microphone capture using Web Audio `AudioContext` and `AnalyserNode` with a 16-band animated VU meter, 3-second countdown, take review playback, and direct profile creation export.
+  - **Zone 3: Tri-State A/B Audition Transport (`VocalAuditionPlayer.tsx`)**: seamless switching between `Converted Vocal`, `Original Vocal Stem`, and `Full Master Remix` with audio waveform scrub bar, volume control, WAV export, and 1-click DAW session handoff.
 - **ArtistsView** — the [artist domain](../concepts/artist-domain.md) front-end: guided
   4-step create stepper, server-searched/paginated artist grid with stats, artist detail
   (identity editor, singing-voice selector, world-lore editor + World-Builder generation,
@@ -71,7 +77,7 @@ Suno-style **reference IA** plus a full web **DAW workspace**.
 
 ## Modals & UI kit
 - **ModelsManagerModal** — [Model Manager](model-manager.md) (hardware profile + model tree).
-- **VoiceStudioModal** — [Voice Studio (SVC)](voice-service.md) with mandatory consent.
+- **VoiceStudioModal** — [Voice Studio (SVC)](voice-service.md) wrapping Vocal Studio (SVC) and YuE2 Foundation Studio tabs; deeply wired into `useModalStore` (`isVoiceStudioOpen` and `isVoiceConvertOpen`) with instant stem handoff from `ArrangeTimeline.tsx`.
 - **TrainingStudio**, **StyleManagerModal** — [Training Studio](training-studio.md).
 - **LLMSettingsModal**, **PathsSettingsModal** — providers/paths.
 - **InpaintModal** — [Repair Segment](inpainting.md).

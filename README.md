@@ -202,16 +202,21 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 - **Multitrack Console Mixer**: Channel faders, stereo panning, animated LED peak meters, and Matchering reference mastering (-14.0 LUFS broadcast target).
 - **Lyrics & Karaoke Studio**: Fullscreen live karaoke teleprompter with interactive line seeking and on-demand acoustic realignment.
 
-### 🎙️ Voice Studio & Singing Voice Conversion (SVC)
-- **Offline Vocal Cloning**: Transform vocal tracks into custom timbres using offline voice profiles.
+### 🎙️ AI Vocal Studio & Singing Voice Conversion (SVC)
+- **Dedicated 3-Zone Vocal Production Workstation**: Unified Master Track Bar with isolated vocal stem detection, dual workspace (Voice Library vs. Vocal DSP Rack), and Tri-State A/B Audition Transport.
+- **Live In-Browser Vocal Booth**: Real-time microphone capture via Web Audio API with an animated 16-band VU peak meter, 3-second countdown timer, take review playback, and direct profile creation export.
+- **Vocal DSP Processing Rack**: Musical semitone pitch transposition (-12 to +12) with quick presets (`+12` Octave Up M→F, `-12` Octave Down F→M, `+3` Minor 3rd, `+7` Perfect 5th), phase-locked formant preservation, 0–100% dry/wet mix slider, and multi-algorithm F0 pitch tracking (`rmvpe`, `crepe`, `harvest`, `pm`).
+- **Tri-State A/B Audition Player & DAW Integration**: Instant, seamless switching between Converted Vocal, Original Vocal Stem, and Full Master Remix with waveform scrub bar, volume control, WAV export, and 1-click handoff to DAW Session Workspace.
 - **RVC Neural Checkpoint Loader & Acoustic Formant EQ**: Supports real `.pth` model weights and profile-specific acoustic formant/presence equalization chains (`Aria` ethereal presence, `Marcus` warm soul resonance).
 - **Consent-Enforced Governance**: Cryptographic audio consent gating to ensure ethical vocal profile creation.
 
 ### 🎬 Production AI Music Video Studio (Wan 2.1 14B & LivePortrait)
 - **Wan 2.1 14B Flagship & LTX-Video Diffusion**: True spatio-temporal video diffusion via `diffusers` (`WanPipeline`, `WanImageToVideoPipeline`, `LTXPipeline`), generating broadcast-quality clips directly from prompt concepts and character keyframes.
+- **14 Curated Visual Aesthetic Palettes**: Categorized across 5 cinematic families (`Film & Cinema`, `Animation & Anime`, `Digital Art & Surreal`, `Retro & Vintage`, `Modern & Experimental`), including `neon-cyberpunk`, `anime-cinematic`, `retro-vhs`, `film-noir-35mm`, `golden-hour-folk`, `kpop-holographic`, `wes-anderson-pastel`, and custom directing prompt injection.
+- **Collision-Free 2-Tier Master Bar & Playhead Sync**: Resilient two-tier header preventing layout collisions even with the Composer Sidebar open, multi-aspect ratio rendering (`16:9`, `9:16`, `1:1`, `21:9`), and interactive playhead click-to-seek synchronization directly from timeline scene blocks.
 - **LivePortrait Neural Singing Avatar**: Vocal lip-syncing driven strictly by isolated vocal stems (`vocals.wav`), animating facial landmark deformation, expressive eye blinks, and pitch-synced micro-motion without audio-bleed distortions.
 - **Autonomous Musical Video Director**: Tempo estimation (`librosa` / `muscriptor`) and bar-aligned scene segmentation snapping cuts to musical bars (`(60/BPM) * 4`), with automated vocal vs. B-roll classification, cinematic camera dynamics (dolly zoom, orbital steadycam, crane tilt), and volumetric lighting designs.
-- **Pre-Rendered Keyframe Stills**: On-demand scene keyframe pre-rendering (`POST /videos/keyframes/{job_id}`) enabling visual preview and storyboard approval before launching full video diffusion.
+- **Pre-Rendered Keyframe Stills & Clip Retakes**: On-demand scene keyframe pre-rendering (`POST /videos/keyframes/{job_id}`) with fullscreen lightbox zoom and in-place per-scene retakes (`POST /videos/retake-clip/{job_id}/{clip_index}`) before launching full video diffusion.
 - **Hybrid Local & Cloud GPU Offloading**: Native Apple Silicon MPS / unified memory execution alongside turnkey cloud GPU offloading via Fal.ai and Replicate serverless endpoints.
 - **Burned Karaoke Subtitles & Master Remux**: Real-time Advanced SubStation Alpha (`.ass`) karaoke scripts burned directly into the video stream via FFmpeg `-filter_complex "[0:v]subtitles=..."` with zero A/V drift master remuxing.
 
@@ -456,7 +461,7 @@ Milimo Music maintains a comprehensive, LLM-curated **Technical Encyclopedia and
 | 🎼 [**MiniMax Music 3 Engine (`wiki/entities/minimax-music3.md`)**](wiki/entities/minimax-music3.md) | Sampling parameters, structured captions, and MLX/DiT hooks |
 | 🎸 [**YuE2 48kHz Stereo Provider (`wiki/entities/yue2-music.md`)**](wiki/entities/yue2-music.md) | Full 48kHz stereo generation, ABC notation guidance, and personal style adapter fine-tuning |
 | 📦 [**Model Manager (`wiki/entities/model-manager.md`)**](wiki/entities/model-manager.md) | Multi-modal tree, Hugging Face Hub search, and download policies |
-| 🎙️ [**Voice Studio & SVC (`wiki/entities/voice-service.md`)**](wiki/entities/voice-service.md) | Offline singing voice conversion (SVC) and acoustic formant chains |
+| 🎙️ [**Voice Studio & SVC (`wiki/entities/voice-service.md`)**](wiki/entities/voice-service.md) | 3-Zone Vocal Studio, live in-browser Vocal Booth, DSP transposition rack, and tri-state A/B audition |
 | 🏛️ [**ADR: Training Studio Decommission (`wiki/entities/training-studio.md`)**](wiki/entities/training-studio.md) | Technical investigation and architectural record retiring fine-tuning |
 | 🤖 [**AI Co-Writer Engine (`wiki/entities/ai-cowriter.md`)**](wiki/entities/ai-cowriter.md) | Multi-agent lyric coordination graph (Lyricist, StructureGuard) |
 | 🐳 [**Docker Deployment (`wiki/entities/docker-deployment.md`)**](wiki/entities/docker-deployment.md) | Turnkey multi-stage container build, GPU/CPU compose profiles, and volume persistence |

@@ -1973,3 +1973,10 @@ Executed the comprehensive production UI/UX refactor for `MusicVideosView.tsx` a
 6. Verification:
    - 100% test pass rate across all backend pytest suites (`pytest tests/test_production_v2.py -k "voice"`, `pytest tests/test_neural_svc.py`, `pytest tests/test_phase* tests/test_v2_core.py`).
    - Clean frontend production build (`npm run build` passing with 0 errors).
+
+## [2026-09-24] update | Vocal Studio & Music Video Studio Wiki & README Synchronization
+1. Synchronized wiki pages across architecture, entities, and index:
+   - Updated `wiki/entities/frontend.md` with complete 3-zone `VocalStudioView`, `VocalBoothRecorder`, `VocalDSPRack`, `VocalAuditionPlayer`, and updated 14-aesthetic `MusicVideosView`.
+   - Updated `wiki/index.md` cataloging the newly expanded Voice Studio capabilities.
+   - Cross-referenced all relative links according to AGENTS.md conventions.
+2. Synchronized `README.md` to document the AI Vocal Studio, Live Vocal Booth, 14 Visual Aesthetic Palettes, and DAW Timeline handoff workflows.

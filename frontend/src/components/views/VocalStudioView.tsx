@@ -71,6 +71,8 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
     // Audition Outputs
     const [convertedVocalUrl, setConvertedVocalUrl] = useState<string | undefined>(undefined);
     const [remixedMasterUrl, setRemixedMasterUrl] = useState<string | undefined>(undefined);
+    const [latestDerivativeTrack, setLatestDerivativeTrack] = useState<Job | null>(null);
+    const [customMicStemUrl, setCustomMicStemUrl] = useState<string | null>(null);
 
     // New Profile Creation State
     const [newName, setNewName] = useState('');
@@ -154,10 +156,13 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
     useEffect(() => {
         setConvertedVocalUrl(undefined);
         setRemixedMasterUrl(undefined);
+        setLatestDerivativeTrack(null);
+        setCustomMicStemUrl(null);
     }, [selectedTrack?.id]);
 
     // Resolve isolated vocal stem path
     const originalVocalStemUrl = useMemo(() => {
+        if (customMicStemUrl) return customMicStemUrl;
         if (!selectedTrack) return undefined;
         if (initialStemPath && selectedTrack.id === initialTrack?.id) {
             return initialStemPath;
@@ -171,7 +176,7 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
             }
         } catch {}
         return undefined;
-    }, [selectedTrack, initialStemPath, initialTrack?.id]);
+    }, [selectedTrack, initialStemPath, initialTrack?.id, customMicStemUrl]);
 
     const hasVocalStem = !!originalVocalStemUrl;
 
@@ -204,7 +209,8 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
             const derivative = await trackApi.voiceConvertTrack(selectedTrack.id, selectedProfileId, {
                 pitch_shift: pitchShift,
                 dry_wet: dryWet,
-                formant_preserve: formantPreserve
+                formant_preserve: formantPreserve,
+                f0_method: f0Method
             });
 
             // Extract converted vocal and master URLs
@@ -218,6 +224,9 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
 
             setConvertedVocalUrl(convVocal);
             setRemixedMasterUrl(derivative.audio_path);
+            setLatestDerivativeTrack(derivative);
+            setSelectedTrack(derivative);
+            setSongs(prev => [derivative, ...prev.filter(s => s.id !== derivative.id)]);
             toast('Singing voice conversion completed successfully!', 'success');
         } catch (err: any) {
             console.error('Voice conversion failed:', err);
@@ -225,6 +234,38 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
             toast(`Voice conversion failed: ${msg}`, 'error');
         } finally {
             setIsConverting(false);
+        }
+    };
+
+    // Commit converted vocal stem to source track
+    const handleCommitToTrack = async () => {
+        if (!selectedTrack || !convertedVocalUrl) return;
+        try {
+            const targetId = latestDerivativeTrack?.parent_job_id || selectedTrack.id;
+            const updated = await trackApi.commitVocal(targetId, {
+                vocal_path: convertedVocalUrl,
+                master_path: remixedMasterUrl
+            });
+            setSelectedTrack(updated);
+            setSongs(prev => prev.map(s => s.id === updated.id ? updated : s));
+            toast('Converted vocal committed to track successfully!', 'success');
+        } catch (err: any) {
+            console.error('Failed to commit vocal:', err);
+            toast('Failed to commit vocal to track', 'error');
+        }
+    };
+
+    // Handle vocal captured from live Vocal Booth as direct vocal stem
+    const handleVocalBoothAsVocalSource = async (file: File, durationSec: number) => {
+        try {
+            toast('Uploading recorded vocal take...', 'info');
+            const res = await api.uploadAudioFile(file);
+            setCustomMicStemUrl(res.url);
+            setMode('conversion');
+            toast(`Microphone take (${Math.round(durationSec)}s) loaded as active vocal stem!`, 'success');
+        } catch (err: any) {
+            console.error('Failed to upload microphone take:', err);
+            toast('Failed to upload microphone recording', 'error');
         }
     };
 
@@ -367,7 +408,11 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
                                 value={selectedTrack?.id || ''}
                                 onChange={(e) => {
                                     const match = songs.find((s) => s.id === e.target.value);
-                                    if (match) setSelectedTrack(match);
+                                    if (match) {
+                                        setSelectedTrack(match);
+                                        setLatestDerivativeTrack(null);
+                                        setCustomMicStemUrl(null);
+                                    }
                                 }}
                                 className="apple-input text-xs py-1.5 px-3 max-w-sm font-medium"
                             >
@@ -709,6 +754,7 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
                     <div className="max-w-2xl mx-auto space-y-4">
                         <VocalBoothRecorder
                             onAudioCaptured={handleVocalBoothCaptured}
+                            onUseAsVocalTrack={handleVocalBoothAsVocalSource}
                             onCancel={() => setMode('conversion')}
                         />
                     </div>
@@ -716,11 +762,12 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
 
                 {/* ZONE 3: FULL-WIDTH AUDITION & A/B COMPARISON TRANSPORT */}
                 <VocalAuditionPlayer
-                    track={selectedTrack}
+                    track={latestDerivativeTrack || selectedTrack}
                     originalVocalUrl={originalVocalStemUrl}
                     convertedVocalUrl={convertedVocalUrl}
                     remixedMasterUrl={remixedMasterUrl}
                     onOpenInDAW={onOpenWorkspace}
+                    onCommitVocal={convertedVocalUrl ? handleCommitToTrack : undefined}
                 />
             </div>
 

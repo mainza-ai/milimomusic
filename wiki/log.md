@@ -2027,3 +2027,20 @@ Completed exhaustive codebase remediation achieving A+ production readiness:
 5. Verification:
    - Full test suite passing across all test files.
    - Frontend production build (`npm run build`) passing with 0 errors.
+
+## [2026-09-25] remediate | Vocal Studio Pipeline & Provider Registry Parity
+Completed execution of the forensic remediation plan addressing identified gaps:
+1. Vocal Studio End-to-End F0 & DSP Integration:
+   - Plumbed `f0_method` ('rmvpe', 'crepe', 'harvest', 'pm') through `frontend/src/api.ts:voiceConvertTrack`, `backend/app/main.py:/jobs/{job_id}/voice-convert`, and `voice_service.convert_vocals`.
+   - Fixed Dry/Wet crossfade normalization in `backend/app/main.py` and `neural_svc.py`, properly scaling percentages (0..100) down to normalized floats (0.0..1.0) to guarantee linear wet/dry acoustic blending.
+   - Fixed DAW Workspace handoff in `VocalStudioView.tsx`: retained the returned derivative `Job` in state, updated active track, and passed the converted track to `VocalAuditionPlayer.tsx` for DAW workspace handoff.
+   - Enhanced Vocal Booth microphone capture workflow: added dual choices upon recording ("Use as Vocal Track" and "Save as Voice Identity") with direct upload via `api.uploadAudioFile`.
+   - Added `POST /tracks/{job_id}/commit-vocal` route and "Commit to Track" button in `VocalAuditionPlayer.tsx`, enabling in-place vocal stem replacement.
+2. Provider Registry Defaults:
+   - Registered `HeartMuLaProvider` (and `heartmula_3b` alias) in `backend/app/providers/registry.py:_register_defaults()`.
+   - Added unit test suite `backend/tests/test_provider_registry.py` verifying multi-provider registration and capabilities.
+   - Added unit test suite `backend/tests/test_vocal_pipeline.py` verifying F0 extraction parameter transmission, dry/wet normalization, and in-place vocal commit.
+3. Verification:
+   - Full Pytest suite passing with 279 passed tests.
+   - Frontend production build (`npm run build`) passing with 0 errors.
+

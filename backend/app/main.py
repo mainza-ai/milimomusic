@@ -3920,8 +3920,10 @@ async def voice_convert_job(job_id: str, body: dict = Body(...)):
     if not voice_profile_id:
         raise HTTPException(status_code=400, detail="voice_profile_id is required")
     pitch_shift = int(body.get("pitch_shift", 0))
-    dry_wet = float(body.get("dry_wet", 1.0))
+    raw_dry_wet = float(body.get("dry_wet", 1.0))
+    dry_wet = raw_dry_wet / 100.0 if raw_dry_wet > 1.0 else max(0.0, min(1.0, raw_dry_wet))
     formant_preserve = bool(body.get("formant_preserve", True))
+    f0_method = str(body.get("f0_method") or "rmvpe").lower()
         
     from app.services.voice_service import voice_service
     with Session(engine) as session:
@@ -3942,7 +3944,8 @@ async def voice_convert_job(job_id: str, body: dict = Body(...)):
                     job_id=f"{job.id}_{uuid.uuid4().hex[:4]}",
                     pitch_shift=pitch_shift,
                     dry_wet=dry_wet,
-                    formant_preserve=formant_preserve
+                    formant_preserve=formant_preserve,
+                    f0_method=f0_method
                 )
         except Exception as e:
             raise HTTPException(status_code=500, detail=f"Voice conversion failed: {str(e)}")
@@ -3985,6 +3988,31 @@ async def voice_convert_job(job_id: str, body: dict = Body(...)):
         session.commit()
         session.refresh(new_job)
         return new_job
+
+
+@app.post("/tracks/{job_id}/commit-vocal", response_model=Job)
+def commit_vocal_to_track(job_id: str, body: dict = Body(...)):
+    """Commit a converted vocal take or microphone stem in-place onto the specified track."""
+    vocal_path = body.get("vocal_path")
+    if not vocal_path:
+        raise HTTPException(status_code=400, detail="vocal_path is required")
+    master_path = body.get("master_path")
+
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+
+        stems = json.loads(job.stems_json) if job.stems_json else {}
+        stems["vocals"] = vocal_path
+        job.stems_json = json.dumps(stems)
+        if master_path:
+            job.audio_path = master_path
+        job.updated_at = datetime.now(timezone.utc)
+        session.add(job)
+        session.commit()
+        session.refresh(job)
+        return job
 
 
 @app.get("/download_track/{job_id}")

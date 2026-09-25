@@ -127,9 +127,9 @@ class NeuralSVCService:
         converted_mono = librosa.istft(morphed_mag * np.exp(1j * phase), hop_length=hop_length, length=len(y_mono))
 
         # 4. Dry/Wet Blending
-        if dry_wet < 1.0:
-            dry_wet_clamped = max(0.0, min(1.0, dry_wet))
-            out_mono = (1.0 - dry_wet_clamped) * y_mono + dry_wet_clamped * converted_mono
+        dry_wet_norm = dry_wet / 100.0 if dry_wet > 1.0 else max(0.0, min(1.0, float(dry_wet)))
+        if dry_wet_norm < 1.0:
+            out_mono = (1.0 - dry_wet_norm) * y_mono + dry_wet_norm * converted_mono
         else:
             out_mono = converted_mono
 

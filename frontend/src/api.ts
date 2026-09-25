@@ -352,6 +352,15 @@ export const api = {
         return res.data;
     },
 
+    uploadAudioFile: async (file: File): Promise<{ url: string; filename: string; path: string }> => {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await axios.post(`${API_BASE_URL}/upload/audio`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        return res.data;
+    },
+
     getLyricsModels: async () => {
         const res = await axios.get(`${API_BASE_URL}/models/lyrics`);
         return res.data.models;
@@ -873,6 +882,14 @@ export const coverApi = {
         });
         return res.data;
     },
+    uploadAudioFile: async (file: File): Promise<{ url: string; filename: string; path: string }> => {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await axios.post(`${API_BASE_URL}/upload/audio`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        return res.data;
+    },
     generateCoverPrompt: async (params: { title?: string; description?: string; tags?: string; genre?: string; lyrics?: string }): Promise<{ prompt: string; llm_used: boolean; provider: string | null }> => {
         const res = await axios.post(`${API_BASE_URL}/generate/cover-prompt`, params);
         return res.data;
@@ -968,14 +985,19 @@ export const trackApi = {
     voiceConvertTrack: async (
         jobId: string,
         voiceProfileId: string,
-        options?: { pitch_shift?: number; dry_wet?: number; formant_preserve?: boolean }
+        options?: { pitch_shift?: number; dry_wet?: number; formant_preserve?: boolean; f0_method?: string }
     ): Promise<Job> => {
         const res = await axios.post(`${API_BASE_URL}/jobs/${jobId}/voice-convert`, {
             voice_profile_id: voiceProfileId,
             pitch_shift: options?.pitch_shift ?? 0,
             dry_wet: options?.dry_wet !== undefined ? options.dry_wet / 100 : 1.0,
-            formant_preserve: options?.formant_preserve ?? true
+            formant_preserve: options?.formant_preserve ?? true,
+            f0_method: options?.f0_method ?? 'rmvpe'
         });
+        return res.data;
+    },
+    commitVocal: async (jobId: string, params: { vocal_path: string; master_path?: string }): Promise<Job> => {
+        const res = await axios.post(`${API_BASE_URL}/tracks/${jobId}/commit-vocal`, params);
         return res.data;
     },
     getSheets: async (jobId: string): Promise<{ job_id: string; sheets: SheetScoreItem[] }> => {

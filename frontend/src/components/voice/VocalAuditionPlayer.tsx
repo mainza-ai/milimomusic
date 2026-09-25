@@ -7,7 +7,8 @@ import {
     Volume2,
     VolumeX,
     Download,
-    Sliders
+    Sliders,
+    CheckCircle2
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { api, type Job } from '../../api';
@@ -18,6 +19,7 @@ interface VocalAuditionPlayerProps {
     convertedVocalUrl?: string;
     remixedMasterUrl?: string;
     onOpenInDAW?: (track: Job) => void;
+    onCommitVocal?: () => void;
 }
 
 export type AuditionSource = 'converted' | 'original' | 'master';
@@ -27,7 +29,8 @@ export const VocalAuditionPlayer: React.FC<VocalAuditionPlayerProps> = ({
     originalVocalUrl,
     convertedVocalUrl,
     remixedMasterUrl,
-    onOpenInDAW
+    onOpenInDAW,
+    onCommitVocal
 }) => {
     const [selectedSource, setSelectedSource] = useState<AuditionSource>('converted');
     const [isPlaying, setIsPlaying] = useState(false);
@@ -229,6 +232,18 @@ export const VocalAuditionPlayer: React.FC<VocalAuditionPlayerProps> = ({
                         <Download size={13} />
                         <span>Export WAV</span>
                     </button>
+
+                    {onCommitVocal && convertedVocalUrl && (
+                        <button
+                            type="button"
+                            onClick={onCommitVocal}
+                            className="px-3.5 py-1.5 rounded-lg bg-teal-500 hover:bg-teal-400 text-slate-950 text-xs font-bold flex items-center gap-1.5 transition-colors shadow-sm"
+                            title="Replace the vocal stem on the source track with this converted take"
+                        >
+                            <CheckCircle2 size={13} />
+                            <span>Commit to Track</span>
+                        </button>
+                    )}
 
                     {onOpenInDAW && track && (
                         <button

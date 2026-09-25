@@ -14,12 +14,14 @@ import { GlassCard } from '../ui/GlassCard';
 
 interface VocalBoothRecorderProps {
     onAudioCaptured: (audioFile: File, durationSec: number) => void;
+    onUseAsVocalTrack?: (audioFile: File, durationSec: number) => void;
     onCancel?: () => void;
     maxDurationSec?: number;
 }
 
 export const VocalBoothRecorder: React.FC<VocalBoothRecorderProps> = ({
     onAudioCaptured,
+    onUseAsVocalTrack,
     onCancel,
     maxDurationSec = 60
 }) => {
@@ -403,13 +405,27 @@ export const VocalBoothRecorder: React.FC<VocalBoothRecorderProps> = ({
                         >
                             Discard & Re-Record
                         </button>
+                        {onUseAsVocalTrack && (
+                            <button
+                                type="button"
+                                onClick={() => {
+                                    if (!audioBlob) return;
+                                    const file = new File([audioBlob], `vocal_mic_take_${Date.now()}.wav`, { type: 'audio/wav' });
+                                    onUseAsVocalTrack(file, elapsedSec);
+                                }}
+                                className="px-3.5 py-2 rounded-xl bg-teal-500/20 text-teal-700 dark:text-teal-300 hover:bg-teal-500/30 font-bold text-xs flex items-center space-x-1.5 border border-teal-500/30 transition-all"
+                            >
+                                <Radio size={13} />
+                                <span>Use as Vocal Track</span>
+                            </button>
+                        )}
                         <button
                             type="button"
                             onClick={handleConfirmRecording}
                             className="px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 shadow-md shadow-teal-500/20 active:scale-95 transition-all"
                         >
                             <Check size={14} />
-                            <span>Use Sample for Voice Profile</span>
+                            <span>Save as Voice Identity</span>
                         </button>
                     </div>
                 </div>

@@ -13,8 +13,12 @@ services:
       - milimo-audio:/app/generated_audio
       - milimo-midi:/app/generated_midi
       - milimo-hf-cache:/root/.cache/huggingface
+    env_file:
+      - path: .env
+        required: false
     environment:
       - MILIMO_IN_DOCKER=1
+      - MILIMO_DATABASE_URL=sqlite:////app/data/jobs.db
       - HOST=0.0.0.0
       - PORT=8000
     extra_hosts:

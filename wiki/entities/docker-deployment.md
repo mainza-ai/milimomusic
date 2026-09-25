@@ -2,7 +2,7 @@
 title: Docker Deployment & Single-Process Architecture
 type: entity
 created: 2026-09-07
-updated: 2026-09-07
+updated: 2026-09-24
 tags: [docker, deployment, container, production, nginx, uvicorn, packaging]
 aliases: [Docker, Containerization, Docker Deployment, Production Container]
 ---
@@ -51,12 +51,17 @@ services:
     ports:
       - "8000:8000"
     volumes:
+      - milimo-models:/app/models
       - milimo-data:/app/data
       - milimo-audio:/app/generated_audio
       - milimo-midi:/app/generated_midi
       - milimo-hf-cache:/root/.cache/huggingface
+    env_file:
+      - path: .env
+        required: false
     environment:
       - MILIMO_IN_DOCKER=1
+      - MILIMO_DATABASE_URL=sqlite:////app/data/jobs.db
       - HOST=0.0.0.0
       - PORT=8000
     extra_hosts:
@@ -79,12 +84,13 @@ Configured for systems without NVIDIA Container Toolkit (e.g. CPU-only servers, 
 
 ## 3. Persistent Volumes & Data Isolation
 
-Containers are stateless; all generated artifacts, training data, and downloaded model weights are isolated in four named Docker volumes:
+Containers are stateless; all generated artifacts, training data, and downloaded model weights are isolated in five named Docker volumes:
 
 | Volume Name | Container Path | Purpose |
 |---|---|---|
-| `milimo-data` | `/app/data` | SQLite database (`database.db`), voice profiles (`profiles.json`), custom presets, artist lore |
-| `milimo-audio` | `/app/generated_audio` | Rendered master tracks, stems (`stems/`), converted vocals, and cover images (`data/covers/`) |
+| `milimo-models` | `/app/models` | Local models directory (modality subfolders: audio, image, video) |
+| `milimo-data` | `/app/data` | SQLite database (`jobs.db`), voice profiles (`data/voice_profiles/`), custom presets, artist lore |
+| `milimo-audio` | `/app/generated_audio` | Rendered master tracks, stems (`stems/`), converted vocals, videos (`videos/`), and cover images (`covers/`) |
 | `milimo-midi` | `/app/generated_midi` | Note-level multi-track MIDI (`.mid`) and MusicXML 3.1 sheet music (`.musicxml`) files |
 | `milimo-hf-cache` | `/root/.cache/huggingface` | Hugging Face model snapshots (MiniMax Music 3, FLUX, HuBERT, RMVPE weights) |
 

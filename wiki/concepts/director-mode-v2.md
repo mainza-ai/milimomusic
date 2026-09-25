@@ -1,9 +1,9 @@
 ---
 title: Director Mode v2 Architecture & Musical Timing
 type: concept
-tags: [director, video, beat-tracking, downbeats, pacing, lipsync, performer-map, timing, ffmpeg]
+tags: [director, video, beat-tracking, downbeats, pacing, lipsync, performer-map, timing, ffmpeg, fidelity-repair, vocal-bypass]
 created: 2026-09-16
-updated: 2026-09-16
+updated: 2026-09-24
 sources: [sources/maestro-creative-studio.md]
 aliases: [DirectorV2, BeatAwareDirecting, MusicalShotPlanner]
 ---
@@ -142,6 +142,26 @@ def music_performance_direction(
             "vocal_constraint": f"Lip-sync exclusively reserved for {active_speaker or 'singer'}; background members do not lip-sync"
         }
 ```
+
+### 4.2 Visible-Cast Scoping (v2.4.0)
+In Maestro v2.4.0, performance instructions were upgraded from global scene injection to **strict per-shot visible-cast scoping**:
+- Narrative, dancing, and scenery shots no longer inherit boilerplate lists of vocalists and instrumentalists.
+- Only the performers actually staged and visible within that specific shot receive performance constraints (`mouth_movement: closed` vs active emotive singing).
+- Recompiling saved music prompts strips out old injected boilerplate, keeping diffusion context compact and focused.
+
+### 4.3 Music Timeline Vocal Bypass & Dialogue Suppression (v2.4.0)
+When creating videos for generated music:
+- The supplied song audio is the **sole source of truth** for vocal timing, lyrics, and pauses.
+- The prompt enhancer completely skips dialogue writing and word-count gating.
+- Prevents the LLM from inventing spoken dialogue, voice-over clauses, or conflicting silence directives that corrupt the music video prompt. Visual staging checks and camera directions remain fully enforced.
+
+### 4.4 Localized Multi-Window Repair & 0–5 Fidelity Retries (v2.2.4–v2.4.0)
+- **Fidelity Repair Controls**: Users can configure 0 to 5 repair attempts (default 1) with an optional *"Generate even if fidelity checks fail"* switch that continues with the saved draft rather than stalling the pipeline.
+- **Card-Local Repairs**: When a multi-window prompt fails camera or continuity fidelity checks, only the affected event card/window prompt is retried. Valid neighboring windows, overall story schedules, and dialogue turn orders are preserved intact.
+
+### 4.5 Speech Pre-Checks & Nonverbal Sound Isolation (v2.2.3)
+- **Pre-Flight Duration Validation**: Compares the duration required for exact dialogue against the window length *before* invoking the LLM, preventing fruitless rewrite loops trying to shorten unchangeable lyrics.
+- **Nonverbal Sound Cue Isolation**: Authored sound effects (e.g. guitar slide, drum crash, sub sweep) remain in the audio instructions without falsely requiring them to be depicted in the visual action description.
 
 ---
 

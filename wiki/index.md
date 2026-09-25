@@ -2,7 +2,7 @@
 title: Milimo Music Wiki — Index
 type: index
 created: 2026-08-19
-updated: 2026-09-16
+updated: 2026-09-24
 ---
 
 # Milimo Music Wiki — Index
@@ -20,7 +20,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 
 - [Generation Provider Abstraction](entities/generation-provider.md) — pluggable `GenerationProvider` interface + registry + capability manifests.
 - [MiniMax Music 3](entities/minimax-music3.md) — the default generation model (structured captions, up to 5 min; fallback-to-synth now surfaced to the UI).
-- [YuE2 48kHz Stereo Music Provider](entities/yue2-music.md) — open-weight 48 kHz stereo music generation, ABC notation guidance, source covers, and personal style adapter fine-tuning.
+- [YuE2 48kHz Stereo Music Provider](entities/yue2-music.md) — open-weight 48 kHz stereo music generation, ABC notation guidance, source covers, auto-instrumental LoRA routing, and Auto/Guided My Music training.
 - [MuLaCover](entities/mulacover.md) — 3B controllable music cover & remix engine (symbolic cross-attention, dual transcription, composite downloader).
 - [HeartMuLa](entities/heartmula.md) — the 3B music language model; now a legacy/local provider.
 - [Heartlib](entities/heartlib.md) — the local audio-generation framework wrapping HeartMuLa + HeartCodec.
@@ -66,7 +66,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 
 ## Concepts
 
-- [Director Mode v2](concepts/director-mode-v2.md) — multi-signal audio analysis, hierarchical accent snapping, cut speed pacing ($-2$ to $+2$), performer role ownership, and discrete model frame lattice trimming.
+- [Director Mode v2](concepts/director-mode-v2.md) — multi-signal audio analysis, hierarchical accent snapping, cut speed pacing ($-2$ to $+2$), visible-cast performance scoping, music-timeline vocal bypass, 0–5 fidelity repair retries, and discrete model frame lattice trimming.
 - [Non-Destructive Multitrack Timeline](concepts/non-destructive-multitrack-timeline.md) — atomic project schema, single-pass FFmpeg hardware-accelerated filter graph compilation (NVENC/VideoToolbox), and AI round-trip take workflow.
 - [Hardware Auto-Tune, Memory Profiles & OOM Self-Healing](concepts/hardware-autotune-memory-profiles.md) — zero-config empirical profiles 1 to 5, $\le 0.80$ VRAM safety coefficient, scoped CPU execution, kernel benchmarking (PyTorch vs Triton), and self-healing telemetry.
 - [Orchestration Pipeline](concepts/generation-pipeline.md) — the 4-step generate → stems → voice → transcribe flow.
@@ -103,7 +103,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 
 ## Sources
 
-- [Maestro Creative Studio Ingest](sources/maestro-creative-studio.md) — architecture, Director v2, Editor mode, YuE2 48kHz audio, Hardware Auto-Tune, and universal queue.
+- [Maestro Creative Studio Ingest](sources/maestro-creative-studio.md) — architecture, Director v2 (vocal bypass & 0–5 repair retries), Editor mode, YuE2 48kHz audio (Auto/Guided training), H3 Singularity, Qwen 2.1, Hardware Auto-Tune, and universal queue.
 - [README (Milimo Music)](sources/readme.md) — product overview, capabilities, setup.
 - [Heartlib Bible](sources/heartlib-bible.md) — the definitive Heartlib framework guide.
 - [Training Studio Guide](sources/training-studio-guide.md) — UI + API reference for fine-tuning.

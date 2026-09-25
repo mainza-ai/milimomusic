@@ -2,7 +2,7 @@
 title: Wiki Log
 type: log
 created: 2026-08-19
-updated: 2026-09-16
+updated: 2026-09-24
 ---
 
 # Wiki Log
@@ -1887,3 +1887,21 @@ Completed thorough investigation of Blizaine/Maestro (v2.2.1) and ingested key a
 4. Created `concepts/hardware-autotune-memory-profiles.md` formalizing empirical Profiles 1–5, $\le 0.80$ VRAM safety coefficients, scoped CPU memory execution (`cpu_scoped()`), kernel benchmarking, and self-healing OOM telemetry.
 5. Created entity pages: `entities/yue2-music.md` (48 kHz stereo foundation provider, ABC scores, personal style LoRA studio), `entities/multitrack-editor.md` (DAW/video editor), and `entities/durable-task-queue.md` (persistent SQLite queue, asset vaulting, restart recovery).
 6. Updated `entities/video-studio.md`, `entities/hardware-coordinator.md`, `architecture.md`, `roadmap.md`, and `index.md`.
+
+## [2026-09-24] ingest | Maestro v2.4.0 Architecture & Plan Update
+Checked and ingested upstream architectural advancements from Blizaine/Maestro (v2.2.2 through v2.4.0, release 2026-09-24):
+1. Ingested `sources/maestro-creative-studio.md`:
+   - Director Mode v2 prompt enhancement & fidelity repair controls (0–5 repair retries knob, auto-continuation with saved draft, localized window/event card repair without rewriting neighboring windows).
+   - Music timeline vocal bypass: treats supplied song audio as the authoritative source of vocals and timing, bypassing dialogue generation and word-count gating while keeping visual direction active.
+   - Visible-cast performance scoping: music-performance constraints are strictly scoped to visible performers on screen, eliminating musicians from narrative/scenery shots.
+   - Pre-flight duration validation for dialogue and nonverbal sound cue isolation.
+   - YuE2 "My Music" Studio redesign: Auto mode (end-to-end queued workflow) and Guided mode (recordings → matched voice/sound tokenizer/decoder adaptation with v9 → AR song-style LoRA → test song auditions at 100/200 steps).
+   - Mothersuperior Instrumental AR LoRA auto-routing at strength 1.0 and multi-LoRA mixes with independent weights.
+   - MiniMax H3 Singularity v1.3 References: 21 GB pruned INT8 ConvRot checkpoint with 4-step LightX2V Ref2VA Turbo4 LoRA and Comfy quantization descriptor extraction (`convrot_layout.py`).
+   - Qwen Image 2.1 7B: 10-image reference editing, transparent RGBA PNGs, fused `gate_up` LoRAs, CivitAI browser filter, and reference attention memory sizing against VRAM.
+   - Immersive Gallery & Media Bridge: fullscreen vertical swipe viewer, cached first-frame video posters (`GET /api/v1/thumbnail/{filename}`), before/after image comparison slider, and 1-click gallery-to-active-input routing.
+   - Bounded memory execution: single-frame bounded mask processing for character masks (eliminating tens of GB of index array overhead) and safe Windows file sharing (`share_delete_file_response`).
+2. Updated `wiki/roadmap.md` with the refreshed implementation plan incorporating the v2.4.0 pillars and phased rollout.
+3. Updated `entities/yue2-music.md` with Auto/Guided My Music training, instrumental LoRA routing, and multi-LoRA mixing.
+4. Updated `concepts/director-mode-v2.md` with visible-cast scoping, music-timeline vocal bypass, 0–5 fidelity repair retries, and card-local repairs.
+5. Updated `wiki/index.md` cataloging the updated pages.

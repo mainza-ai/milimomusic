@@ -11,6 +11,9 @@ from sqlmodel import Session, select
 logger = logging.getLogger(__name__)
 
 
+import threading
+
+
 class EventManager:
     _instance = None
     
@@ -18,6 +21,7 @@ class EventManager:
         if cls._instance is None:
             cls._instance = super(EventManager, cls).__new__(cls)
             cls._instance.subscribers = []
+            cls._instance._lock = threading.Lock()
         return cls._instance
 
     def subscribe(self):
@@ -25,12 +29,21 @@ class EventManager:
         # hours-long runs. Drops stale progress frames on overflow; terminal
         # states are recovered by polling.
         q = asyncio.Queue(maxsize=512)
-        self.subscribers.append(q)
+        with self._lock:
+            self.subscribers.append(q)
         return q
 
     def unsubscribe(self, q):
-        if q in self.subscribers:
-            self.subscribers.remove(q)
+        with self._lock:
+            if q in self.subscribers:
+                self.subscribers.remove(q)
+
+    @staticmethod
+    def _safe_put(q: asyncio.Queue, msg: str):
+        try:
+            q.put_nowait(msg)
+        except asyncio.QueueFull:
+            pass
 
     def publish(self, event_type: Any, data: Optional[dict] = None):
         import json
@@ -42,20 +55,34 @@ class EventManager:
             data = data or {}
 
         msg = f"event: {evt_name}\ndata: {json.dumps(data)}\n\n"
-        for q in self.subscribers:
-            try:
-                q.put_nowait(msg)
-            except asyncio.QueueFull:
-                pass
+        with self._lock:
+            subscribers_snapshot = list(self.subscribers)
+
+        running_loop = None
+        try:
+            running_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            pass
+
+        for q in subscribers_snapshot:
+            # If current thread is the loop thread, put_nowait directly
+            if running_loop and running_loop.is_running():
+                self._safe_put(q, msg)
+            else:
+                # Dispatched from background worker thread (e.g. run_in_executor)
+                target_loop = getattr(q, "_loop", None)
+                if target_loop and target_loop.is_running():
+                    target_loop.call_soon_threadsafe(self._safe_put, q, msg)
+                else:
+                    self._safe_put(q, msg)
 
     def shutdown(self):
         """Broadcast shutdown signal to all subscribers to release connections."""
         msg = "event: shutdown\ndata: {}\n\n"
-        for q in self.subscribers:
-            try:
-                q.put_nowait(msg)
-            except asyncio.QueueFull:
-                pass
+        with self._lock:
+            subscribers_snapshot = list(self.subscribers)
+        for q in subscribers_snapshot:
+            self._safe_put(q, msg)
 
 
 event_manager = EventManager()

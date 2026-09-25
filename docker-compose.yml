@@ -12,7 +12,7 @@ services:
       - milimo-data:/app/data
       - milimo-audio:/app/generated_audio
       - milimo-midi:/app/generated_midi
-      - milimo-hf-cache:/root/.cache/huggingface
+      - milimo-hf-cache:/home/milimo/.cache/huggingface
     env_file:
       - path: .env
         required: false

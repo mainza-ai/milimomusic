@@ -132,10 +132,36 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
         };
     }, []);
 
+    // External audio bus listener
+    useEffect(() => {
+        const handleExternalAudioPlay = (e: Event) => {
+            const customEvent = e as CustomEvent<{ source?: string }>;
+            if (customEvent.detail?.source && customEvent.detail.source !== 'vocal-studio-preview') {
+                if (profileAudioRef.current && !profileAudioRef.current.paused) {
+                    profileAudioRef.current.pause();
+                    setPlayingProfileId(null);
+                }
+            }
+        };
+
+        window.addEventListener('milimo:audio-play', handleExternalAudioPlay);
+        return () => {
+            window.removeEventListener('milimo:audio-play', handleExternalAudioPlay);
+        };
+    }, []);
+
+    // Reset conversion outputs when track changes
+    useEffect(() => {
+        setConvertedVocalUrl(undefined);
+        setRemixedMasterUrl(undefined);
+    }, [selectedTrack?.id]);
+
     // Resolve isolated vocal stem path
     const originalVocalStemUrl = useMemo(() => {
         if (!selectedTrack) return undefined;
-        if (initialStemPath) return initialStemPath;
+        if (initialStemPath && selectedTrack.id === initialTrack?.id) {
+            return initialStemPath;
+        }
         try {
             if (selectedTrack.stems_json) {
                 const stems = typeof selectedTrack.stems_json === 'string'
@@ -145,7 +171,7 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
             }
         } catch {}
         return undefined;
-    }, [selectedTrack, initialStemPath]);
+    }, [selectedTrack, initialStemPath, initialTrack?.id]);
 
     const hasVocalStem = !!originalVocalStemUrl;
 
@@ -159,6 +185,7 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
             if (profileAudioRef.current) {
                 profileAudioRef.current.pause();
             }
+            window.dispatchEvent(new CustomEvent('milimo:audio-play', { detail: { source: 'vocal-studio-preview' } }));
             const fullUrl = api.getAudioUrl(p.sample_audio_path);
             const audio = new Audio(fullUrl);
             profileAudioRef.current = audio;

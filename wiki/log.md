@@ -2001,3 +2001,29 @@ Executed the comprehensive production UI/UX refactor for `MusicVideosView.tsx` a
    - Removed `.replace(tzinfo=None)` and standardized all model updates on `datetime.now(timezone.utc)`.
 3. Verification:
    - Full test suite passed (53/53 tests across `test_artist_lifecycle.py` and `test_production_v2.py`).
+
+## [2026-09-25] audit & remediate | Full-Stack Enterprise Hardening & Production Reliability
+Completed exhaustive codebase remediation achieving A+ production readiness:
+1. Core Engine & Data Integrity:
+   - Rebuilt `muscriptor_provider.update_midi_notes` with discrete `(tick, priority, type, pitch, velocity)` event sorting (`note_off` prioritized before `note_on`) with delta-time calculations, preserving polyphonic chords and exact song duration.
+   - Thread-safe SSE event dispatching in `EventManager` with subscriber mutex lock and `call_soon_threadsafe` for async-thread safety.
+   - Consolidated `GlobalHardwareCoordinator.scoped_device()` hardware locks across all endpoints (`/transcribe/upload`, `/jobs/{job_id}/voice-convert`).
+   - SQLite foreign key enforcement enabled via `PRAGMA foreign_keys = ON` on connection listeners.
+2. Video Diffusion & Neural Inference:
+   - Wan 2.1 singleton pipeline caching (`_WAN_PIPELINE_CACHE`), model CPU offload on CUDA, and post-clip VRAM cache clearing.
+   - Aspect ratio support expanded to `1:1` and `21:9` alongside `16:9` and `9:16`.
+   - Fal.ai async queue polling loop with progressive backoff and timeout handling in `CloudVideoGenerator` and `CloudLipSyncProvider`.
+   - MiniMax Music 3 strict neural inference (`MILIMO_STRICT_INFERENCE=1`) preventing silent waveform synthesis when weights are missing.
+3. Web Audio DAW, DSP & Apple Silicon MPS:
+   - Centralized audio event bus (`milimo:audio-play`) pausing GlobalAudioPlayer and external audio players to eliminate cross-view audio bleed.
+   - Demucs source separation accelerated on Apple Silicon MPS (`mps`) with automated CPU fallback.
+   - Voice DSP F0 method parameter wiring and master track vocal-notch filtering in Strategy 2 fallback to eliminate double-vocal acoustic flanging.
+   - Fixed `countdownIntervalRef` memory leak in `VocalBoothRecorder` and reset `initialStemPath` on track switch in `VocalStudioView`.
+4. Packaging, Security & Persistence:
+   - Non-root user `milimo:milimo` in `Dockerfile` and updated `docker-compose.yml` cache mapping (`/home/milimo/.cache/huggingface`).
+   - Storage Cache TTL Garbage Collector (`storage_gc.py`) running in FastAPI lifespan to clean temporary files older than 24 hours.
+   - Constant-time bearer token authentication using `hmac.compare_digest`.
+   - Unified note-saving endpoint `/workspace/{job_id}/notes` with `/tracks/{job_id}/midi`, ensuring MIDI and MusicXML files on disk stay synchronized with database JSON.
+5. Verification:
+   - Full test suite passing across all test files.
+   - Frontend production build (`npm run build`) passing with 0 errors.

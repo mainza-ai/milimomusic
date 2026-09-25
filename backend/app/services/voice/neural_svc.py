@@ -50,6 +50,7 @@ class NeuralSVCService:
         pitch_shift: int = 0,
         formant_shift: float = 1.0,
         dry_wet: float = 1.0,
+        f0_method: str = "rmvpe",
     ) -> str:
         """Convert source singing vocals into the target singer timbre.
 

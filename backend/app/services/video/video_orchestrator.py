@@ -354,9 +354,14 @@ class VideoOrchestrator:
             subtitle_style = config.get("subtitle_style", "neon")
             transition_style = config.get("transition_style", "beat_cut")
 
-            w, h = (1920, 1080) if resolution == "1080p" else (1280, 720)
             if aspect_ratio == "9:16":
-                w, h = h, w
+                w, h = (1080, 1920) if resolution == "1080p" else (720, 1280)
+            elif aspect_ratio == "1:1":
+                w, h = (1080, 1080) if resolution == "1080p" else (720, 720)
+            elif aspect_ratio == "21:9":
+                w, h = (2560, 1080) if resolution == "1080p" else (1680, 720)
+            else: # 16:9 widescreen default
+                w, h = (1920, 1080) if resolution == "1080p" else (1280, 720)
 
             vocal_stem = self.resolve_vocals_stem(job)
             face_image = self.resolve_face_image(job, config.get("character_image_path") or config.get("face_image_path"))

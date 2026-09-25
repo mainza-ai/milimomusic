@@ -39,9 +39,21 @@ export const VoiceStudioModal: React.FC<VoiceStudioModalProps> = ({
     const [auditionPlayingKey, setAuditionPlayingKey] = useState<string | null>(null);
     const auditionAudioRef = useRef<HTMLAudioElement | null>(null);
 
-    // Unmount cleanup
+    // Unmount cleanup & external audio bus listener
     useEffect(() => {
+        const handleExternalAudioPlay = (e: Event) => {
+            const customEvent = e as CustomEvent<{ source?: string }>;
+            if (customEvent.detail?.source && customEvent.detail.source !== 'voice-modal-audition') {
+                if (auditionAudioRef.current && !auditionAudioRef.current.paused) {
+                    auditionAudioRef.current.pause();
+                    setAuditionPlayingKey(null);
+                }
+            }
+        };
+
+        window.addEventListener('milimo:audio-play', handleExternalAudioPlay);
         return () => {
+            window.removeEventListener('milimo:audio-play', handleExternalAudioPlay);
             if (auditionAudioRef.current) {
                 auditionAudioRef.current.pause();
                 auditionAudioRef.current = null;
@@ -89,6 +101,7 @@ export const VoiceStudioModal: React.FC<VoiceStudioModalProps> = ({
             if (auditionAudioRef.current) {
                 auditionAudioRef.current.pause();
             }
+            window.dispatchEvent(new CustomEvent('milimo:audio-play', { detail: { source: 'voice-modal-audition' } }));
             const fullUrl = trainingApi.getAuditionAudioUrl(relPath);
             const audio = new Audio(fullUrl);
             auditionAudioRef.current = audio;

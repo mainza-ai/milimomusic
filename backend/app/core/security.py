@@ -34,9 +34,18 @@ async def require_auth(request: Request) -> None:
         if path == prefix or path.startswith(prefix + "/"):
             return
 
+    import hmac
+
     header = request.headers.get("Authorization", "")
     query_token = request.query_params.get("auth", "")
-    if header == f"Bearer {token}" or (query_token and query_token == token):
+
+    provided = ""
+    if header.startswith("Bearer "):
+        provided = header[7:].strip()
+    elif query_token:
+        provided = query_token.strip()
+
+    if provided and hmac.compare_digest(provided, token):
         return
 
     raise HTTPException(

@@ -365,6 +365,13 @@ async def lifespan(app: FastAPI):
     reconcile_orphan_jobs()
     reconcile_orphan_agent_runs()
     try:
+        from app.core.task_queue import task_queue
+        recovered_tasks = task_queue.recover_interrupted_tasks()
+        if recovered_tasks:
+            logger.info(f"Durable queue: auto-recovered {len(recovered_tasks)} interrupted task(s) to paused state.")
+    except Exception as e:
+        logger.warning(f"Durable queue recovery warning: {e}")
+    try:
         _retention_days = int(os.environ.get("MILIMO_RUN_RETENTION_DAYS", "30"))
     except ValueError:
         _retention_days = 30
@@ -536,8 +543,8 @@ def health_check():
 @app.get("/system/telemetry")
 def get_system_telemetry():
     """Return real-time VRAM, RAM, and active neural engine accelerator metrics."""
-    from app.core.hardware_lock import GlobalHardwareCoordinator
-    return GlobalHardwareCoordinator.get_telemetry()
+    from app.core.hardware_coordinator import HardwareCoordinator
+    return HardwareCoordinator.get_comprehensive_telemetry()
 
 
 @app.post("/system/flush")
@@ -4939,6 +4946,141 @@ async def events():
             "X-Accel-Buffering": "no"
         }
     )
+
+
+# --- Non-Destructive Multitrack Timeline & Gallery Media Bridge Endpoints ---
+
+@app.get("/api/v1/thumbnail/{filename}")
+def get_video_thumbnail(filename: str):
+    """Serve cached first-frame JPEG poster for fast gallery loading."""
+    from app.services.gallery.media_bridge import MediaBridge
+    # Search common video locations
+    candidates = [
+        Path("generated_audio") / filename,
+        Path("data/videos") / filename,
+        Path("assets") / filename,
+    ]
+    found = None
+    for c in candidates:
+        if c.exists():
+            found = str(c)
+            break
+    if not found:
+        raise HTTPException(status_code=404, detail="Video file not found")
+
+    poster = MediaBridge.get_first_frame_poster(found)
+    if not poster or not os.path.exists(poster):
+        raise HTTPException(status_code=404, detail="Thumbnail could not be generated")
+
+    return FileResponse(
+        poster,
+        media_type="image/jpeg",
+        headers={"Cache-Control": "public, max-age=86400"}
+    )
+
+
+@app.post("/api/gallery/route")
+def route_gallery_media(payload: dict):
+    """1-Click Gallery-to-Input media routing to Studio / Director slots."""
+    from app.services.gallery.media_bridge import MediaBridge
+    media_path = payload.get("media_path")
+    target_slot = payload.get("target_slot")
+    if not media_path or not target_slot:
+        raise HTTPException(status_code=400, detail="media_path and target_slot are required")
+
+    resolved = Path(media_path)
+    if not resolved.exists():
+        for prefix in [Path("."), Path(".."), Path("assets"), Path("generated_audio"), Path("data")]:
+            candidate = (prefix / media_path).resolve()
+            if candidate.exists():
+                resolved = candidate
+                break
+
+    try:
+        routed = MediaBridge.route_to_input(
+            media_path=str(resolved),
+            target_slot=target_slot,
+            target_job_or_session_id=payload.get("target_job_or_session_id"),
+            extra_params=payload.get("extra_params"),
+        )
+        return {"status": "ok", "routed": routed.to_dict()}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=str(e))
+
+
+@app.post("/api/editor/projects")
+def save_editor_project(payload: dict):
+    """Create or update a non-destructive multi-track editor project."""
+    from app.services.timeline.editor_projects import EditorProject
+    from app.core.win_safe_files import atomic_write_json
+    try:
+        project = EditorProject.from_dict(payload)
+        out_dir = Path("data/editor_projects")
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_file = out_dir / f"{project.project_id}.json"
+        atomic_write_json(out_file, project.to_dict(), make_backup=True)
+        return {"status": "ok", "project": project.to_dict()}
+    except Exception as e:
+        raise HTTPException(status_code=400, detail=f"Failed saving project: {e}")
+
+
+@app.get("/api/editor/projects/{project_id}")
+def get_editor_project(project_id: str):
+    """Load an existing editor project by ID."""
+    from app.services.timeline.editor_projects import EditorProject
+    from app.core.win_safe_files import safe_load_json
+    proj_file = Path("data/editor_projects") / f"{project_id}.json"
+    if not proj_file.exists():
+        raise HTTPException(status_code=404, detail="Editor project not found")
+    data = safe_load_json(proj_file)
+    if not data:
+        raise HTTPException(status_code=500, detail="Corrupted project file")
+    return {"status": "ok", "project": data}
+
+
+@app.post("/api/editor/projects/{project_id}/clip/{clip_id}/retake")
+def apply_clip_retake(project_id: str, clip_id: str, payload: dict):
+    """Apply an AI take replacement to a timeline clip without altering cuts or audio sync."""
+    from app.services.timeline.editor_projects import EditorProject, EditorProjectManager
+    from app.core.win_safe_files import atomic_write_json, safe_load_json
+    proj_file = Path("data/editor_projects") / f"{project_id}.json"
+    if not proj_file.exists():
+        raise HTTPException(status_code=404, detail="Editor project not found")
+    data = safe_load_json(proj_file)
+    project = EditorProject.from_dict(data)
+
+    new_asset_path = payload.get("new_asset_path")
+    if not new_asset_path:
+        raise HTTPException(status_code=400, detail="new_asset_path is required")
+
+    success = EditorProjectManager.apply_retake_to_clip(project, clip_id, new_asset_path)
+    if not success:
+        raise HTTPException(status_code=404, detail="Clip not found in project tracks")
+
+    atomic_write_json(proj_file, project.to_dict(), make_backup=True)
+    return {"status": "ok", "project": project.to_dict()}
+
+
+@app.post("/api/editor/projects/{project_id}/compile")
+def compile_editor_render(project_id: str):
+    """Compile non-destructive project into single-pass hardware FFmpeg command."""
+    from app.services.timeline.editor_projects import EditorProject, EditorProjectManager
+    from app.core.win_safe_files import safe_load_json
+    proj_file = Path("data/editor_projects") / f"{project_id}.json"
+    if not proj_file.exists():
+        raise HTTPException(status_code=404, detail="Editor project not found")
+    data = safe_load_json(proj_file)
+    project = EditorProject.from_dict(data)
+
+    output_path = f"generated_audio/render_{project_id}.mp4"
+    cmd = EditorProjectManager.compile_editor_render_command(project, output_path)
+    return {
+        "status": "ok",
+        "command": cmd,
+        "output_path": output_path,
+        "encoder": EditorProjectManager.detect_hardware_video_encoder(),
+    }
+
 
 # --- Frontend Static Files & SPA Fallback (Unified Single-Process Mode) ---
 

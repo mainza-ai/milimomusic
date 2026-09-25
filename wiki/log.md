@@ -1905,3 +1905,28 @@ Checked and ingested upstream architectural advancements from Blizaine/Maestro (
 3. Updated `entities/yue2-music.md` with Auto/Guided My Music training, instrumental LoRA routing, and multi-LoRA mixing.
 4. Updated `concepts/director-mode-v2.md` with visible-cast scoping, music-timeline vocal bypass, 0–5 fidelity repair retries, and card-local repairs.
 5. Updated `wiki/index.md` cataloging the updated pages.
+
+## [2026-09-24] create | Production Implementation of Maestro v2.4.0 Engine (Phases 1-5)
+Successfully implemented and verified the production architecture across all 5 phases:
+1. Phase 1 (Hardware Auto-Tune, Bounded Memory & File Safety):
+   - Implemented `app.core.hardware_autotune` with empirical Memory Profiles 1–5, safety coefficient $\le 0.80$, dynamic reference cache budgets, and `@cpu_scoped_audio` execution.
+   - Unified `app.core.hardware_coordinator` with comprehensive telemetry exposing real-time VRAM, RAM, and profile strategy.
+   - Implemented `app.services.video.mask_utils` with single-frame bounded mask streaming `compose_recast_character_masks()` eliminating whole-video 4D index array memory spikes.
+   - Implemented `app.core.win_safe_files` providing cross-platform `share_delete_file_response()` and atomic JSON persistence with `.bak` rollback.
+2. Phase 2 (Director Mode v2, Audio Analysis, Musical Timing & Prompt Enhancement):
+   - Implemented `app.services.video.audio_analysis` with Librosa beat/downbeat tracking, structural sectioning, and CPU transient percussion cues.
+   - Implemented `app.services.video.director_music_timing` with scored musical accent snapping (downbeats 1.8, lyric boundaries 2.5, section changes 3.0), pacing bias slider (-2 to +2), and model-native lattice snapping with zero-drift trimming.
+   - Implemented `app.services.video.music_performance` enforcing `mouth_movement: closed` during solos and visible-cast performer scoping.
+   - Implemented `app.services.video.prompt_enhancer` with Two-Tier Vocal Bypass (`PERFORMANCE_AUDIO_GUIDANCE`), 0–5 fidelity repair retries (interactive review vs batch queue auto-continue), and localized card repairs.
+   - Implemented `app.services.video.convrot_layout` parsing ComfyUI safetensors metadata and grouped QKV rotational matrix transformations.
+3. Phase 3 (Non-Destructive Multi-Track DAW & Immersive Gallery):
+   - Implemented `app.services.timeline.editor_projects` with atomic project schema and single-pass FFmpeg compiler with auto-detected hardware encoders (`h264_videotoolbox`, `h264_nvenc`, `libx264`).
+   - Implemented round-trip AI take replacement preserving timing and transitions.
+   - Implemented `app.services.gallery.media_bridge` with 1-click gallery-to-input routing, cached first-frame video posters (`/api/v1/thumbnail/{filename}`), and before/after split comparison manifests.
+4. Phase 4 (YuE2 48kHz Stereo & "My Music" Training Studio):
+   - Implemented `app.providers.yue2_provider` providing native 48kHz stereo foundation synthesis, automatic Mothersuperior Instrumental AR LoRA routing (strength 1.0), and multi-LoRA mixes.
+   - Implemented `app.services.training.yue2_trainer` supporting Auto Mode (1-click queued pipeline) and Guided Mode (4 explicit stages with auditory before/after reconstruction checks).
+5. Phase 5 (Durable Task Queue & Checkpointed Recovery):
+   - Implemented `app.core.task_queue` with ACID SQLite persistence, asset ownership isolation, and background queue pre-enhancement.
+   - Implemented boot-time `recover_interrupted_tasks()` in FastAPI `lifespan` safely pausing interrupted jobs with completed clips preserved.
+6. Verification: 100% test pass rate (32/32 tests passed across `backend/tests/`), clean frontend production build (`tsc -b && vite build`), and live API endpoint verification on running backend (port 8000) and frontend (port 5173).

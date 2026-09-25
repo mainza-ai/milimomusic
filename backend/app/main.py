@@ -4676,6 +4676,42 @@ async def generate_video_keyframes(job_id: str, req: KeyframesRequest = Body(def
         }
 
 
+@app.post("/videos/retake-clip/{job_id}/{clip_index}")
+async def retake_video_clip_endpoint(job_id: str, clip_index: int, payload: dict = Body(default={})):
+    """Generate a visual retake for a specific planned scene clip."""
+    from app.services.video_service import video_service
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        prompt = payload.get("prompt")
+        visual_style = payload.get("visual_style", "neon-cyberpunk")
+        res = payload.get("resolution", "720p")
+        w, h = (1920, 1080) if res == "1080p" else (1280, 720)
+
+        keyframes = await video_service.generate_scene_keyframes(
+            job=job,
+            visual_style=visual_style,
+            width=w, height=h
+        )
+        target_kf = None
+        for kf in keyframes:
+            if kf.get("clip_index") == clip_index:
+                target_kf = kf
+                break
+        if not target_kf and keyframes:
+            target_kf = keyframes[0]
+
+        return {
+            "status": "ok",
+            "job_id": job_id,
+            "clip_index": clip_index,
+            "keyframe_url": target_kf.get("keyframe_url") if target_kf else None,
+            "prompt": prompt or (target_kf.get("prompt") if target_kf else ""),
+        }
+
+
 # ==========================================
 # Playlists API
 # ==========================================

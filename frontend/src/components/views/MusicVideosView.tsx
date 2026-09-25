@@ -4,33 +4,20 @@ import {
     videoApi,
     api,
     galleryApi,
-    type StoryboardScene,
     type VideoPlanResult,
     type VideoTaskStatus,
     type VideoPlanParams,
     type VideoRenderParams
 } from '../../api';
-import {
-    Play,
-    Pause,
-    Film,
-    Wand2,
-    Download,
-    Video,
-    Sparkles,
-    Loader2,
-    CheckCircle2,
-    Mic,
-    Type,
-    Layers,
-    AlertCircle,
-    RefreshCw,
-    Trash2,
-    Share2
-} from 'lucide-react';
-import { GlassCard } from '../ui/GlassCard';
 import { toast } from '../../utils/toast';
 import { AppFooter } from '../ui/AppFooter';
+
+import { VideoTopBar, type AspectRatioType } from '../video/VideoTopBar';
+import { VideoCanvasPlayer } from '../video/VideoCanvasPlayer';
+import { VideoInspectorDock } from '../video/VideoInspectorDock';
+import { VideoTimelineTrack } from '../video/VideoTimelineTrack';
+import { ClipRetakeModal } from '../video/ClipRetakeModal';
+import { KeyframeZoomModal } from '../video/KeyframeZoomModal';
 
 interface MusicVideosViewProps {
     songs: Job[];
@@ -41,17 +28,16 @@ interface MusicVideosViewProps {
     onUpdateSong?: (job: Job) => void;
 }
 
-export type VideoModelKey = 'wan_14b' | 'wan_1.3b' | 'ltx_video' | 'cogvideox' | 'hailuo_h3' | 'hunyuan' | 'audioreactive' | 'wan2.1';
+export type VideoModelKey = 'wan_14b' | 'wan_1.3b' | 'ltx_video' | 'cogvideox' | 'hailuo_h3' | 'hunyuan' | 'audioreactive';
 
 export const MODEL_CONSTRAINTS: Record<string, { label: string; minSec: number; maxSec: number; defaultSec: number; desc: string }> = {
-    'wan_14b': { label: 'Wan 2.1 14B Flagship', minSec: 2.0, maxSec: 5.0, defaultSec: 5.0, desc: 'Alibaba Wan 2.1 14B DiT with 3D temporal diffusion and keyframe I2V' },
+    'wan_14b': { label: 'Wan 2.1 14B Flagship', minSec: 2.0, maxSec: 5.0, defaultSec: 5.0, desc: 'Alibaba Wan 2.1 14B DiT with 3D temporal diffusion & keyframe I2V' },
     'wan_1.3b': { label: 'Wan 2.1 1.3B Fast', minSec: 2.0, maxSec: 5.0, defaultSec: 5.0, desc: 'Lightweight text-to-video diffusion for rapid local preview' },
     'ltx_video': { label: 'LTX-Video 0.9B Realtime', minSec: 3.0, maxSec: 10.0, defaultSec: 5.0, desc: 'Lightricks 0.9B real-time DiT (24 fps) for quick scene rendering' },
     'cogvideox': { label: 'CogVideoX 1.5 Engine', minSec: 3.0, maxSec: 10.0, defaultSec: 10.0, desc: 'THUDM CogVideoX 1.5 — 5B 3D causal VAE model' },
     'hailuo_h3': { label: 'MiniMax Hailuo H3', minSec: 5.0, maxSec: 15.0, defaultSec: 15.0, desc: 'MiniMax Hailuo H3 flagship DiT — up to 15.0s maximum duration' },
     'hunyuan': { label: 'Tencent HunyuanVideo', minSec: 4.0, maxSec: 15.0, defaultSec: 15.0, desc: 'Tencent HunyuanVideo 13B DiT — up to 15.0s extended visual takes' },
     'audioreactive': { label: 'Audio-Reactive Full', minSec: 5.0, maxSec: 120.0, defaultSec: 120.0, desc: 'Continuous full-timeline audio reactive spectrum & waveform visualizer' },
-    'wan2.1': { label: 'Wan 2.1 14B Flagship', minSec: 2.0, maxSec: 5.0, defaultSec: 5.0, desc: 'Alibaba Wan 2.1 — 5.0s limit with musical cuts' },
 };
 
 export const isValidVideoEngine = (e: string): e is VideoModelKey => e in MODEL_CONSTRAINTS;
@@ -89,14 +75,18 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         }
     }, [completedSongs, selectedSongId]);
 
+    // Active song instance
+    const activeSong = completedSongs.find(s => s.id === selectedSongId);
+
     // Style & Model Engine settings
     const [videoModel, setVideoModel] = useState<VideoModelKey>('wan_14b');
     const [videoProvider, setVideoProvider] = useState<'local' | 'cloud_fal' | 'cloud_replicate'>('local');
     const [lipSyncEngine, setLipSyncEngine] = useState<'live_portrait' | 'fallback'>('live_portrait');
+    const [aspectRatio, setAspectRatio] = useState<AspectRatioType>('16:9');
     const [keyframes, setKeyframes] = useState<Record<number, string>>({});
     const [isGeneratingKeyframes, setIsGeneratingKeyframes] = useState(false);
-    // Engine the user marked active in Models & HW — the page follows it by
-    // default and on activation changes; manual override is still allowed.
+
+    // Active model variant tracker
     const [activeVideoEngine, setActiveVideoEngine] = useState<VideoModelKey | null>(null);
     const [modelRegistry, setModelRegistry] = useState<Record<string, any>>({});
     const [clipDuration, setClipDuration] = useState<number>(() => {
@@ -105,9 +95,10 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     });
 
     const selectEngine = useCallback((model: VideoModelKey) => {
-        setVideoModel(model);
-        const conf = MODEL_CONSTRAINTS[model] || MODEL_CONSTRAINTS['wan_14b'];
-        const saved = localStorage.getItem(`milimo_video_clip_len_${model}`);
+        const canonical = model === ('wan2.1' as any) ? 'wan_14b' : model;
+        setVideoModel(canonical);
+        const conf = MODEL_CONSTRAINTS[canonical] || MODEL_CONSTRAINTS['wan_14b'];
+        const saved = localStorage.getItem(`milimo_video_clip_len_${canonical}`);
         const resolved = saved ? Math.min(conf.maxSec, Math.max(conf.minSec, parseFloat(saved))) : conf.defaultSec;
         setClipDuration(resolved);
     }, []);
@@ -122,8 +113,6 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     if (!alive) return;
                     if (r.engine && isValidVideoEngine(r.engine)) {
                         setActiveVideoEngine(r.engine);
-                        // Follow the Models & HW active engine (manual override is
-                        // transient until the next activation change).
                         selectEngine(r.engine);
                     }
                 })
@@ -139,21 +128,18 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
 
     const [videoStyle, setVideoStyle] = useState<'neon-cyberpunk' | 'anime-cinematic' | 'retro-vhs' | 'minimal-lyrics'>('neon-cyberpunk');
     const [resolution, setResolution] = useState<'720p' | '1080p'>('720p');
+    const [transitionStyle, setTransitionStyle] = useState<'beat_cut' | 'crossfade' | 'flash' | 'whip_pan' | 'glitch'>('beat_cut');
     const [isDeletingVideo, setIsDeletingVideo] = useState(false);
 
-    const handleSelectModel = (model: VideoModelKey) => {
-        selectEngine(model);
-    };
-
     const handleClipDurationChange = (val: number) => {
-        const conf = MODEL_CONSTRAINTS[videoModel];
+        const conf = MODEL_CONSTRAINTS[videoModel] || MODEL_CONSTRAINTS['wan_14b'];
         const clamped = Math.min(conf.maxSec, Math.max(conf.minSec, val));
         setClipDuration(clamped);
         localStorage.setItem(`milimo_video_clip_len_${videoModel}`, clamped.toString());
     };
 
     const handleResetDurationToMax = () => {
-        const conf = MODEL_CONSTRAINTS[videoModel];
+        const conf = MODEL_CONSTRAINTS[videoModel] || MODEL_CONSTRAINTS['wan_14b'];
         setClipDuration(conf.maxSec);
         localStorage.setItem(`milimo_video_clip_len_${videoModel}`, conf.maxSec.toString());
     };
@@ -175,8 +161,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const [fidelityRetries, setFidelityRetries] = useState<number>(1);
     const [autoContinue, setAutoContinue] = useState<boolean>(false);
     const [visibleCast, setVisibleCast] = useState<string[]>(['Lead Vocalist']);
-    const [splitCompareActive, setSplitCompareActive] = useState<boolean>(false);
-    const [splitRatio, setSplitRatio] = useState<number>(0.5);
+    const [characterPromptNote, setCharacterPromptNote] = useState<string>('');
 
     // Planning & Task Tracking
     const [isPlanning, setIsPlanning] = useState(false);
@@ -186,6 +171,12 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const [isRendering, setIsRendering] = useState(false);
     const [renderedVideoUrl, setRenderedVideoUrl] = useState<string | null>(null);
     const pollRef = useRef<number | undefined>(undefined);
+
+    // Modal states
+    const [retakeModalOpen, setRetakeModalOpen] = useState(false);
+    const [retakeClipIndex, setRetakeClipIndex] = useState<number | null>(null);
+    const [isRetaking, setIsRetaking] = useState(false);
+    const [zoomKeyframe, setZoomKeyframe] = useState<{ clipIndex: number; url: string } | null>(null);
 
     // Unmount cleanup to prevent leaking video polling interval
     useEffect(() => {
@@ -197,26 +188,16 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         };
     }, []);
 
-    // Fallback legacy storyboard scenes
-    const [isGeneratingStory, setIsGeneratingStory] = useState(false);
-    const [storyboardScenes, setStoryboardScenes] = useState<StoryboardScene[]>([
-        { time: '0:00 - 0:15', prompt: 'Neon cityscape reflections across rain-soaked streets with cyan backlighting', camera: 'Slow drone zoom forward', lighting: 'Cyan edge luminescence' },
-        { time: '0:15 - 0:45', prompt: 'Silhouetted singer at the edge of a cybernetic rooftop under holographic billboard stars', camera: '360 orbit medium shot', lighting: 'Warm amber rim flare' },
-        { time: '0:45 - 1:15', prompt: 'Fast highway pursuit through glowing neon tunnels with rhythmic audio particle reactive pulses', camera: 'Low angle speed tracking', lighting: 'Pulsing stroboscopic neon' }
-    ]);
-
-    const activeSong = completedSongs.find(s => s.id === selectedSongId);
-
     // Check if song has isolated stems
-    let hasVocals = false;
-    if (activeSong?.stems_json) {
+    const hasVocals = useMemo(() => {
+        if (!activeSong?.stems_json) return false;
         try {
             const parsed = typeof activeSong.stems_json === 'string' ? JSON.parse(activeSong.stems_json) : activeSong.stems_json;
-            if (parsed && (parsed.vocals || parsed.vocals_path)) {
-                hasVocals = true;
-            }
-        } catch { /* ignore parse error */ }
-    }
+            return Boolean(parsed && (parsed.vocals || parsed.vocals_path));
+        } catch {
+            return false;
+        }
+    }, [activeSong?.stems_json]);
 
     useEffect(() => {
         if (!selectedSongId) {
@@ -241,12 +222,6 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         setActiveTask(null);
     }, [selectedSongId, activeSong?.video_path]);
 
-    useEffect(() => {
-        return () => {
-            if (pollRef.current) window.clearInterval(pollRef.current);
-        };
-    }, []);
-
     // Plan Scenes Breakdown
     const handlePlanScenes = async () => {
         if (!activeSong) return;
@@ -257,6 +232,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 max_clip_duration: clipDuration,
                 bpm: 120,
                 visual_style: videoStyle,
+                aspect_ratio: aspectRatio,
                 provider: videoProvider,
                 pacing_bias: pacingBias,
                 music_timeline_vocal_bypass: vocalBypass,
@@ -308,12 +284,13 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 model_name: videoModel,
                 visual_style: videoStyle,
                 resolution,
+                aspect_ratio: aspectRatio,
                 provider: videoProvider,
                 lip_sync_engine: lipSyncEngine,
                 enable_lip_sync: enableLipSync,
                 burn_lyrics: burnSubtitles,
                 subtitle_style: subtitleStyle,
-                transition_style: 'beat_cut',
+                transition_style: transitionStyle,
                 max_clip_duration: clipDuration,
                 mode: 'production_multiclip',
                 pacing_bias: pacingBias,
@@ -363,9 +340,6 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         }
     };
 
-    // Apply the render config the existing video was generated with so a
-    // regeneration is faithful (same engine, style, resolution, lip-sync,
-    // subtitles, clip length) instead of whatever the page currently shows.
     const applyStoredVideoConfig = (job: Job) => {
         if (!job?.video_config_json) return;
         try {
@@ -375,18 +349,21 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             }
             if (cfg.max_clip_duration) {
                 const engine = (cfg.model_name && isValidVideoEngine(cfg.model_name)) ? cfg.model_name : videoModel;
-                const conf = MODEL_CONSTRAINTS[engine];
+                const conf = MODEL_CONSTRAINTS[engine] || MODEL_CONSTRAINTS['wan_14b'];
                 const clamped = Math.min(conf.maxSec, Math.max(conf.minSec, parseFloat(cfg.max_clip_duration)));
                 setClipDuration(clamped);
             }
             if (cfg.visual_style && ['neon-cyberpunk', 'anime-cinematic', 'retro-vhs', 'minimal-lyrics'].includes(cfg.visual_style)) {
                 setVideoStyle(cfg.visual_style);
             }
+            if (cfg.aspect_ratio && ['16:9', '9:16', '1:1', '21:9'].includes(cfg.aspect_ratio)) {
+                setAspectRatio(cfg.aspect_ratio);
+            }
             if (cfg.resolution === '1080p' || cfg.resolution === '720p') setResolution(cfg.resolution);
             if (typeof cfg.enable_lip_sync === 'boolean') setEnableLipSync(cfg.enable_lip_sync);
             if (typeof cfg.burn_lyrics === 'boolean') setBurnSubtitles(cfg.burn_lyrics);
             if (cfg.subtitle_style && ['neon', 'cinematic', 'karaoke'].includes(cfg.subtitle_style)) setSubtitleStyle(cfg.subtitle_style);
-        } catch { /* unreadable config — fall back to current page settings */ }
+        } catch { /* fallback to current state */ }
     };
 
     const handleRegenerateVideo = async () => {
@@ -427,785 +404,195 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         }
     };
 
-    // Generate legacy storyboard
+    // Storyboard notes generator
+    const [isGeneratingStory, setIsGeneratingStory] = useState(false);
     const handleGenerateStoryboard = async () => {
         if (!activeSong) return;
         try {
             setIsGeneratingStory(true);
             const scenes = await videoApi.generateStoryboard(activeSong.id, videoStyle);
             if (scenes && scenes.length > 0) {
-                setStoryboardScenes(scenes);
                 toast('Storyboard sequence generated with dynamic directing prompts.', 'success');
             }
         } catch (err: any) {
-            console.error('Failed to generate storyboard:', err);
-            toast(err?.response?.data?.detail || 'Failed to generate storyboard scenes.', 'error');
+            toast(err?.response?.data?.detail || 'Failed to generate storyboard.', 'error');
         } finally {
             setIsGeneratingStory(false);
         }
     };
 
+    // Retake handlers
+    const handleOpenRetakeModal = (clipIndex: number) => {
+        setRetakeClipIndex(clipIndex);
+        setRetakeModalOpen(true);
+    };
+
+    const handleConfirmRetake = async (clipIndex: number, newPrompt: string, camera: string, lighting: string) => {
+        if (!activeSong) return;
+        setIsRetaking(true);
+        try {
+            const res = await videoApi.retakeScene(activeSong.id, clipIndex, {
+                prompt: newPrompt,
+                camera,
+                lighting
+            });
+            if (res.keyframe_url) {
+                setKeyframes(prev => ({ ...prev, [clipIndex]: res.keyframe_url! }));
+            }
+            if (planResult?.clips) {
+                const updatedClips = planResult.clips.map(c => {
+                    if (c.clip_index === clipIndex) {
+                        return { ...c, prompt: newPrompt, camera, lighting };
+                    }
+                    return c;
+                });
+                setPlanResult({ ...planResult, clips: updatedClips });
+            }
+            toast(`Retake generated for Scene #${clipIndex}!`, 'success');
+            setRetakeModalOpen(false);
+        } catch (err: any) {
+            toast(`Failed to generate retake: ${err.message}`, 'error');
+        } finally {
+            setIsRetaking(false);
+        }
+    };
+
+    const activeRetakeSegment = useMemo(() => {
+        if (retakeClipIndex === null || !planResult?.clips) return undefined;
+        return planResult.clips.find(c => c.clip_index === retakeClipIndex);
+    }, [retakeClipIndex, planResult?.clips]);
+
     return (
-        <div className="flex-1 overflow-y-auto p-6 md:p-8 pb-28 sm:pb-32 space-y-6 flex flex-col justify-between min-h-full">
-            <div className="space-y-6">
-                {/* Header */}
-                <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
-                    <div>
-                        <h1 className="text-2xl sm:text-3xl font-extrabold tracking-tight text-slate-900 dark:text-white flex items-center gap-3">
-                            <span className="p-2 rounded-2xl bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 border border-cyan-500/20">
-                                🎬
-                            </span>
-                            <span>AI Music Video Studio</span>
-                            <span className="px-2.5 py-1 text-[11px] font-mono font-bold rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400 border border-teal-500/20 flex items-center gap-1">
-                                <Sparkles size={12} />
-                                Production Multi-Scene Pipeline
-                            </span>
-                        </h1>
-                        <p className="text-xs sm:text-sm text-slate-500 dark:text-slate-400 mt-1">
-                            Model duration constraint handling (H3 15s, Hunyuan 15s, CogVideoX 10s, Wan 5s), isolated vocal stem lip-syncing & burned subtitles
-                        </p>
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-28 sm:pb-32 space-y-6 flex flex-col justify-between min-h-full">
+            <div className="space-y-6 max-w-[1600px] mx-auto w-full">
+                {/* ZONE 1: TOP MASTER STUDIO BAR */}
+                <VideoTopBar
+                    completedSongs={completedSongs}
+                    selectedSongId={selectedSongId}
+                    onSelectSong={handleSelectSong}
+                    activeSong={activeSong}
+                    hasVocals={hasVocals}
+                    aspectRatio={aspectRatio}
+                    onSelectAspectRatio={setAspectRatio}
+                    isPlaying={isPlaying}
+                    playingSongId={playingSongId}
+                    onTogglePlayAudio={() => activeSong && onPlay(activeSong)}
+                    isPlanning={isPlanning}
+                    onPlanScenes={handlePlanScenes}
+                    isGeneratingKeyframes={isGeneratingKeyframes}
+                    onGenerateKeyframes={handleGenerateKeyframes}
+                    isRendering={isRendering}
+                    onRenderVideo={handleRenderAdvancedVideo}
+                    renderedVideoUrl={renderedVideoUrl}
+                    onDownloadVideo={() => {
+                        if (renderedVideoUrl) {
+                            api.downloadUrlAsFile(api.getAudioUrl(renderedVideoUrl), `${activeSong?.title || 'track'}_music_video.mp4`);
+                        }
+                    }}
+                />
+
+                {/* ZONE 2: DUAL WORKSPACE (Center Viewport + Right Inspector Dock) */}
+                <div className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                    {/* Center / Left Viewport (7 Cols on desktop) */}
+                    <div className="lg:col-span-7 xl:col-span-8 space-y-4">
+                        <VideoCanvasPlayer
+                            activeSong={activeSong}
+                            renderedVideoUrl={renderedVideoUrl}
+                            aspectRatio={aspectRatio}
+                            isRendering={isRendering}
+                            activeTask={activeTask}
+                            isDeletingVideo={isDeletingVideo}
+                            onDeleteVideo={handleDeleteVideo}
+                            onRegenerateVideo={handleRegenerateVideo}
+                            onRouteToDirector={handleRouteToDirector}
+                            isRouting={isRouting}
+                            onPlanScenes={handlePlanScenes}
+                            onRenderVideo={handleRenderAdvancedVideo}
+                            isPlanning={isPlanning}
+                        />
                     </div>
 
-                    {renderedVideoUrl && (
-                        <button
-                            onClick={() => api.downloadUrlAsFile(api.getAudioUrl(renderedVideoUrl), `${activeSong?.title || 'track'}_music_video.mp4`)}
-                            className="px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-teal-500/20 active:scale-95 transition-all self-start sm:self-auto"
-                         title="Download MP4 Video">
-                            <Download size={14} />
-                            <span>Download MP4 Video</span>
-                        </button>
-                    )}
-                </div>
-
-                {/* Studio Workspace Grid */}
-                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-                    {/* Left Panel: Controls, Engine Selector & Pipeline Settings */}
-                    <div className="space-y-4">
-                        {/* Track Picker */}
-                        <GlassCard className="p-4 space-y-3">
-                            <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
-                                Select Track for Music Video
-                            </label>
-                            <select
-                                value={selectedSongId || ''}
-                                onChange={(e) => handleSelectSong(e.target.value)}
-                                className="w-full apple-input text-xs font-mono"
-                            >
-                                {completedSongs.map(s => (
-                                    <option key={s.id} value={s.id}>
-                                        {s.video_path ? '🎬 ' : '🎵 '}{s.title || s.prompt.slice(0, 30)}{s.video_path ? ' · [Video Ready]' : ''}
-                                    </option>
-                                ))}
-                            </select>
-
-                            {activeSong && (
-                                <div className="flex items-center gap-2 flex-wrap pt-1 text-[11px]">
-                                    <span className="font-mono px-2 py-0.5 rounded-md bg-black/5 dark:bg-white/5 text-slate-600 dark:text-slate-300">
-                                        ⏱️ {activeSong.duration_ms ? `${Math.round(activeSong.duration_ms / 1000)}s` : 'Unknown'}
-                                    </span>
-                                    <span className={`px-2 py-0.5 rounded-md font-semibold flex items-center gap-1 ${
-                                        hasVocals
-                                            ? 'bg-teal-500/10 text-teal-600 dark:text-teal-400'
-                                            : 'bg-amber-500/10 text-amber-600 dark:text-amber-400'
-                                    }`}>
-                                        <Mic size={11} />
-                                        {hasVocals ? 'Vocals Isolated' : 'Full Audio'}
-                                    </span>
-                                    <span className={`px-2 py-0.5 rounded-md font-semibold flex items-center gap-1 ${
-                                        activeSong.lyrics
-                                            ? 'bg-cyan-500/10 text-cyan-600 dark:text-cyan-400'
-                                            : 'bg-slate-500/10 text-slate-500'
-                                    }`}>
-                                        <Type size={11} />
-                                        {activeSong.lyrics ? 'Lyrics Ready' : 'Instrumental'}
-                                    </span>
-                                </div>
-                            )}
-                        </GlassCard>
-
-                        {/* Execution Provider Selection */}
-                        <GlassCard className="p-4 space-y-3">
-                            <div className="flex items-center justify-between">
-                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
-                                    Execution Provider
-                                </label>
-                                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/10 text-cyan-600 dark:text-cyan-400 font-bold">
-                                    {videoProvider === 'local' ? 'Local M3 Max' : 'Cloud GPU'}
-                                </span>
-                            </div>
-
-                            <div className="space-y-2">
-                                <button
-                                    onClick={() => setVideoProvider('local')}
-                                    className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all ${
-                                        videoProvider === 'local'
-                                            ? 'bg-teal-500/10 border-teal-500/30 text-teal-700 dark:text-teal-300 font-bold shadow-sm'
-                                            : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-600 dark:text-slate-400 hover:bg-black/[0.04]'
-                                    }`}
-                                 title="Action">
-                                    <div className="flex items-center justify-between">
-                                        <span>🖥️ Local Apple Silicon (M3 Max 128GB)</span>
-                                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-teal-500/20 text-teal-700 dark:text-teal-300 font-bold">Offline Free</span>
-                                    </div>
-                                    <div className="text-[10px] text-slate-400 font-normal mt-0.5">Wan 2.1 14B / 1.3B + LivePortrait neural avatar via PyTorch MPS</div>
-                                </button>
-
-                                <button
-                                    onClick={() => setVideoProvider('cloud_fal')}
-                                    className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all ${
-                                        videoProvider === 'cloud_fal'
-                                            ? 'bg-cyan-500/10 border-cyan-500/30 text-cyan-700 dark:text-cyan-300 font-bold shadow-sm'
-                                            : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-600 dark:text-slate-400 hover:bg-black/[0.04]'
-                                    }`}
-                                 title="Action">
-                                    <div className="flex items-center justify-between">
-                                        <span>⚡ Cloud Studio (Fal.ai GPU)</span>
-                                        <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 font-bold">Parallel Fast</span>
-                                    </div>
-                                    <div className="text-[10px] text-slate-400 font-normal mt-0.5">Parallel cloud video generation across high-end H100 GPUs</div>
-                                </button>
-                            </div>
-                        </GlassCard>
-
-                        {/* Model Duration Constraint & Custom Length Setting */}
-                        <GlassCard className="p-4 space-y-3">
-                            <div className="flex items-center justify-between">
-                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
-                                    Video Engine & Clip Duration
-                                </label>
-                                <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400 font-bold">
-                                    Default = Max Length
-                                </span>
-                            </div>
-
-                            <div className="space-y-2">
-                                {(Object.keys(MODEL_CONSTRAINTS) as Array<keyof typeof MODEL_CONSTRAINTS>).map(key => {
-                                    const conf = MODEL_CONSTRAINTS[key];
-                                    return (
-                                        <button
-                                            key={key}
-                                            onClick={() => handleSelectModel(key as any)}
-                                            className={`w-full text-left p-2.5 rounded-xl border text-xs transition-all ${
-                                                videoModel === key
-                                                    ? 'bg-teal-500/10 border-teal-500/30 text-teal-700 dark:text-teal-300 font-bold shadow-sm'
-                                                    : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-600 dark:text-slate-400 hover:bg-black/[0.04] dark:hover:bg-white/5'
-                                            }`}
-                                         title="Action">
-                                            <div className="flex items-center justify-between">
-                                                <div className="flex items-center gap-1.5">
-                                                    <span>{conf.label}</span>
-                                                    {activeVideoEngine === key && (
-                                                        <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-teal-500/15 text-teal-700 dark:text-teal-300 font-bold border border-teal-500/20">
-                                                            ● Active in Models
-                                                        </span>
-                                                    )}
-                                                    {modelRegistry[key]?.local_weights_present && (
-                                                        <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold">
-                                                            ⚡ Local Ready
-                                                        </span>
-                                                    )}
-                                                </div>
-                                                <span className="font-mono text-[10px] px-1.5 py-0.5 rounded bg-teal-500/10 text-teal-600 dark:text-teal-400">
-                                                    Max: {conf.maxSec}s
-                                                </span>
-                                            </div>
-                                            <div className="text-[10px] text-slate-400 font-normal mt-0.5">{conf.desc}</div>
-                                        </button>
-                                    );
-                                })}
-                            </div>
-
-                            {/* Clip Length Adjustment Slider & Stepper */}
-                            <div className="pt-2 border-t border-black/[0.06] dark:border-white/5 space-y-2">
-                                <div className="flex items-center justify-between text-xs">
-                                    <span className="font-semibold text-slate-700 dark:text-slate-300">
-                                        Clip Duration Setting
-                                    </span>
-                                    <div className="flex items-center gap-1.5">
-                                        <span className="font-mono font-bold text-teal-600 dark:text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded-md text-xs">
-                                            {clipDuration.toFixed(1)}s
-                                        </span>
-                                        {clipDuration !== MODEL_CONSTRAINTS[videoModel].maxSec && (
-                                            <button
-                                                onClick={handleResetDurationToMax}
-                                                className="text-[10px] text-teal-600 dark:text-teal-400 hover:underline font-mono"
-                                                title="Reset to model max length"
-                                            >
-                                                Reset Max ({MODEL_CONSTRAINTS[videoModel].maxSec}s)
-                                            </button>
-                                        )}
-                                    </div>
-                                </div>
-
-                                <div className="flex items-center gap-3">
-                                    <span className="text-[10px] font-mono text-slate-400">
-                                        {MODEL_CONSTRAINTS[videoModel].minSec}s
-                                    </span>
-                                    <input
-                                        type="range"
-                                        min={MODEL_CONSTRAINTS[videoModel].minSec}
-                                        max={MODEL_CONSTRAINTS[videoModel].maxSec}
-                                        step={0.5}
-                                        value={clipDuration}
-                                        onChange={(e) => handleClipDurationChange(parseFloat(e.target.value))}
-                                        className="flex-1 accent-teal-500 h-1.5 bg-black/[0.06] dark:bg-white/10 rounded-lg cursor-pointer"
-                                    />
-                                    <span className="text-[10px] font-mono text-slate-400">
-                                        {MODEL_CONSTRAINTS[videoModel].maxSec}s
-                                    </span>
-                                </div>
-
-                                <div className="flex items-center justify-between text-[11px] text-slate-500 dark:text-slate-400 pt-0.5">
-                                    <span>
-                                        Pacing: {clipDuration <= 3.5 ? '⚡ Fast cuts' : clipDuration <= 6.0 ? '🎬 Standard cinematic' : '🌊 Extended takes'}
-                                    </span>
-                                    {activeSong?.duration_ms && (
-                                        <span className="font-mono text-teal-600 dark:text-teal-400">
-                                            Est. ~{Math.ceil(Math.round(activeSong.duration_ms / 1000) / clipDuration)} scenes
-                                        </span>
-                                    )}
-                                </div>
-                            </div>
-                        </GlassCard>
-
-                        {/* Director Mode v2 Controls (Maestro v2.4.0) */}
-                        <GlassCard className="p-4 space-y-3 border-indigo-500/20 bg-indigo-950/10">
-                            <div className="flex items-center justify-between">
-                                <label className="text-xs font-bold uppercase tracking-wider text-indigo-400 flex items-center gap-1.5">
-                                    <Sparkles size={13} className="text-indigo-400" />
-                                    <span>Director Mode v2 (Beat & Cast Directing)</span>
-                                </label>
-                                <span className="text-[9px] font-mono px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-bold">
-                                    Maestro v2.4
-                                </span>
-                            </div>
-
-                            {/* Pacing / Cut Speed Bias Slider */}
-                            <div className="space-y-1.5">
-                                <div className="flex items-center justify-between text-xs">
-                                    <span className="font-semibold text-slate-700 dark:text-slate-300">
-                                        Cut Speed / Pacing Bias
-                                    </span>
-                                    <span className="font-mono font-bold text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded text-[11px]">
-                                        {pacingBias === -2 ? '🌊 Sweeping (-2)' : pacingBias === -1 ? '🎬 Cinematic (-1)' : pacingBias === 0 ? '⚖️ Balanced (0)' : pacingBias === 1 ? '⚡ Rhythmic (+1)' : '🔥 Montage (+2)'}
-                                    </span>
-                                </div>
-                                <input
-                                    type="range"
-                                    min={-2}
-                                    max={2}
-                                    step={1}
-                                    value={pacingBias}
-                                    onChange={(e) => setPacingBias(parseInt(e.target.value, 10))}
-                                    className="w-full accent-indigo-500 h-1.5 bg-black/[0.06] dark:bg-white/10 rounded-lg cursor-pointer"
-                                />
-                                <div className="flex justify-between text-[9px] font-mono text-slate-400">
-                                    <span>-2 Long Takes</span>
-                                    <span>0 Downbeats</span>
-                                    <span>+2 Fast Cuts</span>
-                                </div>
-                            </div>
-
-                            {/* Two-Tier Vocal Bypass Toggle */}
-                            <div className="flex items-center justify-between pt-2 border-t border-indigo-500/10">
-                                <div>
-                                    <div className="text-xs font-semibold text-slate-700 dark:text-slate-300">
-                                        Music Timeline Vocal Bypass
-                                    </div>
-                                    <div className="text-[10px] text-slate-400">
-                                        Locks mouth to vocal stem; suppresses dialogue hallucination
-                                    </div>
-                                </div>
-                                <input
-                                    type="checkbox"
-                                    checked={vocalBypass}
-                                    onChange={(e) => setVocalBypass(e.target.checked)}
-                                    className="rounded border-slate-700 text-indigo-500 focus:ring-indigo-500"
-                                />
-                            </div>
-
-                            {/* Fidelity Repair Retries */}
-                            <div className="pt-2 border-t border-indigo-500/10 space-y-2">
-                                <div className="flex items-center justify-between text-xs">
-                                    <span className="font-semibold text-slate-700 dark:text-slate-300">
-                                        Fidelity Repair Retries
-                                    </span>
-                                    <span className="font-mono text-indigo-400 text-xs font-bold">
-                                        {fidelityRetries} {fidelityRetries === 1 ? 'retry' : 'retries'}
-                                    </span>
-                                </div>
-                                <input
-                                    type="range"
-                                    min={0}
-                                    max={5}
-                                    step={1}
-                                    value={fidelityRetries}
-                                    onChange={(e) => setFidelityRetries(parseInt(e.target.value, 10))}
-                                    className="w-full accent-indigo-500 h-1.5 bg-black/[0.06] dark:bg-white/10 rounded-lg cursor-pointer"
-                                />
-                                <div className="flex items-center justify-between">
-                                    <span className="text-[10px] text-slate-400">Auto-continue if checks fail</span>
-                                    <input
-                                        type="checkbox"
-                                        checked={autoContinue}
-                                        onChange={(e) => setAutoContinue(e.target.checked)}
-                                        className="rounded border-slate-700 text-indigo-500 focus:ring-indigo-500"
-                                    />
-                                </div>
-                            </div>
-
-                            {/* Visible Cast Scoping */}
-                            <div className="pt-2 border-t border-indigo-500/10 space-y-1.5">
-                                <span className="text-xs font-semibold text-slate-700 dark:text-slate-300 block">
-                                    Visible Cast Scoping
-                                </span>
-                                <div className="flex flex-wrap gap-1.5">
-                                    {['Lead Vocalist', 'Guitarist', 'Drummer', 'Atmospheric B-Roll'].map(cast => {
-                                        const isSel = visibleCast.includes(cast);
-                                        return (
-                                            <button
-                                                key={cast}
-                                                type="button"
-                                                onClick={() => {
-                                                    if (isSel) {
-                                                        setVisibleCast(visibleCast.filter(c => c !== cast));
-                                                    } else {
-                                                        setVisibleCast([...visibleCast, cast]);
-                                                    }
-                                                }}
-                                                className={`px-2 py-0.5 text-[10px] rounded-md font-semibold transition-all ${
-                                                    isSel
-                                                        ? 'bg-indigo-500/20 text-indigo-300 border border-indigo-500/40 font-bold'
-                                                        : 'bg-black/[0.04] dark:bg-white/5 text-slate-400 border border-transparent hover:text-slate-300'
-                                                }`}
-                                            >
-                                                {isSel ? '✓ ' : ''}{cast}
-                                            </button>
-                                        );
-                                    })}
-                                </div>
-                            </div>
-                        </GlassCard>
-
-                        {/* Lip Syncing & Vocal Stem Alignment */}
-                        <GlassCard className="p-4 space-y-3">
-                            <div className="flex items-center justify-between">
-                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                                    <Mic size={13} className="text-teal-500" />
-                                    <span>Vocal Lip-Syncing</span>
-                                </label>
-                                <input
-                                    type="checkbox"
-                                    checked={enableLipSync}
-                                    onChange={(e) => setEnableLipSync(e.target.checked)}
-                                    className="rounded border-slate-700 text-teal-500 focus:ring-teal-500"
-                                />
-                            </div>
-
-                            {enableLipSync && (
-                                <div className="space-y-2.5 pt-1">
-                                    <div className="flex items-center justify-between">
-                                        <span className="text-[11px] font-bold text-slate-400">Lip-Sync Engine</span>
-                                        <div className="flex gap-1">
-                                            <button
-                                                type="button"
-                                                onClick={() => setLipSyncEngine('live_portrait')}
-                                                className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
-                                                    lipSyncEngine === 'live_portrait'
-                                                        ? 'bg-teal-500/20 text-teal-400 border border-teal-500/40'
-                                                        : 'text-slate-400 hover:text-white border border-transparent'
-                                                }`}
-                                             title="LivePortrait (Neural)">
-                                                LivePortrait (Neural)
-                                            </button>
-                                            <button
-                                                type="button"
-                                                onClick={() => setLipSyncEngine('fallback')}
-                                                className={`px-2 py-1 text-[10px] font-bold rounded-md transition-all ${
-                                                    lipSyncEngine === 'fallback'
-                                                        ? 'bg-teal-500/20 text-teal-400 border border-teal-500/40'
-                                                        : 'text-slate-400 hover:text-white border border-transparent'
-                                                }`}
-                                             title="Viseme Mesh (Fast)">
-                                                Viseme Mesh (Fast)
-                                            </button>
-                                        </div>
-                                    </div>
-                                    <p className="text-[11px] text-slate-500 dark:text-slate-400">
-                                        {lipSyncEngine === 'live_portrait'
-                                            ? 'Singing avatar animation driven by isolated vocals stem with natural eye blinks and pitch sway.'
-                                            : 'Bilinear mouth mesh deformation with volume-reactive visemes and rhythmic head motion.'}
-                                    </p>
-                                </div>
-                            )}
-                        </GlassCard>
-
-                        {/* Synchronized Subtitles & Karaoke Burning */}
-                        <GlassCard className="p-4 space-y-3">
-                            <div className="flex items-center justify-between">
-                                <label className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-1.5">
-                                    <Type size={13} className="text-cyan-500" />
-                                    <span>Burn Subtitles / Lyrics</span>
-                                </label>
-                                <input
-                                    type="checkbox"
-                                    checked={burnSubtitles}
-                                    onChange={(e) => setBurnSubtitles(e.target.checked)}
-                                    className="rounded border-slate-700 text-cyan-500 focus:ring-cyan-500"
-                                />
-                            </div>
-
-                            {burnSubtitles && (
-                                <div className="flex gap-2 pt-1">
-                                    {(['neon', 'cinematic', 'karaoke'] as const).map(style => (
-                                        <button
-                                            key={style}
-                                            onClick={() => setSubtitleStyle(style)}
-                                            className={`flex-1 py-1 text-xs rounded-lg border capitalize transition-all ${
-                                                subtitleStyle === style
-                                                    ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-600 dark:text-cyan-400 font-bold'
-                                                    : 'border-black/5 dark:border-white/5 text-slate-400'
-                                            }`}
-                                         title="Action">
-                                            {style}
-                                        </button>
-                                    ))}
-                                </div>
-                            )}
-                        </GlassCard>
-
-                        {/* Visual Aesthetic Preset & Resolution */}
-                        <GlassCard className="p-4 space-y-3">
-                            <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
-                                Visual Aesthetic Preset
-                            </label>
-                            <div className="grid grid-cols-2 gap-1.5">
-                                {[
-                                    { id: 'neon-cyberpunk', name: 'Cyberpunk' },
-                                    { id: 'anime-cinematic', name: 'Anime' },
-                                    { id: 'retro-vhs', name: '80s VHS' },
-                                    { id: 'minimal-lyrics', name: 'Minimal' }
-                                ].map(style => (
-                                    <button
-                                        key={style.id}
-                                        onClick={() => setVideoStyle(style.id as any)}
-                                        className={`py-1.5 px-2 rounded-lg border text-xs text-center transition-all ${
-                                            videoStyle === style.id
-                                                ? 'bg-teal-500/10 border-teal-500/30 text-teal-700 dark:text-teal-300 font-bold'
-                                                : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-600 dark:text-slate-400'
-                                        }`}
-                                     title="Action">
-                                        {style.name}
-                                    </button>
-                                ))}
-                            </div>
-
-                            <div className="flex items-center justify-between pt-1">
-                                <span className="text-xs text-slate-400 font-bold">Output Quality</span>
-                                <div className="flex gap-1.5">
-                                    <button
-                                        onClick={() => setResolution('720p')}
-                                        className={`px-2.5 py-0.5 text-xs rounded-md ${resolution === '720p' ? 'bg-teal-500 text-slate-950 font-bold' : 'bg-black/5 dark:bg-white/5 text-slate-400'}`}
-                                     title="720p">
-                                        720p
-                                    </button>
-                                    <button
-                                        onClick={() => setResolution('1080p')}
-                                        className={`px-2.5 py-0.5 text-xs rounded-md ${resolution === '1080p' ? 'bg-teal-500 text-slate-950 font-bold' : 'bg-black/5 dark:bg-white/5 text-slate-400'}`}
-                                     title="1080p">
-                                        1080p
-                                    </button>
-                                </div>
-                            </div>
-                        </GlassCard>
-                    </div>
-
-                    {/* Right Panel: Video Canvas, Live Rendering HUD & Scene Timeline */}
-                    <div className="lg:col-span-2 space-y-4">
-                        <GlassCard className="p-6 space-y-6">
-                            {/* Video Canvas / Player */}
-                            <div className="relative aspect-video rounded-2xl bg-gradient-to-br from-slate-900 via-slate-800 to-slate-950 border border-white/10 flex flex-col items-center justify-center p-6 text-center overflow-hidden shadow-apple-lg group">
-                                {renderedVideoUrl ? (
-                                    <>
-                                        <video
-                                            src={api.getAudioUrl(renderedVideoUrl)}
-                                            poster={galleryApi.getThumbnailUrl(renderedVideoUrl.split('/').pop() || renderedVideoUrl)}
-                                            controls
-                                            autoPlay
-                                            className="w-full h-full object-cover rounded-xl"
-                                        />
-
-                                        {/* Split A/B Compare Toggle & Slider */}
-                                        <div className="absolute top-3 right-3 flex items-center gap-2">
-                                            <button
-                                                type="button"
-                                                onClick={() => setSplitCompareActive(!splitCompareActive)}
-                                                className={`px-2.5 py-1 rounded-lg text-[10px] font-bold backdrop-blur-md border transition-all ${
-                                                    splitCompareActive
-                                                        ? 'bg-indigo-500 text-white border-indigo-400 shadow-md'
-                                                        : 'bg-black/60 text-slate-300 border-white/20 hover:text-white'
-                                                }`}
-                                                title="Toggle Split A/B Comparison View"
-                                            >
-                                                {splitCompareActive ? '✕ Close Split' : '↔ Split Compare'}
-                                            </button>
-                                        </div>
-
-                                        {splitCompareActive && (
-                                            <div className="absolute bottom-14 left-4 right-4 bg-black/80 backdrop-blur-md rounded-xl p-2.5 border border-indigo-500/30 flex items-center gap-3 z-10">
-                                                <span className="text-[10px] font-bold text-slate-300">Original Take</span>
-                                                <input
-                                                    type="range"
-                                                    min={0}
-                                                    max={1}
-                                                    step={0.01}
-                                                    value={splitRatio}
-                                                    onChange={(e) => setSplitRatio(parseFloat(e.target.value))}
-                                                    className="flex-1 accent-indigo-500 h-1.5 bg-white/20 rounded cursor-pointer"
-                                                />
-                                                <span className="text-[10px] font-bold text-indigo-400">AI Retake ({Math.round(splitRatio * 100)}%)</span>
-                                            </div>
-                                        )}
-
-                                        <div className="absolute bottom-3 right-3 flex items-center gap-2">
-                                            <button
-                                                onClick={handleRouteToDirector}
-                                                disabled={isRendering || isDeletingVideo || isRouting}
-                                                className="px-3 py-1.5 bg-black/60 hover:bg-black/80 text-white font-bold text-[11px] rounded-lg flex items-center gap-1.5 backdrop-blur-md border border-white/20 shadow-md transition-all disabled:opacity-50"
-                                                title="Route this video to Gallery & Director reference input"
-                                            >
-                                                {isRouting ? <Loader2 size={12} className="animate-spin" /> : <Share2 size={12} className="text-teal-400" />}
-                                                <span>{isRouting ? 'Routing…' : 'To Director'}</span>
-                                            </button>
-                                            <button
-                                                onClick={handleRegenerateVideo}
-                                                disabled={isRendering || isDeletingVideo}
-                                                className="px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 font-bold text-[11px] rounded-lg flex items-center gap-1.5 shadow-md transition-all disabled:opacity-50"
-                                                title="Re-render with the same configuration this video was generated with"
-                                            >
-                                                {isRendering ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                                                <span>{isRendering ? 'Rendering…' : 'Regenerate'}</span>
-                                            </button>
-                                            <button
-                                                onClick={handleDeleteVideo}
-                                                disabled={isRendering || isDeletingVideo}
-                                                className="px-3 py-1.5 bg-rose-500/90 hover:bg-rose-500 text-white font-bold text-[11px] rounded-lg flex items-center gap-1.5 shadow-md transition-all disabled:opacity-50"
-                                                title="Delete this rendered video (track and audio stay untouched)"
-                                            >
-                                                {isDeletingVideo ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
-                                                <span>{isDeletingVideo ? 'Deleting…' : 'Delete'}</span>
-                                            </button>
-                                        </div>
-                                    </>
-                                ) : (
-                                    <>
-                                        <div className="absolute inset-0 bg-[radial-gradient(circle_at_center,rgba(20,184,166,0.15),transparent_70%)] pointer-events-none" />
-                                        <Film size={48} className={`text-teal-400 mb-3 ${isRendering ? 'animate-bounce' : 'animate-pulse'}`} />
-                                        <h3 className="text-lg font-bold text-white">
-                                            {isRendering ? 'Rendering Production Music Video…' : (activeSong?.title || "AI Music Video Studio")}
-                                        </h3>
-                                        <p className="text-xs text-slate-400 max-w-md mt-1">
-                                            {isRendering
-                                                ? `Executing multi-scene generation and stem alignment pipeline (Step: ${activeTask?.step})…`
-                                                : activeSong
-                                                ? `Synchronized to: ${activeSong.prompt.slice(0, 60)}...`
-                                                : 'Select a track to start music video generation.'}
-                                        </p>
-
-                                        <div className="mt-4 flex items-center gap-2 flex-wrap justify-center">
-                                            <button
-                                                onClick={() => activeSong && onPlay(activeSong)}
-                                                className="px-4 py-2 bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md transition-all active:scale-95"
-                                             title="Play">
-                                                {isPlaying && playingSongId === activeSong?.id ? (
-                                                    <>
-                                                        <Pause size={13} className="ml-0.5" />
-                                                        <span>Pause Audio</span>
-                                                    </>
-                                                ) : (
-                                                    <>
-                                                        <Play size={13} className="ml-0.5" />
-                                                        <span>Preview Audio</span>
-                                                    </>
-                                                )}
-                                            </button>
-                                            <button
-                                                onClick={handlePlanScenes}
-                                                disabled={isPlanning || isRendering || !activeSong}
-                                                className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded-xl flex items-center space-x-1.5 backdrop-blur-md transition-all disabled:opacity-50"
-                                             title="Action">
-                                                {isPlanning ? <Loader2 size={13} className="animate-spin" /> : <Layers size={13} />}
-                                                <span>{isPlanning ? 'Planning…' : 'Plan Scene Breakdown'}</span>
-                                            </button>
-                                            <button
-                                                onClick={handleGenerateKeyframes}
-                                                disabled={isGeneratingKeyframes || isRendering || !activeSong}
-                                                className="px-4 py-2 bg-purple-500/20 hover:bg-purple-500/30 text-purple-300 font-bold text-xs rounded-xl flex items-center space-x-1.5 border border-purple-500/30 backdrop-blur-md transition-all disabled:opacity-50"
-                                                title="Pre-render visual keyframe stills for each planned scene before video diffusion"
-                                            >
-                                                {isGeneratingKeyframes ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                                                <span>{isGeneratingKeyframes ? 'Generating Stills…' : 'Pre-Render Keyframes'}</span>
-                                            </button>
-                                            <button
-                                                onClick={handleRenderAdvancedVideo}
-                                                disabled={isRendering || !activeSong}
-                                                className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md transition-all disabled:opacity-50"
-                                             title="Action">
-                                                {isRendering ? <Loader2 size={13} className="animate-spin" /> : <Video size={13} />}
-                                                <span>{isRendering ? 'Rendering Video…' : 'Render Production Video'}</span>
-                                            </button>
-                                        </div>
-                                    </>
-                                )}
-                            </div>
-
-                            {/* Multi-Stage Live Rendering HUD */}
-                            {activeTask && (
-                                <div className={`p-4 rounded-2xl border space-y-3 ${
-                                    activeTask.status === 'error'
-                                        ? 'bg-rose-500/10 border-rose-500/30'
-                                        : activeTask.status === 'completed'
-                                        ? 'bg-teal-500/10 border-teal-500/30'
-                                        : 'bg-black/[0.03] dark:bg-white/5 border-black/[0.06] dark:border-white/10'
-                                }`}>
-                                    <div className="flex items-center justify-between text-xs">
-                                        <span className="font-bold flex items-center gap-2 text-slate-800 dark:text-slate-200">
-                                            {activeTask.status === 'error' && <AlertCircle size={14} className="text-rose-500" />}
-                                            {activeTask.status === 'completed' && <CheckCircle2 size={14} className="text-teal-500" />}
-                                            {activeTask.status === 'processing' && <Loader2 size={14} className="animate-spin text-teal-500" />}
-                                            <span>Pipeline Stage: <strong className="uppercase">{activeTask.step.replace(/_/g, ' ')}</strong></span>
-                                        </span>
-                                        <span className="font-mono text-slate-500">
-                                            {activeTask.progress}%
-                                        </span>
-                                    </div>
-
-                                    {/* Progress Bar */}
-                                    <div className="w-full h-1.5 bg-black/[0.06] dark:bg-white/10 rounded-full overflow-hidden">
-                                        <div
-                                            className="h-full bg-gradient-to-r from-teal-500 to-cyan-400 rounded-full transition-all duration-500"
-                                            style={{ width: `${activeTask.progress}%` }}
-                                        />
-                                    </div>
-
-                                    <div className="flex items-center justify-between text-[11px] text-slate-500">
-                                        <span>Clip {activeTask.current_clip} of {activeTask.total_clips}</span>
-                                        {activeTask.error && (
-                                            <span className="text-rose-500 font-semibold">{activeTask.error}</span>
-                                        )}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Interactive Scene Plan Timeline */}
-                            {planResult && (
-                                <div className="space-y-3">
-                                    <div className="flex items-center justify-between">
-                                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400 flex items-center gap-2">
-                                            <span>Planned Scene Segments ({planResult.clips?.length || planResult.total_clips} Clips)</span>
-                                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-600 dark:text-teal-400">
-                                                Max {planResult.max_clip_duration}s / clip
-                                            </span>
-                                        </h4>
-                                        <span className="text-[10px] text-slate-400 font-mono">
-                                            Vocals: {planResult.vocal_clips_count} · B-Roll: {planResult.broll_clips_count}
-                                        </span>
-                                    </div>
-
-                                    <div className="space-y-2 max-h-72 overflow-y-auto pr-1">
-                                        {(planResult.clips || []).map((scene) => (
-                                            <div
-                                                key={scene.clip_index}
-                                                className="p-3 bg-black/[0.02] dark:bg-white/[0.02] rounded-xl border border-black/[0.04] dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
-                                            >
-                                                {keyframes[scene.clip_index] && (
-                                                    <div className="w-24 h-16 rounded-lg overflow-hidden flex-shrink-0 border border-white/10 relative group bg-black/40">
-                                                        <img
-                                                            src={api.getAudioUrl(keyframes[scene.clip_index])}
-                                                            alt={`Scene ${scene.clip_index}`}
-                                                            className="w-full h-full object-cover"
-                                                        />
-                                                        <span className="absolute bottom-1 right-1 text-[8px] bg-black/70 text-teal-300 px-1 py-0.5 rounded font-mono font-bold">
-                                                            KF #{scene.clip_index}
-                                                        </span>
-                                                    </div>
-                                                )}
-                                                <div className="space-y-1 flex-1">
-                                                    <div className="flex items-center space-x-2">
-                                                        <span className="font-mono text-[11px] font-bold text-teal-600 dark:text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded-md flex-shrink-0">
-                                                            {scene.time_str} ({scene.duration.toFixed(1)}s)
-                                                        </span>
-                                                        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full ${
-                                                            scene.scene_type === 'VOCAL_PERFORMANCE'
-                                                                ? 'bg-teal-500/20 text-teal-700 dark:text-teal-300'
-                                                                : 'bg-purple-500/20 text-purple-700 dark:text-purple-300'
-                                                        }`}>
-                                                            {scene.scene_type === 'VOCAL_PERFORMANCE' ? '🎤 Vocal Performance (Lip-Sync)' : '🎥 Cinematic B-Roll'}
-                                                        </span>
-                                                        <span className="text-[10px] font-mono text-slate-400">
-                                                            Camera: {scene.camera}
-                                                        </span>
-                                                    </div>
-                                                    <p className="text-slate-700 dark:text-slate-300 font-medium">
-                                                        {scene.prompt}
-                                                    </p>
-                                                    {scene.lyrics && (
-                                                        <p className="text-[11px] italic text-cyan-600 dark:text-cyan-400">
-                                                            "{scene.lyrics}"
-                                                        </p>
-                                                    )}
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-
-                            {/* Fallback Storyboard Sequence (when no plan is generated yet) */}
-                            {!planResult && (
-                                <div className="space-y-3">
-                                    <div className="flex items-center justify-between">
-                                        <h4 className="text-xs font-bold uppercase tracking-wider text-slate-400">
-                                            Cinematic Storyboard Sequence ({videoStyle})
-                                        </h4>
-                                        <div className="flex items-center space-x-2">
-                                            <button
-                                                onClick={handleGenerateStoryboard}
-                                                disabled={isGeneratingStory}
-                                                className="text-[11px] text-teal-600 dark:text-teal-400 hover:underline flex items-center gap-1"
-                                             title="Regenerate Directing Notes">
-                                                {isGeneratingStory ? <Loader2 size={11} className="animate-spin" /> : <Wand2 size={11} />}
-                                                <span>Regenerate Directing Notes</span>
-                                            </button>
-                                        </div>
-                                    </div>
-
-                                    <div className="space-y-2">
-                                        {storyboardScenes.map((scene, idx) => (
-                                            <div
-                                                key={idx}
-                                                className="p-3 bg-black/[0.02] dark:bg-white/[0.02] rounded-xl border border-black/[0.04] dark:border-white/5 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs"
-                                            >
-                                                <div className="flex items-center space-x-3">
-                                                    <span className="font-mono text-[11px] font-bold text-teal-600 dark:text-teal-400 bg-teal-500/10 px-2 py-0.5 rounded-md flex-shrink-0">
-                                                        {scene.time}
-                                                    </span>
-                                                    <span className="text-slate-700 dark:text-slate-300 font-medium">
-                                                        {scene.prompt}
-                                                    </span>
-                                                </div>
-                                                <span className="text-[10px] font-mono text-slate-400 sm:text-right flex-shrink-0">
-                                                    🎥 {scene.camera}
-                                                </span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            )}
-                        </GlassCard>
+                    {/* Right Tabbed Inspector Dock (5 Cols on desktop) */}
+                    <div className="lg:col-span-5 xl:col-span-4 min-h-[500px]">
+                        <VideoInspectorDock
+                            videoModel={videoModel}
+                            onSelectModel={selectEngine}
+                            modelConstraints={MODEL_CONSTRAINTS}
+                            modelRegistry={modelRegistry}
+                            activeVideoEngine={activeVideoEngine}
+                            videoProvider={videoProvider}
+                            onSelectProvider={setVideoProvider}
+                            clipDuration={clipDuration}
+                            onChangeClipDuration={handleClipDurationChange}
+                            onResetClipDuration={handleResetDurationToMax}
+                            resolution={resolution}
+                            onChangeResolution={setResolution}
+                            videoStyle={videoStyle}
+                            onSelectStyle={setVideoStyle}
+                            pacingBias={pacingBias}
+                            onChangePacingBias={setPacingBias}
+                            vocalBypass={vocalBypass}
+                            onChangeVocalBypass={setVocalBypass}
+                            fidelityRetries={fidelityRetries}
+                            onChangeFidelityRetries={setFidelityRetries}
+                            autoContinue={autoContinue}
+                            onChangeAutoContinue={setAutoContinue}
+                            onGenerateStoryboard={handleGenerateStoryboard}
+                            isGeneratingStory={isGeneratingStory}
+                            enableLipSync={enableLipSync}
+                            onChangeEnableLipSync={setEnableLipSync}
+                            lipSyncEngine={lipSyncEngine}
+                            onChangeLipSyncEngine={setLipSyncEngine}
+                            burnSubtitles={burnSubtitles}
+                            onChangeBurnSubtitles={setBurnSubtitles}
+                            subtitleStyle={subtitleStyle}
+                            onChangeSubtitleStyle={setSubtitleStyle}
+                            transitionStyle={transitionStyle}
+                            onChangeTransitionStyle={setTransitionStyle}
+                            visibleCast={visibleCast}
+                            onToggleCastMember={(cast) => {
+                                if (visibleCast.includes(cast)) {
+                                    setVisibleCast(visibleCast.filter(c => c !== cast));
+                                } else {
+                                    setVisibleCast([...visibleCast, cast]);
+                                }
+                            }}
+                            characterPromptNote={characterPromptNote}
+                            onChangeCharacterPromptNote={setCharacterPromptNote}
+                        />
                     </div>
                 </div>
+
+                {/* ZONE 3: FULL-WIDTH HORIZONTAL MULTITRACK PRODUCTION TIMELINE */}
+                {planResult?.clips && planResult.clips.length > 0 && (
+                    <VideoTimelineTrack
+                        clips={planResult.clips}
+                        keyframes={keyframes}
+                        activeSong={activeSong}
+                        onRetakeClip={handleOpenRetakeModal}
+                        onZoomKeyframe={(clipIndex, url) => setZoomKeyframe({ clipIndex, url })}
+                    />
+                )}
             </div>
+
+            {/* Modal 1: Single-Clip Retake Studio Modal */}
+            <ClipRetakeModal
+                isOpen={retakeModalOpen}
+                onClose={() => setRetakeModalOpen(false)}
+                clipIndex={retakeClipIndex}
+                clipSegment={activeRetakeSegment}
+                onConfirmRetake={handleConfirmRetake}
+                isRetaking={isRetaking}
+            />
+
+            {/* Modal 2: Full-Resolution Keyframe Still Zoom Lightbox */}
+            <KeyframeZoomModal
+                isOpen={zoomKeyframe !== null}
+                onClose={() => setZoomKeyframe(null)}
+                clipIndex={zoomKeyframe?.clipIndex ?? null}
+                keyframeUrl={zoomKeyframe?.url ?? null}
+                clipSegment={zoomKeyframe ? planResult?.clips?.find(c => c.clip_index === zoomKeyframe.clipIndex) : undefined}
+            />
 
             {/* Global Creator Footer */}
             <AppFooter />

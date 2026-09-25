@@ -1930,3 +1930,16 @@ Successfully implemented and verified the production architecture across all 5 p
    - Implemented `app.core.task_queue` with ACID SQLite persistence, asset ownership isolation, and background queue pre-enhancement.
    - Implemented boot-time `recover_interrupted_tasks()` in FastAPI `lifespan` safely pausing interrupted jobs with completed clips preserved.
 6. Verification: 100% test pass rate (32/32 tests passed across `backend/tests/`), clean frontend production build (`tsc -b && vite build`), and live API endpoint verification on running backend (port 8000) and frontend (port 5173).
+
+## [2026-09-24] create | Production Refactor of AI Music Video Studio (3-Zone UI/UX)
+Executed the comprehensive production UI/UX refactor for `MusicVideosView.tsx` and the AI Music Video Studio:
+1. Eliminated 1,800+ px vertical scroll "wall of death" by architecting a modern 3-Zone DAW layout:
+   - Zone 1 (Top Master Bar): Song selection with isolated vocal/lyrics badges, audio preview play/pause, 4-tier aspect ratio selector (`16:9`, `9:16`, `1:1`, `21:9`), and permanent primary actions (`Plan Scenes`, `Pre-Render Stills`, `Render Video ⚡`, `Export MP4`).
+   - Zone 2 (Center Workspace): Aspect-ratio aware video viewport with interactive A/B split-comparison curtain, floating scene telemetry chips, and 4-tab docked inspector (`[🎬 Directing]`, `[⚡ Engine & HW]`, `[🎤 Lip-Sync & FX]`, `[👤 Cast & Seeds]`).
+   - Zone 3 (Bottom Multitrack DAW Timeline): Song structure section track (`[Intro]`, `[Verse]`, etc.) alongside horizontal scene blocks with keyframe previews, vocal/B-roll tags, camera tags, and shotboard grid switcher.
+2. Exposed missing features:
+   - Deduplicated AI engines (`wan_14b` canonical).
+   - In-place per-scene retakes via `ClipRetakeModal.tsx` and `POST /videos/retake-clip/{job_id}/{clip_index}`.
+   - Fullscreen keyframe lightbox zoom via `KeyframeZoomModal.tsx`.
+   - Advanced transition styling (`beat_cut`, `crossfade`, `flash`, `whip_pan`, `glitch`).
+3. Verification: Clean TypeScript frontend build (`tsc -b && vite build` passing with 0 errors), 100% backend test suite pass rate (32/32 tests passed in `pytest`), and active verified endpoints on ports 8000 & 5173.

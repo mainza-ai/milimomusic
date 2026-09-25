@@ -1382,6 +1382,7 @@ export interface VideoPlanParams {
     bpm?: number;
     visual_style?: string;
     model_name?: string;
+    aspect_ratio?: '16:9' | '9:16' | '1:1' | '21:9';
     provider?: string;
     pacing_bias?: number; // -2 (slow/cinematic) to +2 (rapid montage)
     music_timeline_vocal_bypass?: boolean;
@@ -1394,13 +1395,13 @@ export interface VideoRenderParams {
     model_name?: string;
     visual_style?: string;
     resolution?: '720p' | '1080p';
-    aspect_ratio?: '16:9' | '9:16';
+    aspect_ratio?: '16:9' | '9:16' | '1:1' | '21:9';
     provider?: 'local' | 'cloud_fal' | 'cloud_replicate';
     lip_sync_engine?: 'live_portrait' | 'echomimic' | 'fallback';
     enable_lip_sync?: boolean;
     burn_lyrics?: boolean;
     subtitle_style?: string;
-    transition_style?: 'beat_cut' | 'crossfade' | 'flash';
+    transition_style?: 'beat_cut' | 'crossfade' | 'flash' | 'whip_pan' | 'glitch';
     max_clip_duration?: number;
     mode?: 'production_multiclip' | 'fast_preview';
     face_image_path?: string | null;
@@ -1467,6 +1468,10 @@ export const videoApi = {
     },
     generateKeyframes: async (jobId: string, visualStyle: string = 'neon-cyberpunk', resolution: string = '720p'): Promise<{ status: string; keyframes: any[] }> => {
         const res = await axios.post(`${API_BASE_URL}/videos/keyframes/${jobId}`, { visual_style: visualStyle, resolution });
+        return res.data;
+    },
+    retakeScene: async (jobId: string, clipIndex: number, params: { prompt?: string; reference_image_path?: string; camera?: string; lighting?: string }): Promise<{ status: string; clip_index: number; keyframe_url?: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/retake-clip/${jobId}/${clipIndex}`, params);
         return res.data;
     }
 };

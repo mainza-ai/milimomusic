@@ -37,6 +37,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { PlaylistsView } from './components/views/PlaylistsView';
 import { ProjectsView } from './components/views/ProjectsView';
 import { MusicVideosView } from './components/views/MusicVideosView';
+import { VocalStudioView } from './components/views/VocalStudioView';
 import { ProfileView } from './components/views/ProfileView';
 import { TrackDetailView } from './components/views/TrackDetailView';
 import { GlobalAudioPlayer } from './components/ui/GlobalAudioPlayer';
@@ -89,6 +90,7 @@ export type NavView =
   | 'projects'
   | 'playlists'
   | 'videos'
+  | 'vocal-studio'
   | 'profile'
   | 'workspace'
   | 'sessions'
@@ -169,6 +171,10 @@ function App() {
     coverStudioMode,
     openCoverStudio: handleOpenCoverStudio,
     closeCoverStudio: handleCloseCoverStudio,
+    isVoiceConvertOpen,
+    voiceConvertTrack,
+    voiceConvertStemPath,
+    closeVoiceConvert
   } = useModalStore();
   const [isModelsManagerOpen, setIsModelsManagerOpen] = useState(false);
   const [isSettingsOpen, setIsSettingsOpen] = useState(false);
@@ -389,6 +395,15 @@ function App() {
         icon: Video,
         shortcut: '6',
         action: () => setCurrentNav('videos'),
+      },
+      {
+        id: 'nav-vocal-studio',
+        title: 'AI Vocal Studio & Voice Cloning',
+        subtitle: 'Singer timbre cloning, Vocal Booth & Neural SVC',
+        category: 'Navigation',
+        icon: Mic,
+        shortcut: '7',
+        action: () => setCurrentNav('vocal-studio'),
       },
       {
         id: 'nav-workspace',
@@ -1275,6 +1290,7 @@ function App() {
               { id: 'artists', label: 'Artists', icon: Users },
               { id: 'playlists', label: 'Playlists', icon: ListMusic },
               { id: 'videos', label: 'Music videos', icon: Video },
+              { id: 'vocal-studio', label: 'Vocal Studio', icon: Mic },
               { id: 'profile', label: 'Profile', icon: User },
               { id: 'workspace', label: 'DAW Workspace', icon: Sliders }
             ].map(item => {
@@ -1813,6 +1829,10 @@ function App() {
               setHistory(prev => prev.map(s => s.id === updatedSong.id ? updatedSong : s));
             }}
           />
+        ) : currentNav === 'vocal-studio' ? (
+          <VocalStudioView
+            onOpenWorkspace={handleOpenWorkspace}
+          />
         ) : currentNav === 'profile' ? (
           <ProfileView
             songs={history}
@@ -2222,8 +2242,19 @@ function App() {
 
       {/* Global Modals & Monitor */}
       <VoiceStudioModal
-        isOpen={isVoiceStudioOpen}
-        onClose={() => setIsVoiceStudioOpen(false)}
+        isOpen={isVoiceStudioOpen || isVoiceConvertOpen}
+        onClose={() => {
+          setIsVoiceStudioOpen(false);
+          closeVoiceConvert();
+        }}
+        initialTrack={voiceConvertTrack}
+        initialStemPath={voiceConvertStemPath}
+        onOpenWorkspace={(job) => {
+          setActiveWorkspaceJob(job);
+          setCurrentNav('workspace');
+          setIsVoiceStudioOpen(false);
+          closeVoiceConvert();
+        }}
       />
 
       <CoverStudioModal

@@ -1357,9 +1357,13 @@ export interface StoryboardScene {
     prompt: string;
     camera: string;
     lighting?: string;
-    scene_type?: 'VOCAL_PERFORMANCE' | 'CINEMATIC_BROLL';
+    scene_type?: 'VOCAL_PERFORMANCE' | 'CINEMATIC_BROLL' | 'ENVIRONMENTAL_BROLL' | 'NARRATIVE_STORY' | 'METAPHORICAL_VISUAL' | 'INSTRUMENTAL_FOCUS' | string;
     is_vocal?: boolean;
     lyrics?: string;
+    section_label?: string;
+    musical_energy?: number;
+    visual_action?: string;
+    directors_note?: string;
 }
 
 export interface VideoClipSegment {
@@ -1369,11 +1373,27 @@ export interface VideoClipSegment {
     duration: number;
     time_str: string;
     is_vocal: boolean;
-    scene_type: 'VOCAL_PERFORMANCE' | 'CINEMATIC_BROLL';
+    scene_type: 'VOCAL_PERFORMANCE' | 'CINEMATIC_BROLL' | 'ENVIRONMENTAL_BROLL' | 'NARRATIVE_STORY' | 'METAPHORICAL_VISUAL' | 'INSTRUMENTAL_FOCUS' | string;
     lyrics: string;
     prompt: string;
     camera: string;
     lighting?: string;
+    section_label?: string;
+    musical_energy?: number;
+    visual_action?: string;
+    directors_note?: string;
+}
+
+export interface DirectorTreatment {
+    concept_title: string;
+    logline: string;
+    visual_metaphor: string;
+    character_profile: string;
+    color_script?: Array<{ section: string; palette: string; mood: string }>;
+    narrative_beats?: Array<{ section: string; energy: number; visual_action: string; shot_intent: string }>;
+    lighting_design?: string;
+    camera_philosophy?: string;
+    director_notes?: string;
 }
 
 export interface VideoPlanResult {
@@ -1386,6 +1406,7 @@ export interface VideoPlanResult {
     model_max_duration?: number;
     model_name: string;
     clips: VideoClipSegment[];
+    treatment?: DirectorTreatment;
 }
 
 export interface VideoTaskStatus {
@@ -1407,6 +1428,7 @@ export interface VideoPlanParams {
     bpm?: number;
     visual_style?: string;
     custom_style_prompt?: string;
+    character_desc?: string;
     model_name?: string;
     aspect_ratio?: '16:9' | '9:16' | '1:1' | '21:9';
     provider?: string;
@@ -1415,12 +1437,14 @@ export interface VideoPlanParams {
     fidelity_retries?: number;
     auto_continue?: boolean;
     visible_cast?: string[];
+    scenes?: any[];
 }
 
 export interface VideoRenderParams {
     model_name?: string;
     visual_style?: string;
     custom_style_prompt?: string;
+    character_desc?: string;
     resolution?: '720p' | '1080p';
     aspect_ratio?: '16:9' | '9:16' | '1:1' | '21:9';
     provider?: 'local' | 'cloud_fal' | 'cloud_replicate';
@@ -1438,6 +1462,8 @@ export interface VideoRenderParams {
     fidelity_retries?: number;
     auto_continue?: boolean;
     visible_cast?: string[];
+    scenes?: any[];
+    clips?: any[];
 }
 
 export interface VideoProvider {
@@ -1501,8 +1527,39 @@ export const videoApi = {
         const res = await axios.post(`${API_BASE_URL}/videos/keyframes/${jobId}`, { visual_style: visualStyle, resolution, custom_style_prompt: customStylePrompt });
         return res.data;
     },
-    retakeScene: async (jobId: string, clipIndex: number, params: { prompt?: string; reference_image_path?: string; camera?: string; lighting?: string; custom_style_prompt?: string }): Promise<{ status: string; clip_index: number; keyframe_url?: string }> => {
+    retakeScene: async (jobId: string, clipIndex: number, params: { prompt?: string; reference_image_path?: string; camera?: string; lighting?: string; custom_style_prompt?: string }): Promise<{ status: string; clip_index: number; keyframe_url?: string; prompt?: string }> => {
         const res = await axios.post(`${API_BASE_URL}/videos/retake-clip/${jobId}/${clipIndex}`, params);
+        return res.data;
+    },
+    generateDirectorTreatment: async (
+        jobId: string,
+        params: {
+            visual_style?: string;
+            custom_style_prompt?: string;
+            character_desc?: string;
+            visible_cast?: string[];
+            pacing_bias?: number;
+            auto_continue?: boolean;
+        } = {}
+    ): Promise<{ status: string; treatment: DirectorTreatment; clips: VideoClipSegment[] }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/director-treatment/${jobId}`, params);
+        return res.data;
+    },
+    getDirectorTreatment: async (jobId: string): Promise<{ status: string; treatment: DirectorTreatment | null }> => {
+        const res = await axios.get(`${API_BASE_URL}/videos/director-treatment/${jobId}`);
+        return res.data;
+    },
+    reimagineScene: async (
+        jobId: string,
+        clipIndex: number,
+        params: {
+            user_instruction?: string;
+            visual_style?: string;
+            character_desc?: string;
+            current_scene?: any;
+        } = {}
+    ): Promise<{ status: string; clip_index: number; scene: VideoClipSegment }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/director-treatment/${jobId}/re-imagine-scene/${clipIndex}`, params);
         return res.data;
     }
 };

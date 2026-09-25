@@ -7,7 +7,8 @@ import {
     type VideoPlanResult,
     type VideoTaskStatus,
     type VideoPlanParams,
-    type VideoRenderParams
+    type VideoRenderParams,
+    type DirectorTreatment
 } from '../../api';
 import { toast } from '../../utils/toast';
 import { AppFooter } from '../ui/AppFooter';
@@ -234,6 +235,27 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const [isPlanning, setIsPlanning] = useState(false);
     const [planResult, setPlanResult] = useState<VideoPlanResult | null>(null);
 
+    // AI Director Treatment State
+    const [directorTreatment, setDirectorTreatment] = useState<DirectorTreatment | null>(null);
+    const [isGeneratingTreatment, setIsGeneratingTreatment] = useState(false);
+
+    // Fetch existing Director Treatment when song changes
+    useEffect(() => {
+        if (!activeSong?.id) {
+            setDirectorTreatment(null);
+            return;
+        }
+        videoApi.getDirectorTreatment(activeSong.id)
+            .then(res => {
+                if (res?.treatment) {
+                    setDirectorTreatment(res.treatment);
+                } else {
+                    setDirectorTreatment(null);
+                }
+            })
+            .catch(() => setDirectorTreatment(null));
+    }, [activeSong?.id]);
+
     const [activeTask, setActiveTask] = useState<VideoTaskStatus | null>(null);
     const [isRendering, setIsRendering] = useState(false);
     const [renderedVideoUrl, setRenderedVideoUrl] = useState<string | null>(null);
@@ -300,6 +322,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 bpm: 120,
                 visual_style: videoStyle,
                 custom_style_prompt: customStylePrompt,
+                character_desc: characterPromptNote,
                 aspect_ratio: aspectRatio,
                 provider: videoProvider,
                 pacing_bias: pacingBias,
@@ -310,12 +333,53 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             };
             const plan = await videoApi.planVideo(activeSong.id, params);
             setPlanResult(plan);
+            if (plan.treatment) {
+                setDirectorTreatment(plan.treatment);
+            }
             toast(`Scene plan created: ${plan.total_clips} scenes ready for production.`, 'success');
         } catch (err: any) {
             console.error('Failed to plan video scenes:', err);
             toast(err?.response?.data?.detail || 'Failed to plan video scenes. Please ensure the track is completed.', 'error');
         } finally {
             setIsPlanning(false);
+        }
+    };
+
+    // AI Visual Director Treatment Generator
+    const handleGenerateDirectorTreatment = async () => {
+        if (!activeSong) return;
+        setIsGeneratingTreatment(true);
+        try {
+            const res = await videoApi.generateDirectorTreatment(activeSong.id, {
+                visual_style: videoStyle,
+                custom_style_prompt: customStylePrompt,
+                character_desc: characterPromptNote,
+                visible_cast: visibleCast,
+                pacing_bias: pacingBias,
+                auto_continue: autoContinue,
+            });
+            if (res.treatment) {
+                setDirectorTreatment(res.treatment);
+                toast(`AI Director treatment generated: "${res.treatment.concept_title}"`, 'success');
+            }
+            if (res.clips && res.clips.length > 0) {
+                setPlanResult({
+                    status: 'ok',
+                    job_id: activeSong.id,
+                    total_clips: res.clips.length,
+                    vocal_clips_count: res.clips.filter(c => c.scene_type === 'VOCAL_PERFORMANCE').length,
+                    broll_clips_count: res.clips.filter(c => c.scene_type !== 'VOCAL_PERFORMANCE').length,
+                    max_clip_duration: clipDuration,
+                    model_name: videoModel,
+                    clips: res.clips,
+                    treatment: res.treatment
+                });
+            }
+        } catch (err: any) {
+            console.error('Failed to generate director treatment:', err);
+            toast(err?.response?.data?.detail || 'Failed to generate AI Director treatment.', 'error');
+        } finally {
+            setIsGeneratingTreatment(false);
         }
     };
 
@@ -352,6 +416,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 model_name: videoModel,
                 visual_style: videoStyle,
                 custom_style_prompt: customStylePrompt,
+                character_desc: characterPromptNote,
                 resolution,
                 aspect_ratio: aspectRatio,
                 provider: videoProvider,
@@ -367,6 +432,8 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 fidelity_retries: fidelityRetries,
                 auto_continue: autoContinue,
                 visible_cast: visibleCast,
+                scenes: planResult?.clips,
+                clips: planResult?.clips,
             };
 
             const taskInit = await videoApi.renderAdvancedVideo(activeSong.id, params);
@@ -554,6 +621,31 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         }
     };
 
+    const handleReimagineScene = async (clipIndex: number, instruction?: string) => {
+        if (!activeSong) return undefined;
+        try {
+            const currentScene = planResult?.clips?.find(c => c.clip_index === clipIndex);
+            const res = await videoApi.reimagineScene(activeSong.id, clipIndex, {
+                user_instruction: instruction,
+                visual_style: videoStyle,
+                character_desc: characterPromptNote,
+                current_scene: currentScene,
+            });
+            if (res?.scene) {
+                if (planResult?.clips) {
+                    const updatedClips = planResult.clips.map(c => c.clip_index === clipIndex ? { ...c, ...res.scene } : c);
+                    setPlanResult({ ...planResult, clips: updatedClips });
+                }
+                toast(`Scene #${clipIndex} re-imagined by AI Director!`, 'success');
+                return res.scene;
+            }
+        } catch (err: any) {
+            console.error('Failed to re-imagine scene:', err);
+            toast(err?.response?.data?.detail || 'Failed to re-imagine scene.', 'error');
+        }
+        return undefined;
+    };
+
     const activeRetakeSegment = useMemo(() => {
         if (retakeClipIndex === null || !planResult?.clips) return undefined;
         return planResult.clips.find(c => c.clip_index === retakeClipIndex);
@@ -625,6 +717,9 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     {/* Right Tabbed Inspector Dock */}
                     <div className="xl:col-span-5 2xl:col-span-5 min-h-[500px]">
                         <VideoInspectorDock
+                            directorTreatment={directorTreatment}
+                            onGenerateTreatment={handleGenerateDirectorTreatment}
+                            isGeneratingTreatment={isGeneratingTreatment}
                             videoModel={videoModel}
                             onSelectModel={handleSelectInspectorModel}
                             modelConstraints={MODEL_CONSTRAINTS}
@@ -690,6 +785,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 clipSegment={activeRetakeSegment}
                 onConfirmRetake={handleConfirmRetake}
                 isRetaking={isRetaking}
+                onReimagineScene={handleReimagineScene}
             />
 
             {/* Modal 2: Full-Resolution Keyframe Still Zoom Lightbox */}

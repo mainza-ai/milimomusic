@@ -2128,3 +2128,29 @@ Forensic audit and architectural fix for master audio, stem, and keyframe asset 
    - 15 video service tests passing in Pytest.
    - Frontend Vite build passing cleanly (0 errors).
 
+## [2026-09-25] feat | LLM Visual Director & Cinematographer Integration
+Implemented autonomous LLM Visual Director & Cinematographer across backend audio/video orchestration and frontend production workspace:
+1. Deep Narrative Arc & Visual Metaphor Planning (`backend/app/services/video/`):
+   - Integrated `LLMService` in `video_director.py` to analyze track metadata, lyrical subtext, and emotional progression into a structured `VideoDirectorTreatment` (concept title, logline, visual metaphor, character continuity profile, color script, and section-by-section narrative beats).
+   - Replaced naive lyric string concatenation with cinematic visual actions, camera choreography, and lighting atmosphere.
+   - Added single-scene re-imagination (`reimagine_scene`) allowing the LLM Director to provide fresh cinematic angles on demand.
+2. Integration of Orphaned Audio & Timing Modules:
+   - Wired `AudioSignalAnalyzer` for acoustic onset, spectral centroid, and RMS energy profiling.
+   - Wired `DirectorMusicTiming` and `MusicPerformanceDirector` for musical bar snapping (4/8/16 bars) and performance vs. narrative shot ratio balancing.
+   - Wired `VideoPromptEnhancer` for visual style palette injection, camera movement syntax, and negative prompting.
+3. REST API Surface (`backend/app/main.py`):
+   - Added `POST /videos/director-treatment/{job_id}`: generates full narrative treatment and segmented clips.
+   - Added `GET /videos/director-treatment/{job_id}`: retrieves cached treatment.
+   - Added `POST /videos/director-treatment/{job_id}/re-imagine-scene/{clip_index}`: single-scene AI Director re-imagination with custom creative direction.
+   - Updated `POST /videos/retake-clip/{job_id}/{clip_index}` to generate fresh keyframe stills via `image_service` when custom prompts are provided.
+4. Frontend UI Suite (`frontend/src/`):
+   - `frontend/src/api.ts`: Added `DirectorTreatment` interface, updated `VideoClipSegment` / `StoryboardScene` with `section_label`, `musical_energy`, `visual_action`, `directors_note`, and added `videoApi` endpoints.
+   - `VideoInspectorDock.tsx`: Added AI Director Treatment card displaying concept title, logline, metaphor, character profile, and "Generate Arc" action button.
+   - `VideoTimelineTrack.tsx`: Added rich shot intent badges (`🎤 Vocal`, `🎭 Narrative`, `🌌 Metaphor`, `🎸 Solo`, `🏙️ B-Roll`), musical energy indicators, and Director's Notes across timeline and storyboard grid modes.
+   - `ClipRetakeModal.tsx`: Added "✨ Re-imagine Scene" feature powered by the LLM Director.
+   - `MusicVideosView.tsx`: Integrated treatment fetching and generation, scene re-imagination, and ensured planned scene customizations are preserved during video rendering.
+5. Verification:
+   - 18 backend tests passing in `backend/tests/test_video_service.py`.
+   - Frontend production build (`npm run build`) passing with 0 errors.
+
+

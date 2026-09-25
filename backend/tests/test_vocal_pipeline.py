@@ -4,7 +4,7 @@ import httpx
 import asyncio
 from unittest.mock import patch, AsyncMock
 from sqlmodel import Session, select
-from app.main import app, engine
+from app.main import app, engine, get_job_by_id
 from app.models import Job
 
 
@@ -58,7 +58,7 @@ def sample_job():
 
     # Cleanup
     with Session(engine) as session:
-        del_job = session.exec(select(Job).where(Job.id == job_id)).first()
+        del_job = get_job_by_id(session, job_id)
         if del_job:
             session.delete(del_job)
             session.commit()

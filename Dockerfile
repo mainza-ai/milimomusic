@@ -12,6 +12,7 @@ FROM python:3.11-slim
 ENV DEBIAN_FRONTEND=noninteractive \
     PYTHONUNBUFFERED=1 \
     MILIMO_IN_DOCKER=1 \
+    MILIMO_DATABASE_URL=sqlite:////app/data/jobs.db \
     PYTHONPATH=/app/backend:/app/muscriptor:/app/heartlib:/app/mulacover
 
 WORKDIR /app
@@ -46,7 +47,7 @@ RUN uv pip install --system --no-cache -e /app/mulacover
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
 # Persistent data directories
-RUN mkdir -p /app/data /app/data/covers /app/generated_audio /app/generated_midi /app/models
+RUN mkdir -p /app/data /app/data/covers /app/data/voice_profiles /app/generated_audio /app/generated_audio/converted_vocals /app/generated_audio/voice_previews /app/generated_audio/videos /app/generated_midi /app/models
 
 EXPOSE 8000
 

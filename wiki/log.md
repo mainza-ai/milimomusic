@@ -1980,3 +1980,15 @@ Executed the comprehensive production UI/UX refactor for `MusicVideosView.tsx` a
    - Updated `wiki/index.md` cataloging the newly expanded Voice Studio capabilities.
    - Cross-referenced all relative links according to AGENTS.md conventions.
 2. Synchronized `README.md` to document the AI Vocal Studio, Live Vocal Booth, 14 Visual Aesthetic Palettes, and DAW Timeline handoff workflows.
+
+## [2026-09-24] update | Docker Setup, Requirements & Environment Synchronization
+1. Requirements Hardening:
+   - Added `psutil>=5.9.0` for hardware autotune, memory profiling, and resource monitoring in containerized environments.
+   - Added `typer>=0.10.0` and `packaging>=21.0` ensuring seamless execution of `muscriptor`.
+   - Added `accelerate>=0.28.0` for diffusers device offloading and `mulacover` execution.
+2. Production Docker Alignment:
+   - Updated `Dockerfile` with explicit `MILIMO_DATABASE_URL=sqlite:////app/data/jobs.db` ensuring SQLite persistence into the `/app/data` volume.
+   - Pre-created all required subdirectories in `/app` (`/app/data/voice_profiles`, `/app/generated_audio/converted_vocals`, `/app/generated_audio/videos`, etc.).
+   - Updated `docker-compose.yml` and `docker-compose.cpu.yml` to import optional `.env` file via `env_file` and enforce `MILIMO_DATABASE_URL` and `milimo-models` volume mapping.
+   - Updated `.env.example` with video offloading keys (`FAL_KEY`, `REPLICATE_API_TOKEN`, `MINIMAX_API_KEY`) and database path configurations.
+   - Synchronized `wiki/entities/docker-deployment.md`.

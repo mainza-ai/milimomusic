@@ -399,6 +399,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     } else if (status.status === 'error') {
                         window.clearInterval(pollRef.current);
                         setIsRendering(false);
+                        toast(status.error || 'Video rendering encountered an error', 'error');
                     }
                 } catch { /* transient error */ }
             }, 1000);
@@ -558,6 +559,20 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         return planResult.clips.find(c => c.clip_index === retakeClipIndex);
     }, [retakeClipIndex, planResult?.clips]);
 
+    const handleTogglePlayAudio = useCallback(() => {
+        if (activeSong) onPlay(activeSong);
+    }, [activeSong, onPlay]);
+
+    const handleDownloadVideo = useCallback(() => {
+        if (renderedVideoUrl) {
+            api.downloadUrlAsFile(api.getAudioUrl(renderedVideoUrl), `${activeSong?.title || 'track'}_music_video.mp4`);
+        }
+    }, [renderedVideoUrl, activeSong?.title]);
+
+    const handleSelectInspectorModel = useCallback((m: VideoModelKey) => {
+        selectEngine(m, true);
+    }, [selectEngine]);
+
     return (
         <div className="flex-1 overflow-y-auto p-4 md:p-6 pb-28 sm:pb-32 space-y-6 flex flex-col justify-between min-h-full">
             <div className="space-y-6 max-w-[1600px] mx-auto w-full">
@@ -573,7 +588,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     resolution={resolution}
                     isPlaying={isPlaying}
                     playingSongId={playingSongId}
-                    onTogglePlayAudio={() => activeSong && onPlay(activeSong)}
+                    onTogglePlayAudio={handleTogglePlayAudio}
                     isPlanning={isPlanning}
                     onPlanScenes={handlePlanScenes}
                     isGeneratingKeyframes={isGeneratingKeyframes}
@@ -581,11 +596,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     isRendering={isRendering}
                     onRenderVideo={handleRenderAdvancedVideo}
                     renderedVideoUrl={renderedVideoUrl}
-                    onDownloadVideo={() => {
-                        if (renderedVideoUrl) {
-                            api.downloadUrlAsFile(api.getAudioUrl(renderedVideoUrl), `${activeSong?.title || 'track'}_music_video.mp4`);
-                        }
-                    }}
+                    onDownloadVideo={handleDownloadVideo}
                 />
 
                 {/* ZONE 2: DUAL WORKSPACE (Center Viewport + Right Inspector Dock) */}
@@ -607,6 +618,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             onRenderVideo={handleRenderAdvancedVideo}
                             isPlanning={isPlanning}
                             seekTime={timelineSeekTime}
+                            onDismissTask={() => setActiveTask(null)}
                         />
                     </div>
 
@@ -614,7 +626,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     <div className="xl:col-span-5 2xl:col-span-5 min-h-[500px]">
                         <VideoInspectorDock
                             videoModel={videoModel}
-                            onSelectModel={(m) => selectEngine(m, true)}
+                            onSelectModel={handleSelectInspectorModel}
                             modelConstraints={MODEL_CONSTRAINTS}
                             modelRegistry={modelRegistry}
                             activeVideoEngine={activeVideoEngine}

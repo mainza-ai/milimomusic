@@ -9,9 +9,13 @@ interface ModelsManagerModalProps {
     onModelActivated?: () => void;
 }
 
+// Module-level SWR cache so opening Models & HW renders instantly with zero layout shift
+let cachedModels: ModelVariant[] = [];
+let cachedHardware: HardwareProfile | null = null;
+
 export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, onClose, onModelActivated }) => {
-    const [models, setModels] = useState<ModelVariant[]>([]);
-    const [hardware, setHardware] = useState<HardwareProfile | null>(null);
+    const [models, setModels] = useState<ModelVariant[]>(cachedModels);
+    const [hardware, setHardware] = useState<HardwareProfile | null>(cachedHardware);
     const [download, setDownload] = useState<ModelDownloadStatus | null>(null);
     const [downloadError, setDownloadError] = useState<string>('');
     const pollRef = useRef<number | undefined>(undefined);
@@ -34,6 +38,8 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                 modelsApi.getModelTree(),
                 modelsApi.getHardwareProfile()
             ]);
+            cachedModels = treeData;
+            cachedHardware = hwData;
             setModels(treeData);
             setHardware(hwData);
         } catch (e) {
@@ -76,18 +82,32 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
     };
 
     const handleActivateModel = async (modelId: string) => {
+        const target = models.find(m => m.id === modelId);
+        const category = target?.category || 'audio';
+
+        // Instant optimistic update — prevent UI lag or layout flicker
+        setModels(prev => {
+            const updated = prev.map(m => {
+                if (m.id === modelId) return { ...m, is_active: true };
+                if ((m.category || 'audio') === category) return { ...m, is_active: false };
+                return m;
+            });
+            cachedModels = updated;
+            return updated;
+        });
+
         try {
             setActivatingId(modelId);
             const res = await modelsApi.selectActiveModel(modelId);
             await loadData();
             const targetModel = models.find(m => m.id === modelId) || res?.active_model;
-            const category = targetModel?.category || 'audio';
             window.dispatchEvent(new CustomEvent('milimo:model-activated', {
                 detail: { modelId, category, model: targetModel }
             }));
             onModelActivated?.();
         } catch (e: any) {
             console.error('Failed to activate model:', e);
+            await loadData();
         } finally {
             setActivatingId(null);
         }
@@ -144,10 +164,10 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
     const busy = !!download && ['queued', 'downloading'].includes(download.status);
     const pct = download?.progress_percent;
 
+    // Stable catalog sort order: Keep items stable (installed first, but DO NOT swap on is_active)
     const filteredModels = models
         .filter(m => (m.category || 'audio') === selectedTab)
         .sort((a, b) => {
-            if (a.is_active !== b.is_active) return a.is_active ? -1 : 1;
             if (a.is_installed !== b.is_installed) return a.is_installed ? -1 : 1;
             return 0;
         });
@@ -158,8 +178,8 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
     if (!isOpen) return null;
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/50 dark:bg-black/80 backdrop-blur-md animate-fade-in">
-            <div className="bg-white/90 dark:bg-[#14161f]/95 border border-black/[0.08] dark:border-white/10 rounded-3xl w-full max-w-4xl overflow-hidden shadow-apple-lg flex flex-col max-h-[85vh] backdrop-blur-2xl">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 dark:bg-black/85">
+            <div className="bg-white dark:bg-[#14161f] border border-black/[0.08] dark:border-white/10 rounded-3xl w-full max-w-4xl overflow-hidden shadow-apple-2xl flex flex-col max-h-[85vh] transform-gpu">
                 {/* Modal Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-black/[0.06] dark:border-white/10 bg-black/[0.02] dark:bg-[#181a24]">
                     <div className="flex items-center space-x-3">
@@ -604,7 +624,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                 {filteredModels.map(m => (
                                     <div
                                         key={m.id}
-                                        className={`p-5 rounded-2xl border transition-all ${
+                                        className={`p-5 rounded-2xl border transition-colors duration-150 transform-gpu ${
                                             m.is_active
                                                 ? 'bg-teal-500/5 border-teal-500/40 shadow-apple-md'
                                                 : m.is_installed

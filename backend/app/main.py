@@ -498,7 +498,10 @@ async def validation_exception_handler(request: Request, exc: RequestValidationE
 
 
 # Static Files (Audio & Covers Serving) & Canonical Storage Initialization
-from app.core.paths import get_models_dir, get_data_dir, get_generated_audio_dir
+from app.core.paths import (
+    get_models_dir, get_data_dir, get_generated_audio_dir,
+    resolve_audio_file, resolve_stem_file, resolve_image_file
+)
 get_models_dir()
 get_models_dir("audio")
 get_models_dir("image")
@@ -515,6 +518,7 @@ backend_audio_dir = Path("generated_audio").resolve()
 (gen_audio_dir / "mastered").mkdir(parents=True, exist_ok=True)
 (gen_audio_dir / "converted_vocals").mkdir(parents=True, exist_ok=True)
 (gen_audio_dir / "videos").mkdir(parents=True, exist_ok=True)
+(gen_audio_dir / "videos" / "keyframes").mkdir(parents=True, exist_ok=True)
 
 covers_dir = get_data_dir() / "covers"
 backend_covers_dir = Path("data/covers").resolve()
@@ -834,13 +838,17 @@ def export_track_asset(job_id: str, export_format: str):
         if export_format == "midi":
             if not job.midi_path:
                 raise HTTPException(status_code=404, detail="MIDI not available for this track")
-            file_path = job.midi_path.replace("/audio/", "generated_audio/")
+            file_path = resolve_audio_file(job.midi_path) or job.midi_path.replace("/audio/", "generated_audio/")
+            if not os.path.isfile(file_path):
+                raise HTTPException(status_code=404, detail="MIDI file not found on disk")
             return FileResponse(file_path, media_type="audio/midi", filename=f"{job.title or 'milimo_track'}.mid")
 
         elif export_format == "musicxml":
             if not job.musicxml_path:
                 raise HTTPException(status_code=404, detail="MusicXML not available")
-            file_path = job.musicxml_path.replace("/audio/", "generated_audio/")
+            file_path = resolve_audio_file(job.musicxml_path) or job.musicxml_path.replace("/audio/", "generated_audio/")
+            if not os.path.isfile(file_path):
+                raise HTTPException(status_code=404, detail="MusicXML file not found on disk")
             return FileResponse(file_path, media_type="application/vnd.recordare.musicxml+xml", filename=f"{job.title or 'milimo_track'}.musicxml")
 
         elif export_format == "lrc":
@@ -905,22 +913,29 @@ def export_track_asset(job_id: str, export_format: str):
             # 1. Neural stems (Vocals, Drums, Bass, Other)
             for stem_key, stem_url in stems.items():
                 if stem_key not in reserved_keys and stem_url and isinstance(stem_url, str):
-                    rel_path = stem_url.replace("/audio/", "generated_audio/").lstrip("/")
-                    if os.path.exists(rel_path):
-                        stem_files_to_zip[f"{stem_key.capitalize()}.wav"] = rel_path
+                    resolved_stem = resolve_audio_file(stem_url) or resolve_stem_file(job.id, stem_key, stems)
+                    if resolved_stem and os.path.exists(resolved_stem):
+                        stem_files_to_zip[f"{stem_key.capitalize()}.wav"] = resolved_stem
 
             # 2. MuScriptor Instrumental parts
             for part_name, part_url in parts.items():
                 if part_url and isinstance(part_url, str):
-                    rel_path = part_url.replace("/audio/", "generated_audio/").lstrip("/")
-                    if os.path.exists(rel_path):
+                    resolved_part = resolve_audio_file(part_url)
+                    if resolved_part and os.path.exists(resolved_part):
                         clean_name = part_name.replace("/", "_").replace("\\", "_")
-                        stem_files_to_zip[f"Part - {clean_name}.wav"] = rel_path
+                        stem_files_to_zip[f"Part - {clean_name}.wav"] = resolved_part
 
-            # 3. Fallback to master audio if no stems on disk
+            # 3. Check disk for unindexed stems if dictionary lookup was empty
+            if not stem_files_to_zip:
+                for default_stem in ["vocals", "drums", "bass", "other"]:
+                    d_path = resolve_stem_file(job.id, default_stem)
+                    if d_path and os.path.exists(d_path):
+                        stem_files_to_zip[f"{default_stem.capitalize()}.wav"] = d_path
+
+            # 4. Fallback to master audio if no stems on disk
             if not stem_files_to_zip and job.audio_path:
-                m_path = job.audio_path.replace("/audio/", "generated_audio/").lstrip("/")
-                if os.path.exists(m_path):
+                m_path = resolve_audio_file(job.audio_path)
+                if m_path and os.path.exists(m_path):
                     stem_files_to_zip["Master.wav"] = m_path
 
             if not stem_files_to_zip:

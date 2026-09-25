@@ -65,89 +65,11 @@ def get_mms_fa_components():
     return _mms_fa_bundle, _mms_fa_model, _mms_fa_tokenizer, _mms_fa_aligner
 
 
+from app.core.paths import resolve_audio_file
+
 def _resolve_audio_file(path: Optional[str]) -> Optional[str]:
     """Resolve any audio file candidate path or URL to an existing local file."""
-    if not path or not isinstance(path, str):
-        return None
-
-    cleaned_path = path.strip()
-    if "://" in cleaned_path:
-        from urllib.parse import urlparse
-        cleaned_path = urlparse(cleaned_path).path
-
-    # If it's already an absolute path that exists, return it immediately
-    if os.path.isabs(cleaned_path) and os.path.isfile(cleaned_path) and os.path.getsize(cleaned_path) > 0:
-        return os.path.abspath(cleaned_path)
-
-    basename = os.path.basename(cleaned_path)
-    relative_no_slash = cleaned_path.lstrip("/")
-    after_audio = cleaned_path.split("/audio/")[-1].lstrip("/") if "/audio/" in cleaned_path else ""
-    after_stems = cleaned_path.split("/stems/")[-1].lstrip("/") if "/stems/" in cleaned_path else ""
-
-    try:
-        from app.core.paths import get_repo_root, get_generated_audio_dir, get_data_dir
-        repo_root = get_repo_root()
-        gen_dir = get_generated_audio_dir()
-        data_dir = get_data_dir()
-    except Exception:
-        repo_root = Path(__file__).resolve().parent.parent.parent
-        gen_dir = repo_root / "generated_audio"
-        data_dir = repo_root / "data"
-
-    search_dirs = [
-        gen_dir,
-        gen_dir / "stems",
-        gen_dir / "mastered",
-        gen_dir / "converted_vocals",
-        gen_dir / "videos",
-        repo_root / "generated_audio",
-        repo_root / "generated_audio" / "stems",
-        repo_root / "backend" / "generated_audio",
-        repo_root / "backend" / "generated_audio" / "stems",
-        repo_root / "backend" / "generated_audio" / "mastered",
-        repo_root / "backend" / "generated_audio" / "converted_vocals",
-        data_dir,
-        data_dir / "audio",
-        data_dir / "uploads",
-        repo_root / "data" / "uploads",
-        repo_root / "backend" / "data" / "uploads",
-        Path.cwd(),
-        Path.cwd() / "generated_audio",
-        Path.cwd() / "generated_audio" / "stems",
-        Path.cwd() / "backend" / "generated_audio",
-        Path.cwd().parent / "generated_audio",
-    ]
-
-    candidates = [
-        cleaned_path,
-        os.path.abspath(cleaned_path),
-    ]
-
-    for d in search_dirs:
-        candidates.append(str(d / basename))
-        if relative_no_slash:
-            candidates.append(str(d / relative_no_slash))
-        if after_audio:
-            candidates.append(str(d / after_audio))
-        if after_stems:
-            candidates.append(str(d / after_stems))
-            candidates.append(str(d / "stems" / after_stems))
-
-    # Also check with alternate common audio extensions
-    base_name_no_ext, ext = os.path.splitext(basename)
-    alt_exts = [".wav", ".mp3", ".flac", ".ogg", ".m4a"]
-    for cand in list(candidates):
-        cand_p = Path(cand)
-        if cand_p.is_file() and cand_p.stat().st_size > 0:
-            return str(cand_p.resolve())
-        # Try alternate extensions if base doesn't match
-        for alt in alt_exts:
-            if alt.lower() != ext.lower():
-                alt_cand = cand_p.with_suffix(alt)
-                if alt_cand.is_file() and alt_cand.stat().st_size > 0:
-                    return str(alt_cand.resolve())
-
-    return None
+    return resolve_audio_file(path)
 
 
 

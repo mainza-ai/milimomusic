@@ -3,8 +3,26 @@ import { Cpu, Zap, Trash2, SlidersHorizontal } from 'lucide-react';
 import { systemApi, type SystemTelemetry } from '../../api';
 import { useModalStore } from '../../stores/useModalStore';
 
-export const HardwareTelemetryBar: React.FC = () => {
-    const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(null);
+const STORAGE_KEY = 'milimo_last_telemetry';
+let cachedTelemetry: SystemTelemetry | null = null;
+
+function getInitialTelemetry(): SystemTelemetry | null {
+    if (cachedTelemetry) return cachedTelemetry;
+    try {
+        const stored = localStorage.getItem(STORAGE_KEY);
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            if (parsed && typeof parsed.device_type === 'string') {
+                cachedTelemetry = parsed;
+                return parsed;
+            }
+        }
+    } catch {}
+    return null;
+}
+
+const HardwareTelemetryBarComponent: React.FC = () => {
+    const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(getInitialTelemetry);
     const [isFlushing, setIsFlushing] = useState(false);
     const [flushMessage, setFlushMessage] = useState<string | null>(null);
     const { openEngineSwitcher } = useModalStore();
@@ -13,7 +31,17 @@ export const HardwareTelemetryBar: React.FC = () => {
         try {
             const data = await systemApi.getTelemetry();
             if (data && typeof data === 'object' && typeof data.device_type === 'string') {
-                setTelemetry(data);
+                cachedTelemetry = data;
+                try { localStorage.setItem(STORAGE_KEY, JSON.stringify(data)); } catch {}
+                setTelemetry(prev => {
+                    if (prev && prev.device_type === data.device_type &&
+                        prev.vram_allocated_mb === data.vram_allocated_mb &&
+                        prev.usage_percent === data.usage_percent &&
+                        prev.active_consumer === data.active_consumer) {
+                        return prev;
+                    }
+                    return data;
+                });
             }
         } catch {
             // Silently swallow background polling errors
@@ -54,7 +82,13 @@ export const HardwareTelemetryBar: React.FC = () => {
         }
     };
 
-    if (!telemetry || typeof telemetry !== 'object' || !telemetry.device_type) return null;
+    if (!telemetry || typeof telemetry !== 'object' || !telemetry.device_type) {
+        return (
+            <div className="flex items-center space-x-2 text-xs font-mono select-none" aria-hidden="true">
+                <div className="w-[185px] h-[28px] rounded-lg bg-black/[0.03] dark:bg-white/[0.04] border border-black/[0.04] dark:border-white/5" />
+            </div>
+        );
+    }
 
     const usagePercent = typeof telemetry.usage_percent === 'number' ? telemetry.usage_percent : 0;
     const isHigh = usagePercent >= 85;
@@ -139,3 +173,5 @@ export const HardwareTelemetryBar: React.FC = () => {
         </div>
     );
 };
+
+export const HardwareTelemetryBar = React.memo(HardwareTelemetryBarComponent);

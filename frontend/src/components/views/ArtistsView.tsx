@@ -39,10 +39,15 @@ interface ArtistsViewProps {
     initialProfileId?: string | null;
 }
 
+// Module-level SWR cache for instant navigation without skeleton flashes
+let cachedArtistsList: ArtistProfileT[] = [];
+let cachedArtistsStats: Record<string, ProfileStats> = {};
+let hasLoadedArtistsOnce = false;
+
 export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) => {
-    const [profiles, setProfiles] = useState<ArtistProfileT[]>([]);
-    const [stats, setStats] = useState<Record<string, ProfileStats>>({});
-    const [isLoadingList, setIsLoadingList] = useState(true);
+    const [profiles, setProfiles] = useState<ArtistProfileT[]>(cachedArtistsList);
+    const [stats, setStats] = useState<Record<string, ProfileStats>>(cachedArtistsStats);
+    const [isLoadingList, setIsLoadingList] = useState(!hasLoadedArtistsOnce && cachedArtistsList.length === 0);
     const [detail, setDetail] = useState<ProfileDetail | null>(null);
     const [isDetailLoading, setIsDetailLoading] = useState(false);
     // Guided create (A1): 4-step modal — identity, bio, tags, cover.
@@ -458,12 +463,17 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     }, [search]);
 
     const loadArtists = React.useCallback(async (opts: { page: number; sortBy: 'activity' | 'name'; q: string }) => {
-        setIsLoadingList(true);
+        if (!hasLoadedArtistsOnce && cachedArtistsList.length === 0) {
+            setIsLoadingList(true);
+        }
         try {
             const data = await profilesApi.list({
                 withStats: true, limit: PAGE_SIZE, offset: opts.page * PAGE_SIZE,
                 q: opts.q || undefined,
             });
+            cachedArtistsList = data.profiles;
+            cachedArtistsStats = data.stats || {};
+            hasLoadedArtistsOnce = true;
             setProfiles(data.profiles);
             setStats(data.stats || {});
             setTotal(data.total);
@@ -820,7 +830,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     // ── LIST MODE ──────────────────────────────────────────────────────────
     if (!detail) {
         return (
-            <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 max-w-6xl mx-auto w-full animate-fade-in">
+            <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 max-w-6xl mx-auto w-full">
                 <div className="flex items-center justify-between gap-4 mb-6">
                     <div className="flex items-center gap-3">
                         <div className="w-9 h-9 rounded-xl bg-teal-500/10 dark:bg-teal-500/20 border border-teal-500/20 flex items-center justify-center">
@@ -1087,7 +1097,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     const hasExperiencerCrew = detail.assignments.some(a => a.agent_name === 'experiencer');
 
     return (
-        <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 max-w-5xl mx-auto w-full animate-fade-in">
+        <div className="flex-1 overflow-y-auto p-4 sm:p-6 md:p-8 max-w-5xl mx-auto w-full">
             {/* Header */}
             <div className="flex items-center justify-between gap-4 mb-6">
                 <div className="flex items-center gap-3 min-w-0">

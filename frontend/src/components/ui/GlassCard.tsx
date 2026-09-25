@@ -20,7 +20,7 @@ export const GlassCard: React.FC<GlassCardProps> = ({
     className,
     delay = 0,
     onClick,
-    animateEntry = true
+    animateEntry = false
 }) => {
     const baseClasses = cn(
         "rounded-2xl p-6 border",

@@ -41,6 +41,9 @@ interface VocalStudioViewProps {
     onCloseModal?: () => void;
 }
 
+// Module-level SWR cache for instant profile rendering
+let cachedVoiceProfiles: VoiceProfile[] = [];
+
 export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
     songs: songsProp,
     initialTrack,
@@ -70,8 +73,8 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
     });
 
     // Voice Profiles State
-    const [profiles, setProfiles] = useState<VoiceProfile[]>([]);
-    const [selectedProfileId, setSelectedProfileId] = useState<string>('default_aria');
+    const [profiles, setProfiles] = useState<VoiceProfile[]>(cachedVoiceProfiles);
+    const [selectedProfileId, setSelectedProfileId] = useState<string>(() => cachedVoiceProfiles[0]?.id || 'default_aria');
     const [playingProfileId, setPlayingProfileId] = useState<string | null>(null);
     const profileAudioRef = useRef<HTMLAudioElement | null>(null);
 
@@ -124,6 +127,7 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
     const loadProfiles = async () => {
         try {
             const list = await voiceApi.listProfiles();
+            cachedVoiceProfiles = list;
             setProfiles(list);
             if (list.length > 0 && !selectedProfileId) {
                 setSelectedProfileId(list[0].id);
@@ -185,13 +189,19 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
         };
     }, []);
 
-    // Reset conversion outputs when track changes
+    const lastTrackIdRef = useRef<string | undefined>(selectedTrack?.id);
+    // Reset conversion outputs only when user switches to a completely different non-derivative track
     useEffect(() => {
-        setConvertedVocalUrl(undefined);
-        setRemixedMasterUrl(undefined);
-        setLatestDerivativeTrack(null);
-        setCustomMicStemUrl(null);
-    }, [selectedTrack?.id]);
+        if (selectedTrack?.id && selectedTrack.id !== lastTrackIdRef.current) {
+            if (latestDerivativeTrack?.id !== selectedTrack.id) {
+                setConvertedVocalUrl(undefined);
+                setRemixedMasterUrl(undefined);
+                setLatestDerivativeTrack(null);
+                setCustomMicStemUrl(null);
+            }
+            lastTrackIdRef.current = selectedTrack.id;
+        }
+    }, [selectedTrack?.id, latestDerivativeTrack?.id]);
 
     // Resolve isolated vocal stem path
     const originalVocalStemUrl = useMemo(() => {

@@ -45,46 +45,12 @@ os.makedirs(VIDEO_DIR, exist_ok=True)
 TEMP_DIR = str(get_data_dir() / "video_cache")
 os.makedirs(TEMP_DIR, exist_ok=True)
 
-STYLE_PALETTES = {
-    "neon-cyberpunk": {
-        "colors": "0x14b8a6|0x06b6d4",
-        "bg": "0x0a0f1d",
-        "primary_color": (20, 184, 166),
-        "accent_color": (6, 182, 212),
-        "desc": "Cyberpunk Neon"
-    },
-    "anime-cinematic": {
-        "colors": "0xf43f5e|0xf59e0b",
-        "bg": "0x111827",
-        "primary_color": (244, 63, 94),
-        "accent_color": (245, 158, 11),
-        "desc": "Anime Cinematic"
-    },
-    "retro-vhs": {
-        "colors": "0xa855f7|0xec4899",
-        "bg": "0x0f0b1e",
-        "primary_color": (168, 85, 247),
-        "accent_color": (236, 72, 153),
-        "desc": "80s Retro VHS"
-    },
-    "minimal-lyrics": {
-        "colors": "0x38bdf8|0x818cf8",
-        "bg": "0x090d16",
-        "primary_color": (240, 240, 245),
-        "accent_color": (56, 189, 248),
-        "desc": "Minimal Typography"
-    }
-}
+from app.services.video.video_director import STYLE_PALETTES
 
 # Video palette key -> cinematic image descriptor for scene-background stills.
-# The palette key drives ffmpeg colors; this descriptor drives the diffusion
-# prompt (they are different surfaces — never pass the palette key as an
-# image style).
 SCENE_STYLE_DESCRIPTORS: Dict[str, str] = {
-    "neon-cyberpunk": "neon-lit cyberpunk city atmosphere, rain-slicked streets, volumetric glow",
-    "anime-cinematic": "anime cinematic film aesthetic, dramatic sky, expressive lighting",
-    "retro-vhs": "80s retro film aesthetic, soft grain, neon dusk glow",
-    "minimal-lyrics": "minimal atmospheric cinema, soft gradient light, empty space",
+    k: v.get("atmosphere", "cinematic atmosphere")
+    for k, v in STYLE_PALETTES.items()
 }
 
 MODEL_MAX_DURATIONS: Dict[str, float] = {
@@ -218,9 +184,9 @@ class VideoService:
         from app.services.video.video_orchestrator import video_orchestrator
         return video_orchestrator.get_video_providers()
 
-    async def generate_scene_keyframes(self, job: Job, visual_style: str = "neon-cyberpunk", width: int = 1280, height: int = 720) -> List[Dict[str, Any]]:
+    async def generate_scene_keyframes(self, job: Job, visual_style: str = "neon-cyberpunk", width: int = 1280, height: int = 720, custom_style_prompt: Optional[str] = None) -> List[Dict[str, Any]]:
         from app.services.video.video_orchestrator import video_orchestrator
-        return await video_orchestrator.generate_scene_keyframes(job=job, visual_style=visual_style, width=width, height=height)
+        return await video_orchestrator.generate_scene_keyframes(job=job, visual_style=visual_style, width=width, height=height, custom_style_prompt=custom_style_prompt)
 
     @classmethod
     def get_active_video_engine(cls) -> Dict[str, Any]:
@@ -313,7 +279,8 @@ class VideoService:
         max_clip_duration: Optional[float] = None,
         model_name: Optional[str] = "wan2.1",
         bpm: Optional[float] = None,
-        visual_style: str = "neon-cyberpunk"
+        visual_style: str = "neon-cyberpunk",
+        custom_style_prompt: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Segment the entire song into consecutive clips respecting model duration constraints.
@@ -347,7 +314,18 @@ class VideoService:
         clips: List[Dict[str, Any]] = []
         cur_time = 0.0
         clip_idx = 1
-        palette = STYLE_PALETTES.get(visual_style, STYLE_PALETTES["neon-cyberpunk"])
+        if custom_style_prompt and custom_style_prompt.strip():
+            palette = {
+                "colors": "0x14b8a6|0x06b6d4",
+                "bg": "0x0a0f1d",
+                "primary_color": (20, 184, 166),
+                "accent_color": (6, 182, 212),
+                "desc": "Custom Directing",
+                "atmosphere": custom_style_prompt.strip(),
+                "negative": "blurry, low resolution, watermark, bad hands, distorted anatomy"
+            }
+        else:
+            palette = STYLE_PALETTES.get(visual_style, STYLE_PALETTES["neon-cyberpunk"])
 
         cameras = [
             "Medium orbital shot focusing on performer",
@@ -738,7 +716,8 @@ class VideoService:
     async def generate_storyboard(
         self,
         job: Job,
-        visual_style: str = "neon-cyberpunk"
+        visual_style: str = "neon-cyberpunk",
+        custom_style_prompt: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Generate a beat-matched, musical scene storyboard sequence for a job.
@@ -748,7 +727,8 @@ class VideoService:
             job=job,
             max_clip_duration=15.0,
             bpm=120.0,
-            visual_style=visual_style
+            visual_style=visual_style,
+            custom_style_prompt=custom_style_prompt
         )
         scenes = []
         for c in clips:

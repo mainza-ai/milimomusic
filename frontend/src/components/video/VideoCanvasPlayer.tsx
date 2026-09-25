@@ -27,6 +27,7 @@ interface VideoCanvasPlayerProps {
     onPlanScenes?: () => void;
     onRenderVideo?: () => void;
     isPlanning?: boolean;
+    seekTime?: number | null;
 }
 
 export const VideoCanvasPlayer: React.FC<VideoCanvasPlayerProps> = ({
@@ -43,14 +44,23 @@ export const VideoCanvasPlayer: React.FC<VideoCanvasPlayerProps> = ({
     onPlanScenes,
     onRenderVideo,
     isPlanning = false,
+    seekTime,
 }) => {
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
 
-    // Split comparison state
+    // split comparison state
     const [splitCompareActive, setSplitCompareActive] = useState(false);
     const [splitRatio, setSplitRatio] = useState(0.5); // 0 to 1
     const [isDraggingSplit, setIsDraggingSplit] = useState(false);
+
+    // Sync playhead when seeking from timeline
+    useEffect(() => {
+        if (seekTime !== undefined && seekTime !== null && videoRef.current) {
+            videoRef.current.currentTime = seekTime;
+            videoRef.current.play().catch(() => {});
+        }
+    }, [seekTime]);
 
     // Aspect ratio classes
     const aspectClass =

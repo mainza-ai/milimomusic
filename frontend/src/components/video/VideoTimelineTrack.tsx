@@ -87,6 +87,7 @@ interface VideoTimelineTrackProps {
     activeSong?: Job;
     onRetakeClip: (clipIndex: number) => void;
     onZoomKeyframe: (clipIndex: number, url: string) => void;
+    onSeekToTime?: (timeSec: number) => void;
 }
 
 export const VideoTimelineTrack: React.FC<VideoTimelineTrackProps> = ({
@@ -95,6 +96,7 @@ export const VideoTimelineTrack: React.FC<VideoTimelineTrackProps> = ({
     activeSong,
     onRetakeClip,
     onZoomKeyframe,
+    onSeekToTime,
 }) => {
     const [viewMode, setViewMode] = useState<'timeline' | 'grid'>('timeline');
 
@@ -188,11 +190,13 @@ export const VideoTimelineTrack: React.FC<VideoTimelineTrackProps> = ({
                             return (
                                 <div
                                     key={clip.clip_index}
-                                    className={`w-52 flex-shrink-0 p-2.5 rounded-2xl border transition-all flex flex-col justify-between group relative overflow-hidden ${
+                                    onClick={() => onSeekToTime?.(clip.start_time)}
+                                    className={`w-52 flex-shrink-0 p-2.5 rounded-2xl border transition-all flex flex-col justify-between group relative overflow-hidden cursor-pointer select-none ${
                                         isVocal
-                                            ? 'bg-teal-500/[0.03] dark:bg-teal-500/[0.05] border-teal-500/20 hover:border-teal-500/40'
-                                            : 'bg-purple-500/[0.03] dark:bg-purple-500/[0.05] border-purple-500/20 hover:border-purple-500/40'
+                                            ? 'bg-teal-500/[0.03] dark:bg-teal-500/[0.05] border-teal-500/20 hover:border-teal-500/50 hover:shadow-md'
+                                            : 'bg-purple-500/[0.03] dark:bg-purple-500/[0.05] border-purple-500/20 hover:border-purple-500/50 hover:shadow-md'
                                     }`}
+                                    title={`Click to jump playhead to ${clip.time_str}`}
                                 >
                                     {/* Keyframe / Poster Image */}
                                     <div className="relative aspect-video rounded-xl overflow-hidden bg-black/40 border border-black/10 dark:border-white/10 mb-2">
@@ -218,7 +222,10 @@ export const VideoTimelineTrack: React.FC<VideoTimelineTrackProps> = ({
                                         {kfUrl && (
                                             <button
                                                 type="button"
-                                                onClick={() => onZoomKeyframe(clip.clip_index, kfUrl)}
+                                                onClick={(e) => {
+                                                    e.stopPropagation();
+                                                    onZoomKeyframe(clip.clip_index, kfUrl);
+                                                }}
                                                 className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 flex items-center justify-center transition-opacity text-white"
                                                 title="View full-resolution keyframe still"
                                             >
@@ -285,7 +292,9 @@ export const VideoTimelineTrack: React.FC<VideoTimelineTrackProps> = ({
                         return (
                             <div
                                 key={clip.clip_index}
-                                className="p-3 bg-black/[0.02] dark:bg-white/[0.02] rounded-2xl border border-black/[0.06] dark:border-white/10 flex flex-col justify-between space-y-2 group"
+                                onClick={() => onSeekToTime?.(clip.start_time)}
+                                className="p-3 bg-black/[0.02] dark:bg-white/[0.02] rounded-2xl border border-black/[0.06] dark:border-white/10 flex flex-col justify-between space-y-2 group hover:border-teal-500/40 transition-all cursor-pointer select-none"
+                                title={`Click to jump playhead to ${clip.time_str}`}
                             >
                                 <div className="flex items-center gap-3">
                                     <div className="relative w-28 aspect-video rounded-xl overflow-hidden bg-black/40 flex-shrink-0 border border-white/10">
@@ -336,7 +345,10 @@ export const VideoTimelineTrack: React.FC<VideoTimelineTrackProps> = ({
                                     <span>🎥 {clip.camera}</span>
                                     <button
                                         type="button"
-                                        onClick={() => onRetakeClip(clip.clip_index)}
+                                        onClick={(e) => {
+                                            e.stopPropagation();
+                                            onRetakeClip(clip.clip_index);
+                                        }}
                                         className="px-2 py-0.5 rounded bg-teal-500/10 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400 font-bold flex items-center gap-1"
                                     >
                                         <RefreshCw size={10} />

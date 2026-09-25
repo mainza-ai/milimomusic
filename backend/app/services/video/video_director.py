@@ -42,14 +42,113 @@ STYLE_PALETTES = {
         "atmosphere": "1980s synthwave music video aesthetic, nostalgic film grain, CRT phosphor glow, dreamlike pastel dusk haze",
         "negative": "modern digital clean, high contrast harsh daylight, 4k digital sharpness"
     },
+    "minimal-stage": {
+        "colors": "0x38bdf8|0x818cf8",
+        "bg": "0x090d16",
+        "primary_color": (240, 240, 245),
+        "accent_color": (56, 189, 248),
+        "desc": "Minimalist Noir Stage",
+        "atmosphere": "moody Scandinavian cinema, soft diffused daylight, vast negative space, elegant architectural silhouettes, understated melancholy",
+        "negative": "cluttered, chaotic, neon, bright garish colors, overexposed"
+    },
     "minimal-lyrics": {
         "colors": "0x38bdf8|0x818cf8",
         "bg": "0x090d16",
         "primary_color": (240, 240, 245),
         "accent_color": (56, 189, 248),
-        "desc": "Minimal Typography",
+        "desc": "Minimal Typography Stage",
         "atmosphere": "moody Scandinavian cinema, soft diffused daylight, vast negative space, elegant architectural silhouettes, understated melancholy",
         "negative": "cluttered, chaotic, neon, bright garish colors, overexposed"
+    },
+    "film-noir-35mm": {
+        "colors": "0xd1d5db|0x9ca3af",
+        "bg": "0x030712",
+        "primary_color": (220, 220, 230),
+        "accent_color": (160, 165, 180),
+        "desc": "Classic Film Noir (35mm)",
+        "atmosphere": "classic 1940s film noir, black and white 35mm cinematography, dramatic chiaroscuro shadow patterns through Venetian blinds, drifting cigarette smoke, wet asphalt reflections",
+        "negative": "color, modern digital clean, oversaturated, neon, flat lighting"
+    },
+    "golden-hour-folk": {
+        "colors": "0xf59e0b|0xd97706",
+        "bg": "0x1c1006",
+        "primary_color": (245, 158, 11),
+        "accent_color": (217, 119, 6),
+        "desc": "Golden Hour Folk",
+        "atmosphere": "sun-drenched golden hour acoustic cinema, warm floating dust particles, anamorphic amber rim flare, organic 70s film warmth, intimate natural landscape",
+        "negative": "cold blue, harsh artificial lighting, neon, sterile studio, modern digital sharpness"
+    },
+    "hyper-scifi": {
+        "colors": "0x06b6d4|0x3b82f6",
+        "bg": "0x030712",
+        "primary_color": (6, 182, 212),
+        "accent_color": (59, 130, 246),
+        "desc": "Interstellar Sci-Fi",
+        "atmosphere": "monolithic hard sci-fi aesthetics, sterile architectural titanium interiors, deep cosmic nebula backdrop, volumetric anamorphic cobalt blue lighting, Stanley Kubrick precision",
+        "negative": "medieval, rustic, fantasy, earthy, low-tech, grainy low-res"
+    },
+    "gothic-dark": {
+        "colors": "0xef4444|0x7c3aed",
+        "bg": "0x0f0514",
+        "primary_color": (239, 68, 68),
+        "accent_color": (124, 58, 237),
+        "desc": "Dark Gothic Cathedral",
+        "atmosphere": "dark romantic gothic fantasy, candlelit cathedral vaults, obsidian velvet shadows, misty moonlight through stained glass, deep crimson and violet undertones",
+        "negative": "cheerful, bright sunny daylight, pastel, cartoon, modern technology"
+    },
+    "vintage-kodak": {
+        "colors": "0xf97316|0xeab308",
+        "bg": "0x1c1208",
+        "primary_color": (249, 115, 22),
+        "accent_color": (234, 179, 8),
+        "desc": "70s Kodachrome 35mm",
+        "atmosphere": "authentic 1970s Kodachrome color science, warm nostalgic amber and terracotta saturation, subtle analog gate weave, vintage Panavision lenses, sun-kissed Americana",
+        "negative": "modern digital video, sterile, cold blue tint, 8k crisp digital sharpness"
+    },
+    "kpop-holographic": {
+        "colors": "0xec4899|0x8b5cf6",
+        "bg": "0x180b24",
+        "primary_color": (236, 72, 153),
+        "accent_color": (139, 92, 246),
+        "desc": "K-Pop Prism Gloss",
+        "atmosphere": "ultra-high-budget K-pop music video studio, holographic chromatic aberration, dynamic pastel iridescent LED tunnel, pristine commercial gloss, vibrant choreography lighting",
+        "negative": "dark muddy shadows, rustic, vintage grain, muted desaturated colors"
+    },
+    "psychedelic-surreal": {
+        "colors": "0x10b981|0xec4899",
+        "bg": "0x091410",
+        "primary_color": (16, 185, 129),
+        "accent_color": (236, 72, 153),
+        "desc": "Surrealist Psychedelic",
+        "atmosphere": "surrealist 1960s liquid oil light show, morphing dreamscape physics, kaleidoscopic spectral color diffusion, shimmering velvet textures, otherworldly optical distortions",
+        "negative": "mundane reality, realistic documentary, sterile corporate, flat lighting"
+    },
+    "urban-street-grime": {
+        "colors": "0xeab308|0x71717a",
+        "bg": "0x121008",
+        "primary_color": (234, 179, 8),
+        "accent_color": (113, 113, 122),
+        "desc": "Urban Street Grime",
+        "atmosphere": "90s East Coast hip-hop music video, raw brutalist concrete architecture, amber sodium vapor streetlights, low-angle fisheye lens perspective, atmospheric smoke and gritty textures",
+        "negative": "clean corporate office, pastel, fantasy, fairy tale, oversaturated cartoon"
+    },
+    "claymation-stopmo": {
+        "colors": "0xf43f5e|0x10b981",
+        "bg": "0x1c0d0a",
+        "primary_color": (244, 63, 94),
+        "accent_color": (16, 185, 129),
+        "desc": "Claymation Art",
+        "atmosphere": "tactile stop-motion claymation animated aesthetic, visible handmade plasticine fingerprint textures, physical miniature studio lighting, charming stop-motion framerate, rich organic depth",
+        "negative": "smooth 3d CGI, realistic live-action human video, glossy digital render"
+    },
+    "wes-anderson-pastel": {
+        "colors": "0xfbbf24|0x34d399",
+        "bg": "0x18180c",
+        "primary_color": (251, 191, 36),
+        "accent_color": (52, 211, 153),
+        "desc": "Symmetrical Pastel",
+        "atmosphere": "meticulous Wes Anderson storybook aesthetic, perfect central one-point perspective symmetry, whimsical muted pastel palette of mustard yellow and mint green, vintage retro props",
+        "negative": "chaotic Dutch angles, shaky handheld cam, gritty dark shadows, high-contrast neon"
     }
 }
 
@@ -147,7 +246,8 @@ class VideoDirector:
         bpm: Optional[float] = None,
         visual_style: str = "neon-cyberpunk",
         vocal_stem_path: Optional[str] = None,
-        character_desc: Optional[str] = None
+        character_desc: Optional[str] = None,
+        custom_style_prompt: Optional[str] = None
     ) -> VideoPlan:
         """
         Segment song into bar-aligned musical scenes classified as Vocal Performance vs B-Roll.
@@ -176,7 +276,19 @@ class VideoDirector:
             vocal_stem_path=vocal_stem_path
         )
 
-        palette = STYLE_PALETTES.get(visual_style, STYLE_PALETTES["neon-cyberpunk"])
+        if custom_style_prompt and custom_style_prompt.strip():
+            palette = {
+                "colors": "0x14b8a6|0x06b6d4",
+                "bg": "0x0a0f1d",
+                "primary_color": (20, 184, 166),
+                "accent_color": (6, 182, 212),
+                "desc": "Custom Directing",
+                "atmosphere": custom_style_prompt.strip(),
+                "negative": "blurry, low resolution, watermark, bad hands, distorted anatomy"
+            }
+        else:
+            palette = STYLE_PALETTES.get(visual_style, STYLE_PALETTES["neon-cyberpunk"])
+
         clips: List[SceneClip] = []
         cur_time = 0.0
         clip_idx = 1
@@ -256,7 +368,8 @@ class VideoDirector:
     def generate_storyboard_scenes(
         self,
         job: Job,
-        visual_style: str = "neon-cyberpunk"
+        visual_style: str = "neon-cyberpunk",
+        custom_style_prompt: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Generate human-readable scene storyboard cards for the frontend directing notes.
@@ -265,7 +378,8 @@ class VideoDirector:
             job=job,
             max_clip_duration=15.0,
             bpm=120.0,
-            visual_style=visual_style
+            visual_style=visual_style,
+            custom_style_prompt=custom_style_prompt
         )
         return [
             {

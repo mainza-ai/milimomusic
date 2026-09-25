@@ -1335,6 +1335,9 @@ export interface StoryboardScene {
     prompt: string;
     camera: string;
     lighting?: string;
+    scene_type?: 'VOCAL_PERFORMANCE' | 'CINEMATIC_BROLL';
+    is_vocal?: boolean;
+    lyrics?: string;
 }
 
 export interface VideoClipSegment {
@@ -1381,6 +1384,7 @@ export interface VideoPlanParams {
     max_clip_duration?: number;
     bpm?: number;
     visual_style?: string;
+    custom_style_prompt?: string;
     model_name?: string;
     aspect_ratio?: '16:9' | '9:16' | '1:1' | '21:9';
     provider?: string;
@@ -1394,6 +1398,7 @@ export interface VideoPlanParams {
 export interface VideoRenderParams {
     model_name?: string;
     visual_style?: string;
+    custom_style_prompt?: string;
     resolution?: '720p' | '1080p';
     aspect_ratio?: '16:9' | '9:16' | '1:1' | '21:9';
     provider?: 'local' | 'cloud_fal' | 'cloud_replicate';
@@ -1426,8 +1431,8 @@ export interface VideoProvider {
 }
 
 export const videoApi = {
-    generateStoryboard: async (jobId: string, visualStyle: string = 'neon-cyberpunk'): Promise<StoryboardScene[]> => {
-        const res = await axios.post(`${API_BASE_URL}/videos/storyboard/${jobId}`, { visual_style: visualStyle });
+    generateStoryboard: async (jobId: string, visualStyle: string = 'neon-cyberpunk', customStylePrompt?: string): Promise<StoryboardScene[]> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/storyboard/${jobId}`, { visual_style: visualStyle, custom_style_prompt: customStylePrompt });
         return res.data.scenes;
     },
     planVideo: async (jobId: string, params: VideoPlanParams = {}): Promise<VideoPlanResult> => {
@@ -1466,11 +1471,11 @@ export const videoApi = {
         const res = await axios.get(`${API_BASE_URL}/videos/providers`);
         return res.data;
     },
-    generateKeyframes: async (jobId: string, visualStyle: string = 'neon-cyberpunk', resolution: string = '720p'): Promise<{ status: string; keyframes: any[] }> => {
-        const res = await axios.post(`${API_BASE_URL}/videos/keyframes/${jobId}`, { visual_style: visualStyle, resolution });
+    generateKeyframes: async (jobId: string, visualStyle: string = 'neon-cyberpunk', resolution: string = '720p', customStylePrompt?: string): Promise<{ status: string; keyframes: any[] }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/keyframes/${jobId}`, { visual_style: visualStyle, resolution, custom_style_prompt: customStylePrompt });
         return res.data;
     },
-    retakeScene: async (jobId: string, clipIndex: number, params: { prompt?: string; reference_image_path?: string; camera?: string; lighting?: string }): Promise<{ status: string; clip_index: number; keyframe_url?: string }> => {
+    retakeScene: async (jobId: string, clipIndex: number, params: { prompt?: string; reference_image_path?: string; camera?: string; lighting?: string; custom_style_prompt?: string }): Promise<{ status: string; clip_index: number; keyframe_url?: string }> => {
         const res = await axios.post(`${API_BASE_URL}/videos/retake-clip/${jobId}/${clipIndex}`, params);
         return res.data;
     }

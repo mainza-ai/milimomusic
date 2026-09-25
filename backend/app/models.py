@@ -221,6 +221,7 @@ class VideoPlanRequest(SQLModel):
     max_clip_duration: Optional[float] = None
     model_name: Optional[str] = "wan_14b"
     visual_style: Optional[str] = "neon-cyberpunk"
+    custom_style_prompt: Optional[str] = None
     bpm: Optional[float] = None
     provider: Optional[str] = "local"
 
@@ -228,6 +229,7 @@ class VideoPlanRequest(SQLModel):
 class VideoRenderRequest(SQLModel):
     model_name: Optional[str] = "wan_14b"
     visual_style: Optional[str] = "neon-cyberpunk"
+    custom_style_prompt: Optional[str] = None
     resolution: Optional[str] = "720p"
     aspect_ratio: Optional[str] = "16:9"
     provider: Optional[str] = "local"
@@ -244,6 +246,7 @@ class VideoRenderRequest(SQLModel):
 
 class KeyframesRequest(SQLModel):
     visual_style: Optional[str] = "neon-cyberpunk"
+    custom_style_prompt: Optional[str] = None
     resolution: Optional[str] = "720p"
 
 
@@ -252,6 +255,7 @@ class SceneRegenerateRequest(SQLModel):
     camera: Optional[str] = None
     lighting: Optional[str] = None
     visual_style: Optional[str] = "neon-cyberpunk"
+    custom_style_prompt: Optional[str] = None
 
 
 class GenerationRequest(SQLModel):

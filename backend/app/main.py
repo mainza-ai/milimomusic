@@ -1708,7 +1708,7 @@ async def set_profile_cover(profile_id: UUID, payload: dict):
         if not profile:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
         profile.cover_image_path = path
-        profile.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        profile.updated_at = datetime.now(timezone.utc)
         session.add(profile)
         session.commit()
         session.refresh(profile)
@@ -1817,7 +1817,7 @@ async def generate_profile_lore(profile_id: UUID):
         # Persist canon onto the artist.
         profile = session.get(ArtistProfile, profile_id)
         profile.lore_json = json.dumps(output, default=str)
-        profile.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        profile.updated_at = datetime.now(timezone.utc)
         session.add(profile)
         session.commit()
         session.refresh(profile)
@@ -1992,7 +1992,7 @@ def update_release(release_id: UUID, payload: ReleaseUpdate):
             raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "Release title cannot be empty."}})
         for k, v in updates.items():
             setattr(release, k, v)
-        release.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        release.updated_at = datetime.now(timezone.utc)
         session.add(release)
         session.commit()
         session.refresh(release)
@@ -2167,7 +2167,7 @@ def set_release_track_order(release_id: UUID, payload: dict):
         if unknown:
             raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": f"Unknown track ids for this release: {unknown[:3]}"}})
         release.track_order_json = json.dumps(ids)
-        release.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        release.updated_at = datetime.now(timezone.utc)
         session.add(release)
         session.commit()
         return {"status": "ok", "track_order": ids}

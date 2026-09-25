@@ -71,7 +71,7 @@ async def run_experiencer_for_release(
 
         # Auto-persist: the Release now carries its imagined journey.
         release.vision_json = vision.model_dump_json()
-        release.updated_at = datetime.now(timezone.utc).replace(tzinfo=None)
+        release.updated_at = datetime.now(timezone.utc)
         session.add(release)
         session.commit()
 

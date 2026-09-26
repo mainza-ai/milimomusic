@@ -1615,6 +1615,14 @@ export const systemApi = {
         const res = await axios.post(`${API_BASE_URL}/system/flush`);
         return res.data;
     },
+    getMemoryPolicy: async (): Promise<{ policy: string; ttl_seconds?: number; registered_modalities?: string[] }> => {
+        const res = await axios.get(`${API_BASE_URL}/system/memory-policy`);
+        return res.data;
+    },
+    setMemoryPolicy: async (policy: string, ttlSeconds?: number): Promise<{ policy: string; ttl_seconds?: number }> => {
+        const res = await axios.post(`${API_BASE_URL}/system/memory-policy`, { policy, ttl_seconds: ttlSeconds });
+        return res.data;
+    },
 };
 
 // --- Multi-Track Timeline & Editor API ---

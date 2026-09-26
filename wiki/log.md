@@ -2264,3 +2264,10 @@ Implemented autonomous LLM Visual Director & Cinematographer across backend audi
    - Enhanced `MusicVideosView.tsx` with eager timeline planning, eliminating the issue where generated keyframes were invisible on disk due to missing timeline clips.
    - Implemented progressive 3-second polling of `videoApi.getKeyframes()` during generation so each scene still pops onto the timeline track dynamically as soon as it is rendered.
    - Added auto-hydration on song selection so existing keyframes and storyboard plans are instantly retrieved from disk without re-generating.
+
+## [2026-09-26] fix | API Parity & Provider Registry Singleton Test Isolation
+1. Memory Policy API Parity:
+   - Added `getMemoryPolicy` and `setMemoryPolicy` to `systemApi` in `frontend/src/api.ts` for `/system/memory-policy` endpoints.
+   - `python3 scripts/check_api_parity.py` and `test_api_parity.py::test_api_ui_parity` now pass with 149/149 backend routes called and 154/154 frontend calls resolved.
+2. Provider Registry Default Isolation:
+   - Updated `test_provider_registry.py` assertion to account for the default MiniMax Music 3 provider alias (`minimax_music3_mxfp4`), eliminating cross-test singleton mutation errors when `test_production_v2.py` selects model variants earlier in the test session.

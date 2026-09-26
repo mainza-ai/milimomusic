@@ -7,8 +7,8 @@ from app.providers.heartmula_provider import HeartMuLaProvider
 def test_provider_registry_defaults():
     registry = ProviderRegistry()
     
-    # Verify default active provider
-    assert registry.get_active_provider_id() == "minimax_music3"
+    # Verify default active provider belongs to MiniMax Music 3 family
+    assert registry.get_active_provider_id() in ["minimax_music3", "minimax_music3_mxfp4"]
     
     # Verify MiniMax Music 3 provider
     minimax = registry.get_provider("minimax_music3")

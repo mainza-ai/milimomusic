@@ -9,7 +9,8 @@ import {
     CheckCircle2,
     Layers,
     Video,
-    X
+    X,
+    Square
 } from 'lucide-react';
 import { api, galleryApi, type Job, type VideoTaskStatus } from '../../api';
 import type { AspectRatioType } from './VideoTopBar';
@@ -27,6 +28,7 @@ interface VideoCanvasPlayerProps {
     isRouting: boolean;
     onPlanScenes?: () => void;
     onRenderVideo?: () => void;
+    onCancelRender?: () => void;
     isPlanning?: boolean;
     seekTime?: number | null;
     onDismissTask?: () => void;
@@ -45,6 +47,7 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
     isRouting,
     onPlanScenes,
     onRenderVideo,
+    onCancelRender,
     isPlanning = false,
     seekTime,
     onDismissTask,
@@ -241,6 +244,19 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                             </p>
                         </div>
 
+                        {isRendering && onCancelRender && (
+                            <div className="pt-2">
+                                <button
+                                    type="button"
+                                    onClick={onCancelRender}
+                                    className="px-4 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs font-bold rounded-xl flex items-center space-x-1.5 shadow-sm transition-all"
+                                >
+                                    <Square size={12} className="fill-current" />
+                                    <span>Stop Video Generation</span>
+                                </button>
+                            </div>
+                        )}
+
                         {!isRendering && activeSong && (
                             <div className="flex items-center gap-2 pt-2">
                                 {onPlanScenes && (
@@ -276,6 +292,8 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                     className={`p-4 rounded-2xl border space-y-3 transition-all ${
                         activeTask.status === 'error'
                             ? 'bg-rose-500/10 border-rose-500/30'
+                            : activeTask.status === 'cancelled'
+                            ? 'bg-amber-500/10 border-amber-500/30'
                             : activeTask.status === 'completed'
                             ? 'bg-teal-500/10 border-teal-500/30'
                             : 'bg-black/[0.03] dark:bg-white/5 border-black/[0.06] dark:border-white/10'
@@ -284,17 +302,29 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                     <div className="flex items-center justify-between text-xs">
                         <span className="font-bold flex items-center gap-2 text-slate-800 dark:text-slate-200">
                             {activeTask.status === 'error' && <AlertCircle size={14} className="text-rose-500" />}
+                            {activeTask.status === 'cancelled' && <Square size={12} className="text-amber-500 fill-current" />}
                             {activeTask.status === 'completed' && <CheckCircle2 size={14} className="text-teal-500" />}
                             {activeTask.status === 'processing' && <Loader2 size={14} className="animate-spin text-teal-500" />}
                             <span>
                                 Pipeline Stage: <strong className="uppercase font-mono text-teal-600 dark:text-teal-400">{activeTask.step.replace(/_/g, ' ')}</strong>
                             </span>
                         </span>
-                        <div className="flex items-center gap-3">
+                        <div className="flex items-center gap-2">
+                            {activeTask.status === 'processing' && onCancelRender && (
+                                <button
+                                    type="button"
+                                    onClick={onCancelRender}
+                                    className="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 flex items-center gap-1 transition-colors"
+                                    title="Cancel video generation"
+                                >
+                                    <Square size={9} className="fill-current" />
+                                    <span>Stop</span>
+                                </button>
+                            )}
                             <span className="font-mono text-xs font-bold text-slate-700 dark:text-slate-300">
                                 {activeTask.progress}%
                             </span>
-                            {onDismissTask && (activeTask.status === 'error' || activeTask.status === 'completed') && (
+                            {onDismissTask && (activeTask.status === 'error' || activeTask.status === 'completed' || activeTask.status === 'cancelled') && (
                                 <button
                                     onClick={onDismissTask}
                                     title="Dismiss status"
@@ -309,7 +339,11 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                     {/* Progress Bar */}
                     <div className="w-full h-1.5 bg-black/[0.06] dark:bg-white/10 rounded-full overflow-hidden">
                         <div
-                            className="h-full bg-gradient-to-r from-teal-500 to-cyan-400 rounded-full transition-all duration-500"
+                            className={`h-full rounded-full transition-all duration-500 ${
+                                activeTask.status === 'cancelled'
+                                    ? 'bg-amber-500'
+                                    : 'bg-gradient-to-r from-teal-500 to-cyan-400'
+                            }`}
                             style={{ width: `${Math.max(3, activeTask.progress)}%` }}
                         />
                     </div>
@@ -320,6 +354,16 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                         </span>
                         {activeTask.error && <span className="text-rose-500 font-semibold">{activeTask.error}</span>}
                     </div>
+
+                    {/* Fallback metadata banner */}
+                    {activeTask.fallback_used && (
+                        <div className="flex items-center gap-2 p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px]">
+                            <AlertCircle size={14} className="shrink-0 text-amber-400" />
+                            <span>
+                                <strong>Storyboard Animatic Mode:</strong> Neural video diffusion was bypassed ({activeTask.fallback_reason || 'diffusers model unavailable'}). Serving Ken Burns animatic stills.
+                            </span>
+                        </div>
+                    )}
                 </div>
             )}
         </div>

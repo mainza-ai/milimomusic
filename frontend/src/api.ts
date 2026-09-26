@@ -1413,7 +1413,7 @@ export interface VideoPlanResult {
 export interface VideoTaskStatus {
     id: string;
     job_id: string;
-    status: 'processing' | 'completed' | 'error';
+    status: 'processing' | 'completed' | 'error' | 'cancelled';
     step: string;
     progress: number;
     total_clips: number;
@@ -1422,6 +1422,8 @@ export interface VideoTaskStatus {
     video_url?: string | null;
     error?: string | null;
     clips?: VideoClipSegment[];
+    fallback_used?: boolean;
+    fallback_reason?: string | null;
 }
 
 export interface VideoPlanParams {
@@ -1496,6 +1498,14 @@ export const videoApi = {
         const res = await axios.get(`${API_BASE_URL}/videos/tasks/${taskId}`);
         return res.data;
     },
+    cancelVideoTask: async (taskId: string): Promise<{ status: string; task_id: string; ok: boolean }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/tasks/${taskId}/cancel`);
+        return res.data;
+    },
+    cancelKeyframeGeneration: async (jobId: string): Promise<{ status: string; job_id: string; ok: boolean }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/keyframes/${jobId}/cancel`);
+        return res.data;
+    },
     renderVideo: async (jobId: string, visualStyle: string = 'neon-cyberpunk', resolution: string = '720p'): Promise<{ status: string; video_url: string }> => {
         const res = await axios.post(`${API_BASE_URL}/videos/render/${jobId}`, { visual_style: visualStyle, resolution });
         return res.data;
@@ -1532,7 +1542,7 @@ export const videoApi = {
         aspectRatio: string = '16:9',
         forceRegenerate: boolean = false,
         scenes?: any[]
-    ): Promise<{ status: string; keyframes: any[] }> => {
+    ): Promise<{ status: string; task_id?: string; job_id?: string; keyframes?: any[] }> => {
         const res = await axios.post(`${API_BASE_URL}/videos/keyframes/${jobId}`, {
             visual_style: visualStyle,
             resolution,
@@ -1540,7 +1550,8 @@ export const videoApi = {
             aspect_ratio: aspectRatio,
             force_regenerate: forceRegenerate,
             scenes,
-        }, { timeout: 600000 });
+            background: true,
+        });
         return res.data;
     },
     getKeyframes: async (jobId: string): Promise<{ status: string; job_id: string; keyframes: Record<number, string> }> => {

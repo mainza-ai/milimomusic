@@ -4876,9 +4876,25 @@ def get_video_keyframes_endpoint(job_id: str):
         }
 
 
+@app.post("/videos/tasks/{task_id}/cancel")
+def cancel_video_task_endpoint(task_id: str):
+    """Cancel an active background music video rendering task."""
+    from app.services.video_service import video_service
+    ok = video_service.cancel_video_task(task_id)
+    return {"status": "cancelled", "task_id": task_id, "ok": ok}
+
+
+@app.post("/videos/keyframes/{job_id}/cancel")
+def cancel_keyframe_generation_endpoint(job_id: str):
+    """Cancel active keyframe still generation for a track."""
+    from app.services.video_service import video_service
+    ok = video_service.cancel_keyframe_generation(job_id)
+    return {"status": "cancelled", "job_id": job_id, "ok": ok}
+
+
 @app.post("/videos/keyframes/{job_id}")
 async def generate_video_keyframes(job_id: str, req: KeyframesRequest = Body(default=KeyframesRequest())):
-    """Generate visual keyframe stills for each scene in the storyboard breakdown."""
+    """Generate visual keyframe stills for each scene asynchronously with live progress tracking."""
     from app.services.video_service import video_service
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)
@@ -4896,21 +4912,48 @@ async def generate_video_keyframes(job_id: str, req: KeyframesRequest = Body(def
         else:
             w, h = (1920, 1080) if res == "1080p" else (1280, 720)
 
-        keyframes = await video_service.generate_scene_keyframes(
-            job=job,
-            visual_style=req.visual_style or "neon-cyberpunk",
-            width=w, height=h,
-            custom_style_prompt=req.custom_style_prompt,
-            force_regenerate=req.force_regenerate,
-            user_scenes=req.scenes
-        )
-        return {
-            "status": "ok",
-            "job_id": job_id,
-            "visual_style": req.visual_style,
-            "aspect_ratio": ar,
-            "keyframes": keyframes
-        }
+        task_id = f"kf_{uuid.uuid4().hex[:12]}"
+
+        if req.background:
+            async def _run_kf_bg():
+                try:
+                    await video_service.generate_scene_keyframes(
+                        job=job,
+                        visual_style=req.visual_style or "neon-cyberpunk",
+                        width=w, height=h,
+                        custom_style_prompt=req.custom_style_prompt,
+                        force_regenerate=req.force_regenerate,
+                        user_scenes=req.scenes,
+                        task_id=task_id
+                    )
+                except Exception as e:
+                    logger.error(f"Background keyframe generation failed for {job_id}: {e}")
+                    video_service.update_task(task_id, status="error", error=str(e))
+
+            asyncio.create_task(_run_kf_bg())
+            return {
+                "status": "queued",
+                "task_id": task_id,
+                "job_id": job_id,
+                "visual_style": req.visual_style,
+                "aspect_ratio": ar,
+                "message": "Keyframe still generation started in background."
+            }
+        else:
+            keyframes = await video_service.generate_scene_keyframes(
+                job=job,
+                visual_style=req.visual_style or "neon-cyberpunk",
+                width=w, height=h,
+                custom_style_prompt=req.custom_style_prompt,
+                force_regenerate=req.force_regenerate,
+                user_scenes=req.scenes,
+                task_id=task_id
+            )
+            return {
+                "status": "ok",
+                "job_id": job_id,
+                "keyframes": keyframes
+            }
 
 
 @app.post("/videos/retake-clip/{job_id}/{clip_index}")
@@ -5284,19 +5327,53 @@ def get_video_thumbnail(filename: str):
 @app.post("/api/gallery/route")
 def route_gallery_media(payload: dict):
     """1-Click Gallery-to-Input media routing to Studio / Director slots."""
+    import urllib.parse
     from app.services.gallery.media_bridge import MediaBridge
+    from app.core.paths import get_data_dir, get_generated_audio_dir, resolve_video_file, resolve_image_file, resolve_audio_file
+
     media_path = payload.get("media_path")
     target_slot = payload.get("target_slot")
     if not media_path or not target_slot:
         raise HTTPException(status_code=400, detail="media_path and target_slot are required")
 
-    resolved = Path(media_path)
-    if not resolved.exists():
-        for prefix in [Path("."), Path(".."), Path("assets"), Path("generated_audio"), Path("data")]:
-            candidate = (prefix / media_path).resolve()
-            if candidate.exists():
-                resolved = candidate
-                break
+    # Clean URL scheme, domain, query parameters and extract path
+    parsed = urllib.parse.urlparse(str(media_path))
+    clean_path = parsed.path if parsed.path else str(media_path)
+    clean_rel = clean_path.lstrip("/")
+
+    # Try resolving via helper functions first
+    resolved_str = (
+        resolve_video_file(clean_path)
+        or resolve_video_file(clean_rel)
+        or resolve_image_file(clean_path)
+        or resolve_image_file(clean_rel)
+        or resolve_audio_file(clean_path)
+        or resolve_audio_file(clean_rel)
+    )
+
+    if resolved_str and os.path.isfile(resolved_str):
+        resolved = Path(resolved_str)
+    else:
+        resolved = Path(clean_path)
+        if not resolved.exists():
+            for prefix in [
+                Path("."),
+                Path(".."),
+                get_generated_audio_dir() / "videos",
+                get_generated_audio_dir(),
+                get_data_dir() / "video_cache",
+                get_data_dir() / "video_cache" / "scene_stills",
+                get_data_dir() / "video_cache" / "keyframes",
+                get_data_dir(),
+                Path("generated_audio") / "videos",
+                Path("generated_audio"),
+                Path("assets"),
+                Path("data"),
+            ]:
+                candidate = (prefix / clean_rel).resolve()
+                if candidate.exists() and candidate.is_file():
+                    resolved = candidate
+                    break
 
     try:
         routed = MediaBridge.route_to_input(

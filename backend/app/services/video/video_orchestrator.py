@@ -51,7 +51,9 @@ os.makedirs(KEYFRAMES_DIR, exist_ok=True)
 class VideoOrchestrator:
     _instance = None
     _tasks: Dict[str, VideoTaskStatusInfo] = {}
-    _lock = threading.Lock()
+    _video_cancels: Dict[str, asyncio.Event] = {}
+    _keyframe_cancels: Dict[str, asyncio.Event] = {}
+    _lock = threading.RLock()
 
     def __new__(cls):
         if cls._instance is None:
@@ -98,6 +100,41 @@ class VideoOrchestrator:
             )
         except Exception as e:
             logger.debug(f"Failed to sync task {task_id} to durable queue: {e}")
+
+    def cancel_video_task(self, task_id: str) -> bool:
+        with self._lock:
+            ev = self._video_cancels.get(task_id)
+            if ev:
+                ev.set()
+        self.update_task(task_id, status="cancelled", step="Video rendering cancelled by user.")
+        try:
+            from app.core.hardware_lock import GlobalHardwareCoordinator
+            GlobalHardwareCoordinator.flush_memory()
+        except Exception:
+            pass
+        return True
+
+    def cancel_keyframe_generation(self, job_id: str) -> bool:
+        matching_tasks = []
+        with self._lock:
+            ev = self._keyframe_cancels.get(str(job_id))
+            if ev:
+                ev.set()
+            for tid, tinfo in self._tasks.items():
+                if tinfo.job_id == str(job_id) and tid.startswith("kf_"):
+                    matching_tasks.append(tid)
+
+        for tid in matching_tasks:
+            self.update_task(tid, status="cancelled", step="Keyframe generation cancelled by user.")
+
+        try:
+            from app.services.image_service import image_service
+            image_service.unload_models()
+            from app.core.hardware_lock import GlobalHardwareCoordinator
+            GlobalHardwareCoordinator.flush_memory()
+        except Exception:
+            pass
+        return True
 
     def resolve_audio_path(self, path: Optional[str]) -> Optional[str]:
         return resolve_audio_file(path)
@@ -255,7 +292,8 @@ class VideoOrchestrator:
         height: int = 720,
         custom_style_prompt: Optional[str] = None,
         force_regenerate: bool = False,
-        user_scenes: Optional[List[Dict[str, Any]]] = None
+        user_scenes: Optional[List[Dict[str, Any]]] = None,
+        task_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         """
         Generate visual keyframe stills for each scene in the storyboard breakdown.
@@ -263,6 +301,31 @@ class VideoOrchestrator:
         Every scene (vocal performance, narrative, B-roll, instrumental solo) receives
         a dedicated scene still rendered from its director prompt.
         """
+        cancel_event = asyncio.Event()
+        with self._lock:
+            self._keyframe_cancels[str(job.id)] = cancel_event
+            if task_id:
+                tinfo = VideoTaskStatusInfo(
+                    id=task_id,
+                    job_id=str(job.id),
+                    status="processing",
+                    step="Conceiving Scene Breakdown & Director Prompts",
+                    progress=5,
+                    total_clips=len(user_scenes) if user_scenes else 8,
+                    current_clip=0
+                )
+                self._tasks[task_id] = tinfo
+                try:
+                    task_queue.enqueue_task(
+                        task_id=task_id,
+                        task_type="keyframe_generation",
+                        payload={"job_id": str(job.id)},
+                        initial_status="processing",
+                        initial_message="Conceiving Scene Breakdown & Director Prompts"
+                    )
+                except Exception as _e:
+                    logger.debug(f"Could not enqueue keyframe task to durable queue: {_e}")
+
         # If force-regenerating, purge any existing keyframe files for this job to prevent stale caches
         if force_regenerate and os.path.isdir(KEYFRAMES_DIR):
             prefix = f"keyframe_{job.id}_"
@@ -297,8 +360,24 @@ class VideoOrchestrator:
 
         results = []
         try:
+            total_scenes = len(plan.clips)
             for idx, clip in enumerate(plan.clips):
+                if cancel_event.is_set():
+                    logger.info(f"generate_scene_keyframes: Cancelled by user for job {job.id}")
+                    if task_id:
+                        self.update_task(task_id, status="cancelled", step="Keyframe generation cancelled by user.", progress=0)
+                    break
+
                 clip_idx = int(clip.clip_index or (idx + 1))
+                if task_id:
+                    self.update_task(
+                        task_id,
+                        current_clip=idx + 1,
+                        total_clips=total_scenes,
+                        step=f"Diffusing Scene Still {idx + 1}/{total_scenes} ({'🎤 Vocal' if clip.is_vocal else '🎥 Cinematic'})",
+                        progress=10 + int(85 * (idx / max(1, total_scenes)))
+                    )
+
                 kf_filename = f"keyframe_{job.id}_{clip_idx:03d}.png"
                 kf_path = os.path.join(KEYFRAMES_DIR, kf_filename)
 
@@ -398,7 +477,17 @@ class VideoOrchestrator:
                         logger.error(f"Fallback keyframe still generation also failed: {ex}")
 
                 results.append(_clip_dict(clip, clip_idx))
+
+            if task_id and not cancel_event.is_set():
+                self.update_task(
+                    task_id,
+                    status="completed",
+                    step="Scene keyframes generated successfully.",
+                    progress=100
+                )
         finally:
+            with self._lock:
+                self._keyframe_cancels.pop(str(job.id), None)
             # Batch keyframe rendering complete: release image generation weights from unified memory
             try:
                 from app.services.image_service import image_service
@@ -428,7 +517,10 @@ class VideoOrchestrator:
             total_clips=0,
             current_clip=0
         )
+        cancel_event = asyncio.Event()
         with self._lock:
+            self._video_cancels[task_id] = cancel_event
+            self._video_cancels[str(job.id)] = cancel_event
             self._tasks[task_id] = task_info
 
         try:
@@ -529,6 +621,11 @@ class VideoOrchestrator:
             if is_local:
                 async with GlobalHardwareCoordinator.scoped_device("Keyframe Stills Generation", modality="image_gen"):
                     for idx, clip in enumerate(plan.clips):
+                        if cancel_event.is_set():
+                            logger.info(f"render_advanced_music_video: Cancelled during Phase A stills generation.")
+                            self.update_task(task_id, status="cancelled", step="Video rendering cancelled by user.", progress=0)
+                            return ""
+
                         if not clip.is_vocal:
                             clip_idx = int(clip.clip_index or (idx + 1))
                             pre_rendered_kf = os.path.join(KEYFRAMES_DIR, f"keyframe_{job.id}_{clip_idx:03d}.png")
@@ -554,6 +651,11 @@ class VideoOrchestrator:
 
             try:
                 for idx, clip in enumerate(plan.clips):
+                    if cancel_event.is_set():
+                        logger.info(f"render_advanced_music_video: Cancelled before rendering scene {idx + 1}.")
+                        self.update_task(task_id, status="cancelled", step="Video rendering cancelled by user.", progress=0)
+                        return ""
+
                     clip_file = os.path.join(TEMP_DIR, f"clip_{task_id}_{idx:03d}.mp4")
                     self.update_task(
                         task_id,
@@ -596,6 +698,7 @@ class VideoOrchestrator:
                             pre_rendered_kf = os.path.join(KEYFRAMES_DIR, f"keyframe_{job.id}_{clip_idx:03d}.png")
                             scene_bg = pre_rendered_kf if (os.path.isfile(pre_rendered_kf) and os.path.getsize(pre_rendered_kf) > 0) else face_image
 
+                            fb_meta: Dict[str, Any] = {}
                             success = await video_generator.generate_clip(
                                 prompt=clip.prompt,
                                 duration=clip.duration,
@@ -603,9 +706,15 @@ class VideoOrchestrator:
                                 width=w, height=h,
                                 image_path=scene_bg,
                                 negative_prompt=clip.negative_prompt,
-                                visual_style=style
+                                visual_style=style,
+                                fallback_metadata=fb_meta
                             )
+                            if fb_meta.get("fallback_used"):
+                                task_info.fallback_used = True
+                                task_info.fallback_reason = fb_meta.get("error", "Procedural fallback used")
                             if not success or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
+                                task_info.fallback_used = True
+                                task_info.fallback_reason = "Video generator output empty; falling back to procedural animatic."
                                 # Fallback to procedural generator
                                 await self._procedural.generate_clip(
                                     prompt=clip.prompt,
@@ -631,6 +740,9 @@ class VideoOrchestrator:
                         clip.status = "completed"
 
             finally:
+                with self._lock:
+                    self._video_cancels.pop(task_id, None)
+                    self._video_cancels.pop(str(job.id), None)
                 if is_local and hasattr(video_generator, "unload"):
                     try:
                         video_generator.unload()

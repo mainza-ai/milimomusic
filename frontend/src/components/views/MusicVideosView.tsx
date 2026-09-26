@@ -512,50 +512,79 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 isForce,
                 currentClips
             );
-            if (res && res.keyframes) {
-                const bustTime = Date.now();
-                const kfMap: Record<number, string> = {};
-                for (const kf of res.keyframes) {
-                    if (kf.keyframe_url) {
-                        const url = (kf.keyframe_url as string).includes('?')
-                            ? `${kf.keyframe_url}&t=${bustTime}`
-                            : `${kf.keyframe_url}?t=${bustTime}`;
-                        kfMap[kf.clip_index] = url;
+
+            const activeJobId = activeSong.id;
+            const taskId = res?.task_id;
+
+            const onKeyframesCompleted = (finalKeyframes: any[]) => {
+                if (finalKeyframes && finalKeyframes.length > 0) {
+                    const bustTime = Date.now();
+                    const kfMap: Record<number, string> = {};
+                    for (const kf of finalKeyframes) {
+                        if (kf.keyframe_url) {
+                            const url = (kf.keyframe_url as string).includes('?')
+                                ? `${kf.keyframe_url}&t=${bustTime}`
+                                : `${kf.keyframe_url}?t=${bustTime}`;
+                            kfMap[kf.clip_index] = url;
+                        }
+                    }
+                    setKeyframes(kfMap);
+
+                    // If timeline was not planned yet, automatically populate it from the returned keyframe scenes
+                    if (!planResult || !planResult.clips || planResult.clips.length === 0) {
+                        const clips: VideoClipSegment[] = finalKeyframes.map((kf: any, idx: number) => ({
+                            clip_index: kf.clip_index || (idx + 1),
+                            start_time: kf.start_time ?? (idx * 15),
+                            end_time: kf.end_time ?? ((idx + 1) * 15),
+                            duration: kf.duration ?? 15,
+                            time_str: kf.time_str || `${idx * 15}s - ${(idx + 1) * 15}s`,
+                            is_vocal: kf.is_vocal ?? (kf.scene_type === 'VOCAL_PERFORMANCE'),
+                            scene_type: kf.scene_type || 'CINEMATIC_BROLL',
+                            lyrics: kf.lyrics || '',
+                            prompt: kf.prompt || '',
+                            camera: kf.camera || 'Cinematic tracking shot',
+                            lighting: kf.lighting || 'Atmospheric rim lighting',
+                            section_label: kf.section_label,
+                            musical_energy: kf.musical_energy,
+                            visual_action: kf.visual_action,
+                            directors_note: kf.directors_note
+                        }));
+                        setPlanResult({
+                            status: 'ok',
+                            job_id: activeJobId,
+                            total_clips: clips.length,
+                            vocal_clips_count: clips.filter(c => c.is_vocal).length,
+                            broll_clips_count: clips.filter(c => !c.is_vocal).length,
+                            max_clip_duration: clipDuration,
+                            model_name: videoModel,
+                            clips
+                        });
+                    }
+                    toast(`Generated ${finalKeyframes.length} scene keyframes for review.`, 'success');
+                }
+            };
+
+            if (taskId) {
+                while (true) {
+                    await new Promise(resolve => setTimeout(resolve, 2000));
+                    try {
+                        const taskStatus: any = await videoApi.getVideoTaskStatus(taskId);
+                        if (taskStatus.status === 'completed') {
+                            onKeyframesCompleted(taskStatus.keyframes || []);
+                            break;
+                        } else if (taskStatus.status === 'cancelled') {
+                            toast('Keyframe generation cancelled.', 'info');
+                            break;
+                        } else if (taskStatus.status === 'error') {
+                            toast(taskStatus.error || 'Keyframe generation encountered an error.', 'error');
+                            break;
+                        }
+                    } catch {
+                        // transient network polling error, retry
                     }
                 }
-                setKeyframes(kfMap);
-
-                // If timeline was not planned yet, automatically populate it from the returned keyframe scenes
-                if (!planResult || !planResult.clips || planResult.clips.length === 0) {
-                    const clips: VideoClipSegment[] = res.keyframes.map((kf: any, idx: number) => ({
-                        clip_index: kf.clip_index || (idx + 1),
-                        start_time: kf.start_time ?? (idx * 15),
-                        end_time: kf.end_time ?? ((idx + 1) * 15),
-                        duration: kf.duration ?? 15,
-                        time_str: kf.time_str || `${idx * 15}s - ${(idx + 1) * 15}s`,
-                        is_vocal: kf.is_vocal ?? (kf.scene_type === 'VOCAL_PERFORMANCE'),
-                        scene_type: kf.scene_type || 'CINEMATIC_BROLL',
-                        lyrics: kf.lyrics || '',
-                        prompt: kf.prompt || '',
-                        camera: kf.camera || 'Cinematic tracking shot',
-                        lighting: kf.lighting || 'Atmospheric rim lighting',
-                        section_label: kf.section_label,
-                        musical_energy: kf.musical_energy,
-                        visual_action: kf.visual_action,
-                        directors_note: kf.directors_note
-                    }));
-                    setPlanResult({
-                        status: 'ok',
-                        job_id: activeSong.id,
-                        total_clips: clips.length,
-                        vocal_clips_count: clips.filter(c => c.is_vocal).length,
-                        broll_clips_count: clips.filter(c => !c.is_vocal).length,
-                        max_clip_duration: clipDuration,
-                        model_name: videoModel,
-                        clips
-                    });
-                }
-                toast(`Generated ${res.keyframes.length} scene keyframes for review.`, 'success');
+            } else if (res && res.keyframes) {
+                onKeyframesCompleted(res.keyframes);
             }
         } catch (err: any) {
             console.error('Failed to generate keyframes:', err);
@@ -566,6 +595,39 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 kfPollRef.current = undefined;
             }
             setIsGeneratingKeyframes(false);
+        }
+    };
+
+    const handleCancelKeyframes = async () => {
+        if (!activeSong) return;
+        try {
+            await videoApi.cancelKeyframeGeneration(activeSong.id);
+            toast('Keyframe generation cancelled.', 'info');
+        } catch (err: any) {
+            toast(err?.response?.data?.detail || 'Failed to cancel keyframe generation.', 'error');
+        } finally {
+            if (kfPollRef.current) {
+                window.clearInterval(kfPollRef.current);
+                kfPollRef.current = undefined;
+            }
+            setIsGeneratingKeyframes(false);
+        }
+    };
+
+    const handleCancelVideoRender = async () => {
+        if (!activeTask?.id) return;
+        try {
+            await videoApi.cancelVideoTask(activeTask.id);
+            toast('Video rendering cancelled.', 'info');
+            setActiveTask(prev => prev ? { ...prev, status: 'cancelled', step: 'cancelled' } : null);
+        } catch (err: any) {
+            toast(err?.response?.data?.detail || 'Failed to cancel video rendering.', 'error');
+        } finally {
+            if (pollRef.current) {
+                window.clearInterval(pollRef.current);
+                pollRef.current = undefined;
+            }
+            setIsRendering(false);
         }
     };
 
@@ -625,6 +687,10 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                                 onUpdateSong({ ...activeSong, video_path: status.video_url });
                             }
                         }
+                    } else if (status.status === 'cancelled') {
+                        window.clearInterval(pollRef.current);
+                        setIsRendering(false);
+                        toast('Video rendering cancelled.', 'info');
                     } else if (status.status === 'error') {
                         window.clearInterval(pollRef.current);
                         setIsRendering(false);
@@ -850,9 +916,11 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     onPlanScenes={handlePlanScenes}
                     isGeneratingKeyframes={isGeneratingKeyframes}
                     onGenerateKeyframes={handleGenerateKeyframes}
+                    onCancelKeyframes={handleCancelKeyframes}
                     hasKeyframes={Object.keys(keyframes).length > 0}
                     isRendering={isRendering}
                     onRenderVideo={handleRenderAdvancedVideo}
+                    onCancelRender={handleCancelVideoRender}
                     renderedVideoUrl={renderedVideoUrl}
                     onDownloadVideo={handleDownloadVideo}
                 />
@@ -874,6 +942,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             isRouting={isRouting}
                             onPlanScenes={handlePlanScenes}
                             onRenderVideo={handleRenderAdvancedVideo}
+                            onCancelRender={handleCancelVideoRender}
                             isPlanning={isPlanning}
                             seekTime={timelineSeekTime}
                             onDismissTask={() => setActiveTask(null)}

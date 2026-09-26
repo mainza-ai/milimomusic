@@ -585,6 +585,11 @@ class VideoDirector:
             base_prompt = raw_s.get("diffusion_prompt", "")
             if not base_prompt or len(base_prompt.strip()) < 15:
                 base_prompt = f"{visual_action}. {camera}. {lighting}. {palette['atmosphere']}."
+            elif palette.get("atmosphere") and palette["atmosphere"].lower() not in base_prompt.lower():
+                base_prompt = f"{base_prompt}. {palette['atmosphere']}."
+
+            if palette.get("atmosphere") and palette["atmosphere"].lower() not in lighting.lower():
+                lighting = f"{lighting} ({palette['atmosphere']})"
 
             cleaned_prompt = prompt_enhancer.strip_accidental_dialogue(base_prompt)
             # Prepend character profile for shots involving performance or narrative

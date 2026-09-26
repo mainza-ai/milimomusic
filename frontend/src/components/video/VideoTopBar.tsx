@@ -33,9 +33,11 @@ interface VideoTopBarProps {
     onPlanScenes: () => void;
     isGeneratingKeyframes: boolean;
     onGenerateKeyframes: (force?: boolean) => void;
+    onCancelKeyframes?: () => void;
     hasKeyframes?: boolean;
     isRendering: boolean;
     onRenderVideo: () => void;
+    onCancelRender?: () => void;
     renderedVideoUrl: string | null;
     onDownloadVideo?: () => void;
 }
@@ -56,9 +58,11 @@ const VideoTopBarComponent: React.FC<VideoTopBarProps> = ({
     onPlanScenes,
     isGeneratingKeyframes,
     onGenerateKeyframes,
+    onCancelKeyframes,
     hasKeyframes = false,
     isRendering,
     onRenderVideo,
+    onCancelRender,
     renderedVideoUrl,
     onDownloadVideo,
 }) => {
@@ -210,29 +214,53 @@ const VideoTopBarComponent: React.FC<VideoTopBarProps> = ({
                         <span>{isPlanning ? 'Planning…' : 'Plan Scenes'}</span>
                     </button>
 
-                    {/* Pre-Render Keyframes */}
-                    <button
-                        type="button"
-                        onClick={() => onGenerateKeyframes(Boolean(hasKeyframes))}
-                        disabled={isGeneratingKeyframes || isRendering || !activeSong}
-                        className="px-3.5 py-1.5 bg-purple-500/15 hover:bg-purple-500/25 text-purple-700 dark:text-purple-300 font-bold text-xs rounded-xl flex items-center space-x-1.5 border border-purple-500/20 transition-all disabled:opacity-50"
-                        title="Pre-render visual keyframe stills for each planned scene before video diffusion"
-                    >
-                        {isGeneratingKeyframes ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                        <span>{isGeneratingKeyframes ? 'Keyframes…' : (hasKeyframes ? 'Regenerate Stills' : 'Pre-Render Stills')}</span>
-                    </button>
+                    {/* Pre-Render Keyframes / Stop Stills Button */}
+                    {isGeneratingKeyframes && onCancelKeyframes ? (
+                        <button
+                            type="button"
+                            onClick={onCancelKeyframes}
+                            className="px-3.5 py-1.5 bg-rose-500/20 hover:bg-rose-500/30 text-rose-600 dark:text-rose-400 font-bold text-xs rounded-xl flex items-center space-x-1.5 border border-rose-500/30 transition-all shadow-sm active:scale-95"
+                            title="Cancel still image generation"
+                        >
+                            <Square size={13} className="fill-current text-rose-500" />
+                            <span>Stop Stills</span>
+                        </button>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={() => onGenerateKeyframes(Boolean(hasKeyframes))}
+                            disabled={isGeneratingKeyframes || isRendering || !activeSong}
+                            className="px-3.5 py-1.5 bg-purple-500/15 hover:bg-purple-500/25 text-purple-700 dark:text-purple-300 font-bold text-xs rounded-xl flex items-center space-x-1.5 border border-purple-500/20 transition-all disabled:opacity-50"
+                            title="Pre-render visual keyframe stills for each planned scene before video diffusion"
+                        >
+                            {isGeneratingKeyframes ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
+                            <span>{isGeneratingKeyframes ? 'Keyframes…' : (hasKeyframes ? 'Regenerate Stills' : 'Pre-Render Stills')}</span>
+                        </button>
+                    )}
 
-                    {/* Render Video */}
-                    <button
-                        type="button"
-                        onClick={onRenderVideo}
-                        disabled={isRendering || !activeSong}
-                        className="px-4 py-1.5 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-teal-500/20 active:scale-95 transition-all disabled:opacity-50"
-                        title="Execute multi-scene video diffusion with vocal lip-syncing & subtitle burn"
-                    >
-                        {isRendering ? <Loader2 size={13} className="animate-spin" /> : <Video size={13} />}
-                        <span>{isRendering ? 'Rendering Video…' : 'Render Video ⚡'}</span>
-                    </button>
+                    {/* Render Video / Stop Video Render Button */}
+                    {isRendering && onCancelRender ? (
+                        <button
+                            type="button"
+                            onClick={onCancelRender}
+                            className="px-4 py-1.5 bg-rose-500/25 hover:bg-rose-500/35 text-rose-600 dark:text-rose-300 font-bold text-xs rounded-xl flex items-center space-x-1.5 border border-rose-500/40 shadow-sm transition-all active:scale-95"
+                            title="Cancel active video rendering"
+                        >
+                            <Square size={13} className="fill-current text-rose-500" />
+                            <span>Stop Render</span>
+                        </button>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={onRenderVideo}
+                            disabled={isRendering || !activeSong}
+                            className="px-4 py-1.5 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-teal-500/20 active:scale-95 transition-all disabled:opacity-50"
+                            title="Execute multi-scene video diffusion with vocal lip-syncing & subtitle burn"
+                        >
+                            {isRendering ? <Loader2 size={13} className="animate-spin" /> : <Video size={13} />}
+                            <span>{isRendering ? 'Rendering Video…' : 'Render Video ⚡'}</span>
+                        </button>
+                    )}
 
                     {/* Download MP4 Video */}
                     {renderedVideoUrl && onDownloadVideo && (

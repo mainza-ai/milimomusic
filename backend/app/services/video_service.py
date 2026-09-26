@@ -266,7 +266,8 @@ class VideoService:
         height: int = 720,
         custom_style_prompt: Optional[str] = None,
         force_regenerate: bool = False,
-        user_scenes: Optional[List[Dict[str, Any]]] = None
+        user_scenes: Optional[List[Dict[str, Any]]] = None,
+        task_id: Optional[str] = None
     ) -> List[Dict[str, Any]]:
         from app.services.video.video_orchestrator import video_orchestrator
         return await video_orchestrator.generate_scene_keyframes(
@@ -276,8 +277,17 @@ class VideoService:
             height=height,
             custom_style_prompt=custom_style_prompt,
             force_regenerate=force_regenerate,
-            user_scenes=user_scenes
+            user_scenes=user_scenes,
+            task_id=task_id
         )
+
+    def cancel_video_task(self, task_id: str) -> bool:
+        from app.services.video.video_orchestrator import video_orchestrator
+        return video_orchestrator.cancel_video_task(task_id)
+
+    def cancel_keyframe_generation(self, job_id: str) -> bool:
+        from app.services.video.video_orchestrator import video_orchestrator
+        return video_orchestrator.cancel_keyframe_generation(job_id)
 
     def get_job_keyframes(self, job_id: str) -> Dict[int, str]:
         from app.services.video.video_orchestrator import video_orchestrator

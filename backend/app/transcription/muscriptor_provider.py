@@ -89,7 +89,22 @@ class MuScriptorProvider:
             logger.info("MuScriptor TranscriptionModel loaded successfully!")
         return self._model
 
+    def unload(self) -> bool:
+        """Release cached transcription model weights from memory."""
+        if self._model is not None:
+            self._model = None
+            import gc
+            gc.collect()
+            try:
+                from app.core.hardware_lock import GlobalHardwareCoordinator
+                GlobalHardwareCoordinator.flush_memory()
+            except Exception:
+                pass
+            logger.info("MuScriptorProvider: Model unloaded and VRAM flushed.")
+        return True
+
     async def transcribe(
+
         self,
         audio_file_path: Optional[str] = None,
         audio_path: Optional[str] = None,
@@ -262,6 +277,13 @@ class MuScriptorProvider:
         except Exception as e:
             logger.error(f"MuScriptor execution error: {e}", exc_info=True)
             return await self._fallback_transcription(audio_path or target_path, job_id, progress_callback)
+        finally:
+            try:
+                from app.core.hardware_lock import GlobalHardwareCoordinator
+                if GlobalHardwareCoordinator.get_memory_policy()["policy"] == "eager":
+                    self.unload()
+            except Exception:
+                pass
 
     async def update_midi_notes(self, job_id: str, notes: list[dict], bpm: float = 120.0) -> TranscriptionResult:
         """Saves user-edited note events from Piano Roll back to MIDI and MusicXML."""

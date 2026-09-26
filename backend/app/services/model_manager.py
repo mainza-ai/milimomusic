@@ -361,6 +361,42 @@ class ModelManager:
                 "repo_id": "HeartMuLa/MuLaCover",
                 "is_default": False
             },
+            {
+                "id": "stable_audio_open_1_0",
+                "name": "Stable Audio Open 1.0 (Diffusion Audio Generator)",
+                "architecture": "Continuous-Time DiT + T5 + Autoencoder",
+                "quantization": "FP16 / BF16 (Cross-Platform)",
+                "size_gb": 4.8,
+                "license": "Stability AI Community License",
+                "recommended_hardware": "NVIDIA CUDA / Apple Silicon MPS / CPU (8GB+ RAM)",
+                "category": "audio",
+                "repo_id": "stabilityai/stable-audio-open-1.0",
+                "is_default": not is_apple_silicon and hw.has_cuda
+            },
+            {
+                "id": "musicgen_small",
+                "name": "Meta MusicGen Small (300M Text-to-Music)",
+                "architecture": "EnCodec + Autoregressive Transformer (300M)",
+                "quantization": "FP32 / FP16",
+                "size_gb": 1.2,
+                "license": "MIT / CC BY-NC 4.0",
+                "recommended_hardware": "CPU / Apple Silicon / Any CUDA GPU (4GB+ RAM)",
+                "category": "audio",
+                "repo_id": "facebook/musicgen-small",
+                "is_default": not is_apple_silicon and not hw.has_cuda
+            },
+            {
+                "id": "musicgen_melody",
+                "name": "Meta MusicGen Melody (1.5B Melody-Conditioned)",
+                "architecture": "EnCodec + Autoregressive Transformer + Chromagram",
+                "quantization": "FP16 / BF16",
+                "size_gb": 3.1,
+                "license": "CC BY-NC 4.0",
+                "recommended_hardware": "NVIDIA GPU (8GB+ VRAM) / Apple Silicon (16GB+ RAM)",
+                "category": "audio",
+                "repo_id": "facebook/musicgen-melody",
+                "is_default": False
+            },
 
             # -------------------------------------------------------------
             # IMAGE MODELS: FLUX.2, FLUX.1 & SDXL Turbo (Visual Studio)
@@ -699,7 +735,17 @@ class ModelManager:
             if match.get("local_path"):
                 global DEFAULT_MINIMAX_SNAPSHOT
                 DEFAULT_MINIMAX_SNAPSHOT = match["local_path"]
-                os.environ["MINIMAX_MODEL_PATH"] = match["local_path"]
+                if "stable_audio" in match["id"] or "stable-audio" in match["id"]:
+                    os.environ["STABLE_AUDIO_MODEL_PATH"] = match["local_path"]
+                elif "musicgen" in match["id"]:
+                    os.environ["MUSICGEN_MODEL_PATH"] = match["local_path"]
+                else:
+                    os.environ["MINIMAX_MODEL_PATH"] = match["local_path"]
+            try:
+                from app.providers.registry import provider_registry
+                provider_registry.set_active_provider(match["id"])
+            except Exception as e:
+                logger.debug(f"Sync active provider in registry: {e}")
             logger.info(f"Active audio model switched to {match['name']} at {match.get('local_path')}")
 
         return match

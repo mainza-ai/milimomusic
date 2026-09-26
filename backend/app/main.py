@@ -566,6 +566,22 @@ def flush_system_memory():
     return GlobalHardwareCoordinator.flush_memory()
 
 
+@app.get("/system/memory-policy")
+def get_system_memory_policy():
+    """Return active memory lifecycle policy ('eager' vs 'warm_ttl') and registered modalities."""
+    from app.core.hardware_lock import GlobalHardwareCoordinator
+    return GlobalHardwareCoordinator.get_memory_policy()
+
+
+@app.post("/system/memory-policy")
+def set_system_memory_policy(payload: Dict[str, Any] = Body(...)):
+    """Configure memory lifecycle policy ('eager' or 'warm_ttl') and TTL seconds."""
+    from app.core.hardware_lock import GlobalHardwareCoordinator
+    policy = payload.get("policy", "eager")
+    ttl = payload.get("ttl_seconds")
+    return GlobalHardwareCoordinator.set_memory_policy(policy, ttl_seconds=ttl)
+
+
 # --- Model Management & Tree Endpoints ---
 
 @app.get("/models/tree")
@@ -3247,6 +3263,18 @@ async def generate_music(req: GenerationRequest, background_tasks: BackgroundTas
 
     lyrics_content = None if req.is_instrumental else req.lyrics
 
+    chosen_provider = req.model_provider
+    if not chosen_provider or chosen_provider == "minimax_music3":
+        try:
+            active_audio = model_manager.get_active_model("audio")
+            if active_audio and active_audio.get("id"):
+                chosen_provider = active_audio["id"]
+        except Exception:
+            pass
+    if not chosen_provider:
+        chosen_provider = "minimax_music3"
+    req.model_provider = chosen_provider
+
     job = Job(
         title=req.title,
         prompt=req.prompt, 
@@ -3254,7 +3282,7 @@ async def generate_music(req: GenerationRequest, background_tasks: BackgroundTas
         duration_ms=req.duration_ms, 
         tags=req.tags, 
         seed=seed_val,
-        model_provider=req.model_provider or "minimax_music3",
+        model_provider=chosen_provider,
         llm_model=req.llm_model,
         parent_job_id=req.parent_job_id,
         project_id=req.project_id,

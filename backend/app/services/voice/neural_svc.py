@@ -147,11 +147,39 @@ class NeuralSVCService:
         # Save output
         out_path_obj = Path(output_path)
         out_path_obj.parent.mkdir(parents=True, exist_ok=True)
-        sf.write(str(out_path_obj), out_audio.T if is_stereo else out_audio, sr)
+        try:
+            sf.write(str(out_path_obj), out_audio.T if is_stereo else out_audio, sr)
+        finally:
+            try:
+                from app.core.hardware_lock import GlobalHardwareCoordinator
+                if GlobalHardwareCoordinator.get_memory_policy()["policy"] == "eager":
+                    self.unload()
+            except Exception:
+                pass
 
         logger.info(f"Neural SVC conversion completed: {output_path}")
         return str(out_path_obj.resolve())
 
+    def unload(self) -> bool:
+        """Release SVC session and flush accelerator caches."""
+        if self._onnx_session is not None:
+            self._onnx_session = None
+        import gc
+        gc.collect()
+        try:
+            from app.core.hardware_lock import GlobalHardwareCoordinator
+            GlobalHardwareCoordinator.flush_memory()
+        except Exception:
+            pass
+        logger.info("NeuralSVCService: unloaded and memory flushed.")
+        return True
+
 
 # Singleton instance
 neural_svc = NeuralSVCService()
+
+try:
+    from app.core.hardware_lock import GlobalHardwareCoordinator
+    GlobalHardwareCoordinator.register_eviction_hook("audio_voice", lambda: neural_svc.unload())
+except Exception:
+    pass

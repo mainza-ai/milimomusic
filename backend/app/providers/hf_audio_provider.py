@@ -168,35 +168,94 @@ class HuggingFaceAudioProvider(GenerationProvider):
             )
 
             audio_data = res["audio"]
-            sr = res["sampling_rate"]
+            sr = int(res.get("sampling_rate", 32000))
 
-            # Save normalized waveform
+            # Format raw waveform numpy array
             if isinstance(audio_data, torch.Tensor):
-                audio_np = audio_data.cpu().numpy()
+                audio_np = audio_data.detach().cpu().numpy()
             else:
-                audio_np = np.array(audio_data)
+                audio_np = np.array(audio_data, dtype=np.float32)
 
+            # Ensure 2D (channels, samples) or (samples, channels)
             if audio_np.ndim == 1:
-                audio_np = np.expand_dims(audio_np, axis=1)
+                audio_np = np.expand_dims(audio_np, axis=0)
+            elif audio_np.ndim == 2 and audio_np.shape[0] > audio_np.shape[1]:
+                audio_np = audio_np.T
 
-            sf.write(output_path, audio_np, sr)
+            target_sr = 44100
+            if sr != target_sr:
+                try:
+                    import torchaudio.transforms as T
+                    resampler = T.Resample(orig_freq=sr, new_freq=target_sr)
+                    audio_tensor = torch.from_numpy(audio_np)
+                    audio_np = resampler(audio_tensor).numpy()
+                    sr = target_sr
+                except Exception:
+                    try:
+                        from scipy.signal import resample_poly
+                        from math import gcd
+                        g = gcd(sr, target_sr)
+                        audio_np = resample_poly(audio_np, target_sr // g, sr // g, axis=-1)
+                        sr = target_sr
+                    except Exception as e:
+                        logger.warning(f"Could not resample audio from {sr} to {target_sr}: {e}")
+
+            # Ensure stereo (2 channels)
+            if audio_np.shape[0] == 1:
+                audio_np = np.vstack([audio_np, audio_np])
+
+            # Peak ceiling normalization to -1.0 dBFS (amplitude ~0.891)
+            peak = float(np.max(np.abs(audio_np))) if audio_np.size > 0 else 0.0
+            if peak > 0.891:
+                audio_np = audio_np * (0.891 / peak)
+
+            # Transpose to (samples, channels) for soundfile write
+            out_pcm = audio_np.T
+            sf.write(output_path, out_pcm, sr)
             return output_path
 
-        await loop.run_in_executor(None, _infer)
+        try:
+            await loop.run_in_executor(None, _infer)
+        finally:
+            from app.core.hardware_lock import GlobalHardwareCoordinator
+            if GlobalHardwareCoordinator.get_memory_policy()["policy"] == "eager":
+                self.unload()
 
         if progress_callback:
             progress_callback(4, 4, "Generation complete.")
 
         return GeneratedAudioResult(
             audio_path=f"/audio/{filename}",
-            duration_ms=duration_ms,
-            sample_rate=32000,
-            provider_id=self.get_capabilities().provider_id,
-            model_version=self.repo_id,
-            stems=None,
+            duration_sec=duration_sec,
+            sample_rate=44100,
             structured_caption=structured_caption,
-            prompt_used=prompt
+            metadata={
+                "provider_id": self.get_capabilities().provider_id,
+                "model_version": self.repo_id,
+                "prompt_used": prompt,
+            }
         )
+
+    def unload(self) -> bool:
+        """Evict pipeline and release PyTorch accelerator memory."""
+        if self.pipeline is not None:
+            try:
+                if hasattr(self.pipeline, "model") and hasattr(self.pipeline.model, "remove_all_hooks"):
+                    self.pipeline.model.remove_all_hooks()
+            except Exception:
+                pass
+            self.pipeline = None
+            self._is_loaded = False
+            import gc
+            gc.collect()
+            try:
+                from app.core.hardware_lock import GlobalHardwareCoordinator
+                GlobalHardwareCoordinator.flush_memory()
+            except Exception:
+                pass
+            logger.info(f"HuggingFaceAudioProvider: Unloaded {self.repo_id} from memory.")
+        return True
+
 
     async def extend(
         self,

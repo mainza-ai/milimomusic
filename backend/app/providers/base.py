@@ -6,7 +6,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Optional, List, Dict, Any, Callable
 from enum import Enum
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class HardwareTier(str, Enum):
@@ -16,6 +16,8 @@ class HardwareTier(str, Enum):
 
 
 class GenerationCapabilities(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     provider_id: str
     display_name: str
     description: str
@@ -33,6 +35,8 @@ class GenerationCapabilities(BaseModel):
 
 
 class GeneratedAudioResult(BaseModel):
+    model_config = ConfigDict(extra="ignore")
+
     audio_path: str
     duration_sec: float
     sample_rate: int = 44100
@@ -64,6 +68,15 @@ class GenerationProvider(ABC):
     def is_ready(self) -> bool:
         """Check if provider is loaded and ready for inference."""
         pass
+
+    def unload(self) -> bool:
+        """Release loaded model weights and clear framework caches.
+
+        Subclasses override this to perform accelerator and runtime specific
+        deallocations (e.g. MLX Metal cache clearing, PyTorch CUDA IPC collection,
+        and accelerate hook stripping).
+        """
+        return True
 
     @abstractmethod
     async def generate(
@@ -113,3 +126,4 @@ class GenerationProvider(ABC):
     ) -> GeneratedAudioResult:
         """In-paint / repair a specific audio time window."""
         pass
+

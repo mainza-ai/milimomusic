@@ -187,3 +187,46 @@ class DiffusersWanGenerator(BaseVideoGenerator):
                 negative_prompt=negative_prompt,
                 **kwargs
             )
+
+    def unload(self) -> bool:
+        """Completely release all cached Wan 2.1 pipelines and accelerator memory."""
+        global _WAN_PIPELINE_CACHE
+        if not _WAN_PIPELINE_CACHE:
+            return True
+        for key, pipe in list(_WAN_PIPELINE_CACHE.items()):
+            try:
+                if hasattr(pipe, "remove_all_hooks"):
+                    pipe.remove_all_hooks()
+            except Exception:
+                pass
+        _WAN_PIPELINE_CACHE.clear()
+        import gc
+        gc.collect()
+        try:
+            from app.core.hardware_lock import GlobalHardwareCoordinator
+            GlobalHardwareCoordinator.flush_memory()
+        except Exception:
+            pass
+        logger.info("DiffusersWanGenerator: Evicted all cached Wan 2.1 pipelines and flushed VRAM.")
+        return True
+
+
+def _evict_wan_pipelines():
+    global _WAN_PIPELINE_CACHE
+    if not _WAN_PIPELINE_CACHE:
+        return
+    for key, pipe in list(_WAN_PIPELINE_CACHE.items()):
+        try:
+            if hasattr(pipe, "remove_all_hooks"):
+                pipe.remove_all_hooks()
+        except Exception:
+            pass
+    _WAN_PIPELINE_CACHE.clear()
+
+
+try:
+    from app.core.hardware_lock import GlobalHardwareCoordinator
+    GlobalHardwareCoordinator.register_eviction_hook("video_gen", _evict_wan_pipelines)
+except Exception:
+    pass
+

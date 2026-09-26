@@ -40,3 +40,11 @@ class BaseVideoGenerator(ABC):
         Returns True on success, False on failure.
         """
         pass
+
+    def unload(self) -> bool:
+        """
+        Release loaded video diffusion pipelines, models, and clear accelerator memory.
+        Subclasses should override to purge model weights and hook closures.
+        """
+        return True
+

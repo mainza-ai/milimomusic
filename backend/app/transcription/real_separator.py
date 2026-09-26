@@ -77,18 +77,27 @@ def unload_model():
     global _separator_instance
     with _model_lock:
         if _separator_instance is not None:
-            import gc
+            try:
+                if hasattr(_separator_instance, "to"):
+                    _separator_instance.to("cpu")
+            except Exception:
+                pass
             _separator_instance = None
+            import gc
             gc.collect()
             try:
-                import torch
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                elif hasattr(torch.backends, "mps") and torch.backends.mps.is_available() and hasattr(torch.mps, "empty_cache"):
-                    torch.mps.empty_cache()
+                from app.core.hardware_lock import GlobalHardwareCoordinator
+                GlobalHardwareCoordinator.flush_memory()
             except Exception:
                 pass
             logger.info("real_separator: neural separation model released from memory.")
+
+
+try:
+    from app.core.hardware_lock import GlobalHardwareCoordinator
+    GlobalHardwareCoordinator.register_eviction_hook("audio_sep", unload_model)
+except Exception:
+    pass
 
 
 def separate_sources(
@@ -110,6 +119,7 @@ def separate_sources(
     Returns:
         SeparationResult with dynamic stem paths, source_id, and available sources.
     """
+    global _separator_instance
     os.makedirs(out_dir, exist_ok=True)
     device = _get_best_device()
     logger.info(f"real_separator: initializing separation on device '{device}' for job '{job_id}'")
@@ -124,6 +134,7 @@ def separate_sources(
             output_format="WAV",
             model_file_dir=str(get_models_dir("audio_separator"))
         )
+        _separator_instance = sep
         sep.load_model(model_filename=model_name)
         output_files = sep.separate(master_wav_path)
         load_dur = time.time() - t0
@@ -159,6 +170,10 @@ def separate_sources(
         )
     except Exception as e:
         logger.info(f"audio-separator direct loader bypassed ({e}), falling back to native neural pipeline.")
+    finally:
+        from app.core.hardware_lock import GlobalHardwareCoordinator
+        if GlobalHardwareCoordinator.get_memory_policy()["policy"] == "eager":
+            unload_model()
 
     # Strategy 2: Native PyTorch Demucs/Roformer pipeline with dynamic source extraction
     import torch
@@ -170,6 +185,7 @@ def separate_sources(
 
         t0 = time.time()
         model = get_model("htdemucs_6s" if False else "htdemucs")
+        _separator_instance = model
         
         # Demucs device placement: CUDA -> MPS -> CPU
         demucs_device = _get_best_device()
@@ -229,4 +245,8 @@ def separate_sources(
             sources_available=[],
             stem_count=0
         )
+    finally:
+        from app.core.hardware_lock import GlobalHardwareCoordinator
+        if GlobalHardwareCoordinator.get_memory_policy()["policy"] == "eager":
+            unload_model()
 

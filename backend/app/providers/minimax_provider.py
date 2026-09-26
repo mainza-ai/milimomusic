@@ -105,21 +105,30 @@ def _load_minimax_model(snapshot_path: str):
 def unload_minimax_model():
     """Release the cached MiniMax MLX model from memory.
 
-    Frees the large model so it isn't resident when idle; it is lazily reloaded on
-    the next real-inference call (~4s). Useful on memory-constrained machines.
+    Frees the large model so it isn't resident when idle; clears Metal buffer cache.
     """
     global _minimax_model, _minimax_model_path
     with _minimax_model_lock:
         if _minimax_model is not None:
             _minimax_model = None
             _minimax_model_path = None
-            if _MLX_AUDIO_AVAILABLE:
-                try:
-                    import gc
-                    gc.collect()
-                except Exception:
-                    pass
-            logger.info("MiniMax Music 3 MLX model released from memory.")
+            import gc
+            gc.collect()
+            try:
+                import mlx.core as mx
+                if hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
+                    mx.metal.clear_cache()
+            except Exception:
+                pass
+            logger.info("MiniMax Music 3 MLX model released and Metal cache cleared.")
+
+
+try:
+    from app.core.hardware_lock import GlobalHardwareCoordinator
+    GlobalHardwareCoordinator.register_eviction_hook("audio_gen", unload_minimax_model)
+except Exception:
+    pass
+
 
 
 def run_real_minimax_inference(
@@ -861,7 +870,15 @@ class MiniMaxMusic3Provider(GenerationProvider):
         finally:
             self._is_loading = False
 
+    def unload(self) -> bool:
+        """Release loaded MLX weights and purge Metal buffer caches."""
+        self.model = None
+        self._is_loaded = False
+        unload_minimax_model()
+        return True
+
     @staticmethod
+
     def parse_structured_caption(prompt: str, tags: Optional[str] = None) -> Dict[str, str]:
         """
         Extract or construct Structured Caption sections:
@@ -1120,6 +1137,13 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 shutil.copy2(wav_path, backend_wav)
             except Exception:
                 pass
+
+        try:
+            from app.core.hardware_lock import GlobalHardwareCoordinator
+            if GlobalHardwareCoordinator.get_memory_policy()["policy"] == "eager":
+                self.unload()
+        except Exception:
+            pass
 
         return GeneratedAudioResult(
             audio_path=f"/audio/{os.path.basename(wav_path)}",

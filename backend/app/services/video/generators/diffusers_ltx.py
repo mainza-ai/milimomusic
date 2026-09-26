@@ -47,6 +47,7 @@ class DiffusersLTXGenerator(BaseVideoGenerator):
         """
         Generates fast cinematic video diffusion with LTX-Video.
         """
+        pipe = None
         try:
             import torch
             from diffusers import LTXPipeline
@@ -92,3 +93,30 @@ class DiffusersLTXGenerator(BaseVideoGenerator):
                 negative_prompt=negative_prompt,
                 **kwargs
             )
+        finally:
+            if pipe is not None:
+                try:
+                    if hasattr(pipe, "remove_all_hooks"):
+                        pipe.remove_all_hooks()
+                except Exception:
+                    pass
+                del pipe
+                import gc
+                gc.collect()
+                try:
+                    from app.core.hardware_lock import GlobalHardwareCoordinator
+                    GlobalHardwareCoordinator.flush_memory()
+                except Exception:
+                    pass
+
+    def unload(self) -> bool:
+        """Purge LTX pipeline memory and flush caches."""
+        import gc
+        gc.collect()
+        try:
+            from app.core.hardware_lock import GlobalHardwareCoordinator
+            GlobalHardwareCoordinator.flush_memory()
+        except Exception:
+            pass
+        return True
+

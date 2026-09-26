@@ -86,14 +86,18 @@ Zero-config startup profiling:
 3. **Phase 3: Multitrack Timeline & Gallery Bridge**: Non-destructive multi-track editor, single-pass FFmpeg hardware rendering, 1-click media routing, before/after comparison, and video poster caching.
 4. **Phase 4: YuE2 48kHz Audio & My Music Studio**: 48 kHz stereo generation, ABC notation guidance, Mothersuperior instrumental LoRA auto-routing, and Auto/Guided My Music training.
 5. **Phase 5: Auto-Tune, Memory Bounding & Universal Queue**: Profiles 1–5, single-frame mask bounding, reference cache sizing, and persistent SQLite task queue.
+6. **Phase 6: Cross-Modal Model Lifecycle & Cross-Platform Audio (Planned)**: Immediate model eviction across Audio (MiniMax, Stable Audio Open, MusicGen), Image (FLUX.2 Klein, SDXL), and Video (Wan 2.1, LTX); phase-decoupled Director execution (Keyframes $\to$ Purge $\to$ Video Diffusion $\to$ Purge); native Stable Audio Open 1.0 (44.1 kHz stereo DiT) and Meta MusicGen (melody conditioning) to bridge the Apple Silicon MLX architecture gap.
 
 ---
 
 ## Related pages
 - [Overview](overview.md) | [Architecture](architecture.md)
+- [Cross-Modal Model Lifecycle](concepts/cross-modal-model-lifecycle.md) | [Generation Provider](entities/generation-provider.md)
+- [Stable Audio Open](entities/stable-audio-open.md) | [Meta MusicGen](entities/musicgen.md)
 - [Maestro Creative Studio Ingest](sources/maestro-creative-studio.md)
 - [Director Mode v2](concepts/director-mode-v2.md) | [Multitrack Timeline Editor](entities/multitrack-editor.md)
 - [Non-Destructive Multitrack Timeline](concepts/non-destructive-multitrack-timeline.md) | [YuE2 Music](entities/yue2-music.md)
 - [Hardware Auto-Tune](concepts/hardware-autotune-memory-profiles.md) | [Durable Task Queue](entities/durable-task-queue.md)
 - [AI Music Video Studio](entities/video-studio.md) | [Stem Audio-Reactive Video](concepts/stem-audio-reactive-video.md)
 - [v2 reference projects](entities/v2-references.md) | [Index](index.md)
+

@@ -59,6 +59,12 @@ If an out-of-memory exception occurs:
 3. Evicts dormant tensor caches via `torch.cuda.empty_cache()` / `torch.mps.empty_cache()`.
 4. Lowers the active safety coefficient by $0.10$ and surfaces an in-app banner for one-click retry with reduced batch size.
 
+## Cross-Modal Eviction Bus
+To prevent cross-modal memory collisions (e.g. FLUX.2 image models colliding with Wan 2.1 video diffusion or MiniMax Music 3), the coordinator acts as a central **Eviction Bus**:
+- Workloads register eviction callbacks: `register_eviction_hook(modality, callback)`.
+- When entering `scoped_device(consumer, modality=...)`, the coordinator triggers `evict_all_except(modality)` to flush all warm models from other modalities before granting device access.
+- See [Cross-Modal Model Lifecycle & Immediate Eviction Architecture](../concepts/cross-modal-model-lifecycle.md) for full protocol details.
+
 ## Core API & Implementation
 
 ```python
@@ -66,10 +72,25 @@ class GlobalHardwareCoordinator:
     _lock = asyncio.Lock()
     _active_consumer: str = "idle"
     _consumer_acquired_at: float = 0.0
+    _eviction_hooks: Dict[str, Callable[[], None]] = {}
 
     @classmethod
-    async def acquire_device(cls, consumer: str, timeout: Optional[float] = 600.0) -> bool:
-        """Acquire exclusive accelerator device access with automatic timeout guard."""
+    def register_eviction_hook(cls, modality: str, hook: Callable[[], None]) -> None:
+        """Register model unloading callback for a modality domain."""
+        cls._eviction_hooks[modality] = hook
+
+    @classmethod
+    def evict_all_except(cls, active_modality: Optional[str] = None) -> None:
+        """Evict cached models across other modalities before running a new workload."""
+        for mod, hook in cls._eviction_hooks.items():
+            if mod != active_modality:
+                try: hook()
+                except Exception: pass
+        cls.flush_memory()
+
+    @classmethod
+    async def acquire_device(cls, consumer: str, modality: Optional[str] = None, timeout: Optional[float] = 600.0) -> bool:
+        """Acquire exclusive accelerator device access with automatic inter-modality eviction."""
         ...
 
     @classmethod
@@ -79,7 +100,7 @@ class GlobalHardwareCoordinator:
 
     @classmethod
     def flush_memory(cls) -> Dict[str, Any]:
-        """Evict cached tensors and call garbage collection across CUDA and MPS."""
+        """Evict cached tensors and call garbage collection across MLX Metal, CUDA, MPS, and glibc."""
         ...
 
     @classmethod
@@ -106,7 +127,7 @@ class GlobalHardwareCoordinator:
     "lock_held": false
   }
   ```
-- `POST /system/flush`: Immediately flushes dormant accelerator tensor caches and returns reclaimed memory metrics.
+- `POST /system/flush`: Immediately executes cross-modal eviction, flushes dormant MLX Metal, PyTorch CUDA/MPS caches, and trims host heap pages.
 
 ## Frontend Telemetry Bar & `Ctrl+E` Switcher
 
@@ -116,10 +137,14 @@ class GlobalHardwareCoordinator:
 ## Related Pages
 
 - [Architecture](../architecture.md)
+- [Cross-Modal Model Lifecycle](../concepts/cross-modal-model-lifecycle.md)
 - [Video Studio](video-studio.md)
 - [Hardware Auto-Tune](../concepts/hardware-autotune-memory-profiles.md)
+- [Stable Audio Open](stable-audio-open.md)
+- [Meta MusicGen](musicgen.md)
 - [YuE2 Music](yue2-music.md)
 - [Durable Task Queue](durable-task-queue.md)
 - [Generation Pipeline](../concepts/generation-pipeline.md)
 - [Neural SVC](neural-svc.md)
 - [MuLaCover](mulacover.md)
+

@@ -2194,3 +2194,54 @@ Implemented autonomous LLM Visual Director & Cinematographer across backend audi
    - Added `hasKeyframes` prop to `VideoTopBar` displaying "Regenerate Stills" dynamically when stills are already present.
    - Updated `KeyframeZoomModal.tsx` to support non-16:9 aspect ratios (`9:16`, `1:1`, `21:9`) with responsive `max-h-[70vh]` scaling.
 
+## [2026-09-25] plan | Cross-Modal Model Lifecycle & Cross-Platform Audio Alternatives
+1. Cross-Modal Memory Retention Forensic Audit:
+   - Identified persistent memory retention across Audio (MiniMax Music 3 `_minimax_model` 8–28GB never unloaded), Image (FLUX.2 Klein MLX and Diffusers SDXL cached in `ImageService` singleton fields forever), and Video (Wan 2.1 DiT 14B/1.3B cached in `_WAN_PIPELINE_CACHE` dict indefinitely).
+   - Uncovered catastrophic concurrent collision in `video_orchestrator.py` lines 550–574 where `image_service.generate_scene_background()` (FLUX.2, 6–18GB) and `video_generator.generate_clip()` (Wan 2.1, 14–28GB) were executed within the exact same loop iteration without deallocation, demanding 36–46GB+ concurrent accelerator memory.
+2. Cross-Modal Eviction Bus Architecture:
+   - Designed modality domain partitioning (`MODALITY_AUDIO_GEN`, `MODALITY_AUDIO_SEP`, `MODALITY_AUDIO_TRANS`, `MODALITY_AUDIO_VOICE`, `MODALITY_IMAGE_GEN`, `MODALITY_VIDEO_GEN`) managed by `GlobalHardwareCoordinator`.
+   - Engineered backend-specific eviction protocols: Apple Silicon MLX Metal cache clearing (`mx.metal.clear_cache()`), PyTorch CUDA accelerate circular hook removal (`remove_all_hooks()`) + `empty_cache()` + `ipc_collect()`, MPS cache clearing, and Linux glibc heap trimming (`malloc_trim(0)`).
+   - Designed phase-decoupled Video Director execution: Batch Keyframe Generation $\to$ Image Model Eviction $\to$ Batch Video Diffusion $\to$ Video Model Eviction $\to$ CPU/VideoToolbox Assembly.
+3. Cross-Platform Audio Alternatives (MiniMax Architecture Gap):
+   - Ingested and specified Stable Audio Open 1.0 (`stabilityai/stable-audio-open-1.0`) as primary cross-platform DiT foundation model (44.1 kHz stereo, CUDA/MPS/CPU, ~6.5GB FP16).
+   - Ingested and specified Meta MusicGen (`musicgen-small`, `melody`, `large`) for CPU-friendly and melody-conditioned generation with 32 kHz $\to$ 44.1 kHz sinc resampling and -14.0 LUFS acoustic staging.
+4. Wiki Documentation:
+   - Created concept page `wiki/concepts/cross-modal-model-lifecycle.md`.
+   - Created entity pages `wiki/entities/stable-audio-open.md` and `wiki/entities/musicgen.md`.
+   - Updated `wiki/entities/generation-provider.md`, `wiki/entities/hardware-coordinator.md`, `wiki/architecture.md`, `wiki/roadmap.md` (Phase 6), and `wiki/index.md`.
+
+## [2026-09-25] feat | Cross-Modal Eviction Bus & Cross-Platform Open Audio Engine Integration
+1. Cross-Modal Eager Eviction Bus Implementation:
+   - Enhanced `GlobalHardwareCoordinator` (`app.core.hardware_lock.py`) with `register_eviction_hook()`, `evict_all_except()`, `evict_modality()`, and automated inter-modality eviction inside `acquire_device()` and `scoped_device()`.
+   - Engineered cross-platform memory purging in `flush_memory()`: Apple Silicon MLX Metal cache clearing (`mx.metal.clear_cache()`), PyTorch CUDA cache/IPC collection (`torch.cuda.empty_cache()`, `torch.cuda.ipc_collect()`), PyTorch MPS cache clearing, garbage collection, and Linux glibc heap trimming (`malloc_trim`).
+   - Added `unload() -> bool` contract to `GenerationProvider` base class and `BaseVideoGenerator`.
+   - Registered eviction hooks across all neural modalities:
+     - `audio_gen`: MiniMax Music 3 (`unload_minimax_model()`), Stable Audio Open, and Meta MusicGen.
+     - `image_gen`: `ImageService.unload_models()` (clearing `_loaded_mlx_pipeline`, Diffusers pipeline hooks via `remove_all_hooks()`, and tensors).
+     - `video_gen`: Wan 2.1 (`DiffusersWanVideoGenerator.unload()`) and LTX-Video.
+     - `audio_sep`: Real stem separator (`unload_model()`).
+     - `audio_trans`: MuScriptor transcription (`unload()`).
+2. Decoupled Director Mode Video Execution:
+   - In `video_orchestrator.py` (`render_advanced_music_video()`), completely eliminated concurrent FLUX.2 + Wan 2.1 memory collision.
+   - Restructured into two distinct serialized phases:
+     - Phase A (Keyframe Generation): Pre-renders all missing clip stills under `image_gen` modality lock, followed by immediate invocation of `image_service.unload_models()`.
+     - Phase B (Video Clip Diffusion): Runs Wan 2.1 / LTX-Video generation under `video_gen` modality lock with a guaranteed `finally:` block invoking `video_generator.unload()`.
+3. Open Source Cross-Platform Audio Generation Providers:
+   - Implemented `StableAudioProvider` (`app/providers/stable_audio_provider.py`): Wraps Stable Audio Open 1.0 DiT via Diffusers, native 44.1 kHz stereo audio generation on CUDA, Apple Silicon MPS, and CPU. Enforces -14.0 LUFS integrated loudness and -1.0 dBFS true peak limiting.
+   - Implemented `MusicGenProvider` (`app/providers/musicgen_provider.py`): Wraps Meta MusicGen (`small`, `melody`, `large`) via Transformers, supporting lightweight CPU execution, Kaiser windowed sinc resampling to 44.1 kHz stereo, and melody-guided conditioning.
+   - Wired dynamic resolution into `ProviderRegistry` (`app/providers/registry.py`) and integrated into `ModelManager` catalog (`app/services/model_manager.py`) with hardware-aware recommendations.
+4. Comprehensive Testing & Verification:
+   - Created `backend/tests/test_model_lifecycle.py` (8 test suites covering eviction bus, flush_memory, scoped_device, StableAudioProvider, MusicGenProvider, ProviderRegistry resolution, ModelManager sync, and ImageService unload). All 8 passed (100%).
+   - Frontend production build (`npm run build`) passed cleanly in 3.19s with 0 errors.
+   - Server daemons operational: Backend port 8000 and Frontend port 5173.
+
+## [2026-09-25] verify | Forensic Production Audit, Test Verification & Dual Memory Policy
+1. Multi-Hook Eviction & Dual Memory Policy Verification:
+   - Verified `GlobalHardwareCoordinator` multi-callback registration per modality (`_eviction_hooks` dictionary of lists).
+   - Validated dual memory policies: `EAGER_UNLOAD` (default, immediately evicting models upon lock release) and `WARM_CACHE_WITH_TTL` (async background timers with TTL cancellation on reuse).
+   - Live testing of `GET /system/memory-policy` and `POST /system/memory-policy` dynamically switching between `eager` and `warm_ttl` modes.
+2. Full Test Suite & Build Verification:
+   - `test_model_lifecycle.py`, `test_provider_registry.py`, and `test_model_activation.py` passed 14/14 tests (100%).
+   - Verified `test_production_v2.py` compatibility with `MusicGenProvider` inheriting from `HuggingFaceAudioProvider`.
+   - Frontend production build (`tsc -b && vite build`) passed with zero errors (dist generated in 2.01s).
+   - Running daemons operational: Backend FastAPI on port 8000, Frontend Vite on port 5173.

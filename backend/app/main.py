@@ -4701,6 +4701,32 @@ async def plan_music_video(job_id: str, req: VideoPlanRequest = Body(default=Vid
     use_llm = req.use_llm if req.use_llm is not None else True
     force_refresh = req.force_refresh if req.force_refresh is not None else False
 
+    if req.async_mode:
+        task_id = f"plan_{uuid.uuid4().hex[:10]}"
+        asyncio.create_task(
+            video_service.plan_music_video_async(
+                job_id=job.id,
+                task_id=task_id,
+                max_clip_duration=clip_dur,
+                model_name=model_name,
+                bpm=req.bpm,
+                visual_style=req.visual_style or "neon-cyberpunk",
+                custom_style_prompt=req.custom_style_prompt,
+                pacing_bias=req.pacing_bias or 0,
+                character_desc=req.character_desc,
+                visible_cast=req.visible_cast,
+                user_scenes=req.scenes,
+                use_llm=use_llm,
+                force_refresh=force_refresh
+            )
+        )
+        return {
+            "status": "queued",
+            "task_id": task_id,
+            "job_id": job.id,
+            "message": "AI Visual Director planning task enqueued"
+        }
+
     plan_dict = await asyncio.to_thread(
         video_service.segment_song_for_video,
         job=job,

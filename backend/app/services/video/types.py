@@ -77,6 +77,7 @@ class VideoDirectorTreatment:
     llm_used: bool = True
     provider: Optional[str] = None
     model: Optional[str] = None
+    fallback_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -99,6 +100,8 @@ class VideoPlan:
     character_profile: Optional[str] = None
     treatment: Optional[Dict[str, Any]] = None
     clips: List[SceneClip] = field(default_factory=list)
+    fallback_used: bool = False
+    fallback_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -119,6 +122,9 @@ class VideoTaskStatusInfo:
     video_url: Optional[str] = None
     error: Optional[str] = None
     clips: List[Dict[str, Any]] = field(default_factory=list)
+    treatment: Optional[Dict[str, Any]] = None
+    fallback_used: Optional[bool] = False
+    fallback_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

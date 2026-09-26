@@ -607,5 +607,74 @@ async def test_plan_music_video_treatment_and_force_refresh(client, sample_job):
         assert "scenes" in cfg
 
 
+@pytest.mark.asyncio
+async def test_plan_music_video_async_endpoint_and_polling(client, sample_job):
+    """Test POST /videos/plan/{job_id} with async_mode=True returns queued task and completes with clips & treatment."""
+    import asyncio
+    res = await client.post(
+        f"/videos/plan/{sample_job.id}",
+        json={
+            "visual_style": "neon-cyberpunk",
+            "model_name": "wan_14b",
+            "use_llm": False,
+            "force_refresh": True,
+            "async_mode": True
+        }
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "queued"
+    assert "task_id" in data
+    task_id = data["task_id"]
+    assert task_id.startswith("plan_")
+
+    # Poll status until completed
+    for _ in range(30):
+        poll_res = await client.get(f"/videos/tasks/{task_id}")
+        assert poll_res.status_code == 200
+        poll_data = poll_res.json()
+        assert poll_data["id"] == task_id
+        if poll_data["status"] == "completed":
+            assert poll_data["progress"] == 100
+            assert len(poll_data["clips"]) > 0
+            assert poll_data["treatment"] is not None
+            break
+        await asyncio.sleep(0.2)
+    else:
+        pytest.fail(f"Async planning task {task_id} did not finish within timeout")
+
+
+@pytest.mark.asyncio
+async def test_plan_music_video_async_cancellation(client, sample_job):
+    """Test cancelling an in-progress async planning task updates task status and unloads model."""
+    import asyncio
+    from app.services.video.video_orchestrator import video_orchestrator
+    from app.services.video.types import VideoTaskStatusInfo
+    task_id = f"plan_test_cancel_{uuid.uuid4().hex[:6]}"
+
+    # Enqueue a mock planning task
+    with video_orchestrator._lock:
+        cancel_ev = asyncio.Event()
+        video_orchestrator._plan_cancels[task_id] = cancel_ev
+        video_orchestrator._tasks[task_id] = VideoTaskStatusInfo(
+            id=task_id,
+            job_id=str(sample_job.id),
+            status="processing",
+            step="AI Visual Director Conceptualizing",
+            progress=50
+        )
+
+    # Cancel via API
+    cancel_res = await client.post(f"/videos/tasks/{task_id}/cancel")
+    assert cancel_res.status_code == 200
+    assert cancel_res.json()["ok"] is True
+    assert cancel_ev.is_set()
+
+    # Verify task status is cancelled
+    status = video_orchestrator.get_task(task_id)
+    assert status is not None
+    assert status["status"] == "cancelled"
+
+
 
 

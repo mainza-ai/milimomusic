@@ -230,6 +230,7 @@ class VideoPlanRequest(SQLModel):
     scenes: Optional[List[Dict[str, Any]]] = None
     use_llm: Optional[bool] = True
     force_refresh: Optional[bool] = False
+    async_mode: Optional[bool] = False
 
 
 class VideoRenderRequest(SQLModel):

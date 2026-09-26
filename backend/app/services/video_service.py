@@ -479,6 +479,40 @@ class VideoService:
             return plan.to_dict()
         return [c.to_dict() for c in plan.clips]
 
+    async def plan_music_video_async(
+        self,
+        job_id: str,
+        task_id: str,
+        max_clip_duration: Optional[float] = None,
+        model_name: Optional[str] = "wan_14b",
+        bpm: Optional[float] = None,
+        visual_style: str = "neon-cyberpunk",
+        custom_style_prompt: Optional[str] = None,
+        pacing_bias: int = 0,
+        character_desc: Optional[str] = None,
+        visible_cast: Optional[List[str]] = None,
+        user_scenes: Optional[List[Dict[str, Any]]] = None,
+        use_llm: bool = True,
+        force_refresh: bool = False
+    ) -> Dict[str, Any]:
+        """Forward asynchronous planning to the VideoOrchestrator."""
+        from app.services.video.video_orchestrator import video_orchestrator
+        return await video_orchestrator.plan_music_video_async(
+            job_id=job_id,
+            task_id=task_id,
+            max_clip_duration=max_clip_duration,
+            model_name=model_name,
+            bpm=bpm,
+            visual_style=visual_style,
+            custom_style_prompt=custom_style_prompt,
+            pacing_bias=pacing_bias,
+            character_desc=character_desc,
+            visible_cast=visible_cast,
+            user_scenes=user_scenes,
+            use_llm=use_llm,
+            force_refresh=force_refresh
+        )
+
     def generate_director_treatment(
         self,
         job: Job,

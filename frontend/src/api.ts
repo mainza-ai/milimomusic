@@ -1400,14 +1400,18 @@ export interface DirectorTreatment {
 export interface VideoPlanResult {
     status: string;
     job_id: string;
-    total_clips: number;
-    vocal_clips_count: number;
-    broll_clips_count: number;
-    max_clip_duration: number;
+    task_id?: string;
+    message?: string;
+    total_clips?: number;
+    vocal_clips_count?: number;
+    broll_clips_count?: number;
+    max_clip_duration?: number;
     model_max_duration?: number;
-    model_name: string;
-    clips: VideoClipSegment[];
+    model_name?: string;
+    clips?: VideoClipSegment[];
     treatment?: DirectorTreatment;
+    fallback_used?: boolean;
+    fallback_reason?: string | null;
 }
 
 export interface VideoTaskStatus {
@@ -1422,6 +1426,7 @@ export interface VideoTaskStatus {
     video_url?: string | null;
     error?: string | null;
     clips?: VideoClipSegment[];
+    treatment?: DirectorTreatment;
     fallback_used?: boolean;
     fallback_reason?: string | null;
 }
@@ -1443,6 +1448,7 @@ export interface VideoPlanParams {
     scenes?: any[];
     use_llm?: boolean;
     force_refresh?: boolean;
+    async_mode?: boolean;
 }
 
 export interface VideoRenderParams {

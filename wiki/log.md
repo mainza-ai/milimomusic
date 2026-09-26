@@ -2325,3 +2325,24 @@ Forensic resolution of silent background HuggingFace weight downloads, LLM Visua
    - Frontend `npm run build` compiled clean (exit code 0).
    - Pytest suite `backend/tests/test_video*.py` passed all 26 unit and regression tests in 7.47s.
 
+## [2026-09-26] fix | Asynchronous AI Director Planning HUD, Task Recovery & Auto-Plan Flicker Elimination
+Resolved UI flickering, missing planning progress feedback, and long synchronous timeouts during AI Visual Director scene planning:
+1. Asynchronous Video Planning Pipeline:
+   - Implemented `async_mode: bool = True` in `POST /videos/plan/{job_id}`, dispatching non-blocking background task (`plan_<id>`) and returning immediately (`status: queued`).
+   - Added `plan_music_video_async` to `VideoOrchestrator` with 5 transparent progress stages:
+     - 10%: Audio signal analysis & musical downbeats
+     - 25%: Timed lyrics alignment & vocal cadence
+     - 50%: AI Visual Director LLM conceptualization (MLX/OMLX/Ollama)
+     - 85%: Scene lattice cut snapping & prompt formatting
+     - 100%: SQLite persistence (`video_config_json`), returning clips & treatment.
+   - Synchronized all updates with SQLite `durable_tasks.db` and memory state.
+2. Director's Planning HUD & Live Feedback:
+   - Enhanced `VideoCanvasPlayer.tsx` to detect `plan_` tasks and render a dedicated Director's Planning HUD with stage labels, animated purple gradient progress bar, and "Stop Planning" cancellation button.
+   - Supported cancellation via `POST /videos/tasks/{task_id}/cancel`, aborting planning and instantly unloading the local LLM to free VRAM.
+3. Auto-Planning Flicker Elimination & Session Recovery:
+   - Severed rogue auto-call to `videoApi.planVideo` on component mount in `MusicVideosView.tsx` (previously line 318), which caused race conditions and UI re-renders on song selection.
+   - Implemented `sessionStorage` task recovery (`milimo_active_planning_<songId>`) so page reloads, tab navigation, or view changes automatically resume live HUD polling seamlessly.
+4. Verification:
+   - All 28 video backend tests passing (`pytest backend/tests/test_video*.py`).
+   - Frontend production build (`npm run build`) passing with 0 errors.
+

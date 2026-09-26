@@ -338,3 +338,69 @@ def resolve_image_file(path: Optional[str]) -> Optional[str]:
                         return str(alt_cand.resolve())
 
     return None
+
+
+def resolve_video_file(path: Optional[str]) -> Optional[str]:
+    """Resolve a video file (.mp4, .mov, .webm) on disk across all video storage locations."""
+    if not path or not isinstance(path, str):
+        return None
+    cleaned = path.strip()
+    if not cleaned:
+        return None
+    if "://" in cleaned:
+        from urllib.parse import urlparse
+        cleaned = urlparse(cleaned).path
+
+    if os.path.isabs(cleaned) and os.path.isfile(cleaned) and os.path.getsize(cleaned) > 0:
+        return os.path.abspath(cleaned)
+
+    base = os.path.basename(cleaned)
+    rel = cleaned.lstrip("/")
+    after_videos = cleaned.split("/videos/")[-1].lstrip("/") if "/videos/" in cleaned else ""
+
+    data_dir = get_data_dir()
+    gen_dir = get_generated_audio_dir()
+    repo_root = get_repo_root()
+
+    search_dirs = [
+        gen_dir / "videos",
+        gen_dir / "videos" / "keyframes",
+        data_dir / "video_cache",
+        data_dir / "video_cache" / "keyframes",
+        data_dir / "video_cache" / "scene_stills",
+        gen_dir,
+        data_dir,
+        repo_root / "generated_audio" / "videos",
+        repo_root / "backend" / "generated_audio" / "videos",
+        Path.cwd() / "generated_audio" / "videos",
+        Path.cwd(),
+    ]
+
+    candidates = [
+        cleaned,
+        os.path.abspath(cleaned),
+    ]
+
+    for d in search_dirs:
+        candidates.append(str(d / base))
+        if rel:
+            candidates.append(str(d / rel))
+        if after_videos:
+            candidates.append(str(d / after_videos))
+            candidates.append(str(d / "videos" / after_videos))
+
+    alt_exts = [".mp4", ".mov", ".webm", ".mkv"]
+    _, ext = os.path.splitext(base)
+
+    for c in candidates:
+        cp = Path(c)
+        if cp.is_file() and cp.stat().st_size > 0:
+            return str(cp.resolve())
+        if ext.lower() in alt_exts:
+            for alt in alt_exts:
+                if alt.lower() != ext.lower():
+                    alt_cand = cp.with_suffix(alt)
+                    if alt_cand.is_file() and alt_cand.stat().st_size > 0:
+                        return str(alt_cand.resolve())
+
+    return None

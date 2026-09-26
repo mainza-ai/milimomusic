@@ -40,10 +40,17 @@ class DiffusersWanGenerator(BaseVideoGenerator):
         """Find local weights or return Hugging Face Hub model ID."""
         repo_prefix = f"Wan-AI/Wan2.1-{'I2V-14B-720P' if mode == 'i2v' else ('T2V-14B' if self.model_size == '14b' else 'T2V-1.3B')}-Diffusers"
         escaped = repo_prefix.replace("/", "__")
+        no_diffusers = escaped.replace("-Diffusers", "")
+        clean_tag = f"Wan-AI__Wan2.1-{'I2V-14B-720P' if mode == 'i2v' else ('T2V-14B' if self.model_size == '14b' else 'T2V-1.3B')}"
         local_cand = [
             str(get_models_dir("video") / escaped),
+            str(get_models_dir("video") / no_diffusers),
+            str(get_models_dir("video") / clean_tag),
             str(get_models_dir("video") / "wan2.1"),
             os.path.join(os.getcwd(), "models", "video", escaped),
+            os.path.join(os.getcwd(), "models", "video", no_diffusers),
+            os.path.join(os.getcwd(), "models", "video", clean_tag),
+            os.path.join(os.getcwd(), "models", "video", "wan2.1"),
         ]
         for c in local_cand:
             if os.path.isdir(c) and len(os.listdir(c)) > 0:
@@ -177,6 +184,10 @@ class DiffusersWanGenerator(BaseVideoGenerator):
 
         except Exception as e:
             logger.warning(f"Wan 2.1 local diffusion error or offline weights ({e}). Falling back to cinematic procedural scene generation.")
+            fallback_meta = kwargs.get("fallback_metadata")
+            if isinstance(fallback_meta, dict):
+                fallback_meta["fallback_used"] = True
+                fallback_meta["error"] = str(e)
             return await self._fallback.generate_clip(
                 prompt=prompt,
                 duration=duration,

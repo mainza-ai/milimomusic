@@ -278,6 +278,7 @@ class KeyframesRequest(SQLModel):
     aspect_ratio: Optional[str] = "16:9"
     force_regenerate: bool = False
     scenes: Optional[List[Dict[str, Any]]] = None
+    background: bool = False
 
 
 class SceneRegenerateRequest(SQLModel):

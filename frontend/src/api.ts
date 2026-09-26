@@ -1394,6 +1394,7 @@ export interface DirectorTreatment {
     lighting_design?: string;
     camera_philosophy?: string;
     director_notes?: string;
+    scenes?: any[];
 }
 
 export interface VideoPlanResult {

@@ -56,11 +56,11 @@ export const KeyframeZoomModal: React.FC<KeyframeZoomModalProps> = ({
                 </div>
 
                 {/* Keyframe Stills Image Canvas */}
-                <div className="relative aspect-video bg-black flex items-center justify-center overflow-hidden">
+                <div className="relative max-h-[70vh] min-h-[300px] bg-black/80 flex items-center justify-center overflow-hidden p-2">
                     <img
                         src={fullUrl}
                         alt={`Keyframe ${clipIndex}`}
-                        className="w-full h-full object-contain"
+                        className="max-h-[68vh] w-auto max-w-full object-contain rounded-lg shadow-md"
                     />
                 </div>
 

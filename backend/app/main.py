@@ -4831,6 +4831,23 @@ def get_video_task_status(task_id: str):
     return task
 
 
+@app.get("/videos/keyframes/{job_id}")
+def get_video_keyframes_endpoint(job_id: str):
+    """Retrieve existing pre-rendered scene keyframe stills for a job."""
+    from app.services.video_service import video_service
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        kf_map = video_service.get_job_keyframes(str(job.id))
+        return {
+            "status": "ok",
+            "job_id": str(job.id),
+            "keyframes": kf_map
+        }
+
+
 @app.post("/videos/keyframes/{job_id}")
 async def generate_video_keyframes(job_id: str, req: KeyframesRequest = Body(default=KeyframesRequest())):
     """Generate visual keyframe stills for each scene in the storyboard breakdown."""
@@ -4840,17 +4857,30 @@ async def generate_video_keyframes(job_id: str, req: KeyframesRequest = Body(def
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        w, h = (1920, 1080) if req.resolution == "1080p" else (1280, 720)
+        res = req.resolution or "720p"
+        ar = req.aspect_ratio or "16:9"
+        if ar == "9:16":
+            w, h = (1080, 1920) if res == "1080p" else (720, 1280)
+        elif ar == "1:1":
+            w, h = (1080, 1080) if res == "1080p" else (720, 720)
+        elif ar == "21:9":
+            w, h = (2560, 1080) if res == "1080p" else (1680, 720)
+        else:
+            w, h = (1920, 1080) if res == "1080p" else (1280, 720)
+
         keyframes = await video_service.generate_scene_keyframes(
             job=job,
             visual_style=req.visual_style or "neon-cyberpunk",
             width=w, height=h,
-            custom_style_prompt=req.custom_style_prompt
+            custom_style_prompt=req.custom_style_prompt,
+            force_regenerate=req.force_regenerate,
+            user_scenes=req.scenes
         )
         return {
             "status": "ok",
             "job_id": job_id,
             "visual_style": req.visual_style,
+            "aspect_ratio": ar,
             "keyframes": keyframes
         }
 
@@ -4868,13 +4898,22 @@ async def retake_video_clip_endpoint(job_id: str, clip_index: int, payload: dict
         prompt = payload.get("prompt")
         visual_style = payload.get("visual_style", "neon-cyberpunk")
         res = payload.get("resolution", "720p")
-        w, h = (1920, 1080) if res == "1080p" else (1280, 720)
+        ar = payload.get("aspect_ratio", "16:9")
+        if ar == "9:16":
+            w, h = (1080, 1920) if res == "1080p" else (720, 1280)
+        elif ar == "1:1":
+            w, h = (1080, 1080) if res == "1080p" else (720, 720)
+        elif ar == "21:9":
+            w, h = (2560, 1080) if res == "1080p" else (1680, 720)
+        else:
+            w, h = (1920, 1080) if res == "1080p" else (1280, 720)
 
         kf_filename = f"keyframe_{job.id}_{clip_index:03d}.png"
         kf_path = os.path.join(KEYFRAMES_DIR, kf_filename)
         os.makedirs(KEYFRAMES_DIR, exist_ok=True)
 
         if prompt and prompt.strip():
+            rendered_ok = False
             try:
                 gen = image_service.generate_scene_background(
                     prompt=prompt.strip(),
@@ -4884,8 +4923,21 @@ async def retake_video_clip_endpoint(job_id: str, clip_index: int, payload: dict
                 )
                 if gen.get("ok") and gen.get("dest_path") and os.path.isfile(gen["dest_path"]):
                     shutil.copy(gen["dest_path"], kf_path)
+                    rendered_ok = True
             except Exception as e:
                 logger.warning(f"Could not generate retake keyframe: {e}")
+
+            if not rendered_ok:
+                try:
+                    image_service._generate_raster_cover(
+                        prompt=f"{prompt.strip()} (Retake #{clip_index})",
+                        style=visual_style,
+                        width=w,
+                        height=h,
+                        dest_path=kf_path
+                    )
+                except Exception as ex:
+                    logger.error(f"Fallback retake keyframe still generation also failed: {ex}")
 
         kf_url = f"/audio/videos/keyframes/{kf_filename}" if os.path.isfile(kf_path) else None
 

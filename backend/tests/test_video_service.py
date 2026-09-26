@@ -429,4 +429,121 @@ async def test_retake_clip_custom_prompt_keyframe(client, sample_job):
     assert data["prompt"] == "An extreme close up of cyberpunk glasses reflecting laser grids"
 
 
+@pytest.mark.asyncio
+async def test_keyframes_get_and_post_api_endpoints(client, sample_job):
+    """Test generating keyframes via POST and retrieving them via GET /videos/keyframes/{job_id}."""
+    # 1. POST /videos/keyframes/{job_id}
+    post_res = await client.post(
+        f"/videos/keyframes/{sample_job.id}",
+        json={
+            "visual_style": "neon-cyberpunk",
+            "resolution": "720p",
+            "aspect_ratio": "16:9",
+            "force_regenerate": True,
+        }
+    )
+    assert post_res.status_code == 200
+    data = post_res.json()
+    assert data["status"] == "ok"
+    assert "keyframes" in data
+    assert len(data["keyframes"]) >= 3
+    first_kf = data["keyframes"][0]
+    assert first_kf["clip_index"] == 1
+    assert "keyframe_url" in first_kf
+
+    # 2. GET /videos/keyframes/{job_id}
+    get_res = await client.get(f"/videos/keyframes/{sample_job.id}")
+    assert get_res.status_code == 200
+    get_data = get_res.json()
+    assert get_data["status"] == "ok"
+    assert get_data["job_id"] == str(sample_job.id)
+    assert "keyframes" in get_data
+    assert len(get_data["keyframes"]) >= 3
+    assert 1 in get_data["keyframes"] or "1" in get_data["keyframes"]
+
+
+@pytest.mark.asyncio
+async def test_generate_scene_keyframes_unique_and_decoupled_from_cover(tmp_path):
+    """Test that generate_scene_keyframes creates distinct images for each clip,
+    including vocal clips, and never copies the album cover image.
+    """
+    import hashlib
+    from PIL import Image
+    from app.services.video.video_orchestrator import video_orchestrator
+
+    # 1. Create a dummy cover image with a known color and MD5
+    cover_path = tmp_path / "album_cover.png"
+    img = Image.new("RGB", (512, 512), color=(255, 0, 0))
+    img.save(cover_path)
+    cover_md5 = hashlib.md5(cover_path.read_bytes()).hexdigest()
+
+    # 2. Create mock job
+    job = Job(
+        id=uuid.uuid4(),
+        title="Keyframe Test",
+        prompt="A testing song",
+        cover_image_path=str(cover_path),
+        status=JobStatus.COMPLETED
+    )
+
+    # 3. Create 3 clips: Clip 1 (Vocal), Clip 2 (Narrative), Clip 3 (Vocal)
+    user_scenes = [
+        {
+            "clip_index": 1,
+            "start_time": 0.0,
+            "end_time": 5.0,
+            "duration": 5.0,
+            "time_str": "0.0s - 5.0s",
+            "is_vocal": True,
+            "scene_type": "VOCAL_PERFORMANCE",
+            "prompt": "Close-up of a vocalist singing with neon blue hair under volumetric laser beams",
+        },
+        {
+            "clip_index": 2,
+            "start_time": 5.0,
+            "end_time": 10.0,
+            "duration": 5.0,
+            "time_str": "5.0s - 10.0s",
+            "is_vocal": False,
+            "scene_type": "NARRATIVE_STORY",
+            "prompt": "A futuristic hovercar speeding down an empty rainy expressway at midnight",
+        },
+        {
+            "clip_index": 3,
+            "start_time": 10.0,
+            "end_time": 15.0,
+            "duration": 5.0,
+            "time_str": "10.0s - 15.0s",
+            "is_vocal": True,
+            "scene_type": "VOCAL_PERFORMANCE",
+            "prompt": "Medium shot of the lead singer on a high-rise balcony looking at dystopian skyline",
+        },
+    ]
+
+    # 4. Generate keyframes
+    kf_results = await video_orchestrator.generate_scene_keyframes(
+        job=job,
+        visual_style="neon-cyberpunk",
+        width=1280,
+        height=720,
+        force_regenerate=True,
+        user_scenes=user_scenes
+    )
+
+    assert len(kf_results) == 3
+
+    # 5. Verify every clip has a generated keyframe file on disk
+    kf_hashes = []
+    for kf in kf_results:
+        kf_path = Path(kf["keyframe_path"])
+        assert kf_path.exists(), f"Keyframe file {kf_path} does not exist"
+        data = kf_path.read_bytes()
+        h = hashlib.md5(data).hexdigest()
+        assert h != cover_md5, f"Clip #{kf['clip_index']} duplicated the album cover image!"
+        kf_hashes.append(h)
+
+    # 6. Verify that keyframes for different clips are distinct (not duplicated across clips)
+    assert len(set(kf_hashes)) == len(kf_results), "Duplicate keyframe stills were detected between clips!"
+
+
 

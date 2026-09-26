@@ -111,12 +111,18 @@ class VideoOrchestrator:
         return resolve_stem_file(job.id, stem_name, stems_val)
 
     def resolve_face_image(self, job: Job, custom_image: Optional[str] = None) -> Optional[str]:
+        """Resolve face/performer portrait image for avatar lip-sync.
+
+        Only returns an image if an explicit character portrait is supplied.
+        Album cover artwork is never treated as a face portrait.
+        """
         if custom_image:
             img = resolve_image_file(custom_image) or resolve_audio_file(custom_image)
             if img:
                 return img
-        if job.cover_image_path:
-            img = resolve_image_file(job.cover_image_path) or resolve_audio_file(job.cover_image_path)
+        char_img = getattr(job, "character_image_path", None)
+        if char_img:
+            img = resolve_image_file(char_img) or resolve_audio_file(char_img)
             if img:
                 return img
         return None
@@ -222,58 +228,122 @@ class VideoOrchestrator:
 
         return "\n".join(ass_lines)
 
+    def get_job_keyframes(self, job_id: str) -> Dict[int, str]:
+        """Scan KEYFRAMES_DIR and return existing keyframes map {clip_index: url} for job."""
+        kf_map: Dict[int, str] = {}
+        prefix = f"keyframe_{job_id}_"
+        if not os.path.isdir(KEYFRAMES_DIR):
+            return kf_map
+
+        for fname in os.listdir(KEYFRAMES_DIR):
+            if fname.startswith(prefix) and fname.endswith(".png"):
+                suffix = fname[len(prefix):-4]
+                try:
+                    clip_idx = int(suffix)
+                    kf_map[clip_idx] = f"/audio/videos/keyframes/{fname}"
+                except ValueError:
+                    continue
+        return kf_map
+
     async def generate_scene_keyframes(
         self,
         job: Job,
         visual_style: str = "neon-cyberpunk",
         width: int = 1280,
         height: int = 720,
-        custom_style_prompt: Optional[str] = None
+        custom_style_prompt: Optional[str] = None,
+        force_regenerate: bool = False,
+        user_scenes: Optional[List[Dict[str, Any]]] = None
     ) -> List[Dict[str, Any]]:
         """
         Generate visual keyframe stills for each scene in the storyboard breakdown.
         Enables user to inspect and approve director concepts before full video diffusion.
+        Every scene (vocal performance, narrative, B-roll, instrumental solo) receives
+        a dedicated scene still rendered from its director prompt.
         """
         plan = video_director.segment_song(
             job=job,
             max_clip_duration=15.0,
             visual_style=visual_style,
-            custom_style_prompt=custom_style_prompt
+            custom_style_prompt=custom_style_prompt,
+            user_scenes=user_scenes
         )
-        face_image = self.resolve_face_image(job)
 
         results = []
         for idx, clip in enumerate(plan.clips):
-            kf_filename = f"keyframe_{job.id}_{idx + 1:03d}.png"
+            clip_idx = int(clip.clip_index or (idx + 1))
+            kf_filename = f"keyframe_{job.id}_{clip_idx:03d}.png"
             kf_path = os.path.join(KEYFRAMES_DIR, kf_filename)
 
-            if clip.is_vocal and face_image and os.path.isfile(face_image):
-                shutil.copy(face_image, kf_path)
-            else:
-                try:
-                    from app.services.image_service import image_service
-                    res = image_service.generate_scene_background(
-                        prompt=clip.prompt,
+            # Preserve existing valid still unless forced or if it is a stale cover copy
+            if not force_regenerate and os.path.isfile(kf_path) and os.path.getsize(kf_path) > 0:
+                is_stale_cover = False
+                if job.cover_image_path:
+                    cover_full = resolve_image_file(job.cover_image_path) or resolve_audio_file(job.cover_image_path)
+                    if cover_full and os.path.isfile(cover_full):
+                        try:
+                            if os.path.getsize(kf_path) == os.path.getsize(cover_full):
+                                import hashlib
+                                with open(kf_path, "rb") as f1, open(cover_full, "rb") as f2:
+                                    if hashlib.md5(f1.read()).digest() == hashlib.md5(f2.read()).digest():
+                                        is_stale_cover = True
+                        except Exception:
+                            pass
+
+                if not is_stale_cover:
+                    results.append({
+                        "clip_index": clip_idx,
+                        "time_str": clip.time_str,
+                        "scene_type": clip.scene_type,
+                        "prompt": clip.prompt,
+                        "camera": clip.camera,
+                        "lighting": clip.lighting,
+                        "keyframe_url": f"/audio/videos/keyframes/{kf_filename}"
+                    })
+                    continue
+
+            # Render dedicated scene still from the clip's director prompt
+            try:
+                from app.services.image_service import image_service
+                res = image_service.generate_scene_background(
+                    prompt=clip.prompt,
+                    style=visual_style,
+                    width=width,
+                    height=height
+                )
+                if res.get("ok") and res.get("dest_path") and os.path.isfile(res["dest_path"]):
+                    shutil.copy(res["dest_path"], kf_path)
+                else:
+                    # Procedural fallback still if diffusion is unavailable
+                    image_service._generate_raster_cover(
+                        prompt=f"{clip.prompt} (Scene {clip_idx})",
                         style=visual_style,
                         width=width,
-                        height=height
+                        height=height,
+                        dest_path=kf_path
                     )
-                    if res.get("ok") and res.get("dest_path") and os.path.isfile(res["dest_path"]):
-                        shutil.copy(res["dest_path"], kf_path)
-                    elif face_image and os.path.isfile(face_image):
-                        shutil.copy(face_image, kf_path)
-                except Exception as e:
-                    logger.warning(f"Failed to generate keyframe image ({e})")
-                    if face_image and os.path.isfile(face_image):
-                        shutil.copy(face_image, kf_path)
+            except Exception as e:
+                logger.warning(f"Failed to generate keyframe image for clip {clip_idx} ({e})")
+                try:
+                    from app.services.image_service import image_service
+                    image_service._generate_raster_cover(
+                        prompt=f"{clip.prompt} (Scene {clip_idx})",
+                        style=visual_style,
+                        width=width,
+                        height=height,
+                        dest_path=kf_path
+                    )
+                except Exception as ex:
+                    logger.error(f"Fallback keyframe still generation also failed: {ex}")
 
             results.append({
-                "clip_index": clip.clip_index,
+                "clip_index": clip_idx,
                 "time_str": clip.time_str,
                 "scene_type": clip.scene_type,
                 "prompt": clip.prompt,
                 "camera": clip.camera,
                 "lighting": clip.lighting,
+                "keyframe_path": kf_path if os.path.isfile(kf_path) else None,
                 "keyframe_url": f"/audio/videos/keyframes/{kf_filename}" if os.path.isfile(kf_path) else None
             })
 

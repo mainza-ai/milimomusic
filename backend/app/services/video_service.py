@@ -258,9 +258,30 @@ class VideoService:
         from app.services.video.video_orchestrator import video_orchestrator
         return video_orchestrator.get_video_providers()
 
-    async def generate_scene_keyframes(self, job: Job, visual_style: str = "neon-cyberpunk", width: int = 1280, height: int = 720, custom_style_prompt: Optional[str] = None) -> List[Dict[str, Any]]:
+    async def generate_scene_keyframes(
+        self,
+        job: Job,
+        visual_style: str = "neon-cyberpunk",
+        width: int = 1280,
+        height: int = 720,
+        custom_style_prompt: Optional[str] = None,
+        force_regenerate: bool = False,
+        user_scenes: Optional[List[Dict[str, Any]]] = None
+    ) -> List[Dict[str, Any]]:
         from app.services.video.video_orchestrator import video_orchestrator
-        return await video_orchestrator.generate_scene_keyframes(job=job, visual_style=visual_style, width=width, height=height, custom_style_prompt=custom_style_prompt)
+        return await video_orchestrator.generate_scene_keyframes(
+            job=job,
+            visual_style=visual_style,
+            width=width,
+            height=height,
+            custom_style_prompt=custom_style_prompt,
+            force_regenerate=force_regenerate,
+            user_scenes=user_scenes
+        )
+
+    def get_job_keyframes(self, job_id: str) -> Dict[int, str]:
+        from app.services.video.video_orchestrator import video_orchestrator
+        return video_orchestrator.get_job_keyframes(job_id)
 
     @classmethod
     def get_active_video_engine(cls) -> Dict[str, Any]:

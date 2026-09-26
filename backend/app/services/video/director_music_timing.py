@@ -170,7 +170,7 @@ class DirectorMusicTiming:
 
         # Plan sequential cuts
         current_time = 0.0
-        clip_index = 0
+        clip_index = 1
         planned_clips: List[PlannedMusicClip] = []
 
         while current_time < duration - 0.2:

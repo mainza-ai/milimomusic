@@ -101,6 +101,7 @@ function getShotIntentBadge(sceneType?: string) {
 interface VideoTimelineTrackProps {
     clips: VideoClipSegment[];
     keyframes: Record<number, string>;
+    aspectRatio?: '16:9' | '9:16' | '1:1' | '21:9';
     activeSong?: Job;
     onRetakeClip: (clipIndex: number) => void;
     onZoomKeyframe: (clipIndex: number, url: string) => void;
@@ -110,12 +111,27 @@ interface VideoTimelineTrackProps {
 const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
     clips,
     keyframes,
+    aspectRatio = '16:9',
     activeSong,
     onRetakeClip,
     onZoomKeyframe,
     onSeekToTime,
 }) => {
     const [viewMode, setViewMode] = useState<'timeline' | 'grid'>('timeline');
+
+    const aspectClass = useMemo(() => {
+        switch (aspectRatio) {
+            case '9:16':
+                return 'aspect-[9/16]';
+            case '1:1':
+                return 'aspect-square';
+            case '21:9':
+                return 'aspect-[21/9]';
+            case '16:9':
+            default:
+                return 'aspect-video';
+        }
+    }, [aspectRatio]);
 
     const totalDurationSec = useMemo(() => {
         if (clips.length > 0) {
@@ -213,7 +229,7 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                     title={`Click to jump playhead to ${clip.time_str}`}
                                 >
                                     {/* Keyframe / Poster Image */}
-                                    <div className="relative aspect-video rounded-xl overflow-hidden bg-black/40 border border-black/10 dark:border-white/10 mb-2">
+                                    <div className={`relative ${aspectClass} rounded-xl overflow-hidden bg-black/40 border border-black/10 dark:border-white/10 mb-2`}>
                                         {kfUrl ? (
                                             <img
                                                 src={api.getAudioUrl(kfUrl)}
@@ -330,7 +346,7 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                 title={`Click to jump playhead to ${clip.time_str}`}
                             >
                                 <div className="flex items-center gap-3">
-                                    <div className="relative w-28 aspect-video rounded-xl overflow-hidden bg-black/40 flex-shrink-0 border border-white/10">
+                                    <div className={`relative w-28 ${aspectClass} rounded-xl overflow-hidden bg-black/40 flex-shrink-0 border border-white/10`}>
                                         {kfUrl ? (
                                             <img
                                                 src={api.getAudioUrl(kfUrl)}

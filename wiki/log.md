@@ -2355,3 +2355,21 @@ Resolved runtime `NameError: name 'full_prompt' is not defined` when engaging AI
    - Verified Python syntax compilation with `py_compile`.
    - Executed full video test suite (`test_video_service.py`), passing all 24 tests in 11.69s.
    - Verified frontend build with `npm run build` (clean exit code 0).
+
+## [2026-09-26] feat | Video Generator Registry, MiniMax H3 MLX Workflow & Model Decoupling
+Architected authoritative model-driven video generation pipeline, eliminating the "Wan Fallthrough Trap" and fully integrating MiniMax Hailuo 3 (MLX 8-bit Apple Silicon):
+1. Root Cause & Architecture Flaw:
+   - In `backend/app/services/video/video_orchestrator.py`, generator selection only checked for `"1.3"` and `"ltx"`; any other model (including `hailuo_h3`) dropped into `else: self._local_wan_14b`, silently hijacking user intent to run Wan 2.1 14B instead of the active MiniMax H3 model.
+   - Wan 2.1 crashed on prompt tokenization due to an upstream diffusers bug in `pipeline_wan_i2v.py` calling `ftfy.fix_text` unconditionally when `ftfy` was absent from `requirements.txt`.
+   - Per-clip hardware lock scoping in `video_orchestrator.py` caused 14B model weights to be evicted and reloaded (24s) on every scene.
+2. Architecture Enhancements:
+   - **Unified Model Specifications (`model_specs.py`)**: Created single source of truth for duration constraints, frame rates (24 fps for H3 vs 16 for Wan), and lattice frame calculations (49+48k for H3).
+   - **Video Generator Registry (`generator_registry.py`)**: Authoritative factory dynamically resolving generators for `hailuo_h3`, `wan_14b`, `wan_1.3b`, `ltx_video`, and cloud endpoints without silent fallthroughs.
+   - **MiniMax H3 Generator (`minimax_h3.py`)**: Integrated local MLX weight resolution (`pipenetwork__MiniMax-H3-MLX-8bit`), Cloud MiniMax API dispatch, 24 fps parameter enforcement, and transparent status reporting.
+   - **Hardware Lock Optimization**: Scoped `GlobalHardwareCoordinator.scoped_device` across the full multi-scene render loop, eliminating 24s-per-clip reloading thrashing.
+   - **Upstream Diffusers Protection**: Added `ftfy>=6.2.0` to `backend/requirements.txt` and defensive polyfill in `diffusers_wan.py`.
+   - **Installed Variant Prioritization**: `video_service.py` prioritizes installed model variants (`minimax_h3_mlx_8bit`) when activating `hailuo_h3`.
+3. Verification:
+   - All 25 backend tests passing (`pytest backend/tests/test_video_service.py`).
+   - Clean frontend build (`npm run build`).
+   - Verified active engine switch and persistence to `active_models.json`.

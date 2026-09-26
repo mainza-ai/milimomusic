@@ -201,22 +201,8 @@ class VideoDirector:
 
     @classmethod
     def get_model_max_duration(cls, model_name: Optional[str] = None) -> float:
-        if not model_name:
-            return 5.0
-        m = model_name.lower().strip()
-        if "wan" in m:
-            return 5.0
-        if "ltx" in m:
-            return 10.0
-        if "cog" in m:
-            return 10.0
-        if "hailuo" in m or "h3" in m or "minimax" in m:
-            return 15.0
-        if "hunyuan" in m:
-            return 15.0
-        if "audioreactive" in m or "reactive" in m:
-            return 120.0
-        return MODEL_MAX_DURATIONS.get(m, 5.0)
+        from app.services.video.model_specs import get_model_spec
+        return get_model_spec(model_name).max_duration
 
     @classmethod
     def detect_bpm(cls, audio_path: Optional[str] = None, default_bpm: float = 120.0) -> float:

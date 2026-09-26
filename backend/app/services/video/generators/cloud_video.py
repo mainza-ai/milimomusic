@@ -185,6 +185,40 @@ class CloudVideoGenerator(BaseVideoGenerator):
                             elif poll_data.get("status") == "failed":
                                 break
 
+            elif self.service == "minimax":
+                minimax_key = os.environ.get("MINIMAX_API_KEY")
+                headers = {
+                    "Authorization": f"Bearer {minimax_key}",
+                    "Content-Type": "application/json"
+                }
+                payload = {
+                    "prompt": prompt,
+                    "model": "video-01",
+                    "duration": int(min(15.0, duration))
+                }
+                async with httpx.AsyncClient(timeout=300.0) as client:
+                    resp = await client.post("https://api.minimax.chat/v1/video_generation", json=payload, headers=headers)
+                    if resp.status_code == 200:
+                        task_data = resp.json()
+                        task_id = task_data.get("task_id")
+                        if task_id:
+                            for _ in range(60):
+                                await asyncio.sleep(4)
+                                check_resp = await client.get(f"https://api.minimax.chat/v1/query/video_generation?task_id={task_id}", headers=headers)
+                                if check_resp.status_code == 200:
+                                    res_json = check_resp.json()
+                                    if res_json.get("status") == "Success":
+                                        file_id = res_json.get("file_id")
+                                        dl_url = res_json.get("download_url")
+                                        if dl_url:
+                                            vid_resp = await client.get(dl_url)
+                                            with open(out_path, "wb") as f_out:
+                                                f_out.write(vid_resp.content)
+                                            return True
+                                    elif res_json.get("status") in ("Fail", "Error"):
+                                        break
+
+
             return False
 
         except Exception as e:

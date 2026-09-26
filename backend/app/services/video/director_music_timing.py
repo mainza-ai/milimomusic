@@ -59,17 +59,12 @@ class DirectorMusicTiming:
         Calculates the closest valid model lattice duration and the required trim duration.
         Returns: (model_render_duration, music_output_trim)
         """
-        m = (model_name or "default").lower()
-        key = "default"
-        for k in cls.MODEL_LATTICE_CONFIGS:
-            if k in m:
-                key = k
-                break
+        from app.services.video.model_specs import get_model_spec
 
-        cfg = cls.MODEL_LATTICE_CONFIGS[key]
-        fps = cfg["fps"]
-        min_frames = cfg["min_frames"]
-        frame_step = cfg["frame_step"]
+        spec = get_model_spec(model_name)
+        fps = spec.fps
+        min_frames = spec.min_frames
+        frame_step = spec.frame_step
 
         target_frames = int(math.ceil(target_duration * fps))
 

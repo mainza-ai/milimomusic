@@ -15,6 +15,18 @@ from app.services.video.generators.procedural import ProceduralVideoGenerator
 
 logger = logging.getLogger(__name__)
 
+# Upstream diffusers bug safeguard: diffusers.pipelines.wan.pipeline_wan_i2v unconditionally
+# calls ftfy.fix_text in basic_clean() without checking is_ftfy_available().
+try:
+    import ftfy
+except ImportError:
+    import types
+    dummy_ftfy = types.ModuleType("ftfy")
+    dummy_ftfy.fix_text = lambda x: str(x)
+    sys.modules["ftfy"] = dummy_ftfy
+    import builtins
+    setattr(builtins, "ftfy", dummy_ftfy)
+
 _WAN_PIPELINE_CACHE: Dict[str, Any] = {}
 
 
@@ -100,6 +112,10 @@ class DiffusersWanGenerator(BaseVideoGenerator):
             # Check if Image-to-Video mode
             if image_path and os.path.isfile(image_path):
                 from diffusers import WanImageToVideoPipeline, AutoencoderKLWan
+                wan_i2v_mod = sys.modules.get("diffusers.pipelines.wan.pipeline_wan_i2v")
+                if wan_i2v_mod and not getattr(wan_i2v_mod, "ftfy", None):
+                    import ftfy
+                    setattr(wan_i2v_mod, "ftfy", ftfy)
 
                 model_id = self._resolve_model_path(mode="i2v")
                 if not model_id:

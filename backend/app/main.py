@@ -4905,10 +4905,15 @@ async def render_advanced_music_video_endpoint(job_id: str, req: VideoRenderRequ
                         j.video_config_json = json.dumps(config, default=str)
                         s.add(j)
                         s.commit()
+            except asyncio.CancelledError:
+                logger.info(f"Background video render task {task_id} successfully cancelled.")
             except Exception as e:
                 logger.error(f"Background advanced video render failed for {job_id}: {e}")
+            finally:
+                video_service.unregister_render_task(task_id)
 
-        asyncio.create_task(_run_bg())
+        bg_task = asyncio.create_task(_run_bg())
+        video_service.register_render_task(task_id, bg_task)
         return {
             "status": "queued",
             "task_id": task_id,

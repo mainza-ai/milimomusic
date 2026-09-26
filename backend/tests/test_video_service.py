@@ -724,5 +724,93 @@ async def test_plan_music_video_async_cancellation(client, sample_job):
     assert status["status"] == "cancelled"
 
 
+@pytest.mark.asyncio
+async def test_render_video_task_instant_asyncio_cancellation(client, sample_job):
+    """Test cancelling an active background video render task cancels the running asyncio.Task object instantly."""
+    import asyncio
+    from app.services.video.video_orchestrator import video_orchestrator
+    from app.services.video.types import VideoTaskStatusInfo
+
+    task_id = f"render_test_cancel_{uuid.uuid4().hex[:6]}"
+
+    async def _dummy_render_loop():
+        try:
+            while True:
+                await asyncio.sleep(0.05)
+        except asyncio.CancelledError:
+            raise
+
+    bg_task = asyncio.create_task(_dummy_render_loop())
+    video_orchestrator.register_render_task(task_id, bg_task)
+
+    with video_orchestrator._lock:
+        cancel_ev = asyncio.Event()
+        video_orchestrator._video_cancels[task_id] = cancel_ev
+        video_orchestrator._tasks[task_id] = VideoTaskStatusInfo(
+            id=task_id,
+            job_id=str(sample_job.id),
+            status="processing",
+            step="Rendering Scene 1/8",
+            progress=25
+        )
+
+    # Cancel via API
+    cancel_res = await client.post(f"/videos/tasks/{task_id}/cancel")
+    assert cancel_res.status_code == 200
+    assert cancel_res.json()["ok"] is True
+    assert cancel_ev.is_set()
+
+    # The background task should be cancelled immediately
+    await asyncio.sleep(0.05)
+    assert bg_task.cancelled() or bg_task.done()
+
+    # Verify task status is cancelled
+    status = video_orchestrator.get_task(task_id)
+    assert status is not None
+    assert status["status"] == "cancelled"
+    assert status["progress"] == 0
+
+
+@pytest.mark.asyncio
+async def test_wan_step_cancellation_callback():
+    """Test DiffusersWanGenerator raises asyncio.CancelledError immediately if cancel_check triggers."""
+    import asyncio
+    from app.services.video.generators.diffusers_wan import DiffusersWanGenerator
+
+    generator = DiffusersWanGenerator(model_size="1.3b")
+    cancel_ev = asyncio.Event()
+    cancel_ev.set()  # Pre-cancelled
+
+    with pytest.raises(asyncio.CancelledError):
+        await generator.generate_clip(
+            prompt="A cinematic drone shot",
+            duration=5.0,
+            out_path="/tmp/test_nonexistent.mp4",
+            cancel_event=cancel_ev,
+            cancel_check=lambda: cancel_ev.is_set()
+        )
+
+
+@pytest.mark.asyncio
+async def test_minimax_h3_step_cancellation():
+    """Test MiniMaxH3Generator raises asyncio.CancelledError immediately when cancelled."""
+    import asyncio
+    from app.services.video.generators.minimax_h3 import MiniMaxH3Generator
+
+    generator = MiniMaxH3Generator()
+    cancel_ev = asyncio.Event()
+    cancel_ev.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await generator.generate_clip(
+            prompt="An epic cyberpunk city",
+            duration=5.0,
+            out_path="/tmp/test_minimax_cancel.mp4",
+            cancel_event=cancel_ev,
+            cancel_check=lambda: cancel_ev.is_set()
+        )
+
+
+
 
 

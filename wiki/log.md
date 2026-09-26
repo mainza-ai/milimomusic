@@ -2373,3 +2373,26 @@ Architected authoritative model-driven video generation pipeline, eliminating th
    - All 25 backend tests passing (`pytest backend/tests/test_video_service.py`).
    - Clean frontend build (`npm run build`).
    - Verified active engine switch and persistence to `active_models.json`.
+
+## [2026-09-26] fix | Metal 558.11 GB Buffer Allocation Crash & Instant Video Render Cancellation
+Forensic investigation and full resolution of Apple Silicon Metal 558.11 GB buffer crash, instant render cancellation, and local-first MiniMax H3 transparency:
+1. Root Causes:
+   - **558.11 GB Metal Allocation Crash**: In un-fused attention on Apple Silicon MPS without FlashAttention-2, Wan 2.1 DiT at 1280x720 with 65 frames produces $S = 61,200$ tokens. PyTorch materializes the full $(1, 40, 61200, 61200)$ tensor in `float32` (4 bytes), calculating $\frac{1 \times 40 \times 61,200^2 \times 4}{1024^3} = \mathbf{558.11\text{ GB}}$, which exceeds Metal's buffer allocation limits and crashes. Furthermore, `DiffusersWanGenerator._resolve_model_path(mode="i2v")` hardcoded resolution to `Wan2.1-I2V-14B-720P`, loading 14B weights even when Wan 1.3B Fast was selected.
+   - **Stop Button Lag (>2 minutes)**: `backend/app/main.py` initiated `asyncio.create_task(_run_bg())` without retaining the background `Task` reference. In `VideoOrchestrator`, `cancel_event.is_set()` was only evaluated once between full clip boundaries (ignoring cancellations while a 30-step diffusion or procedural clip was executing). PyTorch's `pipe(...)` ran an uninterrupted C++ loop without step callbacks.
+2. Architectural Repairs:
+   - **Metal Memory Protection & Attention Slicing (`diffusers_wan.py`)**:
+     - Configured `pipe.enable_attention_slicing(slice_size="auto")` and `pipe.vae.enable_tiling()` / `enable_slicing()`.
+     - Clamped resolution and frame counts on Apple Silicon MPS ($\le 832\times 480$, $\le 33$ frames), maintaining token count $S \le 14,040$ and peak attention memory $<1\text{ GB}$ per slice.
+     - Fixed `_resolve_model_path` and `can_i2v` logic so selecting Wan 1.3B strictly stays on the 1.3B lightweight pipeline.
+   - **Instant (<200ms) Asyncio Task Cancellation (`video_orchestrator.py`, `main.py`, `video_service.py`)**:
+     - Added `_active_render_tasks: Dict[str, asyncio.Task]` registry with `register_render_task` and `unregister_render_task`.
+     - In `cancel_video_task`: sets `cancel_event.set()`, cancels the active `Task` (`task.cancel()`), immediately updates task state to `cancelled`, unloads generators, and flushes VRAM/MPS memory.
+     - Passed `callback_on_step_end` into `WanPipeline`, `WanImageToVideoPipeline`, and `LTXPipeline`, immediately raising `asyncio.CancelledError` on user abort.
+     - Wrapped procedural and lip-sync FFmpeg subprocesses with `proc.kill()` on `CancelledError`.
+     - Caught `asyncio.CancelledError` cleanly without triggering procedural fallbacks or marking tasks as `error`.
+   - **Local-First MiniMax H3 Transparency (`minimax_h3.py`)**:
+     - Explicitly communicates that local MLX weights (35.3 GB DiT) run in animatic preview mode (24 fps, 49+48k frame lattice) until auxiliary text-encoder/VAE pipelines are finalized, clearly noting that full 33B dense attention requires ~1.2 hrs/clip on unified memory and recommending Wan 1.3B or LTX-Video 0.9B for rapid local diffusion.
+3. Verification & Metrics:
+   - All 28 video backend tests passing (`pytest backend/tests/test_video_service.py`), including dedicated tests for instant asyncio cancellation, Wan step callbacks, and MiniMax H3 abort.
+   - Frontend production build (`npm run build`) succeeded with 0 TypeScript/bundling errors.
+   - Live uvicorn daemon running cleanly on port 8000.

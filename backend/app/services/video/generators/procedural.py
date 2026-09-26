@@ -96,6 +96,18 @@ class ProceduralVideoGenerator(BaseVideoGenerator):
                 out_path
             ]
 
-        proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        _, err = await proc.communicate()
-        return proc.returncode == 0 and os.path.isfile(out_path) and os.path.getsize(out_path) > 0
+        cancel_event = kwargs.get("cancel_event")
+        cancel_check = kwargs.get("cancel_check")
+        if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
+            raise asyncio.CancelledError("Procedural video generation cancelled by user.")
+
+        try:
+            proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            _, err = await proc.communicate()
+            return proc.returncode == 0 and os.path.isfile(out_path) and os.path.getsize(out_path) > 0
+        except asyncio.CancelledError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise

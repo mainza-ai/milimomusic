@@ -2,35 +2,59 @@
 title: AI Music Video Studio
 type: entity
 created: 2026-09-07
-updated: 2026-09-16
-tags: [video, studio, wan, liveportrait, ltx-video, diffusers, lipsync, karaoke, ass, director, timeline]
-aliases: [VideoStudio, MusicVideosView, VideoService, VideoOrchestrator]
+updated: 2026-09-26
+tags: [video, studio, wan, liveportrait, ltx-video, minimax-h3, diffusers, lipsync, karaoke, ass, director, timeline, cancellation, attention-slicing]
+aliases: [VideoStudio, MusicVideosView, VideoService, VideoOrchestrator, VideoGeneratorRegistry]
 ---
 
 # AI Music Video Studio
 
 The **AI Music Video Studio** (`backend/app/services/video/` and frontend `MusicVideosView.tsx`) is Milimo Music's production-grade AI music video generation, neural singing avatar animation, and visual performance engine. It turns generated music tracks into broadcast-grade music videos with beat-matched scene cuts, neural facial lip-syncing driven by isolated vocal stems, pre-rendered scene keyframes, synchronized karaoke subtitles, cinematic video diffusion, and a non-destructive multi-track timeline editor.
 
-## 1. Generative Video Models & Diffusion Engines
+## 1. Video Generator Registry & Engine Decoupling
 
-Frontier text-to-video and image-to-video diffusion models operate with strict spatio-temporal attention windows:
+Generation requests are resolved dynamically through the authoritative **Video Generator Registry** (`generator_registry.py`), eliminating silent fallthroughs and ensuring user-selected models run with exact architectural parameters:
 
-| Model ID | Model Family | Max Duration | Engine / Pipeline | Description |
-|---|---|---|---|---|
-| `wan_14b` | Alibaba Wan 2.1 14B | **5.0s** | `WanPipeline` / `WanImageToVideoPipeline` | SOTA 14B DiT with 3D spatio-temporal attention, keyframe I2V and T2V |
-| `wan_1.3b` | Alibaba Wan 2.1 1.3B | **5.0s** | `WanPipeline` / `WanImageToVideoPipeline` | Lightweight 1.3B DiT suitable for rapid local rendering |
-| `ltx_video` | Lightricks LTX-Video 0.9B | **10.0s** | `LTXPipeline` / `LTXImageToVideoPipeline` | Real-time high-efficiency DiT capable of up to 10s continuous generation |
-| `hailuo_h3` | MiniMax Hailuo H3 33B | **15.0s** | Native H3 DiT / MLX | SOTA 33B Omni-modal DiT with Context-IR prompt formatting |
-| `cloud_fal` | Fal.ai Cloud GPU | **5.0s - 15.0s** | Fast Serverless REST | Offloaded Wan 2.1 / LivePortrait generation without local GPU pressure |
-| `cloud_replicate`| Replicate Cloud GPU | **5.0s - 15.0s** | Managed Model Runner | Offloaded Wan 2.1 / LivePortrait execution via Replicate API token |
+| Model ID | Model Family | Max Duration | FPS | Lattice Requirement | Pipeline / Provider | Description |
+|---|---|---|---|---|---|---|
+| `wan_14b` | Alibaba Wan 2.1 14B | **5.0s** | 16 | $(F-1) \% 4 == 0$ | `WanPipeline` / `WanImageToVideoPipeline` | SOTA 14B DiT with 3D spatio-temporal attention, keyframe I2V and T2V |
+| `wan_1.3b` | Alibaba Wan 2.1 1.3B | **5.0s** | 16 | $(F-1) \% 4 == 0$ | `WanPipeline` (T2V) | Lightweight 1.3B DiT strictly isolated from heavy 14B I2V pipelines |
+| `ltx_video` | Lightricks LTX-Video 0.9B | **10.0s** | 24 | Modulo 32 size | `LTXPipeline` | Real-time high-efficiency DiT capable of up to 10s continuous generation |
+| `hailuo_h3` | MiniMax Hailuo H3 33B | **15.0s** | 24 | $49 + 48k$ frames | Local MLX 8-bit / Cloud MiniMax API | SOTA 33B Omni-modal DiT with Context-IR prompt formatting |
+| `cloud_fal` | Fal.ai Cloud GPU | **5.0s - 15.0s** | Adaptive | Model-specific | Serverless REST API | Offloaded Wan 2.1 / LivePortrait generation without local GPU pressure |
+| `cloud_replicate`| Replicate Cloud GPU | **5.0s - 15.0s** | Adaptive | Model-specific | Replicate API Runner | Offloaded Wan 2.1 / LivePortrait execution via Replicate API token |
 
-- **Director Mode v2 Musical Pacing**: Upgraded from naive fixed bars to [Director Mode v2](../concepts/director-mode-v2.md) featuring hierarchical scored accent snapping (beats $+0.5$, downbeats $+1.8$, lyric boundaries $+2.5$), cut speed bias ($-2$ to $+2$), and model-native discrete frame increments ($F_{\text{min}} + k \cdot F_{\text{step}}$) with sub-second output trimming.
+- **Director Mode v2 Musical Pacing**: Integrated with [Director Mode v2](../concepts/director-mode-v2.md) featuring hierarchical scored accent snapping (beats $+0.5$, downbeats $+1.8$, lyric boundaries $+2.5$), cut speed bias ($-2$ to $+2$), and model-native discrete frame increments ($F_{\text{min}} + k \cdot F_{\text{step}}$) with sub-second output trimming.
 - **Keyframe Pre-Rendering**: Users can pre-render visual keyframe stills (`POST /videos/keyframes/{job_id}`) across all planned scenes to inspect and approve directorial composition before triggering full video diffusion.
 
-## 2. Neural Singing Avatar & Lip-Syncing (LivePortrait)
+## 2. Apple Silicon Metal Memory Protection & Attention Slicing
+
+Dense un-fused self-attention in diffusion transformers scales quadratically with token length:
+$$S = \left(\frac{W}{16}\right) \times \left(\frac{H}{16}\right) \times \left(\frac{F - 1}{4} + 1\right)$$
+
+At $1280 \times 720$ with 65 frames, token length reaches $S = 61,200$, requiring a $(1, 40, 61200, 61200)$ tensor in `float32` that consumes **558.11 GB** of VRAM, triggering fatal Metal allocation crashes (`Invalid buffer size: 558.11 GB`).
+
+To guarantee zero-crash execution on Apple Silicon unified memory:
+1. **Attention Slicing**: Configured on pipeline initialization (`pipe.enable_attention_slicing(slice_size="auto")`), breaking the attention tensor into discrete head slices.
+2. **VAE Tiling & Slicing**: Enables spatial tiled encoding/decoding (`pipe.vae.enable_tiling()`, `pipe.vae.enable_slicing()`) to avoid multi-gigabyte latent activation peaks.
+3. **Adaptive Dimension & Frame Clamping (MPS)**: Clamps MPS render dimensions to $\le 832 \times 480$ (or $480 \times 832$ in 9:16) and frame counts to $\le 33$ frames ($S \le 14,040$ tokens), keeping peak attention memory strictly under 1 GB per slice while preserving the Wan lattice rule $(F-1) \% 4 == 0$.
+4. **Upstream Diffusers Protection**: Polyfilled missing `ftfy` references to prevent tokenizer assertion failures during text cleanup.
+
+## 3. Instant Task Cancellation Architecture (< 200ms)
+
+Stopping generation previously took upwards of 2 minutes because background asyncio tasks were unreferenced and PyTorch diffusers loops executed blocking C++ operations between scene checks.
+
+The video pipeline now guarantees instant cancellation across all execution layers:
+1. **Active Task Registry**: `VideoOrchestrator` maintains `_active_render_tasks: Dict[str, asyncio.Task]` with explicit `register_render_task` and `unregister_render_task` hooks.
+2. **Immediate Task Halting**: Calling `POST /videos/tasks/{task_id}/cancel` invokes `task.cancel()`, sets `cancel_event.set()`, instantly updates state to `cancelled`, and flushes VRAM/Metal cache.
+3. **Diffusion Step-End Callbacks**: Injects `callback_on_step_end` into `WanPipeline`, `WanImageToVideoPipeline`, and `LTXPipeline`. If cancellation is flagged, the callback immediately raises `asyncio.CancelledError`, halting active diffusion within a single step ($<200$ms).
+4. **Subprocess Termination**: Wraps all procedural and lip-sync FFmpeg subprocesses with `proc.kill()` on `CancelledError`, preventing orphaned background processes.
+5. **Clean Exception Propagation**: `CancelledError` is caught without triggering procedural fallback cascades or registering false task errors.
+
+## 4. Neural Singing Avatar & Lip-Syncing (LivePortrait)
 
 To eliminate unnatural mouth twitching and deliver broadcast-quality vocal performances:
-1. **Stem Isolation**: The director routes only the isolated vocal track (`vocals.wav` / `vocals.mp3` from Demucs) to the lip-sync engine. Heavy kicks and 808 bass cannot distort lip movements.
+1. **Stem Isolation**: Routes only the isolated vocal track (`vocals.wav` / `vocals.mp3` from Demucs) to the lip-sync engine. Heavy kicks and 808 bass cannot distort lip movements.
 2. **Performer Role Ownership**: Conforms to [Director Mode v2](../concepts/director-mode-v2.md) performer rules: during instrumental solos or drum cutaways, the performer's mouth is strictly kept closed (`mouth_movement: closed`), reserving lip-sync solely for the assigned active singer.
 3. **LivePortrait Neural Avatar**:
    - Uses implicit keypoint representations and landmark deformation driven by audio pitch and amplitude.
@@ -38,23 +62,17 @@ To eliminate unnatural mouth twitching and deliver broadcast-quality vocal perfo
    - Executed under [Global Hardware Coordinator](hardware-coordinator.md) device locks to prevent VRAM exhaustion with audio pipelines.
    - Supports local Apple Silicon PyTorch MPS execution as well as cloud GPU offloading.
 4. **Smooth Viseme Mesh Fallback**:
-   - For low-resource environments without neural weights, a bilinear jaw mesh warp engine smoothly translates the mouth cavity and lips based on vocal power envelopes, avoiding static OpenCV ellipse overlays.
+   - For low-resource environments without neural weights, a bilinear jaw mesh warp engine smoothly translates the mouth cavity and lips based on vocal power envelopes, avoiding static OpenCV overlays.
 5. **Stem Audio-Reactive Modulation**:
-   - Powered by [Stem Audio-Reactive Video](../concepts/stem-audio-reactive-video.md) (`stem_audio_reactive.py`), extracting clean vocal envelopes for lip-sync and percussive downbeat transients from drums/bass to drive Wan 2.1 camera zooms, pulses, and shakes.
+   - Powered by [Stem Audio-Reactive Video](../concepts/stem-audio-reactive-video.md) (`stem_audio_reactive.py`), extracting clean vocal envelopes for lip-sync and percussive downbeat transients from drums/bass to drive camera zooms, pulses, and shakes.
 
-## 3. Autonomous Video Director v2
+## 5. Local-First MiniMax H3 33B Execution
 
-- **Musical Beat & Lyric Alignment**: Analyzes energy peaks and lyrical timestamps to segment tracks into Vocal Performance scenes (when lyrics are active) and Cinematic B-Roll scenes (instrumental breaks, drops, intros).
-- **Cinematic Camera & Lighting Direction**: Directs specialized camera motions (dolly zoom, slow track, crane sweep, orbiting steadycam) and volumetric lighting designs (cyan rim, warm amber spotlights, atmospheric haze) matched to the selected aesthetic preset.
-- **Model-Specific Prompt Compilation**: Translates high-level shot plans into model-specific dialects (e.g. Context-IR for MiniMax H3, LTX-2.5 embedded prompt rules, or Wan2.1 action tags).
+The platform supports local MiniMax Hailuo H3 weights (`pipenetwork__MiniMax-H3-MLX-8bit`, 35.3 GB):
+- **Local Animatic Previews**: Runs at 24 fps with exact 49+48k frame lattice alignment.
+- **Hardware Realism**: Because un-quantized 33B dense attention on Apple Silicon unified memory requires ~1.2 hours per 5s clip without dedicated auxiliary pipelines, the studio clearly notifies the user of hardware demands and recommends lightweight models (`wan_1.3b` or `ltx_video`) for real-time local iterations.
 
-## 4. Multitrack Timeline & Master Rendering
-
-- **Non-Destructive Multitrack Editor**: Integrated with [Multitrack Timeline Editor](multitrack-editor.md) and [Non-Destructive Multitrack Timeline](../concepts/non-destructive-multitrack-timeline.md), enabling creators to arrange video tracks, stem audio tracks, and subtitle layers with in/out trims, opacity, crossfades, and canvas transforms (16:9, 9:16, 21:9).
-- **AI Round-Trip Take**: Select any scene clip on the timeline to generate an AI retake or variation and drop it directly back into the exact timeline slot without re-editing neighboring scenes.
-- **Hardware-Accelerated Single-Pass Compilation**: Compiles the composition into a single FFmpeg `-filter_complex` command using NVENC or Apple Silicon VideoToolbox, remuxed with 256k AAC audio and zero generational loss.
-
-## 5. Keyframe Stills Diffusion & Memory Lifecycle
+## 6. Keyframe Stills Diffusion & Memory Lifecycle
 
 Pre-rendering visual scene keyframes (`POST /videos/keyframes/{job_id}`) provides a production-grade inspection stage before video diffusion:
 - **Adaptive FLUX.2 Diffusion**: Automatically recognizes whether the active image generator is a flow-matching Base model (`black-forest-labs/FLUX.2-klein-base-9B`) or a distilled Turbo/Schnell variant.

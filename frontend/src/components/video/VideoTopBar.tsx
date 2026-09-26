@@ -33,6 +33,7 @@ interface VideoTopBarProps {
     onPlanScenes: () => void;
     isGeneratingKeyframes: boolean;
     onGenerateKeyframes: () => void;
+    hasKeyframes?: boolean;
     isRendering: boolean;
     onRenderVideo: () => void;
     renderedVideoUrl: string | null;
@@ -55,6 +56,7 @@ const VideoTopBarComponent: React.FC<VideoTopBarProps> = ({
     onPlanScenes,
     isGeneratingKeyframes,
     onGenerateKeyframes,
+    hasKeyframes = false,
     isRendering,
     onRenderVideo,
     renderedVideoUrl,
@@ -217,7 +219,7 @@ const VideoTopBarComponent: React.FC<VideoTopBarProps> = ({
                         title="Pre-render visual keyframe stills for each planned scene before video diffusion"
                     >
                         {isGeneratingKeyframes ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
-                        <span>{isGeneratingKeyframes ? 'Keyframes…' : 'Pre-Render Stills'}</span>
+                        <span>{isGeneratingKeyframes ? 'Keyframes…' : (hasKeyframes ? 'Regenerate Stills' : 'Pre-Render Stills')}</span>
                     </button>
 
                     {/* Render Video */}

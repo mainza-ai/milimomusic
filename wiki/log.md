@@ -2182,3 +2182,15 @@ Implemented autonomous LLM Visual Director & Cinematographer across backend audi
    - Unit tests `test_generate_scene_keyframes_unique_and_decoupled_from_cover` and `test_keyframes_get_and_post_api_endpoints` verified in `backend/tests/test_video_service.py`.
    - All tests in `test_phase2_director_mode.py`, `test_production_v2.py`, and `test_video_service.py` passing cleanly.
    - Frontend production build (`npm run build`) passing with 0 errors.
+
+## [2026-09-25] feat | Storyboard Timeline Auto-Hydration & Video Diffusion Still Reuse
+1. Diffusion Still Reuse in Full Render:
+   - In `render_advanced_music_video()` (`video_orchestrator.py`), checked for existing approved pre-rendered scene keyframes (`keyframe_{job.id}_{clip_idx:03d}.png`) before diffusing a new still, ensuring approved director stills & retakes directly condition video clip generation.
+   - If stills were not pre-rendered prior to video render, generated scene stills are automatically cached to `KEYFRAMES_DIR` for UI rehydration.
+2. Timeline Auto-Hydration on Track Load:
+   - In `MusicVideosView.tsx`, enhanced `getDirectorTreatment()` effect to automatically restore `planResult` when a cached treatment with scenes exists, preventing timeline collapse upon song selection or page refresh.
+   - Enhanced `handleGenerateKeyframes()` to guard against non-boolean click event coercion and automatically construct `planResult` from keyframes if scenes were not pre-planned.
+3. TopBar Keyframe State & Zoom Lightbox Responsiveness:
+   - Added `hasKeyframes` prop to `VideoTopBar` displaying "Regenerate Stills" dynamically when stills are already present.
+   - Updated `KeyframeZoomModal.tsx` to support non-16:9 aspect ratios (`9:16`, `1:1`, `21:9`) with responsive `max-h-[70vh]` scaling.
+

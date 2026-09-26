@@ -275,6 +275,27 @@ class VideoOrchestrator:
             kf_filename = f"keyframe_{job.id}_{clip_idx:03d}.png"
             kf_path = os.path.join(KEYFRAMES_DIR, kf_filename)
 
+            def _clip_dict(c, c_idx: int) -> Dict[str, Any]:
+                return {
+                    "clip_index": c_idx,
+                    "start_time": c.start_time,
+                    "end_time": c.end_time,
+                    "duration": c.duration,
+                    "time_str": c.time_str,
+                    "is_vocal": c.is_vocal,
+                    "scene_type": c.scene_type,
+                    "prompt": c.prompt,
+                    "camera": c.camera,
+                    "lighting": c.lighting,
+                    "directors_note": getattr(c, "directors_note", None),
+                    "visual_action": getattr(c, "visual_action", None),
+                    "musical_energy": getattr(c, "musical_energy", 3),
+                    "section_label": getattr(c, "section_label", None),
+                    "lyrics": getattr(c, "lyrics", ""),
+                    "keyframe_path": kf_path if os.path.isfile(kf_path) else None,
+                    "keyframe_url": f"/audio/videos/keyframes/{kf_filename}" if os.path.isfile(kf_path) else None
+                }
+
             # Preserve existing valid still unless forced or if it is a stale cover copy
             if not force_regenerate and os.path.isfile(kf_path) and os.path.getsize(kf_path) > 0:
                 is_stale_cover = False
@@ -290,16 +311,19 @@ class VideoOrchestrator:
                         except Exception:
                             pass
 
+                # If existing still is square legacy cover but widescreen/vertical was requested
+                if not is_stale_cover and width != height:
+                    try:
+                        from PIL import Image
+                        with Image.open(kf_path) as im:
+                            w_kf, h_kf = im.size
+                            if abs(w_kf - h_kf) <= 2:
+                                is_stale_cover = True
+                    except Exception:
+                        pass
+
                 if not is_stale_cover:
-                    results.append({
-                        "clip_index": clip_idx,
-                        "time_str": clip.time_str,
-                        "scene_type": clip.scene_type,
-                        "prompt": clip.prompt,
-                        "camera": clip.camera,
-                        "lighting": clip.lighting,
-                        "keyframe_url": f"/audio/videos/keyframes/{kf_filename}"
-                    })
+                    results.append(_clip_dict(clip, clip_idx))
                     continue
 
             # Render dedicated scene still from the clip's director prompt
@@ -336,16 +360,7 @@ class VideoOrchestrator:
                 except Exception as ex:
                     logger.error(f"Fallback keyframe still generation also failed: {ex}")
 
-            results.append({
-                "clip_index": clip_idx,
-                "time_str": clip.time_str,
-                "scene_type": clip.scene_type,
-                "prompt": clip.prompt,
-                "camera": clip.camera,
-                "lighting": clip.lighting,
-                "keyframe_path": kf_path if os.path.isfile(kf_path) else None,
-                "keyframe_url": f"/audio/videos/keyframes/{kf_filename}" if os.path.isfile(kf_path) else None
-            })
+            results.append(_clip_dict(clip, clip_idx))
 
         return results
 
@@ -499,23 +514,33 @@ class VideoOrchestrator:
                                 width=w, height=h
                             )
 
-                    # Cinematic B-Roll Scene
+                    # Cinematic Scene
                     else:
-                        logger.info(f"Rendering B-roll video for Scene {idx + 1} with {video_generator.name}...")
-                        # Generate scene keyframe image
+                        clip_idx = int(clip.clip_index or (idx + 1))
+                        logger.info(f"Rendering visual scene {clip_idx} with {video_generator.name}...")
+                        # Check if an approved pre-rendered keyframe exists on disk
+                        pre_rendered_kf = os.path.join(KEYFRAMES_DIR, f"keyframe_{job.id}_{clip_idx:03d}.png")
                         scene_bg = None
-                        try:
-                            from app.services.image_service import image_service
-                            bg = image_service.generate_scene_background(
-                                prompt=clip.prompt,
-                                style=style,
-                                width=w, height=h
-                            )
-                            if bg.get("ok") and bg.get("dest_path") and os.path.isfile(bg["dest_path"]):
-                                scene_bg = bg["dest_path"]
-                        except Exception as e:
-                            logger.warning(f"Keyframe image generation skipped ({e})")
-                            scene_bg = face_image
+                        if os.path.isfile(pre_rendered_kf) and os.path.getsize(pre_rendered_kf) > 0:
+                            scene_bg = pre_rendered_kf
+                            logger.info(f"Reusing approved keyframe still for Scene {clip_idx}: {pre_rendered_kf}")
+                        else:
+                            try:
+                                from app.services.image_service import image_service
+                                bg = image_service.generate_scene_background(
+                                    prompt=clip.prompt,
+                                    style=style,
+                                    width=w, height=h
+                                )
+                                if bg.get("ok") and bg.get("dest_path") and os.path.isfile(bg["dest_path"]):
+                                    scene_bg = bg["dest_path"]
+                                    try:
+                                        shutil.copy(scene_bg, pre_rendered_kf)
+                                    except Exception:
+                                        pass
+                            except Exception as e:
+                                logger.warning(f"Keyframe image generation skipped ({e})")
+                                scene_bg = face_image
 
                         success = await video_generator.generate_clip(
                             prompt=clip.prompt,

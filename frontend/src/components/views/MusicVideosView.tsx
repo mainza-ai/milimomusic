@@ -8,7 +8,8 @@ import {
     type VideoTaskStatus,
     type VideoPlanParams,
     type VideoRenderParams,
-    type DirectorTreatment
+    type DirectorTreatment,
+    type VideoClipSegment
 } from '../../api';
 import { toast } from '../../utils/toast';
 import { AppFooter } from '../ui/AppFooter';
@@ -249,12 +250,42 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             .then(res => {
                 if (res?.treatment) {
                     setDirectorTreatment(res.treatment);
+                    if (res.treatment.scenes && res.treatment.scenes.length > 0) {
+                        const scenes = res.treatment.scenes;
+                        setPlanResult({
+                            status: 'ok',
+                            job_id: activeSong.id,
+                            total_clips: scenes.length,
+                            vocal_clips_count: scenes.filter((c: any) => c.scene_type === 'VOCAL_PERFORMANCE' || c.is_vocal).length,
+                            broll_clips_count: scenes.filter((c: any) => c.scene_type !== 'VOCAL_PERFORMANCE' && !c.is_vocal).length,
+                            max_clip_duration: clipDuration,
+                            model_name: videoModel,
+                            clips: scenes.map((s: any, idx: number) => ({
+                                clip_index: s.clip_index || (idx + 1),
+                                start_time: s.start_time ?? (idx * 15),
+                                end_time: s.end_time ?? ((idx + 1) * 15),
+                                duration: s.duration ?? 15,
+                                time_str: s.time_str || `${idx * 15}s - ${(idx + 1) * 15}s`,
+                                is_vocal: s.is_vocal ?? (s.scene_type === 'VOCAL_PERFORMANCE'),
+                                scene_type: s.scene_type || 'CINEMATIC_BROLL',
+                                lyrics: s.lyrics || '',
+                                prompt: s.prompt || '',
+                                camera: s.camera || 'Cinematic tracking shot',
+                                lighting: s.lighting || 'Atmospheric rim lighting',
+                                section_label: s.section_label,
+                                musical_energy: s.musical_energy,
+                                visual_action: s.visual_action,
+                                directors_note: s.directors_note
+                            })),
+                            treatment: res.treatment
+                        });
+                    }
                 } else {
                     setDirectorTreatment(null);
                 }
             })
             .catch(() => setDirectorTreatment(null));
-    }, [activeSong?.id]);
+    }, [activeSong?.id, clipDuration, videoModel]);
 
     // Fetch existing scene keyframes when song changes
     useEffect(() => {
@@ -405,13 +436,14 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         if (!activeSong) return;
         try {
             setIsGeneratingKeyframes(true);
+            const isForce = typeof forceRegenerate === 'boolean' ? forceRegenerate : false;
             const res = await videoApi.generateKeyframes(
                 activeSong.id,
                 videoStyle,
                 resolution,
                 customStylePrompt,
                 aspectRatio,
-                forceRegenerate,
+                isForce,
                 planResult?.clips
             );
             if (res && res.keyframes) {
@@ -422,6 +454,37 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     }
                 }
                 setKeyframes(kfMap);
+
+                // If timeline was not planned yet, automatically populate it from the returned keyframe scenes
+                if (!planResult || !planResult.clips || planResult.clips.length === 0) {
+                    const clips: VideoClipSegment[] = res.keyframes.map((kf: any, idx: number) => ({
+                        clip_index: kf.clip_index || (idx + 1),
+                        start_time: kf.start_time ?? (idx * 15),
+                        end_time: kf.end_time ?? ((idx + 1) * 15),
+                        duration: kf.duration ?? 15,
+                        time_str: kf.time_str || `${idx * 15}s - ${(idx + 1) * 15}s`,
+                        is_vocal: kf.is_vocal ?? (kf.scene_type === 'VOCAL_PERFORMANCE'),
+                        scene_type: kf.scene_type || 'CINEMATIC_BROLL',
+                        lyrics: kf.lyrics || '',
+                        prompt: kf.prompt || '',
+                        camera: kf.camera || 'Cinematic tracking shot',
+                        lighting: kf.lighting || 'Atmospheric rim lighting',
+                        section_label: kf.section_label,
+                        musical_energy: kf.musical_energy,
+                        visual_action: kf.visual_action,
+                        directors_note: kf.directors_note
+                    }));
+                    setPlanResult({
+                        status: 'ok',
+                        job_id: activeSong.id,
+                        total_clips: clips.length,
+                        vocal_clips_count: clips.filter(c => c.is_vocal).length,
+                        broll_clips_count: clips.filter(c => !c.is_vocal).length,
+                        max_clip_duration: clipDuration,
+                        model_name: videoModel,
+                        clips
+                    });
+                }
                 toast(`Generated ${res.keyframes.length} scene keyframes for review.`, 'success');
             }
         } catch (err: any) {
@@ -711,6 +774,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     onPlanScenes={handlePlanScenes}
                     isGeneratingKeyframes={isGeneratingKeyframes}
                     onGenerateKeyframes={handleGenerateKeyframes}
+                    hasKeyframes={Object.keys(keyframes).length > 0}
                     isRendering={isRendering}
                     onRenderVideo={handleRenderAdvancedVideo}
                     renderedVideoUrl={renderedVideoUrl}

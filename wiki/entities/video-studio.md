@@ -54,7 +54,19 @@ To eliminate unnatural mouth twitching and deliver broadcast-quality vocal perfo
 - **AI Round-Trip Take**: Select any scene clip on the timeline to generate an AI retake or variation and drop it directly back into the exact timeline slot without re-editing neighboring scenes.
 - **Hardware-Accelerated Single-Pass Compilation**: Compiles the composition into a single FFmpeg `-filter_complex` command using NVENC or Apple Silicon VideoToolbox, remuxed with 256k AAC audio and zero generational loss.
 
+## 5. Keyframe Stills Diffusion & Memory Lifecycle
+
+Pre-rendering visual scene keyframes (`POST /videos/keyframes/{job_id}`) provides a production-grade inspection stage before video diffusion:
+- **Adaptive FLUX.2 Diffusion**: Automatically recognizes whether the active image generator is a flow-matching Base model (`black-forest-labs/FLUX.2-klein-base-9B`) or a distilled Turbo/Schnell variant.
+  - **Base Models**: Evaluates the full flow ODE trajectory with **24 inference steps** and **guidance scale = 3.5**, rendering crisp, photorealistic cinematic lighting, texture, and character details without blur or waxy artifacts.
+  - **Distilled / Turbo Models**: Fast 4-step sampling with guidance scale = 1.0.
+- **Eager Local LLM Eviction**: The visual director treatment (`video_director.py`) uses local LLMs (e.g. `Qwen3.6-35B-A3B-UD-MLX-4bit` on oMLX). To prevent OOM errors when switching from LLM prompt compiling to heavy 9B image diffusion, the backend executes an immediate HTTP unload (`POST /v1/models/{id}/unload` or `keep_alive: 0` for Ollama), dropping unified memory residency from 22.7 GB to 0 bytes before diffusion weights load.
+- **Batch Diffusion Model Reuse**: During scene stills batch generation across multiple clips, models remain loaded in memory (`auto_unload=False`) to avoid repeated 15-second initialization latency per clip. Once the entire batch is rendered, a single `finally:` block unloads the weights and flushes MLX/Metal memory cache.
+- **Progressive Frontend Polling & Auto-Hydration**: In `MusicVideosView.tsx`, the timeline tracks are eagerly populated when still generation begins, and a 3-second progressive polling loop queries `GET /videos/keyframes/{job_id}`, progressively displaying each scene still on the timeline as soon as it is written to disk.
+
 ## Related pages
 - [Overview](../overview.md) | [Architecture](../architecture.md) | [Stem Separator](stem-separator.md) | [Karaoke & Lyric Sync](karaoke-lyricsync.md)
 - [Global Hardware Coordinator](hardware-coordinator.md) | [Director Mode v2](../concepts/director-mode-v2.md) | [Multitrack Timeline Editor](multitrack-editor.md)
 - [Non-Destructive Multitrack Timeline](../concepts/non-destructive-multitrack-timeline.md) | [Hardware Auto-Tune](../concepts/hardware-autotune-memory-profiles.md)
+- [LLM Service & Providers](llm-service.md)
+

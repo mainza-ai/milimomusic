@@ -60,8 +60,9 @@ If an out-of-memory exception occurs:
 4. Lowers the active safety coefficient by $0.10$ and surfaces an in-app banner for one-click retry with reduced batch size.
 
 ## Cross-Modal Eviction Bus
-To prevent cross-modal memory collisions (e.g. FLUX.2 image models colliding with Wan 2.1 video diffusion or MiniMax Music 3), the coordinator acts as a central **Eviction Bus**:
+To prevent cross-modal memory collisions (e.g. resident LLM inference engines like oMLX, Ollama, LM Studio colliding with FLUX.2 image diffusion or Wan 2.1 video diffusion or MiniMax Music 3), the coordinator acts as a central **Eviction Bus**:
 - Workloads register eviction callbacks: `register_eviction_hook(modality, callback)`.
+- Modalities registered include: `"llm"` (oMLX, Ollama, LM Studio), `"image_gen"` (FLUX.2 MLX / diffusers), `"audio_gen"` (MiniMax Music 3, Stable Audio Open, MusicGen), `"separation"` (HTDemucs, BS-Roformer), `"transcription"` (MuScriptor), `"video_gen"` (Wan 2.1, LTX-Video), and `"voice_conversion"` (Neural SVC).
 - When entering `scoped_device(consumer, modality=...)`, the coordinator triggers `evict_all_except(modality)` to flush all warm models from other modalities before granting device access.
 - See [Cross-Modal Model Lifecycle & Immediate Eviction Architecture](../concepts/cross-modal-model-lifecycle.md) for full protocol details.
 

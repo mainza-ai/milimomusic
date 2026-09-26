@@ -1540,7 +1540,7 @@ export const videoApi = {
             aspect_ratio: aspectRatio,
             force_regenerate: forceRegenerate,
             scenes,
-        });
+        }, { timeout: 600000 });
         return res.data;
     },
     getKeyframes: async (jobId: string): Promise<{ status: string; job_id: string; keyframes: Record<number, string> }> => {

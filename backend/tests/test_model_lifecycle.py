@@ -213,3 +213,103 @@ def test_neural_svc_and_muscriptor_unload():
     """Verify NeuralSVCService and MuScriptorProvider unload cleanly."""
     assert neural_svc.unload() is True
     assert muscriptor_provider.unload() is True
+
+
+def test_llm_service_unload_omlx_and_providers():
+    """Verify LLMService.unload_local_model triggers OMLX, Ollama, and LM Studio unloads."""
+    from app.services.llm_service import LLMService
+
+    llm = LLMService()
+
+    # 1. Test oMLX unload with mocked requests
+    with patch("requests.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=200, json=lambda: {"status": "ok"})
+        unloaded = llm.unload_local_model(provider_name="omlx", model_name="Qwen3.6-35B")
+        assert len(unloaded["unloaded"]) == 1
+        assert "omlx:Qwen3.6-35B" in unloaded["unloaded"]
+        mock_post.assert_called_once()
+        assert "unload" in mock_post.call_args[0][0]
+
+    # 2. Test Ollama keep_alive: 0 unload
+    with patch("requests.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=200)
+        unloaded = llm.unload_local_model(provider_name="ollama", model_name="llama3.1")
+        assert len(unloaded["unloaded"]) == 1
+        assert "ollama:llama3.1" in unloaded["unloaded"]
+        mock_post.assert_called_once()
+        assert mock_post.call_args[1]["json"]["keep_alive"] == 0
+
+    # 3. Test LM Studio unload
+    with patch("requests.post") as mock_post:
+        mock_post.return_value = MagicMock(status_code=200)
+        unloaded = llm.unload_local_model(provider_name="lmstudio", model_name="local-model")
+        assert len(unloaded["unloaded"]) == 1
+        assert "lmstudio:local-model" in unloaded["unloaded"]
+        mock_post.assert_called_once()
+
+    # 4. Graceful handling of network error
+    with patch("requests.post", side_effect=Exception("Connection refused")):
+        unloaded = llm.unload_local_model(provider_name="omlx", model_name="Qwen3.6-35B")
+        assert len(unloaded["errors"]) > 0
+
+
+def test_global_hardware_coordinator_llm_eviction():
+    """Verify GlobalHardwareCoordinator registers and triggers llm modality eviction."""
+    from app.services.llm_service import LLMService
+
+    with patch.object(LLMService, "unload_local_model", return_value={"unloaded": ["omlx:model"], "errors": []}) as mock_unload:
+        # Trigger eviction of LLM modality
+        GlobalHardwareCoordinator.evict_modality("llm")
+        mock_unload.assert_called_once()
+
+
+def test_flux2_adaptive_diffusion_parameters():
+    """Verify ImageService selects base model 24 steps & 3.5 guidance vs distilled 4 steps & 1.0 guidance."""
+    # Test base model detection
+    base_res = None
+    with patch.object(image_service, "_run_mlx_diffusion") as mock_mlx:
+        # Mock executor to call synchronously
+        with patch("app.services.image_service._mlx_executor.submit") as mock_submit:
+            mock_future = MagicMock()
+            mock_future.result.return_value = None
+            mock_submit.return_value = mock_future
+
+            # Render with base model repo_id
+            image_service._render_diffusion_image(
+                full_prompt="photorealistic scene",
+                width=1280,
+                height=720,
+                chosen_model_id="flux2_klein_9b",
+                local_path=None,
+                repo_id="black-forest-labs/FLUX.2-klein-base-9B",
+                is_installed=True,
+                dest_path="/tmp/test_base.png",
+            )
+            mock_submit.assert_called_once()
+            kwargs = mock_submit.call_args[1]
+            assert kwargs["is_base"] is True
+            assert kwargs["steps"] == 24
+            assert kwargs["guidance"] == 3.5
+
+    # Test turbo / distilled model detection
+    with patch("app.services.image_service._mlx_executor.submit") as mock_submit:
+        mock_future = MagicMock()
+        mock_future.result.return_value = None
+        mock_submit.return_value = mock_future
+
+        image_service._render_diffusion_image(
+            full_prompt="photorealistic scene",
+            width=1280,
+            height=720,
+            chosen_model_id="flux2_klein_turbo_4step",
+            local_path=None,
+            repo_id="black-forest-labs/FLUX.2-klein-4step",
+            is_installed=True,
+            dest_path="/tmp/test_turbo.png",
+        )
+        mock_submit.assert_called_once()
+        kwargs = mock_submit.call_args[1]
+        assert kwargs["is_base"] is False
+        assert kwargs["steps"] == 4
+        assert kwargs["guidance"] == 1.0
+

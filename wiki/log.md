@@ -2245,3 +2245,22 @@ Implemented autonomous LLM Visual Director & Cinematographer across backend audi
    - Verified `test_production_v2.py` compatibility with `MusicGenProvider` inheriting from `HuggingFaceAudioProvider`.
    - Frontend production build (`tsc -b && vite build`) passed with zero errors (dist generated in 2.01s).
    - Running daemons operational: Backend FastAPI on port 8000, Frontend Vite on port 5173.
+
+## [2026-09-26] fix | Local LLM Unload, Adaptive FLUX.2 Diffusion & Keyframe Timeline Progressive Hydration
+1. OMLX Local Model Memory Deallocation:
+   - Root cause identified: `video_director.py` invoked `LLMService` to generate storyboard shot breakdowns using local oMLX engine (`Qwen3.6-35B-A3B-UD-MLX-4bit`), keeping 22.7 GB resident in unified memory.
+   - Implemented `LLMService.unload_local_model()` providing automated HTTP deallocation for oMLX (`POST /v1/models/{id}/unload` with admin fallback), Ollama (`POST /api/generate` with `keep_alive: 0`), and LM Studio (`POST /models/unload`).
+   - Added `finally:` deallocation in `video_director.generate_director_treatment()` and `video_orchestrator.generate_scene_keyframes()`.
+   - Registered `"llm"` modality on the `GlobalHardwareCoordinator` eviction bus to automatically evict resident LLMs before heavy image or video diffusion starts.
+2. FLUX.2 Adaptive Diffusion & Image Fidelity Restoration:
+   - Root cause identified: The local cache contains `black-forest-labs/FLUX.2-klein-base-9B` (a non-distilled flow-matching Base model). Hardcoded 4 steps with guidance 1.0 sampled only 8% of the ODE trajectory and zero classifier-free guidance, resulting in blurry, waxy, low-contrast images.
+   - Refactored `ImageService._render_diffusion_image` to dynamically detect Base models and configure `ModelConfig.flux2_klein_base_9b()` with 24 ODE steps and guidance scale = 3.5 (reserving 4 steps and 1.0 guidance for distilled/turbo models).
+   - Threadpool execution timeout raised from 180s to 600s to support high-fidelity 24-step rendering without premature timeouts.
+3. Batch Scene Stills Lifecycle & Memory Optimization:
+   - In `video_orchestrator.generate_scene_keyframes()`, updated the clip rendering loop to pass `auto_unload=False` across scenes, avoiding redundant 15-second model load/re-initialization cycles per clip.
+   - Added guaranteed `finally:` block in `generate_scene_keyframes()` to call `image_service.unload_models()` and `GlobalHardwareCoordinator.flush_memory()` once the entire batch is completed.
+4. Frontend Keyframe Progressive Polling & Auto-Hydration:
+   - Added 10-minute timeout to `videoApi.generateKeyframes` in `frontend/src/api.ts` to prevent Axios connection drops during multi-clip generation.
+   - Enhanced `MusicVideosView.tsx` with eager timeline planning, eliminating the issue where generated keyframes were invisible on disk due to missing timeline clips.
+   - Implemented progressive 3-second polling of `videoApi.getKeyframes()` during generation so each scene still pops onto the timeline track dynamically as soon as it is rendered.
+   - Added auto-hydration on song selection so existing keyframes and storyboard plans are instantly retrieved from disk without re-generating.

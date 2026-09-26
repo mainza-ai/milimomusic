@@ -243,7 +243,7 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 |---|---|---|
 | **Frontend** | React 19, Vite, Tailwind CSS, Web Audio API | Apple-inspired interface, 6-mode DAW, floating dock player, interactive notation |
 | **Backend** | FastAPI, SQLModel, SQLite, PyTorch, Librosa | REST API, async task execution, SSE progress streaming, audio pipeline |
-| **Generative ML** | MLX (Apple Silicon), PyTorch (CUDA/CPU) | MiniMax Music 3 (Primary), MuLaCover-3B (Cover & Remix), HeartMuLa-3B (Legacy fallback), HeartCodec |
+| **Generative ML** | MLX (Apple Silicon), PyTorch (CUDA/MPS/CPU), Diffusers | MiniMax Music 3 (Apple Silicon MLX default), Stable Audio Open 1.0 (DiT Cross-Platform), Meta MusicGen (Lightweight CPU & Melody), MuLaCover-3B, HeartMuLa-3B |
 | **Separation & Transcription** | BS-Roformer, MelBand-Roformer, MuScriptor, YourMT3, ChordNet, MusicXML 3.1 | 6-stem neural source separation, dual symbolic transcription, MIDI lead sheets |
 | **Audio Infill & Extension** | Librosa, Beat-This, Equal-Power Crossfade | Downbeat-aligned waveform inpainting, segment repair, seamless track extension |
 | **Lyric Sync** | TorchAudio MMS_FA, Adaptive VAD, LRC/SRT Generator | Acoustic forced alignment, progressive word timing |
@@ -270,7 +270,9 @@ Milimo Music is a high-performance neural workstation designed to scale from loc
 
 | Studio Engine / Feature | Apple Silicon (MLX / MPS) | NVIDIA GPU (CUDA) | CPU / Fallback Mode |
 |:---|:---:|:---:|:---:|
-| **MiniMax Music 3 Audio Generation** | ⚡ **Native MLX (Fastest)** | 🔄 **PyTorch / Container** | ⚠️ *Procedural Synthesizer Preview* |
+| **MiniMax Music 3 (MLX / GGUF / CUDA)** | ⚡ **Native MLX (Fastest)** | 🔄 **Comfy-Org INT8 / PyTorch** | 🔄 **GGUF Q4_K_M (Cross-Platform)** |
+| **Stable Audio Open 1.0 (DiT 44.1kHz)** | ⚡ **Native MPS Accelerated** | ⚡ **Native CUDA Accelerated** | ⏱️ **PyTorch CPU Execution** |
+| **Meta MusicGen (Small & Melody)** | ⚡ **Native MPS Accelerated** | ⚡ **Native CUDA Accelerated** | ⚡ **Optimized Fast CPU Execution** |
 | **BS-Roformer 6-Stem Source Separation** | ⚡ **Native MPS Accelerated** | ⚡ **Native CUDA Accelerated** | ⏱️ *Functional (CPU processing)* |
 | **MuScriptor Neural MIDI & Sheet Music** | ⚡ **Accelerated** | ⚡ **Accelerated** | ⚡ **Real-time CPU execution** |
 | **TorchAudio MMS_FA Forced Lyric Sync** | ⚡ **Accelerated** | ⚡ **Accelerated** | ⚡ **Real-time CPU execution** |
@@ -278,7 +280,16 @@ Milimo Music is a high-performance neural workstation designed to scale from loc
 | **AI Music Video Studio & Lip-Sync** | ⚡ **Native MPS / Diffusers + LivePortrait** | ⚡ **Native CUDA + NVENC / Diffusers** | ⏱️ **Smooth Viseme Mesh Fallback** |
 | **6-Mode DAW, Timeline & Matchering DSP** | ⚡ **Real-time (Web Audio)** | ⚡ **Real-time (Web Audio)** | ⚡ **Real-time (Web Audio)** |
 
-> 💡 **Apple Silicon Advantage**: On Apple M-series Macs, Milimo Music leverages unified memory architecture via Apple MLX (`mlx-community/MiniMax-Music3-bf16`), enabling true 44.1kHz stereo full-track neural generation without requiring a discrete server GPU.
+> ⚠️ **Architecture Notice: MiniMax Music 3 Deployment & Cross-Platform Alternatives**
+>
+> - **Apple Silicon Optimization**: MiniMax Music 3 was released primarily with native Apple MLX weights (`mlx-community/MiniMax-Music3-bf16`, `4bit`, `mxfp4`), achieving sub-minute full stereo generation on Mac workstations with 16GB–36GB unified memory without requiring a discrete server GPU.
+> - **Linux & Windows Execution**: Running full MiniMax Music 3 in PyTorch requires substantial VRAM (24GB+ or multi-GPU). On non-Apple hardware, Milimo Music provides official support for quantized INT8 (`Comfy-Org/MiniMax-Music-3`) and GGUF (`molbal/Minimax-Music3-GGUF`).
+> - **Open-Source Foundation Alternatives**: To ensure true platform neutrality, users can download and switch between native open-source audio engines via the in-app **Model Manager**:
+>   - 🎛️ **Stable Audio Open 1.0** (`stabilityai/stable-audio-open-1.0`): Continuous Latent Diffusion Transformer (DiT) producing native 44.1 kHz stereo audio on CUDA, MPS, and CPU.
+>   - 🎼 **Meta MusicGen** (`facebook/musicgen-small` / `melody`): Lightweight autoregressive transformer with CPU friendliness and melody-guided conditioning.
+>
+> 🧹 **Zero-Leak Cross-Modal Memory Manager (`GlobalHardwareCoordinator`)**:
+> Milimo Music actively prevents Out-Of-Memory (OOM) crashes across Audio, Image (FLUX.2), and Video (Wan 2.1) through immediate eager eviction (`EAGER_UNLOAD`) and configurable TTL warm-caching (`WARM_CACHE_WITH_TTL`). Physical accelerator caches (`mx.metal.clear_cache()`, `torch.cuda.empty_cache()`, `malloc_trim`) are flushed automatically when switching generative modalities.
 
 ---
 

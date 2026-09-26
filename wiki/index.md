@@ -20,6 +20,8 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 
 - [Generation Provider Abstraction](entities/generation-provider.md) — pluggable `GenerationProvider` interface + registry + capability manifests.
 - [MiniMax Music 3](entities/minimax-music3.md) — the default generation model (structured captions, up to 5 min; fallback-to-synth now surfaced to the UI).
+- [Stable Audio Open 1.0 Provider](entities/stable-audio-open.md) — cross-platform DiT audio generation (CUDA/MPS/CPU), native 44.1 kHz stereo, immediate VRAM eviction.
+- [Meta MusicGen Provider](entities/musicgen.md) — lightweight autoregressive music generation, melody-guided conditioning, CPU-friendly execution.
 - [YuE2 48kHz Stereo Music Provider](entities/yue2-music.md) — open-weight 48 kHz stereo music generation, ABC notation guidance, source covers, auto-instrumental LoRA routing, and Auto/Guided My Music training.
 - [MuLaCover](entities/mulacover.md) — 3B controllable music cover & remix engine (symbolic cross-attention, dual transcription, composite downloader).
 - [HeartMuLa](entities/heartmula.md) — the 3B music language model; now a legacy/local provider.
@@ -69,6 +71,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Director Mode v2](concepts/director-mode-v2.md) — multi-signal audio analysis, hierarchical accent snapping, cut speed pacing ($-2$ to $+2$), visible-cast performance scoping, music-timeline vocal bypass, 0–5 fidelity repair retries, and discrete model frame lattice trimming.
 - [Non-Destructive Multitrack Timeline](concepts/non-destructive-multitrack-timeline.md) — atomic project schema, single-pass FFmpeg hardware-accelerated filter graph compilation (NVENC/VideoToolbox), and AI round-trip take workflow.
 - [Hardware Auto-Tune, Memory Profiles & OOM Self-Healing](concepts/hardware-autotune-memory-profiles.md) — zero-config empirical profiles 1 to 5, $\le 0.80$ VRAM safety coefficient, scoped CPU execution, kernel benchmarking (PyTorch vs Triton), and self-healing telemetry.
+- [Cross-Modal Model Lifecycle & Immediate Eviction Architecture](concepts/cross-modal-model-lifecycle.md) — unified immediate model eviction across audio, image, and video; framework purge protocols (MLX Metal cache, CUDA IPC/caching allocator, glibc malloc_trim); Director phase-decoupled execution; dual eager/TTL memory policies.
 - [Orchestration Pipeline](concepts/generation-pipeline.md) — the 4-step generate → stems → voice → transcribe flow.
 - [Structured Captions](concepts/structured-caption.md) — the MiniMax Global Metadata / Vocal Details / Arrangement format.
 - [Caption Rewriter](concepts/caption-rewriter.md) — official music-caption-rewriter port: brief → professional three-heading caption via the real LLM.

@@ -68,7 +68,7 @@ IMAGE_KEYWORDS = [
 ]
 AUDIO_KEYWORDS = [
     "minimax-music", "music3", "music-3", "mxfp4",
-    "musicgen", "audiocraft", "musiclm",
+    "stable-audio", "stable_audio", "musicgen", "audiocraft", "musiclm",
     "text-to-audio", "audio-to-audio",
     "voice-conversion", "text-to-speech",
     "whisper", "wav2vec", "hubert", "bark", "vall-e", "xtts",

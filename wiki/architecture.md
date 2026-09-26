@@ -33,25 +33,29 @@ Milimo Music is a full-featured open-source AI music generation and production D
               │                           │
   ┌───────────▼────────────┐  ┌───────────▼────────────┐  ┌──────────────▼────────────┐
   │  GENERATION PROVIDERS  │  │  TRANSCRIPTION ENGINE  │  │  LLM PROVIDERS            │
-  │  MiniMax Music 3 (Def) │  │  MuScriptor (MT3)      │  │  Ollama / OpenAI / Gemini │
-  │  YuE2 3B (48kHz Stereo)│  │  Dual SymbolicHub      │  │  DeepSeek / Claude        │
-  │  MuLaCover-3B (Remix)  │  │  Drum Tracker (MIDI)   │  │  (Lyrics, Co-Writer graph,│
-  │  HeartMuLa-3B (Legacy) │  │  Note events + Stems   │  │   director shot planner)  │
-  │  Capability manifests  │  └────────────────────────┘  └───────────────────────────┘
+  │  MiniMax Music 3 (MLX) │  │  MuScriptor (MT3)      │  │  Ollama / OpenAI / Gemini │
+  │  Stable Audio Open 1.0 │  │  Dual SymbolicHub      │  │  DeepSeek / Claude        │
+  │  Meta MusicGen (Melody)│  │  Drum Tracker (MIDI)   │  │  (Lyrics, Co-Writer graph,│
+  │  YuE2 3B (48kHz Stereo)│  │  Note events + Stems   │  │   director shot planner)  │
+  │  MuLaCover-3B (Remix)  │  └────────────────────────┘  └───────────────────────────┘
+  │  HeartMuLa-3B (Legacy) │
+  │  Capability manifests  │
   └────────────────────────┘
 ```
 
 ## Generation & Transcription Pipeline
 
 The full flow is the [orchestration pipeline](concepts/generation-pipeline.md)
-(`orchestration/pipeline.py`):
+(`orchestration/pipeline.py`) operating under strict [Cross-Modal Model Lifecycle](concepts/cross-modal-model-lifecycle.md) immediate eviction:
 
-1. **Generation (MiniMax Music 3 default / YuE2 3B / HeartMuLa)**: [Structured Caption](concepts/structured-caption.md)
-   embeddings conditioning flow-matching DiT with section tags (`[Intro]`, `[Verse]`, `[Chorus]`, etc.) or [YuE2](entities/yue2-music.md) 48 kHz stereo music generation with optional ABC notation conditioning.
+1. **Generation (MiniMax / Stable Audio / MusicGen / YuE2 / HeartMuLa)**: [Structured Caption](concepts/structured-caption.md)
+   embeddings conditioning flow-matching DiT with section tags (`[Intro]`, `[Verse]`, `[Chorus]`, etc.), or [Stable Audio Open](entities/stable-audio-open.md) 44.1 kHz stereo diffusion, or [MusicGen](entities/musicgen.md) melody conditioning, or [YuE2](entities/yue2-music.md) 48 kHz stereo music generation.
+   *Immediate Eviction*: On generation completion, `provider.unload()` instantly purges model weights and clears framework allocators.
 2. **Stem Separation**: [Stem Separator](entities/stem-separator.md) — filter-bank extraction of
    4 preview clips (Vocals, Drums, Bass, Instruments) + combined Instrumental. The **DAW's
    playback channels**, however, source from **dynamic per-instrument parts derived from the
    transcription** (see step 4) so Solo/Mute truly isolates each instrument, not a fixed 4-set.
+   *Immediate Eviction*: BS-Roformer unloads and flushes device memory in `finally:` block.
 3. **Vocal Identity Cloning (SVC)**: Optional local SVC inference on vocal stem using
    consent-verified [Voice Profiles](entities/voice-service.md).
 4. **MuScriptor Transcription**: Note-level multi-instrument transcription into Standard
@@ -64,6 +68,7 @@ All outputs feed the [Session Workspace (DAW)](entities/session-workspace.md) an
 ## Director Mode v2 & AI Music Video Studio
 Directs synchronized cinematic video clips:
 - **Hierarchical Musical Accent Snapping**: Upgraded to [Director Mode v2](concepts/director-mode-v2.md) in `video_director.py`, scoring beats, downbeats, lyric phrase boundaries, and percussion entrances.
+- **Phase-Decoupled Execution**: Enforces strict phase separation under the [Cross-Modal Model Lifecycle](concepts/cross-modal-model-lifecycle.md): all keyframe stills are generated via FLUX.2/SDXL and saved to disk, followed by eager image model unloading before Wan 2.1 / LTX video diffusion commences.
 - **Pacing Control**: User-selectable Cut Speed bias slider ($-2$ to $+2$).
 - **Performer Role Ownership**: Assigns visual and vocal roles to performers, ensuring `mouth_movement: closed` during instrumental breaks and solos.
 - **Discrete Frame Lattice Snapping**: Snaps clips to discrete video model frame lattices ($F_{\text{min}} + k \cdot F_{\text{step}}$) and applies sample-accurate sub-second trimming (`music_output_trim`) to eliminate cumulative audio-video drift.
@@ -75,6 +80,7 @@ Directs synchronized cinematic video clips:
 
 ## Hardware Auto-Tune & Resilient Memory Lifecycle
 Milimo Music orchestrates concurrent audio and video generative backbones using the [Global Hardware Coordinator](entities/hardware-coordinator.md) and [Hardware Auto-Tune](concepts/hardware-autotune-memory-profiles.md):
+- **Cross-Modal Eviction Bus**: Coordinates mutual exclusion across `audio`, `image`, and `video` modalities, auto-evicting warm models when preempted by another media pipeline.
 - **Empirical Performance Profiles (1 to 5)**: Automatically detects GPU VRAM, compute capability, and host RAM at startup and selects optimal memory offloading (Profile 1: Max Performance, Profile 2: Balanced Streaming, Profile 4: Consumer Standard, Profile 5: Max Layer Offload).
 - **VRAM Safety Coefficient**: Enforces a strict $\le 0.80$ memory ceiling ($0.70$ for $< 12\text{ GB}$ VRAM) to prevent activation spikes and VAE decoding from crashing the GPU.
 - **Scoped CPU Execution (`cpu_scoped()`)**: Pre-processing, format loading (Librosa/torchaudio), and audio decoders are strictly scoped to CPU memory, preventing CUDA memory heap fragmentation.
@@ -90,8 +96,11 @@ Milimo Music orchestrates concurrent audio and video generative backbones using 
 ## Related pages
 
 - [Overview](overview.md) | [Backend & API](entities/backend-api.md) | [Frontend](entities/frontend.md)
+- [Cross-Modal Model Lifecycle](concepts/cross-modal-model-lifecycle.md) | [Generation Provider](entities/generation-provider.md)
+- [Stable Audio Open](entities/stable-audio-open.md) | [Meta MusicGen](entities/musicgen.md)
 - [Director Mode v2](concepts/director-mode-v2.md) | [AI Music Video Studio](entities/video-studio.md)
 - [Multitrack Timeline Editor](entities/multitrack-editor.md) | [Non-Destructive Multitrack Timeline](concepts/non-destructive-multitrack-timeline.md)
 - [YuE2 48kHz Stereo](entities/yue2-music.md) | [Hardware Auto-Tune](concepts/hardware-autotune-memory-profiles.md)
 - [Durable Task Queue](entities/durable-task-queue.md) | [Global Hardware Coordinator](entities/hardware-coordinator.md)
 - [Audio Synthesis Standards](concepts/audio-synthesis-standards.md) | [Database Integrity Lifecycle](concepts/database-integrity-lifecycle.md)
+

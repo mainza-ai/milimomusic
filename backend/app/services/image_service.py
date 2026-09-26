@@ -58,6 +58,37 @@ class ImageService:
             cls._instance = super(ImageService, cls).__new__(cls)
         return cls._instance
 
+    def unload_models(self) -> bool:
+        """Completely release loaded MLX and Diffusers image models and purge accelerator caches."""
+        unloaded = False
+        if self._loaded_mlx_pipeline is not None:
+            self._loaded_mlx_pipeline = None
+            self._loaded_mlx_model_id = None
+            unloaded = True
+            logger.info("ImageService: Unloaded MLX FLUX.2 pipeline.")
+
+        if self._loaded_diffusers_pipeline is not None:
+            try:
+                if hasattr(self._loaded_diffusers_pipeline, "remove_all_hooks"):
+                    self._loaded_diffusers_pipeline.remove_all_hooks()
+            except Exception:
+                pass
+            self._loaded_diffusers_pipeline = None
+            self._loaded_diffusers_model_id = None
+            unloaded = True
+            logger.info("ImageService: Unloaded Diffusers image pipeline.")
+
+        if unloaded:
+            import gc
+            gc.collect()
+            try:
+                from app.core.hardware_lock import GlobalHardwareCoordinator
+                GlobalHardwareCoordinator.flush_memory()
+            except Exception:
+                pass
+
+        return unloaded
+
     def get_default_image_model(self) -> str:
         """Get currently active or recommended image generation model."""
         active = model_manager.get_active_model("image")
@@ -439,6 +470,7 @@ class ImageService:
         visual_style: Optional[str] = None,
         title: Optional[str] = None,
         artist: Optional[str] = None,
+        auto_unload: bool = True,
     ) -> Dict[str, Any]:
         """
         Generate or synthesize visual artwork for track or project cover.
@@ -510,7 +542,7 @@ class ImageService:
             except Exception:
                 pass
 
-        return {
+        res = {
             "url": f"/covers/{filename}",
             "file_path": dest_path,
             "dest_path": dest_path,
@@ -527,6 +559,15 @@ class ImageService:
             "artist": overlay_artist or None,
         }
 
+        try:
+            from app.core.hardware_lock import GlobalHardwareCoordinator
+            if auto_unload and GlobalHardwareCoordinator.get_memory_policy()["policy"] == "eager":
+                self.unload_models()
+        except Exception:
+            pass
+
+        return res
+
     def generate_scene_background(
         self,
         prompt: str,
@@ -534,6 +575,7 @@ class ImageService:
         width: int = 1280,
         height: int = 720,
         model_id: Optional[str] = None,
+        auto_unload: bool = True,
     ) -> Dict[str, Any]:
         """Render a per-scene video background still (B-roll / Ken Burns source).
 
@@ -572,7 +614,7 @@ class ImageService:
         else:
             logger.info("Scene background diffusion unavailable; caller should use procedural fallback.")
 
-        return {
+        res = {
             "ok": ok,
             "dest_path": dest_path if ok else None,
             "prompt": prompt,
@@ -583,5 +625,24 @@ class ImageService:
             "diffusion_error": diffusion_error,
         }
 
+        try:
+            from app.core.hardware_lock import GlobalHardwareCoordinator
+            if auto_unload and GlobalHardwareCoordinator.get_memory_policy()["policy"] == "eager":
+                self.unload_models()
+        except Exception:
+            pass
+
+        return res
+
 
 image_service = ImageService()
+
+try:
+    from app.core.hardware_lock import GlobalHardwareCoordinator
+    GlobalHardwareCoordinator.register_eviction_hook(
+        "image_gen",
+        lambda: image_service.unload_models()
+    )
+except Exception:
+    pass
+

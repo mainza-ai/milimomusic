@@ -38,6 +38,7 @@ class HardwareCoordinator(GlobalHardwareCoordinator):
 
         return {
             **base_telemetry,
+            "memory_policy": cls.get_memory_policy(),
             "profile_id": profile.profile_id,
             "profile_name": profile.name,
             "offload_strategy": profile.offload_strategy,

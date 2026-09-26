@@ -24,7 +24,12 @@ class ProviderRegistry:
     def _register_defaults(self):
         """Register default generation engines."""
         minimax = MiniMaxMusic3Provider()
-        self.register_provider("minimax_music3", minimax)
+        for mid in [
+            "minimax_music3", "minimax", "minimax_music3_mxfp4", "minimax_music3_4bit",
+            "minimax_music3_6bit", "minimax_music3_8bit", "minimax_music3_bf16",
+            "minimax_music3_comfy_int8", "minimax_music3_gguf_q4", "minimax_music3_official_pytorch"
+        ]:
+            self.register_provider(mid, minimax)
         try:
             from app.providers.heartmula_provider import HeartMuLaProvider
             heartmula = HeartMuLaProvider()
@@ -51,6 +56,27 @@ class ProviderRegistry:
         except Exception as e:
             logger.warning(f"MuLaCoverProvider registration deferred: {e}")
 
+        try:
+            from app.providers.stable_audio_provider import StableAudioProvider
+            stable_audio = StableAudioProvider()
+            self.register_provider("stable_audio_open_1_0", stable_audio)
+            self.register_provider("stable_audio", stable_audio)
+            self.register_provider("stabilityai/stable-audio-open-1.0", stable_audio)
+        except Exception as e:
+            logger.warning(f"StableAudioProvider registration deferred: {e}")
+
+        try:
+            from app.providers.musicgen_provider import MusicGenProvider
+            musicgen_small = MusicGenProvider("facebook/musicgen-small")
+            musicgen_melody = MusicGenProvider("facebook/musicgen-melody")
+            self.register_provider("musicgen_small", musicgen_small)
+            self.register_provider("musicgen", musicgen_small)
+            self.register_provider("facebook/musicgen-small", musicgen_small)
+            self.register_provider("musicgen_melody", musicgen_melody)
+            self.register_provider("facebook/musicgen-melody", musicgen_melody)
+        except Exception as e:
+            logger.warning(f"MusicGenProvider registration deferred: {e}")
+
     def register_provider(self, provider_id: str, provider: GenerationProvider):
         self.providers[provider_id] = provider
         if "/" in provider_id and not provider_id.startswith("hf:"):
@@ -70,6 +96,22 @@ class ProviderRegistry:
         cleaned_id = target_id.removeprefix("hf:")
         if cleaned_id in self.providers:
             return self.providers[cleaned_id]
+
+        # Check if stable-audio or musicgen
+        if "stable-audio" in cleaned_id or "stable_audio" in cleaned_id:
+            from app.providers.stable_audio_provider import StableAudioProvider
+            provider = StableAudioProvider(cleaned_id if "/" in cleaned_id else None)
+            self.register_provider(target_id, provider)
+            self.register_provider(cleaned_id, provider)
+            return provider
+
+        if "musicgen" in cleaned_id:
+            from app.providers.musicgen_provider import MusicGenProvider
+            repo = cleaned_id if "/" in cleaned_id else ("facebook/musicgen-melody" if "melody" in cleaned_id else "facebook/musicgen-small")
+            provider = MusicGenProvider(repo)
+            self.register_provider(target_id, provider)
+            self.register_provider(cleaned_id, provider)
+            return provider
 
         # Check if this is a Hugging Face model repository or custom downloaded model
         from app.providers.hf_audio_provider import HuggingFaceAudioProvider
@@ -102,6 +144,13 @@ class ProviderRegistry:
             self.active_provider_id = provider_id
             logger.info(f"Active provider set to: {provider_id}")
             return True
+        cleaned = provider_id.removeprefix("hf:")
+        if cleaned in self.providers:
+            self.active_provider_id = cleaned
+            return True
+        if "minimax" in provider_id.lower() and "minimax_music3" in self.providers:
+            self.active_provider_id = "minimax_music3"
+            return True
         return False
 
     def get_active_provider_id(self) -> str:
@@ -113,8 +162,29 @@ class ProviderRegistry:
     def get_active_capabilities(self) -> GenerationCapabilities:
         return self.get_provider().get_capabilities()
 
+    def unload_all(self) -> int:
+        """Unload all instantiated providers from memory."""
+        count = 0
+        for p in set(self.providers.values()):
+            try:
+                if hasattr(p, "unload"):
+                    p.unload()
+                    count += 1
+            except Exception as e:
+                logger.warning(f"Error unloading provider {p}: {e}")
+        return count
+
 
 provider_registry = ProviderRegistry()
+
+try:
+    from app.core.hardware_lock import GlobalHardwareCoordinator
+    GlobalHardwareCoordinator.register_eviction_hook(
+        "audio_gen",
+        lambda: provider_registry.unload_all()
+    )
+except Exception:
+    pass
 
 
 def get_provider(provider_id: Optional[str] = None) -> GenerationProvider:

@@ -500,33 +500,51 @@ class VideoOrchestrator:
             self.update_task(task_id, step="Rendering Video Scenes & Lip-Sync Performance", progress=20)
             is_local = (provider_type not in ("cloud_fal", "cloud_replicate"))
 
-            for idx, clip in enumerate(plan.clips):
-                clip_file = os.path.join(TEMP_DIR, f"clip_{task_id}_{idx:03d}.mp4")
-                self.update_task(
-                    task_id,
-                    current_clip=idx + 1,
-                    current_clip_type=clip.scene_type,
-                    step=f"Rendering Scene {idx + 1}/{total_clips} ({'🎤 Vocal Performance' if clip.is_vocal else '🎥 Cinematic B-Roll'})",
-                    progress=20 + int(60 * (idx / total_clips))
-                )
+            # Phase A: Batch Pre-Render Missing Keyframe Stills (Image Modality)
+            if is_local:
+                async with GlobalHardwareCoordinator.scoped_device("Keyframe Stills Generation", modality="image_gen"):
+                    for idx, clip in enumerate(plan.clips):
+                        if not clip.is_vocal:
+                            clip_idx = int(clip.clip_index or (idx + 1))
+                            pre_rendered_kf = os.path.join(KEYFRAMES_DIR, f"keyframe_{job.id}_{clip_idx:03d}.png")
+                            if not (os.path.isfile(pre_rendered_kf) and os.path.getsize(pre_rendered_kf) > 0):
+                                try:
+                                    from app.services.image_service import image_service
+                                    bg = image_service.generate_scene_background(
+                                        prompt=clip.prompt,
+                                        style=style,
+                                        width=w, height=h,
+                                        auto_unload=False
+                                    )
+                                    if bg.get("ok") and bg.get("dest_path") and os.path.isfile(bg["dest_path"]):
+                                        shutil.copy(bg["dest_path"], pre_rendered_kf)
+                                except Exception as e:
+                                    logger.warning(f"Keyframe batch generation skipped for scene {clip_idx}: {e}")
+                    # Immediately unload image diffusion models and clear MLX/CUDA memory
+                    try:
+                        from app.services.image_service import image_service
+                        image_service.unload_models()
+                    except Exception:
+                        pass
 
-                async def _render_clip():
-                    # Vocal Singing Scene
-                    # Prefer isolated vocal stem; fall back to resolved master audio so lip-sync succeeds even without stem separation
-                    vocal_audio_source = vocal_stem or resolved_master
-                    if clip.is_vocal and enable_lip_sync and face_image and vocal_audio_source:
-                        logger.info(f"Rendering singing performance for Scene {idx + 1} with {lipsync_provider.name} (audio: {os.path.basename(vocal_audio_source)})...")
-                        success = await lipsync_provider.render_lip_sync(
-                            face_image_path=face_image,
-                            vocal_audio_path=vocal_audio_source,
-                            start_time=clip.start_time,
-                            duration=clip.duration,
-                            out_path=clip_file,
-                            width=w, height=h
-                        )
-                        if not success or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
-                            # Fallback to smooth provider
-                            await self._fallback_lipsync.render_lip_sync(
+            try:
+                for idx, clip in enumerate(plan.clips):
+                    clip_file = os.path.join(TEMP_DIR, f"clip_{task_id}_{idx:03d}.mp4")
+                    self.update_task(
+                        task_id,
+                        current_clip=idx + 1,
+                        current_clip_type=clip.scene_type,
+                        step=f"Rendering Scene {idx + 1}/{total_clips} ({'🎤 Vocal Performance' if clip.is_vocal else '🎥 Cinematic B-Roll'})",
+                        progress=20 + int(60 * (idx / total_clips))
+                    )
+
+                    async def _render_clip():
+                        # Vocal Singing Scene
+                        # Prefer isolated vocal stem; fall back to resolved master audio so lip-sync succeeds even without stem separation
+                        vocal_audio_source = vocal_stem or resolved_master
+                        if clip.is_vocal and enable_lip_sync and face_image and vocal_audio_source:
+                            logger.info(f"Rendering singing performance for Scene {idx + 1} with {lipsync_provider.name} (audio: {os.path.basename(vocal_audio_source)})...")
+                            success = await lipsync_provider.render_lip_sync(
                                 face_image_path=face_image,
                                 vocal_audio_path=vocal_audio_source,
                                 start_time=clip.start_time,
@@ -534,68 +552,70 @@ class VideoOrchestrator:
                                 out_path=clip_file,
                                 width=w, height=h
                             )
-
-                    # Cinematic Scene
-                    else:
-                        clip_idx = int(clip.clip_index or (idx + 1))
-                        logger.info(f"Rendering visual scene {clip_idx} with {video_generator.name}...")
-                        # Check if an approved pre-rendered keyframe exists on disk
-                        pre_rendered_kf = os.path.join(KEYFRAMES_DIR, f"keyframe_{job.id}_{clip_idx:03d}.png")
-                        scene_bg = None
-                        if os.path.isfile(pre_rendered_kf) and os.path.getsize(pre_rendered_kf) > 0:
-                            scene_bg = pre_rendered_kf
-                            logger.info(f"Reusing approved keyframe still for Scene {clip_idx}: {pre_rendered_kf}")
-                        else:
-                            try:
-                                from app.services.image_service import image_service
-                                bg = image_service.generate_scene_background(
-                                    prompt=clip.prompt,
-                                    style=style,
+                            if not success or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
+                                # Fallback to smooth provider
+                                await self._fallback_lipsync.render_lip_sync(
+                                    face_image_path=face_image,
+                                    vocal_audio_path=vocal_audio_source,
+                                    start_time=clip.start_time,
+                                    duration=clip.duration,
+                                    out_path=clip_file,
                                     width=w, height=h
                                 )
-                                if bg.get("ok") and bg.get("dest_path") and os.path.isfile(bg["dest_path"]):
-                                    scene_bg = bg["dest_path"]
-                                    try:
-                                        shutil.copy(scene_bg, pre_rendered_kf)
-                                    except Exception:
-                                        pass
-                            except Exception as e:
-                                logger.warning(f"Keyframe image generation skipped ({e})")
-                                scene_bg = face_image
 
-                        success = await video_generator.generate_clip(
-                            prompt=clip.prompt,
-                            duration=clip.duration,
-                            out_path=clip_file,
-                            width=w, height=h,
-                            image_path=scene_bg,
-                            negative_prompt=clip.negative_prompt,
-                            visual_style=style
-                        )
-                        if not success or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
-                            # Fallback to procedural generator
-                            await self._procedural.generate_clip(
+                        # Cinematic Scene
+                        else:
+                            clip_idx = int(clip.clip_index or (idx + 1))
+                            logger.info(f"Rendering visual scene {clip_idx} with {video_generator.name}...")
+                            # Check if an approved pre-rendered keyframe exists on disk
+                            pre_rendered_kf = os.path.join(KEYFRAMES_DIR, f"keyframe_{job.id}_{clip_idx:03d}.png")
+                            scene_bg = pre_rendered_kf if (os.path.isfile(pre_rendered_kf) and os.path.getsize(pre_rendered_kf) > 0) else face_image
+
+                            success = await video_generator.generate_clip(
                                 prompt=clip.prompt,
                                 duration=clip.duration,
                                 out_path=clip_file,
                                 width=w, height=h,
                                 image_path=scene_bg,
+                                negative_prompt=clip.negative_prompt,
                                 visual_style=style
                             )
+                            if not success or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
+                                # Fallback to procedural generator
+                                await self._procedural.generate_clip(
+                                    prompt=clip.prompt,
+                                    duration=clip.duration,
+                                    out_path=clip_file,
+                                    width=w, height=h,
+                                    image_path=scene_bg,
+                                    visual_style=style
+                                )
 
-                if is_local:
-                    async with GlobalHardwareCoordinator.scoped_device(f"Wan 2.1 Video Clip {idx + 1}/{total_clips}"):
+                    if is_local:
+                        async with GlobalHardwareCoordinator.scoped_device(
+                            f"Wan 2.1 Video Clip {idx + 1}/{total_clips}",
+                            modality="video_gen"
+                        ):
+                            await _render_clip()
+                    else:
                         await _render_clip()
-                else:
-                    await _render_clip()
 
-                if os.path.isfile(clip_file) and os.path.getsize(clip_file) > 0:
-                    rendered_clips.append(clip_file)
-                    clip.rendered_clip_path = clip_file
-                    clip.status = "completed"
+                    if os.path.isfile(clip_file) and os.path.getsize(clip_file) > 0:
+                        rendered_clips.append(clip_file)
+                        clip.rendered_clip_path = clip_file
+                        clip.status = "completed"
+
+            finally:
+                if is_local and hasattr(video_generator, "unload"):
+                    try:
+                        video_generator.unload()
+                        GlobalHardwareCoordinator.flush_memory()
+                    except Exception as _e:
+                        logger.debug(f"Video generator unload skipped: {_e}")
 
             if not rendered_clips:
                 raise RuntimeError("No video scenes were successfully rendered.")
+
 
             # Step 3: Scene Assembly & Concat
             self.update_task(task_id, step="Assembling & Stitching Video Scenes", progress=82)

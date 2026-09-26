@@ -226,7 +226,16 @@ class GenerateAndTranscribePipeline:
                     session.add(job)
                     session.commit()
 
+            # Immediate Eviction of Generation Model weights to maximize VRAM for Separation
+            try:
+                if hasattr(provider, "unload"):
+                    provider.unload()
+                GlobalHardwareCoordinator.flush_memory()
+            except Exception as _u:
+                logger.debug(f"Generation provider unload skipped: {_u}")
+
             # Step 2: SOTA Neural Source Separation (BS-Roformer / MelBand-Roformer).
+
             # Separates the ACTUAL generated master into genuine audio stems
             # (vocals, drums, bass, guitar, piano, other) — real separated audio,
             # never synthesized oscillators. Runs in a worker thread.
@@ -356,6 +365,13 @@ class GenerateAndTranscribePipeline:
             except Exception as e:  # never let per-instrument rendering sink the job
                 logger.warning(f"Per-instrument stem rendering skipped for {job_id_str}: {e}")
 
+            # Release transcription model from memory
+            try:
+                muscriptor_provider.unload()
+                GlobalHardwareCoordinator.flush_memory()
+            except Exception as _u:
+                logger.debug(f"Transcription unload skipped: {_u}")
+
             _abort_if_terminal(engine, job_id, cancel_event, stage="finalize")
 
             # If voice conversion occurred, remix final master track audio with converted vocals
@@ -399,8 +415,14 @@ class GenerateAndTranscribePipeline:
                     )
                     final_cover_path = cover_res.get("url")
                     logger.info(f"Auto-generated album cover for job {job_id_str}: {final_cover_path}")
+                    # Immediately unload image diffusion models
+                    try:
+                        image_service.unload_models()
+                    except Exception:
+                        pass
                 except Exception as e:
                     logger.warning(f"Auto-cover generation skipped for {job_id_str}: {e}")
+
 
             # Finalize DB Record
             with Session(engine) as session:

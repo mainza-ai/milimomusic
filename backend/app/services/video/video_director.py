@@ -11,8 +11,9 @@ import os
 import re
 import math
 import json
+import asyncio
 import logging
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple, Callable
 
 from app.models import Job
 from app.transcription.karaoke import lyric_sync_engine
@@ -258,18 +259,26 @@ class VideoDirector:
         visible_cast: Optional[List[str]] = None,
         character_desc: Optional[str] = None,
         vocal_stem_path: Optional[str] = None,
-        use_llm: bool = True
+        use_llm: bool = True,
+        progress_callback: Optional[Callable[[str, int], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None
     ) -> VideoDirectorTreatment:
         """
         Conceptualize and script an entire music video using the AI Visual Director (LLMService).
         Translates lyrical themes, mood, and musical downbeats into a cohesive visual treatment
         with persistent character continuity, metaphorical scene planning, and camera choreography.
         """
+        if cancel_check and cancel_check():
+            raise asyncio.CancelledError("Planning cancelled by user.")
+
         total_duration = float((job.duration_ms or 180000) / 1000.0)
         model_max = self.get_model_max_duration(model_name)
         effective_max = max(1.0, min(float(max_clip_duration or model_max), model_max))
 
         # 1. Audio Signal Analysis & Timed Lyrics Alignment
+        if progress_callback:
+            progress_callback("Analyzing Audio Signal & Musical Downbeats", 10)
+
         timed_lines = []
         if job and getattr(job, "timed_lyrics_json", None):
             try:
@@ -280,11 +289,19 @@ class VideoDirector:
                 timed_lines = []
 
         if not timed_lines:
+            if progress_callback:
+                progress_callback("Aligning Timed Lyrics & Vocal Cadence", 25)
             timed_lines = lyric_sync_engine.align_lyrics(
                 lyrics=job.lyrics or "",
                 duration_sec=total_duration,
                 vocal_stem_path=vocal_stem_path
             )
+        else:
+            if progress_callback:
+                progress_callback("Aligning Timed Lyrics & Vocal Cadence", 25)
+
+        if cancel_check and cancel_check():
+            raise asyncio.CancelledError("Planning cancelled by user.")
 
         audio_file = job.audio_path if job.audio_path and os.path.isfile(job.audio_path) else None
         if audio_file:
@@ -345,6 +362,8 @@ class VideoDirector:
         # 3. Call LLM for Visual Directing or Fast Fallback
         should_use_llm = use_llm and os.environ.get("MILIMO_FAST_TEST_MODE") != "1"
         if not should_use_llm:
+            if progress_callback:
+                progress_callback("Generating Intelligent Fallback Storyboard", 70)
             return self._generate_intelligent_fallback_treatment(
                 job=job,
                 analysis=analysis,
@@ -354,8 +373,12 @@ class VideoDirector:
                 character_desc=character_desc,
                 visible_cast=visible_cast,
                 visual_style=visual_style,
-                palette=palette
+                palette=palette,
+                fallback_reason="Fast test mode enabled or LLM explicitly disabled"
             )
+
+        if progress_callback:
+            progress_callback("AI Visual Director Conceptualizing Storyboard & Visual Metaphors", 50)
 
         treatment = self._call_llm_visual_director(
             job=job,
@@ -366,7 +389,9 @@ class VideoDirector:
             character_desc=character_desc,
             visible_cast=visible_cast,
             visual_style=visual_style,
-            palette=palette
+            palette=palette,
+            progress_callback=progress_callback,
+            cancel_check=cancel_check
         )
 
         return treatment
@@ -381,7 +406,9 @@ class VideoDirector:
         character_desc: Optional[str] = None,
         visible_cast: Optional[List[str]] = None,
         visual_style: str = "neon-cyberpunk",
-        palette: Optional[Dict[str, Any]] = None
+        palette: Optional[Dict[str, Any]] = None,
+        progress_callback: Optional[Callable[[str, int], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None
     ) -> VideoDirectorTreatment:
         """Invoke LLMService with structured visual director prompt and fall back cleanly on error."""
         from app.services.llm_service import LLMService
@@ -469,17 +496,25 @@ class VideoDirector:
             "}"
         )
 
-        full_prompt = f"{system_instruction}\n\n{user_content}"
+        if cancel_check and cancel_check():
+            raise asyncio.CancelledError("Planning cancelled by user before LLM invocation.")
 
+        fallback_reason = None
         try:
             response_text, provider, model = LLMService.generate_text_via_active(
                 full_prompt,
                 options={"temperature": 0.7}
             )
+            if cancel_check and cancel_check():
+                raise asyncio.CancelledError("Planning cancelled by user after LLM invocation.")
+
             if response_text and response_text.strip():
                 parsed = self._extract_json_treatment(response_text)
                 if parsed and parsed.get("scenes") and len(parsed["scenes"]) > 0:
                     logger.info(f"AI Visual Director treatment successfully generated via {provider}/{model} ({len(parsed['scenes'])} scenes).")
+                    if progress_callback:
+                        progress_callback("Snapping Scene Cuts to Acoustic Lattice & Enhancing Prompts", 85)
+
                     scenes = self._normalize_director_scenes(
                         parsed_scenes=parsed["scenes"],
                         clips_meta=clips_meta,
@@ -506,13 +541,23 @@ class VideoDirector:
                         provider=provider,
                         model=model
                     )
+                else:
+                    fallback_reason = "LLM response did not contain valid scene storyboard JSON"
+            else:
+                fallback_reason = "LLM returned empty response"
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            raise
         except Exception as e:
             logger.warning(f"AI Visual Director LLM invocation failed ({e}), using intelligent fallback.")
+            fallback_reason = str(e)
         finally:
             try:
                 LLMService.unload_local_model()
             except Exception:
                 pass
+
+        if progress_callback:
+            progress_callback("Generating Intelligent Fallback Storyboard", 85)
 
         # Fallback to intelligent rule-based directing
         return self._generate_intelligent_fallback_treatment(
@@ -524,7 +569,8 @@ class VideoDirector:
             character_desc=character_desc,
             visible_cast=visible_cast,
             visual_style=visual_style,
-            palette=palette
+            palette=palette,
+            fallback_reason=fallback_reason
         )
 
     def _extract_json_treatment(self, text: str) -> Optional[Dict[str, Any]]:
@@ -643,7 +689,8 @@ class VideoDirector:
         character_desc: Optional[str] = None,
         visible_cast: Optional[List[str]] = None,
         visual_style: str = "neon-cyberpunk",
-        palette: Optional[Dict[str, Any]] = None
+        palette: Optional[Dict[str, Any]] = None,
+        fallback_reason: Optional[str] = None
     ) -> VideoDirectorTreatment:
         """
         Intelligent deterministic fallback when LLM is offline or unreachable.
@@ -766,7 +813,8 @@ class VideoDirector:
             scenes=scenes,
             llm_used=False,
             provider="deterministic_fallback",
-            model="director_v2_engine"
+            model="director_v2_engine",
+            fallback_reason=fallback_reason
         )
 
     def reimagine_scene(
@@ -846,7 +894,9 @@ class VideoDirector:
         visible_cast: Optional[List[str]] = None,
         user_scenes: Optional[List[Dict[str, Any]]] = None,
         use_llm: bool = True,
-        force_refresh: bool = False
+        force_refresh: bool = False,
+        progress_callback: Optional[Callable[[str, int], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None
     ) -> VideoPlan:
         """
         Produce a production VideoPlan.
@@ -964,7 +1014,9 @@ class VideoDirector:
             visible_cast=visible_cast,
             character_desc=character_desc,
             vocal_stem_path=vocal_stem_path,
-            use_llm=use_llm
+            use_llm=use_llm,
+            progress_callback=progress_callback,
+            cancel_check=cancel_check
         )
 
         clips = []
@@ -1006,7 +1058,9 @@ class VideoDirector:
             visual_metaphor=treatment.visual_metaphor,
             character_profile=treatment.character_profile,
             treatment=treatment.to_dict(),
-            clips=clips
+            clips=clips,
+            fallback_used=not treatment.llm_used,
+            fallback_reason=treatment.fallback_reason
         )
 
         # Update in-memory job.video_config_json if job is present

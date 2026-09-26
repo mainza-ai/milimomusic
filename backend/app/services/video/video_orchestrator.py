@@ -53,6 +53,7 @@ class VideoOrchestrator:
     _tasks: Dict[str, VideoTaskStatusInfo] = {}
     _video_cancels: Dict[str, asyncio.Event] = {}
     _keyframe_cancels: Dict[str, asyncio.Event] = {}
+    _plan_cancels: Dict[str, asyncio.Event] = {}
     _lock = threading.RLock()
 
     def __new__(cls):
@@ -76,7 +77,13 @@ class VideoOrchestrator:
         # Query durable SQLite task queue if not in memory
         pt = task_queue.get_task(task_id)
         if pt:
-            return pt.to_dict()
+            d = pt.to_dict()
+            if pt.result and isinstance(pt.result, dict):
+                if "clips" in pt.result and not d.get("clips"):
+                    d["clips"] = pt.result["clips"]
+                if "treatment" in pt.result and not d.get("treatment"):
+                    d["treatment"] = pt.result["treatment"]
+            return d
         return None
 
     def update_task(self, task_id: str, **kwargs):
@@ -91,11 +98,13 @@ class VideoOrchestrator:
             status = kwargs.get("status")
             progress = kwargs.get("progress")
             step = kwargs.get("step") or kwargs.get("error")
+            result = kwargs.get("result")
             task_queue.update_task(
                 task_id=task_id,
                 status=status,
                 progress=progress,
                 message=step,
+                result=result,
                 error=kwargs.get("error"),
             )
         except Exception as e:
@@ -106,10 +115,18 @@ class VideoOrchestrator:
             ev = self._video_cancels.get(task_id)
             if ev:
                 ev.set()
-        self.update_task(task_id, status="cancelled", step="Video rendering cancelled by user.")
+            ev_plan = self._plan_cancels.get(task_id)
+            if ev_plan:
+                ev_plan.set()
+        self.update_task(task_id, status="cancelled", step="Planning / rendering cancelled by user.")
         try:
             from app.core.hardware_lock import GlobalHardwareCoordinator
             GlobalHardwareCoordinator.flush_memory()
+        except Exception:
+            pass
+        try:
+            from app.services.llm_service import LLMService
+            LLMService.unload_local_model()
         except Exception:
             pass
         return True
@@ -872,6 +889,169 @@ class VideoOrchestrator:
                 if os.path.isfile(cf):
                     try: os.remove(cf)
                     except: pass
+
+    async def plan_music_video_async(
+        self,
+        job_id: str,
+        task_id: str,
+        max_clip_duration: Optional[float] = None,
+        model_name: Optional[str] = "wan_14b",
+        bpm: Optional[float] = None,
+        visual_style: str = "neon-cyberpunk",
+        custom_style_prompt: Optional[str] = None,
+        pacing_bias: int = 0,
+        character_desc: Optional[str] = None,
+        visible_cast: Optional[List[str]] = None,
+        user_scenes: Optional[List[Dict[str, Any]]] = None,
+        use_llm: bool = True,
+        force_refresh: bool = False
+    ) -> Dict[str, Any]:
+        """
+        Asynchronously plan a multi-scene music video with real-time HUD progress updates.
+        Updates task status across:
+          1. 10%: Audio analysis & BPM detection
+          2. 25%: Lyric alignment & vocal cadence
+          3. 50%: AI Visual Director LLM conceptualization
+          4. 85%: Storyboard lattice snapping & prompt formatting
+          5. 100%: Persistence to SQLite DB & completion with clips and treatment
+        """
+        from app.main import engine, get_job_by_id
+        from app.models import Job
+        from sqlmodel import Session
+        from app.services.video.video_director import video_director
+
+        cancel_event = asyncio.Event()
+        with self._lock:
+            self._plan_cancels[task_id] = cancel_event
+            tinfo = VideoTaskStatusInfo(
+                id=task_id,
+                job_id=job_id,
+                status="processing",
+                step="Analyzing Audio Signal & Musical Downbeats",
+                progress=10,
+                total_clips=0,
+                current_clip=0
+            )
+            self._tasks[task_id] = tinfo
+            try:
+                task_queue.enqueue_task(
+                    task_id=task_id,
+                    task_type="video_planning",
+                    payload={"job_id": job_id},
+                    initial_status="processing",
+                    initial_message="Analyzing Audio Signal & Musical Downbeats"
+                )
+            except Exception as _e:
+                logger.debug(f"Could not enqueue planning task to durable queue: {_e}")
+
+        def _progress_cb(step_desc: str, pct: int):
+            if cancel_event.is_set():
+                raise asyncio.CancelledError("Planning cancelled by user.")
+            self.update_task(task_id, step=step_desc, progress=pct)
+
+        try:
+            with Session(engine) as session:
+                job = get_job_by_id(session, job_id)
+                if not job:
+                    raise ValueError(f"Job {job_id} not found")
+
+            if cancel_event.is_set():
+                raise asyncio.CancelledError("Planning cancelled by user.")
+
+            model_name = model_name or "wan_14b"
+            model_max = video_director.get_model_max_duration(model_name)
+            if max_clip_duration is not None and float(max_clip_duration) > 0:
+                clip_dur = max(1.0, min(float(max_clip_duration), model_max))
+            else:
+                clip_dur = model_max
+
+            # Execute segmentation in worker thread so event loop remains responsive
+            plan = await asyncio.to_thread(
+                video_director.segment_song,
+                job=job,
+                max_clip_duration=clip_dur,
+                model_name=model_name,
+                bpm=bpm,
+                visual_style=visual_style or "neon-cyberpunk",
+                vocal_stem_path=self.resolve_vocals_stem(job),
+                character_desc=character_desc,
+                custom_style_prompt=custom_style_prompt,
+                pacing_bias=pacing_bias or 0,
+                visible_cast=visible_cast,
+                user_scenes=user_scenes,
+                use_llm=use_llm,
+                force_refresh=force_refresh,
+                progress_callback=_progress_cb,
+                cancel_check=lambda: cancel_event.is_set()
+            )
+
+            if cancel_event.is_set():
+                raise asyncio.CancelledError("Planning cancelled by user.")
+
+            plan_dict = plan.to_dict()
+            clips = plan_dict.get("clips", [])
+            treatment = plan_dict.get("treatment")
+            fallback_used = getattr(plan, "fallback_used", False)
+            fallback_reason = getattr(plan, "fallback_reason", None)
+
+            # Persist plan to SQLite Job database
+            _progress_cb("Saving Scene Storyboard to Project", 95)
+            with Session(engine) as session:
+                j = session.get(Job, job.id)
+                if j:
+                    existing_cfg = {}
+                    if j.video_config_json:
+                        try:
+                            existing_cfg = json.loads(j.video_config_json)
+                        except Exception:
+                            pass
+                    if treatment:
+                        existing_cfg["director_treatment"] = treatment
+                    existing_cfg["scenes"] = clips
+                    existing_cfg["visual_style"] = visual_style or "neon-cyberpunk"
+                    existing_cfg["model_name"] = model_name
+                    j.video_config_json = json.dumps(existing_cfg, default=str)
+                    session.add(j)
+                    session.commit()
+
+            self.update_task(
+                task_id,
+                status="completed",
+                progress=100,
+                step="Scene Planning Complete",
+                total_clips=len(clips),
+                clips=clips,
+                treatment=treatment,
+                fallback_used=fallback_used,
+                fallback_reason=fallback_reason,
+                result={"clips": clips, "treatment": treatment}
+            )
+            return {
+                "status": "completed",
+                "task_id": task_id,
+                "job_id": job_id,
+                "clips": clips,
+                "treatment": treatment
+            }
+
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            logger.info(f"Scene planning task {task_id} cancelled.")
+            self.update_task(task_id, status="cancelled", step="Planning cancelled by user.")
+            try:
+                from app.services.llm_service import LLMService
+                LLMService.unload_local_model()
+            except Exception:
+                pass
+            return {"status": "cancelled", "task_id": task_id}
+
+        except Exception as e:
+            logger.error(f"Scene planning task {task_id} failed: {e}", exc_info=True)
+            self.update_task(task_id, status="failed", error=str(e), step=f"Planning Failed: {str(e)[:100]}")
+            return {"status": "failed", "task_id": task_id, "error": str(e)}
+
+        finally:
+            with self._lock:
+                self._plan_cancels.pop(task_id, None)
 
 
 video_orchestrator = VideoOrchestrator()

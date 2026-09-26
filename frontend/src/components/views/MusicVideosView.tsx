@@ -313,21 +313,6 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                         if (JSON.stringify(prev) === JSON.stringify(kfMap)) return prev;
                         return kfMap;
                     });
-
-                    // Ensure timeline is planned so keyframes can be viewed immediately if not already hydrated
-                    if (!planResultRef.current?.clips?.length) {
-                        videoApi.planVideo(activeSong.id, {
-                            model_name: videoModel,
-                            visual_style: videoStyle,
-                            custom_style_prompt: customStylePrompt,
-                            aspect_ratio: aspectRatio,
-                            max_clip_duration: clipDuration
-                        }).then(plan => {
-                            if (plan && plan.clips && plan.clips.length > 0) {
-                                setPlanResult(prev => prev || plan);
-                            }
-                        }).catch(() => {});
-                    }
                 } else {
                     setKeyframes(prev => Object.keys(prev).length === 0 ? prev : {});
                 }
@@ -340,12 +325,107 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const [renderedVideoUrl, setRenderedVideoUrl] = useState<string | null>(null);
     const pollRef = useRef<number | undefined>(undefined);
     const kfPollRef = useRef<number | undefined>(undefined);
+    const planPollRef = useRef<number | undefined>(undefined);
 
     // Modal states
     const [retakeModalOpen, setRetakeModalOpen] = useState(false);
     const [retakeClipIndex, setRetakeClipIndex] = useState<number | null>(null);
     const [isRetaking, setIsRetaking] = useState(false);
     const [zoomKeyframe, setZoomKeyframe] = useState<{ clipIndex: number; url: string } | null>(null);
+
+    // Planning Polling Engine
+    const startPlanningPoll = useCallback((taskId: string, songId: string) => {
+        if (planPollRef.current) window.clearInterval(planPollRef.current);
+        setIsPlanning(true);
+        planPollRef.current = window.setInterval(async () => {
+            try {
+                const status = await videoApi.getVideoTaskStatus(taskId);
+                setActiveTask(status);
+
+                if (status.status === 'completed') {
+                    if (planPollRef.current) window.clearInterval(planPollRef.current);
+                    planPollRef.current = undefined;
+                    setIsPlanning(false);
+                    sessionStorage.removeItem(`milimo_active_planning_${songId}`);
+
+                    if (status.treatment) {
+                        setDirectorTreatment(status.treatment);
+                    }
+                    if (status.clips && status.clips.length > 0) {
+                        const totalClips = status.clips.length;
+                        const vocalClips = status.clips.filter((c: any) => c.scene_type === 'VOCAL_PERFORMANCE' || c.is_vocal).length;
+                        setPlanResult({
+                            status: 'ok',
+                            job_id: songId,
+                            total_clips: totalClips,
+                            vocal_clips_count: vocalClips,
+                            broll_clips_count: totalClips - vocalClips,
+                            max_clip_duration: clipDuration,
+                            model_name: videoModel,
+                            clips: status.clips,
+                            treatment: status.treatment
+                        });
+                    } else {
+                        // Hydrate from getDirectorTreatment if clips not in task
+                        videoApi.getDirectorTreatment(songId).then(res => {
+                            if (res?.treatment) {
+                                setDirectorTreatment(res.treatment);
+                                if (res.treatment.scenes && res.treatment.scenes.length > 0) {
+                                    const scenes = res.treatment.scenes;
+                                    setPlanResult({
+                                        status: 'ok',
+                                        job_id: songId,
+                                        total_clips: scenes.length,
+                                        vocal_clips_count: scenes.filter((c: any) => c.scene_type === 'VOCAL_PERFORMANCE' || c.is_vocal).length,
+                                        broll_clips_count: scenes.filter((c: any) => c.scene_type !== 'VOCAL_PERFORMANCE' && !c.is_vocal).length,
+                                        max_clip_duration: clipDuration,
+                                        model_name: videoModel,
+                                        clips: scenes,
+                                        treatment: res.treatment
+                                    });
+                                }
+                            }
+                        }).catch(() => {});
+                    }
+                    toast('Scene planning completed successfully.', 'success');
+                } else if (status.status === 'cancelled') {
+                    if (planPollRef.current) window.clearInterval(planPollRef.current);
+                    planPollRef.current = undefined;
+                    setIsPlanning(false);
+                    sessionStorage.removeItem(`milimo_active_planning_${songId}`);
+                    toast('Scene planning cancelled.', 'info');
+                } else if (status.status === 'error' || (status as any).status === 'failed') {
+                    if (planPollRef.current) window.clearInterval(planPollRef.current);
+                    planPollRef.current = undefined;
+                    setIsPlanning(false);
+                    sessionStorage.removeItem(`milimo_active_planning_${songId}`);
+                    toast(status.error || 'Scene planning failed.', 'error');
+                }
+            } catch {
+                /* transient network poll error */
+            }
+        }, 1200);
+    }, [clipDuration, videoModel]);
+
+    // Resume any in-progress planning task across view reloads / re-renders
+    useEffect(() => {
+        if (!activeSong?.id) return;
+        const storedPlanTaskId = sessionStorage.getItem(`milimo_active_planning_${activeSong.id}`);
+        if (storedPlanTaskId) {
+            videoApi.getVideoTaskStatus(storedPlanTaskId)
+                .then(status => {
+                    if (status && status.status === 'processing') {
+                        setActiveTask(status);
+                        startPlanningPoll(storedPlanTaskId, activeSong.id);
+                    } else {
+                        sessionStorage.removeItem(`milimo_active_planning_${activeSong.id}`);
+                    }
+                })
+                .catch(() => {
+                    sessionStorage.removeItem(`milimo_active_planning_${activeSong.id}`);
+                });
+        }
+    }, [activeSong?.id, startPlanningPoll]);
 
     // Unmount cleanup to prevent leaking video polling intervals
     useEffect(() => {
@@ -357,6 +437,10 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             if (kfPollRef.current) {
                 window.clearInterval(kfPollRef.current);
                 kfPollRef.current = undefined;
+            }
+            if (planPollRef.current) {
+                window.clearInterval(planPollRef.current);
+                planPollRef.current = undefined;
             }
         };
     }, []);
@@ -415,20 +499,37 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 visible_cast: visibleCast,
                 use_llm: true,
                 force_refresh: true,
+                async_mode: true
             };
-            const plan = await videoApi.planVideo(activeSong.id, params);
-            setPlanResult(plan);
-            if (plan.treatment) {
-                setDirectorTreatment(plan.treatment);
+            const planRes = await videoApi.planVideo(activeSong.id, params);
+            if (planRes.status === 'queued' && planRes.task_id) {
+                const taskId = planRes.task_id;
+                sessionStorage.setItem(`milimo_active_planning_${activeSong.id}`, taskId);
+                setActiveTask({
+                    id: taskId,
+                    job_id: activeSong.id,
+                    status: 'processing',
+                    step: 'Initializing Scene Planning Pipeline',
+                    progress: 5,
+                    total_clips: 0,
+                    current_clip: 0
+                });
+                startPlanningPoll(taskId, activeSong.id);
+            } else if (planRes.clips && planRes.clips.length > 0) {
+                // Synchronous fallback response
+                setPlanResult(planRes);
+                if (planRes.treatment) {
+                    setDirectorTreatment(planRes.treatment);
+                }
+                toast(`Scene plan created: ${planRes.total_clips} scenes ready for production.`, 'success');
+                setIsPlanning(false);
             }
-            toast(`Scene plan created: ${plan.total_clips} scenes ready for production.`, 'success');
         } catch (err: any) {
             console.error('Failed to plan video scenes:', err);
             toast(err?.response?.data?.detail || 'Failed to plan video scenes. Please ensure the track is completed.', 'error');
-        } finally {
             setIsPlanning(false);
         }
-    }, [activeSong, videoModel, clipDuration, videoStyle, customStylePrompt, characterPromptNote, aspectRatio, videoProvider, pacingBias, vocalBypass, fidelityRetries, autoContinue, visibleCast]);
+    }, [activeSong, videoModel, clipDuration, videoStyle, customStylePrompt, characterPromptNote, aspectRatio, videoProvider, pacingBias, vocalBypass, fidelityRetries, autoContinue, visibleCast, startPlanningPoll]);
 
     // Clear Timeline & Cached Scenes
     const handleClearTimeline = useCallback(async () => {
@@ -657,18 +758,27 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         if (!activeTask?.id) return;
         try {
             await videoApi.cancelVideoTask(activeTask.id);
-            toast('Video rendering cancelled.', 'info');
+            const isPlan = activeTask.id.startsWith('plan_');
+            toast(isPlan ? 'Scene planning cancelled.' : 'Video rendering cancelled.', 'info');
             setActiveTask(prev => prev ? { ...prev, status: 'cancelled', step: 'cancelled' } : null);
+            if (activeSong?.id) {
+                sessionStorage.removeItem(`milimo_active_planning_${activeSong.id}`);
+            }
         } catch (err: any) {
-            toast(err?.response?.data?.detail || 'Failed to cancel video rendering.', 'error');
+            toast(err?.response?.data?.detail || 'Failed to cancel task.', 'error');
         } finally {
             if (pollRef.current) {
                 window.clearInterval(pollRef.current);
                 pollRef.current = undefined;
             }
+            if (planPollRef.current) {
+                window.clearInterval(planPollRef.current);
+                planPollRef.current = undefined;
+            }
             setIsRendering(false);
+            setIsPlanning(false);
         }
-    }, [activeTask?.id]);
+    }, [activeTask?.id, activeSong?.id]);
 
     // Render Advanced Production Video
     const handleRenderAdvancedVideo = useCallback(async () => {

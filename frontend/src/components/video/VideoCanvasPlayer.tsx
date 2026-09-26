@@ -326,7 +326,7 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                 )}
             </div>
 
-            {/* Multi-Stage Live Pipeline Rendering HUD */}
+            {/* Multi-Stage Live Pipeline Rendering / Director Planning HUD */}
             {activeTask && (
                 <div
                     className={`p-4 rounded-2xl border space-y-3 transition-all ${
@@ -346,7 +346,10 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                             {activeTask.status === 'completed' && <CheckCircle2 size={14} className="text-teal-500" />}
                             {activeTask.status === 'processing' && <Loader2 size={14} className="animate-spin text-teal-500" />}
                             <span>
-                                Pipeline Stage: <strong className="uppercase font-mono text-teal-600 dark:text-teal-400">{activeTask.step.replace(/_/g, ' ')}</strong>
+                                {activeTask.id.startsWith('plan_') ? 'AI Visual Director: ' : 'Pipeline Stage: '}
+                                <strong className="uppercase font-mono text-teal-600 dark:text-teal-400">
+                                    {activeTask.step.replace(/_/g, ' ')}
+                                </strong>
                             </span>
                         </span>
                         <div className="flex items-center gap-2">
@@ -355,10 +358,10 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                                     type="button"
                                     onClick={onCancelRender}
                                     className="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 flex items-center gap-1 transition-colors"
-                                    title="Cancel video generation"
+                                    title={activeTask.id.startsWith('plan_') ? "Cancel scene planning" : "Cancel video generation"}
                                 >
                                     <Square size={9} className="fill-current" />
-                                    <span>Stop</span>
+                                    <span>{activeTask.id.startsWith('plan_') ? "Stop Planning" : "Stop"}</span>
                                 </button>
                             )}
                             <span className="font-mono text-xs font-bold text-slate-700 dark:text-slate-300">
@@ -382,6 +385,8 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                             className={`h-full rounded-full transition-all duration-500 ${
                                 activeTask.status === 'cancelled'
                                     ? 'bg-amber-500'
+                                    : activeTask.id.startsWith('plan_')
+                                    ? 'bg-gradient-to-r from-purple-500 via-pink-500 to-teal-400 animate-pulse'
                                     : 'bg-gradient-to-r from-teal-500 to-cyan-400'
                             }`}
                             style={{ width: `${Math.max(3, activeTask.progress)}%` }}
@@ -390,7 +395,9 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
 
                     <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
                         <span>
-                            Clip {activeTask.current_clip} of {activeTask.total_clips}
+                            {activeTask.id.startsWith('plan_')
+                                ? (activeTask.total_clips > 0 ? `${activeTask.total_clips} scenes planned` : 'Synchronizing downbeats, lyrics & cinematic prompts')
+                                : `Clip ${activeTask.current_clip} of ${activeTask.total_clips}`}
                         </span>
                         {activeTask.error && <span className="text-rose-500 font-semibold">{activeTask.error}</span>}
                     </div>
@@ -400,7 +407,7 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                         <div className="flex items-center gap-2 p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px]">
                             <AlertCircle size={14} className="shrink-0 text-amber-400" />
                             <span>
-                                <strong>Storyboard Animatic Mode:</strong> Neural video diffusion was bypassed ({activeTask.fallback_reason || 'diffusers model unavailable'}). Serving Ken Burns animatic stills.
+                                <strong>{activeTask.id.startsWith('plan_') ? 'Deterministic Fallback Director:' : 'Storyboard Animatic Mode:'}</strong> {activeTask.fallback_reason || (activeTask.id.startsWith('plan_') ? 'LLM service was unreachable or offline; used acoustic downbeat pacing.' : 'diffusers model unavailable')}
                             </span>
                         </div>
                     )}

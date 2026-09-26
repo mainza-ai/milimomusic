@@ -2396,3 +2396,15 @@ Forensic investigation and full resolution of Apple Silicon Metal 558.11 GB buff
    - All 28 video backend tests passing (`pytest backend/tests/test_video_service.py`), including dedicated tests for instant asyncio cancellation, Wan step callbacks, and MiniMax H3 abort.
    - Frontend production build (`npm run build`) succeeded with 0 TypeScript/bundling errors.
    - Live uvicorn daemon running cleanly on port 8000.
+
+## [2026-09-26] update | Video Studio Wiki Expansion: Memory Slicing, Instant Cancel & Registry
+Reconciled and expanded the wiki knowledge graph to document the latest video generation systems:
+1. `entities/video-studio.md`:
+   - Updated catalog of supported video backbones with Video Generator Registry (`generator_registry.py`), framing constraints, and FPS contracts.
+   - Documented the mathematical root cause and solution for Apple Silicon Metal buffer allocation crashes (un-fused attention $S = 61,200 \rightarrow 558.11\text{ GB}$; attention slicing, VAE tiling/slicing, MPS resolution/frame bounds to maintain peak memory $<1\text{ GB}$).
+   - Documented instant (<200ms) cancellation architecture: `_active_render_tasks`, Diffusers `callback_on_step_end` injection, FFmpeg subprocess termination, and state lifecycle.
+   - Added guidance on local MiniMax H3 33B DiT animatics vs. rapid local diffusion models.
+2. `architecture.md`:
+   - Updated the Director Mode v2 & AI Music Video Studio subsystem section to reflect the Generator Registry, Metal memory safeguards, and cancellation hooks.
+3. `index.md`:
+   - Bumped `updated:` timestamp and refreshed the catalog summary for the AI Music Video Studio entity.

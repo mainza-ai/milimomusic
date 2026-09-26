@@ -2,7 +2,7 @@
 title: Milimo Music — Architecture
 type: overview
 created: 2026-08-19
-updated: 2026-09-16
+updated: 2026-09-26
 sources: [sources/heartlib-bible.md, sources/readme.md, sources/v2-refactor-plan.md, sources/maestro-creative-studio.md]
 tags: [architecture, system, backend, frontend, minimax, yue2, mulacover, muscriptor, daw, director, timeline, autotune, queue]
 ---
@@ -68,6 +68,9 @@ All outputs feed the [Session Workspace (DAW)](entities/session-workspace.md) an
 ## Director Mode v2 & AI Music Video Studio
 Directs synchronized cinematic video clips:
 - **Hierarchical Musical Accent Snapping**: Upgraded to [Director Mode v2](concepts/director-mode-v2.md) in `video_director.py`, scoring beats, downbeats, lyric phrase boundaries, and percussion entrances.
+- **Video Generator Registry**: Authoritative resolution (`generator_registry.py`) mapping user selections to exact DiT architectures (`wan_14b`, `wan_1.3b`, `ltx_video`, `hailuo_h3`, cloud backbones) without silent fallthroughs.
+- **Metal Memory Safeguards**: Automatically engages attention slicing (`slice_size="auto"`), VAE tiling/slicing, and adaptive resolution/frame clamping on Apple Silicon MPS, eliminating 558.11 GB Metal buffer crashes.
+- **Instant Task Cancellation (<200ms)**: Centralized `_active_render_tasks` registry with step-end callbacks into Diffusers pipelines (`callback_on_step_end`) and FFmpeg subprocess cleanup (`proc.kill()`).
 - **Phase-Decoupled Execution**: Enforces strict phase separation under the [Cross-Modal Model Lifecycle](concepts/cross-modal-model-lifecycle.md): all keyframe stills are generated via FLUX.2/SDXL and saved to disk, followed by eager image model unloading before Wan 2.1 / LTX video diffusion commences.
 - **Pacing Control**: User-selectable Cut Speed bias slider ($-2$ to $+2$).
 - **Performer Role Ownership**: Assigns visual and vocal roles to performers, ensuring `mouth_movement: closed` during instrumental breaks and solos.

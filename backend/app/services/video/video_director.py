@@ -496,6 +496,8 @@ class VideoDirector:
             "}"
         )
 
+        full_prompt = f"{system_instruction}\n\n{user_content}"
+
         if cancel_check and cancel_check():
             raise asyncio.CancelledError("Planning cancelled by user before LLM invocation.")
 

@@ -105,6 +105,15 @@ class DiffusersLTXGenerator(BaseVideoGenerator):
             w = (min(1280, width) // mod) * mod
             h = (min(720, height) // mod) * mod
 
+            cancel_event = kwargs.get("cancel_event")
+            cancel_check = kwargs.get("cancel_check")
+
+            def step_end_callback(pipeline, step_index: int, timestep: int, callback_kwargs: dict):
+                if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
+                    logger.info(f"DiffusersLTXGenerator: Immediate cancellation triggered at step {step_index}.")
+                    raise asyncio.CancelledError("LTX-Video diffusion cancelled by user.")
+                return callback_kwargs
+
             output = pipe(
                 prompt=prompt,
                 negative_prompt=negative_prompt or "worst quality, inconsistent motion, blurry, jittery",
@@ -113,12 +122,18 @@ class DiffusersLTXGenerator(BaseVideoGenerator):
                 num_frames=num_frames,
                 num_inference_steps=num_inference_steps,
                 guidance_scale=guidance_scale,
+                callback_on_step_end=step_end_callback,
             ).frames[0]
 
             export_to_video(output, out_path, fps=fps)
             return os.path.isfile(out_path) and os.path.getsize(out_path) > 0
 
+        except asyncio.CancelledError:
+            logger.info(f"DiffusersLTXGenerator: Task cancelled for {out_path}.")
+            raise
         except Exception as e:
+            if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
+                raise asyncio.CancelledError("LTX-Video diffusion cancelled by user.")
             logger.warning(f"LTX-Video diffusion error ({e}), falling back to procedural scene generation.")
             return await self._fallback.generate_clip(
                 prompt=prompt,

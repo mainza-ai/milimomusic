@@ -54,6 +54,7 @@ class VideoOrchestrator:
     _video_cancels: Dict[str, asyncio.Event] = {}
     _keyframe_cancels: Dict[str, asyncio.Event] = {}
     _plan_cancels: Dict[str, asyncio.Event] = {}
+    _active_render_tasks: Dict[str, asyncio.Task] = {}
     _lock = threading.RLock()
 
     def __new__(cls):
@@ -110,6 +111,14 @@ class VideoOrchestrator:
         except Exception as e:
             logger.debug(f"Failed to sync task {task_id} to durable queue: {e}")
 
+    def register_render_task(self, task_id: str, task: asyncio.Task) -> None:
+        with self._lock:
+            self._active_render_tasks[task_id] = task
+
+    def unregister_render_task(self, task_id: str) -> None:
+        with self._lock:
+            self._active_render_tasks.pop(task_id, None)
+
     def cancel_video_task(self, task_id: str) -> bool:
         with self._lock:
             ev = self._video_cancels.get(task_id)
@@ -118,10 +127,22 @@ class VideoOrchestrator:
             ev_plan = self._plan_cancels.get(task_id)
             if ev_plan:
                 ev_plan.set()
-        self.update_task(task_id, status="cancelled", step="Planning / rendering cancelled by user.")
+            bg_task = self._active_render_tasks.get(task_id)
+            if bg_task and not bg_task.done():
+                try:
+                    bg_task.cancel()
+                    logger.info(f"VideoOrchestrator: Cancelled background asyncio task for {task_id}.")
+                except Exception as e:
+                    logger.debug(f"Error cancelling asyncio task {task_id}: {e}")
+        self.update_task(task_id, status="cancelled", step="Video rendering cancelled by user.", progress=0)
         try:
             from app.core.hardware_lock import GlobalHardwareCoordinator
             GlobalHardwareCoordinator.flush_memory()
+        except Exception:
+            pass
+        try:
+            from app.services.video.generator_registry import VideoGeneratorRegistry
+            VideoGeneratorRegistry.unload_all()
         except Exception:
             pass
         try:
@@ -663,13 +684,20 @@ class VideoOrchestrator:
                     except Exception:
                         pass
 
+            if cancel_event.is_set():
+                logger.info("render_advanced_music_video: Cancelled before scene rendering.")
+                self.update_task(task_id, status="cancelled", step="Video rendering cancelled by user.", progress=0)
+                return ""
+
             try:
+                _is_cancelled = lambda: cancel_event.is_set()
+
                 async def _render_all_scenes():
                     for idx, clip in enumerate(plan.clips):
                         if cancel_event.is_set():
                             logger.info(f"render_advanced_music_video: Cancelled before rendering scene {idx + 1}.")
                             self.update_task(task_id, status="cancelled", step="Video rendering cancelled by user.", progress=0)
-                            return ""
+                            raise asyncio.CancelledError("Video rendering cancelled by user.")
 
                         clip_file = os.path.join(TEMP_DIR, f"clip_{task_id}_{idx:03d}.mp4")
                         self.update_task(
@@ -690,9 +718,13 @@ class VideoOrchestrator:
                                 start_time=clip.start_time,
                                 duration=clip.duration,
                                 out_path=clip_file,
-                                width=w, height=h
+                                width=w, height=h,
+                                cancel_event=cancel_event,
+                                cancel_check=_is_cancelled
                             )
                             if not success or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
+                                if cancel_event.is_set():
+                                    raise asyncio.CancelledError("Video rendering cancelled by user.")
                                 # Fallback to smooth provider
                                 await self._fallback_lipsync.render_lip_sync(
                                     face_image_path=face_image,
@@ -700,7 +732,9 @@ class VideoOrchestrator:
                                     start_time=clip.start_time,
                                     duration=clip.duration,
                                     out_path=clip_file,
-                                    width=w, height=h
+                                    width=w, height=h,
+                                    cancel_event=cancel_event,
+                                    cancel_check=_is_cancelled
                                 )
 
                         # Cinematic Scene
@@ -721,8 +755,12 @@ class VideoOrchestrator:
                                 negative_prompt=clip.negative_prompt,
                                 visual_style=style,
                                 provider=provider_type,
-                                fallback_metadata=fb_meta
+                                fallback_metadata=fb_meta,
+                                cancel_event=cancel_event,
+                                cancel_check=_is_cancelled
                             )
+                            if cancel_event.is_set():
+                                raise asyncio.CancelledError("Video rendering cancelled by user.")
                             if fb_meta.get("fallback_used"):
                                 task_info.fallback_used = True
                                 task_info.fallback_reason = fb_meta.get("error", "Procedural fallback used")
@@ -737,7 +775,9 @@ class VideoOrchestrator:
                                     width=w, height=h,
                                     image_path=scene_bg,
                                     visual_style=style,
-                                    fps=model_spec.fps
+                                    fps=model_spec.fps,
+                                    cancel_event=cancel_event,
+                                    cancel_check=_is_cancelled
                                 )
 
                         if os.path.isfile(clip_file) and os.path.getsize(clip_file) > 0:
@@ -754,17 +794,22 @@ class VideoOrchestrator:
                 else:
                     await _render_all_scenes()
 
-
             finally:
                 with self._lock:
                     self._video_cancels.pop(task_id, None)
                     self._video_cancels.pop(str(job.id), None)
+                    self._active_render_tasks.pop(task_id, None)
                 if is_local and hasattr(video_generator, "unload"):
                     try:
                         video_generator.unload()
                         GlobalHardwareCoordinator.flush_memory()
                     except Exception as _e:
                         logger.debug(f"Video generator unload skipped: {_e}")
+
+            if cancel_event.is_set():
+                logger.info(f"render_advanced_music_video: Cancelled after scenes render.")
+                self.update_task(task_id, status="cancelled", step="Video rendering cancelled by user.", progress=0)
+                return ""
 
             if not rendered_clips:
                 raise RuntimeError("No video scenes were successfully rendered.")
@@ -878,7 +923,15 @@ class VideoOrchestrator:
             )
             return video_url
 
+        except asyncio.CancelledError:
+            logger.info(f"render_advanced_music_video: Task {task_id} successfully cancelled.")
+            self.update_task(task_id, status="cancelled", step="Video rendering cancelled by user.", progress=0)
+            return ""
         except Exception as e:
+            if cancel_event.is_set():
+                logger.info(f"render_advanced_music_video: Task {task_id} aborted cleanly due to cancellation.")
+                self.update_task(task_id, status="cancelled", step="Video rendering cancelled by user.", progress=0)
+                return ""
             logger.error(f"Advanced video generation failed: {e}", exc_info=True)
             self.update_task(task_id, status="error", error=str(e), step=f"Error: {str(e)[:120]}")
             raise e

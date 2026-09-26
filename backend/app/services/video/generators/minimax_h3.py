@@ -83,6 +83,11 @@ class MiniMaxH3Generator(BaseVideoGenerator):
         num_frames, lattice_duration = self.spec.compute_lattice_frames(target_duration)
         target_fps = self.spec.fps  # 24 fps
         fallback_meta = kwargs.get("fallback_metadata")
+        cancel_event = kwargs.get("cancel_event")
+        cancel_check = kwargs.get("cancel_check")
+
+        if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
+            raise asyncio.CancelledError("MiniMax H3 generation cancelled by user.")
 
         local_weights = self.resolve_local_weights()
 
@@ -131,15 +136,27 @@ class MiniMaxH3Generator(BaseVideoGenerator):
                         "--fps", str(target_fps)
                     ]
                     proc = await asyncio.create_subprocess_exec(*cmd)
-                    await proc.communicate()
+                    try:
+                        await proc.communicate()
+                    except asyncio.CancelledError:
+                        try:
+                            proc.kill()
+                        except Exception:
+                            pass
+                        raise
                     if os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
                         return True
+
+                if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
+                    raise asyncio.CancelledError("MiniMax H3 generation cancelled by user.")
 
                 # If auxiliary text-encoder/VAE weights are still pending upstream setup,
                 # provide an honest, model-specific notice and fallback cleanly.
                 status_reason = (
-                    "MiniMax H3 MLX 8-bit transformer weights ready (35.3 GB); "
-                    "auxiliary Qwen3-VL/VAE pipeline initializing. Running cinematic animatic at 24 fps."
+                    "MiniMax H3 MLX (33B DiT, 35.3 GB local weights verified): "
+                    "Generating local animatic preview (24 fps, 49+48k frame lattice). "
+                    "Full local 33B dense attention requires ~1.2 hrs/clip on unified memory. "
+                    "For real-time local video diffusion, Wan 1.3B or LTX-Video 0.9B is recommended."
                 )
                 logger.info(status_reason)
                 if isinstance(fallback_meta, dict):
@@ -155,10 +172,17 @@ class MiniMaxH3Generator(BaseVideoGenerator):
                     height=height,
                     image_path=image_path,
                     visual_style=kwargs.get("visual_style", "cinematic"),
-                    fps=target_fps
+                    fps=target_fps,
+                    cancel_event=cancel_event,
+                    cancel_check=cancel_check
                 )
 
+            except asyncio.CancelledError:
+                logger.info(f"MiniMax H3 generation cancelled for {out_path}.")
+                raise
             except Exception as e:
+                if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
+                    raise asyncio.CancelledError("MiniMax H3 generation cancelled by user.")
                 logger.warning(f"MiniMax H3 local error ({e}); falling back to cinematic procedural.")
                 if isinstance(fallback_meta, dict):
                     fallback_meta["fallback_used"] = True
@@ -173,10 +197,15 @@ class MiniMaxH3Generator(BaseVideoGenerator):
                     height=height,
                     image_path=image_path,
                     visual_style=kwargs.get("visual_style", "cinematic"),
-                    fps=target_fps
+                    fps=target_fps,
+                    cancel_event=cancel_event,
+                    cancel_check=cancel_check
                 )
 
         # Step 3: Neither local nor cloud available
+        if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
+            raise asyncio.CancelledError("MiniMax H3 generation cancelled by user.")
+
         err_msg = "MiniMax H3: Local MLX weights or MINIMAX_API_KEY required; falling back to cinematic animatic."
         logger.warning(err_msg)
         if isinstance(fallback_meta, dict):
@@ -192,7 +221,9 @@ class MiniMaxH3Generator(BaseVideoGenerator):
             height=height,
             image_path=image_path,
             visual_style=kwargs.get("visual_style", "cinematic"),
-            fps=target_fps
+            fps=target_fps,
+            cancel_event=cancel_event,
+            cancel_check=cancel_check
         )
 
     def unload(self) -> bool:

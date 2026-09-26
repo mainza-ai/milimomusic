@@ -58,6 +58,11 @@ class SmoothVisemeFallbackProvider(BaseLipSyncProvider):
         Renders an audio-driven singing performance clip using continuous organic
         jaw deformation and facial micro-motion.
         """
+        cancel_event = kwargs.get("cancel_event")
+        cancel_check = kwargs.get("cancel_check")
+        if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
+            raise asyncio.CancelledError("Lip sync cancelled by user.")
+
         slice_audio = os.path.join(TEMP_DIR, f"vocal_slice_{uuid.uuid4().hex[:8]}.wav")
         cmd_cut = [
             "ffmpeg", "-y",
@@ -67,8 +72,18 @@ class SmoothVisemeFallbackProvider(BaseLipSyncProvider):
             "-ar", "44100", "-ac", "1",
             slice_audio
         ]
-        proc = await asyncio.create_subprocess_exec(*cmd_cut, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        await proc.communicate()
+        try:
+            proc = await asyncio.create_subprocess_exec(*cmd_cut, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+            await proc.communicate()
+        except asyncio.CancelledError:
+            try:
+                proc.kill()
+            except Exception:
+                pass
+            raise
+
+        if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
+            raise asyncio.CancelledError("Lip sync cancelled by user.")
 
         fps = 25
         total_frames = max(1, int(round(duration * fps)))
@@ -208,11 +223,22 @@ class SmoothVisemeFallbackProvider(BaseLipSyncProvider):
                 "-t", str(duration),
                 out_path
             ]
-            proc_clip = await asyncio.create_subprocess_exec(*cmd_clip, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            await proc_clip.communicate()
+            try:
+                proc_clip = await asyncio.create_subprocess_exec(*cmd_clip, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+                await proc_clip.communicate()
+            except asyncio.CancelledError:
+                try:
+                    proc_clip.kill()
+                except Exception:
+                    pass
+                raise
             return os.path.isfile(out_path) and os.path.getsize(out_path) > 0
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
+            if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
+                raise asyncio.CancelledError("Lip sync cancelled by user.")
             logger.error(f"SmoothVisemeFallbackProvider error: {e}", exc_info=True)
             return False
         finally:

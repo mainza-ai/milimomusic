@@ -137,7 +137,13 @@ class LivePortraitProvider(BaseLipSyncProvider):
                 **kwargs
             )
 
+        except asyncio.CancelledError:
+            raise
         except Exception as e:
+            cancel_event = kwargs.get("cancel_event")
+            cancel_check = kwargs.get("cancel_check")
+            if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
+                raise asyncio.CancelledError("LivePortrait execution cancelled by user.")
             logger.error(f"LivePortrait execution error: {e}", exc_info=True)
             return await self._fallback.render_lip_sync(
                 face_image_path=face_image_path,

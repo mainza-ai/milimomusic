@@ -281,6 +281,14 @@ class VideoService:
             task_id=task_id
         )
 
+    def register_render_task(self, task_id: str, task: asyncio.Task) -> None:
+        from app.services.video.video_orchestrator import video_orchestrator
+        video_orchestrator.register_render_task(task_id, task)
+
+    def unregister_render_task(self, task_id: str) -> None:
+        from app.services.video.video_orchestrator import video_orchestrator
+        video_orchestrator.unregister_render_task(task_id)
+
     def cancel_video_task(self, task_id: str) -> bool:
         from app.services.video.video_orchestrator import video_orchestrator
         return video_orchestrator.cancel_video_task(task_id)
@@ -368,19 +376,26 @@ class VideoService:
         tree = model_manager.get_model_tree()
         video_models = [m for m in tree if m.get("category") == "video"]
 
+        # Prioritize exact model_id match first if present in catalog
+        exact_match = next((m for m in tree if m["id"] == model_id or m.get("repo_id") == model_id), None)
+
         # Prioritize installed model variants in the same family
         installed_match = None
         if "h3" in target or "hailuo" in target or "minimax" in target:
             installed_match = next((m for m in video_models if ("h3" in m["id"] or "minimax" in m["id"]) and m.get("is_installed")), None)
-        elif "1.3" in target:
+        elif "14" in target or target == "wan_14b":
+            installed_match = next((m for m in video_models if "14" in m["id"] and m.get("is_installed")), None)
+        elif "1.3" in target or target == "wan_1.3b":
             installed_match = next((m for m in video_models if ("1_3" in m["id"] or "1.3" in m["id"]) and m.get("is_installed")), None)
         elif "wan" in target:
-            installed_match = next((m for m in video_models if ("14" in m["id"] or "wan" in m["id"]) and m.get("is_installed")), None)
+            installed_match = next((m for m in video_models if "wan" in m["id"] and m.get("is_installed")), None)
 
         if installed_match:
             match = installed_match
+        elif exact_match:
+            match = exact_match
         else:
-            match = next((m for m in tree if m["id"] == model_id or m.get("repo_id") == model_id), None)
+            match = None
 
         if not match:
             if "1.3" in target:

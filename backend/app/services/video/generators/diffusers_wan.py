@@ -50,10 +50,15 @@ class DiffusersWanGenerator(BaseVideoGenerator):
 
     def _resolve_model_path(self, mode: str = "t2v") -> Optional[str]:
         """Find local weights or return None if weights are not installed locally."""
-        repo_prefix = f"Wan-AI/Wan2.1-{'I2V-14B-720P' if mode == 'i2v' else ('T2V-14B' if self.model_size == '14b' else 'T2V-1.3B')}-Diffusers"
+        if mode == "i2v" and self.model_size == "14b":
+            repo_prefix = "Wan-AI/Wan2.1-I2V-14B-720P-Diffusers"
+        elif self.model_size == "1.3b":
+            repo_prefix = "Wan-AI/Wan2.1-T2V-1.3B-Diffusers"
+        else:
+            repo_prefix = "Wan-AI/Wan2.1-T2V-14B-Diffusers"
         escaped = repo_prefix.replace("/", "__")
         no_diffusers = escaped.replace("-Diffusers", "")
-        clean_tag = f"Wan-AI__Wan2.1-{'I2V-14B-720P' if mode == 'i2v' else ('T2V-14B' if self.model_size == '14b' else 'T2V-1.3B')}"
+        clean_tag = repo_prefix.replace("-Diffusers", "")
         local_cand = [
             str(get_models_dir("video") / escaped),
             str(get_models_dir("video") / no_diffusers),
@@ -101,6 +106,38 @@ class DiffusersWanGenerator(BaseVideoGenerator):
         target_fps = 16
         num_frames = max(17, min(81, int(round(duration * target_fps))))
 
+        cancel_event = kwargs.get("cancel_event")
+        cancel_check = kwargs.get("cancel_check")
+
+        if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
+            raise asyncio.CancelledError("Diffusion cancelled by user.")
+
+        def _configure_pipeline_memory(p):
+            if hasattr(p, "enable_attention_slicing"):
+                try:
+                    p.enable_attention_slicing(slice_size="auto")
+                    logger.info("DiffusersWanGenerator: Enabled attention slicing (auto).")
+                except Exception as ex:
+                    logger.debug(f"Could not enable attention slicing: {ex}")
+            if hasattr(p, "vae") and p.vae is not None:
+                if hasattr(p.vae, "enable_tiling"):
+                    try:
+                        p.vae.enable_tiling()
+                        logger.info("DiffusersWanGenerator: Enabled VAE tiling.")
+                    except Exception as ex:
+                        logger.debug(f"Could not enable VAE tiling: {ex}")
+                if hasattr(p.vae, "enable_slicing"):
+                    try:
+                        p.vae.enable_slicing()
+                    except Exception:
+                        pass
+
+        def step_end_callback(pipeline, step_index: int, timestep: int, callback_kwargs: dict):
+            if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
+                logger.info(f"DiffusersWanGenerator: Immediate cancellation triggered at step {step_index}.")
+                raise asyncio.CancelledError("Diffusion cancelled by user.")
+            return callback_kwargs
+
         # If diffusers or weights cannot be loaded, fallback gracefully
         try:
             import torch
@@ -109,8 +146,35 @@ class DiffusersWanGenerator(BaseVideoGenerator):
             device = "mps" if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()) else ("cuda" if torch.cuda.is_available() else "cpu")
             dtype = torch.bfloat16 if device in ("cuda", "mps") else torch.float32
 
-            # Check if Image-to-Video mode
-            if image_path and os.path.isfile(image_path):
+            # Wan architecture constraints:
+            # 1. (num_frames - 1) % 4 == 0 (e.g. 17, 21, 25, 29, 33, 49, 65, 81)
+            # 2. width and height divisible by 16
+            # 3. Dense un-fused self-attention on MPS (Metal) scales as O(S^2)
+            # where S = (W/16) * (H/16) * ((num_frames - 1)/4 + 1).
+            # At 1280x720 with 65 frames: S = 80 * 45 * 17 = 61,200 tokens -> (40 heads * 61200^2 * 4 bytes) = 558.11 GB!
+            # Metal terminates with "Invalid buffer size: 558.11 GB".
+            # Clamping on MPS ensures S <= 14,040 tokens, keeping attention memory under safe Metal limits (<8 GB).
+            if device == "mps":
+                if width >= height:
+                    target_w = min(width, 832)
+                    target_h = min(height, 480)
+                else:
+                    target_w = min(width, 480)
+                    target_h = min(height, 832)
+                num_frames = min(num_frames, 33)
+            else:
+                target_w = width
+                target_h = height
+
+            mod_value = 16
+            target_w = max(16, (target_w // mod_value) * mod_value)
+            target_h = max(16, (target_h // mod_value) * mod_value)
+            num_frames = max(17, ((num_frames - 1) // 4) * 4 + 1)
+
+            # Check if true Image-to-Video is available (Wan 2.1 official I2V is 14B)
+            can_i2v = (self.model_size == "14b") and bool(image_path and os.path.isfile(image_path))
+
+            if can_i2v:
                 from diffusers import WanImageToVideoPipeline, AutoencoderKLWan
                 wan_i2v_mod = sys.modules.get("diffusers.pipelines.wan.pipeline_wan_i2v")
                 if wan_i2v_mod and not getattr(wan_i2v_mod, "ftfy", None):
@@ -139,13 +203,10 @@ class DiffusersWanGenerator(BaseVideoGenerator):
                             pipe.to(device)
                     else:
                         pipe.to(device)
+                    _configure_pipeline_memory(pipe)
                     _WAN_PIPELINE_CACHE[cache_key] = pipe
 
                 ref_img = load_image(image_path)
-                # Compute aspect ratio dimensions conforming to VAE patch size
-                mod_value = 16
-                target_w = (width // mod_value) * mod_value
-                target_h = (height // mod_value) * mod_value
                 ref_img = ref_img.resize((target_w, target_h))
 
                 logger.info(f"Diffusing I2V video: prompt='{prompt[:60]}...', frames={num_frames}, size={target_w}x{target_h}")
@@ -158,6 +219,7 @@ class DiffusersWanGenerator(BaseVideoGenerator):
                     num_frames=num_frames,
                     guidance_scale=guidance_scale,
                     num_inference_steps=num_inference_steps,
+                    callback_on_step_end=step_end_callback,
                 ).frames[0]
 
                 export_to_video(output, out_path, fps=target_fps)
@@ -187,11 +249,8 @@ class DiffusersWanGenerator(BaseVideoGenerator):
                             pipe.to(device)
                     else:
                         pipe.to(device)
+                    _configure_pipeline_memory(pipe)
                     _WAN_PIPELINE_CACHE[cache_key] = pipe
-
-                mod_value = 16
-                target_w = (width // mod_value) * mod_value
-                target_h = (height // mod_value) * mod_value
 
                 logger.info(f"Diffusing T2V video: prompt='{prompt[:60]}...', frames={num_frames}, size={target_w}x{target_h}")
                 output = pipe(
@@ -202,6 +261,7 @@ class DiffusersWanGenerator(BaseVideoGenerator):
                     num_frames=num_frames,
                     guidance_scale=guidance_scale,
                     num_inference_steps=num_inference_steps,
+                    callback_on_step_end=step_end_callback,
                 ).frames[0]
 
                 export_to_video(output, out_path, fps=target_fps)
@@ -217,7 +277,13 @@ class DiffusersWanGenerator(BaseVideoGenerator):
 
             return os.path.isfile(out_path) and os.path.getsize(out_path) > 0
 
+        except asyncio.CancelledError:
+            logger.info(f"DiffusersWanGenerator: Task cancelled for {out_path}.")
+            raise
         except Exception as e:
+            if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
+                logger.info(f"DiffusersWanGenerator: Task aborted due to cancellation.")
+                raise asyncio.CancelledError("Diffusion cancelled by user.")
             logger.warning(f"Wan 2.1 local diffusion error or offline weights ({e}). Falling back to cinematic procedural scene generation.")
             fallback_meta = kwargs.get("fallback_metadata")
             if isinstance(fallback_meta, dict):

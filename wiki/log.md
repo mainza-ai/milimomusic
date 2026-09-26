@@ -2153,4 +2153,19 @@ Implemented autonomous LLM Visual Director & Cinematographer across backend audi
    - 18 backend tests passing in `backend/tests/test_video_service.py`.
    - Frontend production build (`npm run build`) passing with 0 errors.
 
+## [2026-09-25] lint | AI Video Director Test Suite Stabilization & OMLX Integration
+1. Stabilized Audio Fallback Duration:
+   - Restored `_fallback_analysis` default duration in `backend/app/services/video/audio_analysis.py` to 30.0s when `duration_sec` is omitted.
+2. Direct Custom Style Prompt Injection:
+   - Configured `generate_director_treatment`, `_call_llm_visual_director`, and `_generate_intelligent_fallback_treatment` in `backend/app/services/video/video_director.py` to propagate custom style prompts across palettes, prompt templates, and lighting design.
+3. Test Concurrency & Enum Expansion:
+   - Updated `test_production_v2.py` line 358 to encompass expanded `SceneType` enum values (`ENVIRONMENTAL_BROLL`, `NARRATIVE_STORY`, `METAPHORICAL_VISUAL`, `INSTRUMENTAL_FOCUS`).
+   - Mocked background video rendering execution during unit test in `test_production_v2.py` to avoid background hardware lock contention.
+4. OMLX Local LLM Activation:
+   - Configured `OMLX_MODEL=Qwen3.6-35B-A3B-UD-MLX-4bit` on `http://localhost:8787/v1` in `ConfigManager` and `.env`.
+   - Verified active generation via OMLX producing structured director treatments.
+5. Verification:
+   - Full suite of 286 backend unit and integration tests passed cleanly (286 passed).
+
+
 

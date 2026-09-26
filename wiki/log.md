@@ -2167,5 +2167,18 @@ Implemented autonomous LLM Visual Director & Cinematographer across backend audi
 5. Verification:
    - Full suite of 286 backend unit and integration tests passed cleanly (286 passed).
 
-
-
+## [2026-09-25] fix | Pre-Render Keyframe Still Duplication Elimination & Rehydration
+1. Elimination of Vocal Clip Artwork Copying:
+   - Decoupled `resolve_face_image()` in `video_orchestrator.py` from `job.cover_image_path`. Album artwork is no longer treated as a facial portrait.
+   - Refactored `generate_scene_keyframes()` in `video_orchestrator.py` to generate unique scene stills from `clip.prompt` for all clips (including vocal performances) via `image_service.generate_scene_background()`.
+   - Added automatic detection and purge of stale square album cover copies from previous runs.
+2. Standardized 1-Based Timeline Indexing:
+   - Standardized `clip_index` starting at 1 across `director_music_timing.py`, `video_director.py`, `video_orchestrator.py`, `main.py`, and frontend components.
+3. Keyframe Rehydration & Aspect Ratio Alignment:
+   - Added `GET /videos/keyframes/{job_id}` in `main.py` and `getKeyframes()` in `frontend/src/api.ts` to rehydrate keyframes upon song selection or page refresh.
+   - Added aspect-ratio-accurate dimensions (`16:9`, `9:16`, `1:1`, `21:9`) across `KeyframesRequest`, `generate_scene_keyframes()`, and `VideoTimelineTrack.tsx`.
+   - Preserved custom scene retakes when regenerating stills unless `force_regenerate=True`.
+4. Verification:
+   - Unit tests `test_generate_scene_keyframes_unique_and_decoupled_from_cover` and `test_keyframes_get_and_post_api_endpoints` verified in `backend/tests/test_video_service.py`.
+   - All tests in `test_phase2_director_mode.py`, `test_production_v2.py`, and `test_video_service.py` passing cleanly.
+   - Frontend production build (`npm run build`) passing with 0 errors.

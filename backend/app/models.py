@@ -275,6 +275,9 @@ class KeyframesRequest(SQLModel):
     visual_style: Optional[str] = "neon-cyberpunk"
     custom_style_prompt: Optional[str] = None
     resolution: Optional[str] = "720p"
+    aspect_ratio: Optional[str] = "16:9"
+    force_regenerate: bool = False
+    scenes: Optional[List[Dict[str, Any]]] = None
 
 
 class SceneRegenerateRequest(SQLModel):

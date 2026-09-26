@@ -1523,11 +1523,30 @@ export const videoApi = {
         const res = await axios.get(`${API_BASE_URL}/videos/providers`);
         return res.data;
     },
-    generateKeyframes: async (jobId: string, visualStyle: string = 'neon-cyberpunk', resolution: string = '720p', customStylePrompt?: string): Promise<{ status: string; keyframes: any[] }> => {
-        const res = await axios.post(`${API_BASE_URL}/videos/keyframes/${jobId}`, { visual_style: visualStyle, resolution, custom_style_prompt: customStylePrompt });
+    generateKeyframes: async (
+        jobId: string,
+        visualStyle: string = 'neon-cyberpunk',
+        resolution: string = '720p',
+        customStylePrompt?: string,
+        aspectRatio: string = '16:9',
+        forceRegenerate: boolean = false,
+        scenes?: any[]
+    ): Promise<{ status: string; keyframes: any[] }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/keyframes/${jobId}`, {
+            visual_style: visualStyle,
+            resolution,
+            custom_style_prompt: customStylePrompt,
+            aspect_ratio: aspectRatio,
+            force_regenerate: forceRegenerate,
+            scenes,
+        });
         return res.data;
     },
-    retakeScene: async (jobId: string, clipIndex: number, params: { prompt?: string; reference_image_path?: string; camera?: string; lighting?: string; custom_style_prompt?: string }): Promise<{ status: string; clip_index: number; keyframe_url?: string; prompt?: string }> => {
+    getKeyframes: async (jobId: string): Promise<{ status: string; job_id: string; keyframes: Record<number, string> }> => {
+        const res = await axios.get(`${API_BASE_URL}/videos/keyframes/${jobId}`);
+        return res.data;
+    },
+    retakeScene: async (jobId: string, clipIndex: number, params: { prompt?: string; reference_image_path?: string; camera?: string; lighting?: string; custom_style_prompt?: string; aspect_ratio?: string }): Promise<{ status: string; clip_index: number; keyframe_url?: string; prompt?: string }> => {
         const res = await axios.post(`${API_BASE_URL}/videos/retake-clip/${jobId}/${clipIndex}`, params);
         return res.data;
     },

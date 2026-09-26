@@ -256,6 +256,23 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             .catch(() => setDirectorTreatment(null));
     }, [activeSong?.id]);
 
+    // Fetch existing scene keyframes when song changes
+    useEffect(() => {
+        if (!activeSong?.id) {
+            setKeyframes({});
+            return;
+        }
+        videoApi.getKeyframes(activeSong.id)
+            .then(res => {
+                if (res?.keyframes && Object.keys(res.keyframes).length > 0) {
+                    setKeyframes(res.keyframes);
+                } else {
+                    setKeyframes({});
+                }
+            })
+            .catch(() => setKeyframes({}));
+    }, [activeSong?.id]);
+
     const [activeTask, setActiveTask] = useState<VideoTaskStatus | null>(null);
     const [isRendering, setIsRendering] = useState(false);
     const [renderedVideoUrl, setRenderedVideoUrl] = useState<string | null>(null);
@@ -384,11 +401,19 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     };
 
     // Pre-Render Scene Keyframes for Storyboard Preview
-    const handleGenerateKeyframes = async () => {
+    const handleGenerateKeyframes = async (forceRegenerate: boolean = false) => {
         if (!activeSong) return;
         try {
             setIsGeneratingKeyframes(true);
-            const res = await videoApi.generateKeyframes(activeSong.id, videoStyle, resolution, customStylePrompt);
+            const res = await videoApi.generateKeyframes(
+                activeSong.id,
+                videoStyle,
+                resolution,
+                customStylePrompt,
+                aspectRatio,
+                forceRegenerate,
+                planResult?.clips
+            );
             if (res && res.keyframes) {
                 const kfMap: Record<number, string> = {};
                 for (const kf of res.keyframes) {
@@ -598,7 +623,8 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 prompt: newPrompt,
                 camera,
                 lighting,
-                custom_style_prompt: customStylePrompt
+                custom_style_prompt: customStylePrompt,
+                aspect_ratio: aspectRatio,
             });
             if (res.keyframe_url) {
                 setKeyframes(prev => ({ ...prev, [clipIndex]: res.keyframe_url! }));
@@ -769,6 +795,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     <VideoTimelineTrack
                         clips={planResult.clips}
                         keyframes={keyframes}
+                        aspectRatio={aspectRatio}
                         activeSong={activeSong}
                         onRetakeClip={handleOpenRetakeModal}
                         onZoomKeyframe={handleZoomKeyframe}

@@ -294,11 +294,21 @@ class VideoDirector:
             model_max_duration=effective_max
         )
 
-        palette = STYLE_PALETTES.get(visual_style, STYLE_PALETTES["neon-cyberpunk"])
         if custom_style_prompt and custom_style_prompt.strip():
-            style_desc = f"Custom Directed: {custom_style_prompt.strip()}"
-            atmosphere_desc = custom_style_prompt.strip()
+            custom_text = custom_style_prompt.strip()
+            style_desc = f"Custom Directed: {custom_text}"
+            atmosphere_desc = custom_text
+            palette = {
+                "colors": "0x14b8a6|0x06b6d4",
+                "bg": "0x0a0f1d",
+                "primary_color": (20, 184, 166),
+                "accent_color": (6, 182, 212),
+                "desc": style_desc,
+                "atmosphere": atmosphere_desc,
+                "negative": "blurry, low resolution, watermark, bad hands, distorted anatomy"
+            }
         else:
+            palette = dict(STYLE_PALETTES.get(visual_style, STYLE_PALETTES["neon-cyberpunk"]))
             style_desc = palette["desc"]
             atmosphere_desc = palette["atmosphere"]
 
@@ -333,7 +343,8 @@ class VideoDirector:
                 atmosphere_desc=atmosphere_desc,
                 character_desc=character_desc,
                 visible_cast=visible_cast,
-                visual_style=visual_style
+                visual_style=visual_style,
+                palette=palette
             )
 
         treatment = self._call_llm_visual_director(
@@ -344,7 +355,8 @@ class VideoDirector:
             atmosphere_desc=atmosphere_desc,
             character_desc=character_desc,
             visible_cast=visible_cast,
-            visual_style=visual_style
+            visual_style=visual_style,
+            palette=palette
         )
 
         return treatment
@@ -358,10 +370,31 @@ class VideoDirector:
         atmosphere_desc: str,
         character_desc: Optional[str] = None,
         visible_cast: Optional[List[str]] = None,
-        visual_style: str = "neon-cyberpunk"
+        visual_style: str = "neon-cyberpunk",
+        palette: Optional[Dict[str, Any]] = None
     ) -> VideoDirectorTreatment:
         """Invoke LLMService with structured visual director prompt and fall back cleanly on error."""
         from app.services.llm_service import LLMService
+
+        if palette is None:
+            if visual_style in STYLE_PALETTES:
+                palette = dict(STYLE_PALETTES[visual_style])
+            else:
+                palette = {
+                    "colors": "0x14b8a6|0x06b6d4",
+                    "bg": "0x0a0f1d",
+                    "primary_color": (20, 184, 166),
+                    "accent_color": (6, 182, 212),
+                    "desc": style_desc,
+                    "atmosphere": atmosphere_desc,
+                    "negative": "blurry, low resolution, watermark, bad hands, distorted anatomy"
+                }
+        else:
+            palette = dict(palette)
+        if atmosphere_desc:
+            palette["atmosphere"] = atmosphere_desc
+        if style_desc:
+            palette["desc"] = style_desc
 
         prompt_enhancer = VideoPromptEnhancer(max_fidelity_retries=1, auto_continue_on_fail=True)
 
@@ -442,7 +475,7 @@ class VideoDirector:
                         clips_meta=clips_meta,
                         character_profile=parsed.get("character_profile", character_desc or "Lead performer"),
                         visible_cast=visible_cast,
-                        palette=STYLE_PALETTES.get(visual_style, STYLE_PALETTES["neon-cyberpunk"]),
+                        palette=palette,
                         prompt_enhancer=prompt_enhancer
                     )
                     return VideoDirectorTreatment(
@@ -469,7 +502,8 @@ class VideoDirector:
             atmosphere_desc=atmosphere_desc,
             character_desc=character_desc,
             visible_cast=visible_cast,
-            visual_style=visual_style
+            visual_style=visual_style,
+            palette=palette
         )
 
     def _extract_json_treatment(self, text: str) -> Optional[Dict[str, Any]]:
@@ -582,14 +616,35 @@ class VideoDirector:
         atmosphere_desc: str,
         character_desc: Optional[str] = None,
         visible_cast: Optional[List[str]] = None,
-        visual_style: str = "neon-cyberpunk"
+        visual_style: str = "neon-cyberpunk",
+        palette: Optional[Dict[str, Any]] = None
     ) -> VideoDirectorTreatment:
         """
         Intelligent deterministic fallback when LLM is offline or unreachable.
         Generates structured, section-aware scenes with dynamic camera and lighting,
         never relying on raw lyric string concatenation.
         """
-        palette = STYLE_PALETTES.get(visual_style, STYLE_PALETTES["neon-cyberpunk"])
+        if palette is None:
+            if visual_style in STYLE_PALETTES:
+                palette = dict(STYLE_PALETTES[visual_style])
+            else:
+                palette = {
+                    "colors": "0x14b8a6|0x06b6d4",
+                    "bg": "0x0a0f1d",
+                    "primary_color": (20, 184, 166),
+                    "accent_color": (6, 182, 212),
+                    "desc": style_desc,
+                    "atmosphere": atmosphere_desc,
+                    "negative": "blurry, low resolution, watermark, bad hands, distorted anatomy"
+                }
+        else:
+            palette = dict(palette)
+
+        if atmosphere_desc:
+            palette["atmosphere"] = atmosphere_desc
+        if style_desc:
+            palette["desc"] = style_desc
+
         concept_title = f"{job.title or 'Track'} Cinematic Treatment"
         char_seed = character_desc or "Lead vocalist in contemporary cinematic attire"
 
@@ -643,6 +698,9 @@ class VideoDirector:
                 camera = "Intimate emotive close-up with shallow depth of field and bokeh"
                 lighting = "Volumetric warm amber stage spotlights piercing atmospheric haze"
                 note = "Lyrical exposition and narrative progression"
+
+            if visual_style == "custom" and atmosphere_desc:
+                lighting = f"{lighting} ({atmosphere_desc})"
 
             prompt = (
                 f"{palette['desc']} cinema: {visual_action}. "

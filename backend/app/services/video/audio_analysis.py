@@ -278,7 +278,7 @@ class AudioSignalAnalyzer:
     @classmethod
     def _fallback_analysis(cls, audio_path: str, duration_sec: Optional[float] = None) -> AudioAnalysisResult:
         """Synthetic fallback when audio packages or files are unavailable."""
-        dur = float(duration_sec or 60.0)
+        dur = float(duration_sec) if duration_sec is not None else 30.0
         if audio_path and sf is not None and os.path.exists(audio_path):
             try:
                 info = sf.info(audio_path)

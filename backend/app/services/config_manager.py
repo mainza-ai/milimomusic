@@ -71,7 +71,7 @@ DEFAULT_CONFIG = {
     "omlx": {
         "base_url": "http://localhost:8787/v1",
         "api_key": "omlx",
-        "model": "Llama-3.2-3B-Instruct-bf16"
+        "model": "Qwen3.6-35B-A3B-UD-MLX-4bit"
     },
     "paths": {
         "models_directory": "./models",
@@ -91,7 +91,7 @@ _ENV_MAP = {
     "openrouter": {"api_key": ("OPENROUTER_API_KEY", ""), "base_url": ("OPENROUTER_BASE_URL", "https://openrouter.ai/api/v1"), "model": ("OPENROUTER_MODEL", "openai/gpt-3.5-turbo")},
     "openai": {"api_key": ("OPENAI_API_KEY", ""), "model": ("OPENAI_MODEL", "gpt-4o")},
     "gemini": {"api_key": ("GEMINI_API_KEY", ""), "model": ("GEMINI_MODEL", "gemini-1.5-flash")},
-    "omlx": {"api_key": ("OMLX_API_KEY", "omlx"), "base_url": ("OMLX_BASE_URL", "http://localhost:8787/v1"), "model": ("OMLX_MODEL", "Llama-3.2-3B-Instruct-bf16")},
+    "omlx": {"api_key": ("OMLX_API_KEY", "omlx"), "base_url": ("OMLX_BASE_URL", "http://localhost:8787/v1"), "model": ("OMLX_MODEL", "Qwen3.6-35B-A3B-UD-MLX-4bit")},
     "ollama": {"base_url": ("OLLAMA_BASE_URL", "http://localhost:11434"), "model": ("OLLAMA_MODEL", "llama3.2:3b-instruct-fp16")},
     "lmstudio": {"api_key": ("LMSTUDIO_API_KEY", "lm-studio"), "base_url": ("LMSTUDIO_BASE_URL", "http://localhost:1234/v1"), "model": ("LMSTUDIO_MODEL", "local-model")},
 }

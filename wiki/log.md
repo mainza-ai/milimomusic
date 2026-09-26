@@ -2346,3 +2346,12 @@ Resolved UI flickering, missing planning progress feedback, and long synchronous
    - All 28 video backend tests passing (`pytest backend/tests/test_video*.py`).
    - Frontend production build (`npm run build`) passing with 0 errors.
 
+## [2026-09-26] fix | AI Visual Director NameError full_prompt Resolution & Fallback Verification
+Resolved runtime `NameError: name 'full_prompt' is not defined` when engaging AI Visual Director during scene planning:
+1. Root Cause:
+   - In `backend/app/services/video/video_director.py`, a multiline string tuple in `_call_llm_visual_director` was missing its closing parenthesis and the `full_prompt = f"{system_instruction}\n\n{user_content}"` statement was omitted during an edit, triggering deterministic fallback and displaying the exception on the UI HUD.
+2. Fix & Validation:
+   - Formatted `user_content` and explicitly assigned `full_prompt`.
+   - Verified Python syntax compilation with `py_compile`.
+   - Executed full video test suite (`test_video_service.py`), passing all 24 tests in 11.69s.
+   - Verified frontend build with `npm run build` (clean exit code 0).

@@ -287,7 +287,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             .catch(() => setDirectorTreatment(null));
     }, [activeSong?.id, clipDuration, videoModel]);
 
-    // Fetch existing scene keyframes when song changes
+    // Fetch existing scene keyframes when song changes, and auto-hydrate timeline plan if needed
     useEffect(() => {
         if (!activeSong?.id) {
             setKeyframes({});
@@ -302,6 +302,19 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                         kfMap[Number(idx)] = (url as string).includes('?') ? `${url}&t=${bustTime}` : `${url}?t=${bustTime}`;
                     }
                     setKeyframes(kfMap);
+
+                    // Ensure timeline is planned so keyframes can be viewed immediately
+                    videoApi.planVideo(activeSong.id, {
+                        model_name: videoModel,
+                        visual_style: videoStyle,
+                        custom_style_prompt: customStylePrompt,
+                        aspect_ratio: aspectRatio,
+                        max_clip_duration: clipDuration
+                    }).then(plan => {
+                        if (plan && plan.clips && plan.clips.length > 0) {
+                            setPlanResult(prev => prev || plan);
+                        }
+                    }).catch(() => {});
                 } else {
                     setKeyframes({});
                 }
@@ -313,6 +326,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const [isRendering, setIsRendering] = useState(false);
     const [renderedVideoUrl, setRenderedVideoUrl] = useState<string | null>(null);
     const pollRef = useRef<number | undefined>(undefined);
+    const kfPollRef = useRef<number | undefined>(undefined);
 
     // Modal states
     const [retakeModalOpen, setRetakeModalOpen] = useState(false);
@@ -320,12 +334,16 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const [isRetaking, setIsRetaking] = useState(false);
     const [zoomKeyframe, setZoomKeyframe] = useState<{ clipIndex: number; url: string } | null>(null);
 
-    // Unmount cleanup to prevent leaking video polling interval
+    // Unmount cleanup to prevent leaking video polling intervals
     useEffect(() => {
         return () => {
             if (pollRef.current) {
                 window.clearInterval(pollRef.current);
                 pollRef.current = undefined;
+            }
+            if (kfPollRef.current) {
+                window.clearInterval(kfPollRef.current);
+                kfPollRef.current = undefined;
             }
         };
     }, []);
@@ -360,7 +378,6 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 }
             }).catch(() => setRenderedVideoUrl(null));
         }
-        setPlanResult(null);
         setActiveTask(null);
     }, [selectedSongId, activeSong?.video_path]);
 
@@ -442,6 +459,50 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         try {
             setIsGeneratingKeyframes(true);
             const isForce = forceRegenerate === true || (typeof forceRegenerate !== 'boolean' && Object.keys(keyframes).length > 0);
+            if (isForce) {
+                setKeyframes({});
+            }
+
+            // Eagerly plan timeline if not yet present so user sees scene cards immediately
+            let currentClips = planResult?.clips;
+            if (!currentClips || currentClips.length === 0) {
+                try {
+                    const eagerPlan = await videoApi.planVideo(activeSong.id, {
+                        model_name: videoModel,
+                        visual_style: videoStyle,
+                        custom_style_prompt: customStylePrompt,
+                        aspect_ratio: aspectRatio,
+                        max_clip_duration: clipDuration
+                    });
+                    if (eagerPlan?.clips?.length) {
+                        setPlanResult(eagerPlan);
+                        currentClips = eagerPlan.clips;
+                    }
+                } catch (e) {
+                    console.warn('Eager planning pre-keyframe generation failed; will use server segmentation:', e);
+                }
+            }
+
+            // Start progressive polling so stills appear as soon as each is rendered on disk
+            if (kfPollRef.current) {
+                window.clearInterval(kfPollRef.current);
+            }
+            kfPollRef.current = window.setInterval(async () => {
+                try {
+                    const pollRes = await videoApi.getKeyframes(activeSong.id);
+                    if (pollRes?.keyframes && Object.keys(pollRes.keyframes).length > 0) {
+                        const bustTime = Date.now();
+                        const kfMap: Record<number, string> = {};
+                        for (const [idx, url] of Object.entries(pollRes.keyframes)) {
+                            kfMap[Number(idx)] = (url as string).includes('?') ? `${url}&t=${bustTime}` : `${url}?t=${bustTime}`;
+                        }
+                        setKeyframes(prev => ({ ...prev, ...kfMap }));
+                    }
+                } catch {
+                    // ignore polling errors
+                }
+            }, 3000);
+
             const res = await videoApi.generateKeyframes(
                 activeSong.id,
                 videoStyle,
@@ -449,7 +510,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 customStylePrompt,
                 aspectRatio,
                 isForce,
-                planResult?.clips
+                currentClips
             );
             if (res && res.keyframes) {
                 const bustTime = Date.now();
@@ -500,6 +561,10 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             console.error('Failed to generate keyframes:', err);
             toast('Failed to generate scene keyframes.', 'error');
         } finally {
+            if (kfPollRef.current) {
+                window.clearInterval(kfPollRef.current);
+                kfPollRef.current = undefined;
+            }
             setIsGeneratingKeyframes(false);
         }
     };

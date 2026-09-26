@@ -910,6 +910,97 @@ class LLMService:
             logger.warning(f"Failed to get models from active provider: {e}")
             return ["minimax-m3", "Llama-3.2-3B-Instruct-bf16", "llama3.2:3b-instruct-fp16"]
 
+    @classmethod
+    def unload_local_model(
+        cls,
+        provider_name: Optional[str] = None,
+        model_name: Optional[str] = None
+    ) -> Dict[str, Any]:
+        """
+        Unload resident models from local LLM inference engines (oMLX, Ollama, LM Studio)
+        to immediately release unified memory / VRAM for generative image & video diffusion.
+        """
+        results: Dict[str, List[str]] = {"unloaded": [], "errors": []}
+        target_providers = [provider_name] if provider_name else ["omlx", "ollama", "lmstudio"]
+
+        config = ConfigManager().get_config()
+
+        for prov in target_providers:
+            prov_lower = str(prov).lower()
+            if prov_lower == "omlx":
+                base_url = _normalize_llm_url(config.get("omlx", {}).get("base_url", "http://localhost:8787/v1"))
+                api_key = config.get("omlx", {}).get("api_key", "omlx")
+                headers = {"Authorization": f"Bearer {api_key}"} if api_key else {}
+                try:
+                    models_to_unload: List[str] = [model_name] if model_name else []
+                    if not models_to_unload:
+                        try:
+                            status_resp = requests.get(f"{base_url}/models/status", headers=headers, timeout=3.0)
+                            if status_resp.status_code == 200:
+                                status_data = status_resp.json()
+                                for m in status_data.get("models", []):
+                                    if m.get("loaded") and m.get("id"):
+                                        models_to_unload.append(str(m.get("id")))
+                        except Exception:
+                            act_m = config.get("omlx", {}).get("model")
+                            if act_m:
+                                models_to_unload.append(str(act_m))
+
+                    for mid in models_to_unload:
+                        if not mid or mid == "MarkItDown":
+                            continue
+                        unload_url = f"{base_url}/models/{mid}/unload"
+                        try:
+                            resp = requests.post(unload_url, headers=headers, timeout=5.0)
+                            if resp.status_code == 200:
+                                logger.info(f"OMLX: Successfully unloaded resident model: {mid}")
+                                results["unloaded"].append(f"omlx:{mid}")
+                            else:
+                                admin_base = base_url.rstrip("/").removesuffix("/v1")
+                                admin_url = f"{admin_base}/admin/api/models/{mid}/unload"
+                                resp2 = requests.post(admin_url, headers=headers, timeout=5.0)
+                                if resp2.status_code == 200:
+                                    logger.info(f"OMLX (admin): Successfully unloaded resident model: {mid}")
+                                    results["unloaded"].append(f"omlx:{mid}")
+                        except Exception as ex:
+                            results["errors"].append(f"omlx:{mid}:{ex}")
+                except Exception as e:
+                    results["errors"].append(f"omlx:{e}")
+
+            elif prov_lower == "ollama":
+                base_url = _normalize_llm_url(config.get("ollama", {}).get("base_url", "http://localhost:11434"))
+                try:
+                    target_model = model_name or config.get("ollama", {}).get("model", "")
+                    if target_model:
+                        resp = requests.post(
+                            f"{base_url}/api/generate",
+                            json={"model": target_model, "keep_alive": 0},
+                            timeout=3.0
+                        )
+                        if resp.status_code == 200:
+                            logger.info(f"Ollama: Unloaded resident model: {target_model}")
+                            results["unloaded"].append(f"ollama:{target_model}")
+                except Exception as e:
+                    results["errors"].append(f"ollama:{e}")
+
+            elif prov_lower == "lmstudio":
+                base_url = _normalize_llm_url(config.get("lmstudio", {}).get("base_url", "http://localhost:1234/v1"))
+                try:
+                    target_model = model_name or config.get("lmstudio", {}).get("model", "")
+                    if target_model:
+                        resp = requests.post(
+                            f"{base_url}/models/unload",
+                            json={"model": target_model},
+                            timeout=3.0
+                        )
+                        if resp.status_code == 200:
+                            logger.info(f"LM Studio: Unloaded resident model: {target_model}")
+                            results["unloaded"].append(f"lmstudio:{target_model}")
+                except Exception as e:
+                    results["errors"].append(f"lmstudio:{e}")
+
+        return results
+
     @staticmethod
     def _get_active_model() -> str:
         config = ConfigManager().get_config()
@@ -1728,3 +1819,15 @@ class LLMService:
     @staticmethod
     def get_config() -> Dict[str, Any]:
         return ConfigManager().get_client_config()
+
+
+llm_service = LLMService()
+
+try:
+    from app.core.hardware_lock import GlobalHardwareCoordinator
+    GlobalHardwareCoordinator.register_eviction_hook(
+        "llm",
+        lambda: LLMService.unload_local_model()
+    )
+except Exception:
+    pass

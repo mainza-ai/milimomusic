@@ -273,6 +273,13 @@ class VideoOrchestrator:
                     except OSError:
                         pass
 
+        # Ensure LLM is unloaded before starting segmentation or diffusion
+        try:
+            from app.services.llm_service import llm_service
+            llm_service.unload_local_model()
+        except Exception:
+            pass
+
         plan = video_director.segment_song(
             job=job,
             max_clip_duration=15.0,
@@ -281,107 +288,125 @@ class VideoOrchestrator:
             user_scenes=user_scenes
         )
 
+        # Unload LLM immediately after director treatment generation to yield unified memory to diffusion
+        try:
+            from app.services.llm_service import llm_service
+            llm_service.unload_local_model()
+        except Exception:
+            pass
+
         results = []
-        for idx, clip in enumerate(plan.clips):
-            clip_idx = int(clip.clip_index or (idx + 1))
-            kf_filename = f"keyframe_{job.id}_{clip_idx:03d}.png"
-            kf_path = os.path.join(KEYFRAMES_DIR, kf_filename)
+        try:
+            for idx, clip in enumerate(plan.clips):
+                clip_idx = int(clip.clip_index or (idx + 1))
+                kf_filename = f"keyframe_{job.id}_{clip_idx:03d}.png"
+                kf_path = os.path.join(KEYFRAMES_DIR, kf_filename)
 
-            def _clip_dict(c, c_idx: int) -> Dict[str, Any]:
-                has_file = os.path.isfile(kf_path)
-                mtime = int(os.path.getmtime(kf_path)) if has_file else int(time.time())
-                return {
-                    "clip_index": c_idx,
-                    "start_time": c.start_time,
-                    "end_time": c.end_time,
-                    "duration": c.duration,
-                    "time_str": c.time_str,
-                    "is_vocal": c.is_vocal,
-                    "scene_type": c.scene_type,
-                    "prompt": c.prompt,
-                    "camera": c.camera,
-                    "lighting": c.lighting,
-                    "directors_note": getattr(c, "directors_note", None),
-                    "visual_action": getattr(c, "visual_action", None),
-                    "musical_energy": getattr(c, "musical_energy", 3),
-                    "section_label": getattr(c, "section_label", None),
-                    "lyrics": getattr(c, "lyrics", ""),
-                    "keyframe_path": kf_path if has_file else None,
-                    "keyframe_url": f"/audio/videos/keyframes/{kf_filename}?v={mtime}" if has_file else None
-                }
+                def _clip_dict(c, c_idx: int) -> Dict[str, Any]:
+                    has_file = os.path.isfile(kf_path)
+                    mtime = int(os.path.getmtime(kf_path)) if has_file else int(time.time())
+                    return {
+                        "clip_index": c_idx,
+                        "start_time": c.start_time,
+                        "end_time": c.end_time,
+                        "duration": c.duration,
+                        "time_str": c.time_str,
+                        "is_vocal": c.is_vocal,
+                        "scene_type": c.scene_type,
+                        "prompt": c.prompt,
+                        "camera": c.camera,
+                        "lighting": c.lighting,
+                        "directors_note": getattr(c, "directors_note", None),
+                        "visual_action": getattr(c, "visual_action", None),
+                        "musical_energy": getattr(c, "musical_energy", 3),
+                        "section_label": getattr(c, "section_label", None),
+                        "lyrics": getattr(c, "lyrics", ""),
+                        "keyframe_path": kf_path if has_file else None,
+                        "keyframe_url": f"/audio/videos/keyframes/{kf_filename}?v={mtime}" if has_file else None
+                    }
 
-            # Preserve existing valid still unless forced or if it is a stale cover copy
-            if not force_regenerate and os.path.isfile(kf_path) and os.path.getsize(kf_path) > 0:
-                is_stale_cover = False
-                if job.cover_image_path:
-                    cover_full = resolve_image_file(job.cover_image_path) or resolve_audio_file(job.cover_image_path)
-                    if cover_full and os.path.isfile(cover_full):
+                # Preserve existing valid still unless forced or if it is a stale cover copy
+                if not force_regenerate and os.path.isfile(kf_path) and os.path.getsize(kf_path) > 0:
+                    is_stale_cover = False
+                    if job.cover_image_path:
+                        cover_full = resolve_image_file(job.cover_image_path) or resolve_audio_file(job.cover_image_path)
+                        if cover_full and os.path.isfile(cover_full):
+                            try:
+                                if os.path.getsize(kf_path) == os.path.getsize(cover_full):
+                                    import hashlib
+                                    with open(kf_path, "rb") as f1, open(cover_full, "rb") as f2:
+                                        if hashlib.md5(f1.read()).digest() == hashlib.md5(f2.read()).digest():
+                                            is_stale_cover = True
+                            except Exception:
+                                pass
+
+                    # If existing still is square legacy cover but widescreen/vertical was requested
+                    if not is_stale_cover and width != height:
                         try:
-                            if os.path.getsize(kf_path) == os.path.getsize(cover_full):
-                                import hashlib
-                                with open(kf_path, "rb") as f1, open(cover_full, "rb") as f2:
-                                    if hashlib.md5(f1.read()).digest() == hashlib.md5(f2.read()).digest():
-                                        is_stale_cover = True
+                            from PIL import Image
+                            with Image.open(kf_path) as im:
+                                w_kf, h_kf = im.size
+                                if abs(w_kf - h_kf) <= 2:
+                                    is_stale_cover = True
                         except Exception:
                             pass
 
-                # If existing still is square legacy cover but widescreen/vertical was requested
-                if not is_stale_cover and width != height:
+                    if not is_stale_cover:
+                        results.append(_clip_dict(clip, clip_idx))
+                        continue
+
+                # Ensure clean slate for this keyframe file
+                if os.path.isfile(kf_path):
                     try:
-                        from PIL import Image
-                        with Image.open(kf_path) as im:
-                            w_kf, h_kf = im.size
-                            if abs(w_kf - h_kf) <= 2:
-                                is_stale_cover = True
-                    except Exception:
+                        os.remove(kf_path)
+                    except OSError:
                         pass
 
-                if not is_stale_cover:
-                    results.append(_clip_dict(clip, clip_idx))
-                    continue
-
-            # Ensure clean slate for this keyframe file
-            if os.path.isfile(kf_path):
-                try:
-                    os.remove(kf_path)
-                except OSError:
-                    pass
-
-            # Render dedicated scene still from the clip's director prompt
-            try:
-                from app.services.image_service import image_service
-                res = image_service.generate_scene_background(
-                    prompt=clip.prompt,
-                    style=visual_style,
-                    width=width,
-                    height=height
-                )
-                if res.get("ok") and res.get("dest_path") and os.path.isfile(res["dest_path"]):
-                    shutil.copy(res["dest_path"], kf_path)
-                else:
-                    # Procedural fallback still if diffusion is unavailable
-                    image_service._generate_raster_cover(
-                        prompt=f"{clip.prompt} (Scene {clip_idx})",
-                        style=visual_style,
-                        width=width,
-                        height=height,
-                        dest_path=kf_path
-                    )
-            except Exception as e:
-                logger.warning(f"Failed to generate keyframe image for clip {clip_idx} ({e})")
+                # Render dedicated scene still from the clip's director prompt
                 try:
                     from app.services.image_service import image_service
-                    image_service._generate_raster_cover(
-                        prompt=f"{clip.prompt} (Scene {clip_idx})",
+                    res = image_service.generate_scene_background(
+                        prompt=clip.prompt,
                         style=visual_style,
                         width=width,
                         height=height,
-                        dest_path=kf_path
+                        auto_unload=False
                     )
-                except Exception as ex:
-                    logger.error(f"Fallback keyframe still generation also failed: {ex}")
+                    if res.get("ok") and res.get("dest_path") and os.path.isfile(res["dest_path"]):
+                        shutil.copy(res["dest_path"], kf_path)
+                    else:
+                        # Procedural fallback still if diffusion is unavailable
+                        image_service._generate_raster_cover(
+                            prompt=f"{clip.prompt} (Scene {clip_idx})",
+                            style=visual_style,
+                            width=width,
+                            height=height,
+                            dest_path=kf_path
+                        )
+                except Exception as e:
+                    logger.warning(f"Failed to generate keyframe image for clip {clip_idx} ({e})")
+                    try:
+                        from app.services.image_service import image_service
+                        image_service._generate_raster_cover(
+                            prompt=f"{clip.prompt} (Scene {clip_idx})",
+                            style=visual_style,
+                            width=width,
+                            height=height,
+                            dest_path=kf_path
+                        )
+                    except Exception as ex:
+                        logger.error(f"Fallback keyframe still generation also failed: {ex}")
 
-            results.append(_clip_dict(clip, clip_idx))
+                results.append(_clip_dict(clip, clip_idx))
+        finally:
+            # Batch keyframe rendering complete: release image generation weights from unified memory
+            try:
+                from app.services.image_service import image_service
+                image_service.unload_models()
+                from app.core.hardware_lock import GlobalHardwareCoordinator
+                GlobalHardwareCoordinator.flush_memory()
+            except Exception as e:
+                logger.warning(f"Error during post-keyframe cleanup: {e}")
 
         return results
 

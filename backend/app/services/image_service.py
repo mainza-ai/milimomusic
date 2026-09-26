@@ -181,6 +181,7 @@ class ImageService:
         self,
         model_source: str,
         is_9b: bool,
+        is_base: bool,
         prompt: str,
         steps: int,
         guidance: float,
@@ -194,14 +195,17 @@ class ImageService:
         from mflux.models.flux2.variants import Flux2Klein
 
         if self._loaded_mlx_model_id != model_source or self._loaded_mlx_pipeline is None:
-            logger.info(f"Loading Flux2Klein model from {model_source} in dedicated MLX thread (is_9b={is_9b})...")
-            cfg = ModelConfig.flux2_klein_9b() if is_9b else ModelConfig.flux2_klein_4b()
+            logger.info(f"Loading Flux2Klein model from {model_source} in dedicated MLX thread (is_9b={is_9b}, is_base={is_base})...")
+            if is_base:
+                cfg = ModelConfig.flux2_klein_base_9b() if is_9b else ModelConfig.flux2_klein_base_4b()
+            else:
+                cfg = ModelConfig.flux2_klein_9b() if is_9b else ModelConfig.flux2_klein_4b()
             self._loaded_mlx_pipeline = Flux2Klein(model_path=model_source, model_config=cfg)
             self._loaded_mlx_model_id = model_source
         else:
             logger.info(f"Reusing in-memory Flux2Klein model ({model_source}) in dedicated MLX thread...")
 
-        logger.info(f"Generating image via mflux Flux2Klein (steps={steps}, seed={seed}, size={width}x{height})...")
+        logger.info(f"Generating image via mflux Flux2Klein (steps={steps}, guidance={guidance}, seed={seed}, size={width}x{height})...")
         image = self._loaded_mlx_pipeline.generate_image(
             seed=seed,
             prompt=prompt,
@@ -259,6 +263,8 @@ class ImageService:
         repo_id: Optional[str],
         is_installed: bool,
         dest_path: str,
+        steps: Optional[int] = None,
+        guidance: Optional[float] = None,
         log_label: str = "image",
     ) -> Dict[str, Any]:
         """Attempt MLX FLUX.2 then PyTorch-diffusers text-to-image rendering.
@@ -284,6 +290,21 @@ class ImageService:
                 or (repo_id and "FLUX2" in repo_id)
             )
 
+            is_base = bool(
+                "base" in chosen_model_id.lower()
+                or (repo_id and "base" in repo_id.lower())
+                or (local_path and "base" in local_path.lower())
+            )
+            is_turbo_or_schnell = bool(
+                "turbo" in chosen_model_id.lower()
+                or "schnell" in chosen_model_id.lower()
+                or (repo_id and ("turbo" in repo_id.lower() or "schnell" in repo_id.lower()))
+                or (local_path and ("turbo" in local_path.lower() or "schnell" in local_path.lower()))
+            )
+
+            eff_steps = steps if steps is not None else (4 if (is_turbo_or_schnell or not is_base) else 24)
+            eff_guidance = guidance if guidance is not None else (1.0 if (is_turbo_or_schnell or not is_base) else 3.5)
+
             if is_mlx_flux2:
                 try:
                     is_9b = (
@@ -296,17 +317,18 @@ class ImageService:
                         self._run_mlx_diffusion,
                         model_source=model_source,
                         is_9b=is_9b,
+                        is_base=is_base,
                         prompt=full_prompt,
-                        steps=4,
-                        guidance=1.0,
+                        steps=eff_steps,
+                        guidance=eff_guidance,
                         width=width,
                         height=height,
                         seed=seed,
                         dest_path=dest_path,
                     )
-                    future.result(timeout=180)
+                    future.result(timeout=600)
                     engine_used = "mflux_flux2_mlx"
-                    logger.info(f"MLX FLUX.2 Klein diffusion {log_label} rendered at {dest_path}")
+                    logger.info(f"MLX FLUX.2 Klein diffusion {log_label} rendered at {dest_path} (steps={eff_steps}, guidance={eff_guidance})")
                 except Exception as e:
                     self._loaded_mlx_pipeline = None
                     self._loaded_mlx_model_id = None
@@ -334,14 +356,13 @@ class ImageService:
                         self._loaded_diffusers_pipeline = pipe
                         self._loaded_diffusers_model_id = model_source
 
-                    lowered = chosen_model_id.lower()
-                    steps = 4 if ("turbo" in lowered or "schnell" in lowered) else 20
-                    guidance = 0.0 if ("turbo" in lowered or "schnell" in lowered) else 3.5
+                    diff_steps = steps if steps is not None else (4 if is_turbo_or_schnell else 20)
+                    diff_guidance = guidance if guidance is not None else (0.0 if is_turbo_or_schnell else 3.5)
 
                     image = pipe(
                         prompt=full_prompt,
-                        num_inference_steps=steps,
-                        guidance_scale=guidance,
+                        num_inference_steps=diff_steps,
+                        guidance_scale=diff_guidance,
                         width=width,
                         height=height,
                     ).images[0]
@@ -470,6 +491,8 @@ class ImageService:
         visual_style: Optional[str] = None,
         title: Optional[str] = None,
         artist: Optional[str] = None,
+        steps: Optional[int] = None,
+        guidance: Optional[float] = None,
         auto_unload: bool = True,
     ) -> Dict[str, Any]:
         """
@@ -506,6 +529,8 @@ class ImageService:
             repo_id=repo_id,
             is_installed=is_installed,
             dest_path=dest_path,
+            steps=steps,
+            guidance=guidance,
             log_label="cover",
         )
         engine_used = diffusion_res["engine"]
@@ -575,6 +600,8 @@ class ImageService:
         width: int = 1280,
         height: int = 720,
         model_id: Optional[str] = None,
+        steps: Optional[int] = None,
+        guidance: Optional[float] = None,
         auto_unload: bool = True,
     ) -> Dict[str, Any]:
         """Render a per-scene video background still (B-roll / Ken Burns source).
@@ -603,6 +630,8 @@ class ImageService:
             repo_id=repo_id,
             is_installed=is_installed,
             dest_path=dest_path,
+            steps=steps,
+            guidance=guidance,
             log_label="scene background",
         )
         engine_used = diffusion_res["engine"]

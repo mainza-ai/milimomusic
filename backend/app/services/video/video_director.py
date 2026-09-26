@@ -478,6 +478,12 @@ class VideoDirector:
                         palette=palette,
                         prompt_enhancer=prompt_enhancer
                     )
+                    # Unload local LLM immediately to free VRAM for image/video diffusion
+                    try:
+                        LLMService.unload_local_model(provider)
+                    except Exception as ex:
+                        logger.debug(f"Post-treatment LLM unload skipped: {ex}")
+
                     return VideoDirectorTreatment(
                         job_id=str(job.id),
                         concept_title=parsed.get("concept_title", f"{job.title or 'Track'} Visuals"),
@@ -492,6 +498,11 @@ class VideoDirector:
                     )
         except Exception as e:
             logger.warning(f"AI Visual Director LLM invocation failed ({e}), using intelligent fallback.")
+        finally:
+            try:
+                LLMService.unload_local_model()
+            except Exception:
+                pass
 
         # Fallback to intelligent rule-based directing
         return self._generate_intelligent_fallback_treatment(

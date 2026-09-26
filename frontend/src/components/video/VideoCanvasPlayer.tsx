@@ -59,6 +59,11 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
     const [splitCompareActive, setSplitCompareActive] = useState(false);
     const [splitRatio, setSplitRatio] = useState(0.5); // 0 to 1
     const [isDraggingSplit, setIsDraggingSplit] = useState(false);
+    const [videoError, setVideoError] = useState(false);
+
+    useEffect(() => {
+        setVideoError(false);
+    }, [renderedVideoUrl]);
 
     // Sync playhead when seeking from timeline with settle guard
     useEffect(() => {
@@ -124,8 +129,43 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                             poster={galleryApi.getThumbnailUrl(renderedVideoUrl.split('/').pop() || renderedVideoUrl)}
                             controls
                             playsInline
+                            onError={() => setVideoError(true)}
+                            onLoadedData={() => setVideoError(false)}
                             className="w-full h-full object-cover rounded-xl"
                         />
+
+                        {/* Playback Error Fallback Overlay */}
+                        {videoError && (
+                            <div className="absolute inset-0 bg-slate-950/90 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-20">
+                                <div className="w-12 h-12 rounded-2xl bg-rose-500/10 border border-rose-500/20 text-rose-400 flex items-center justify-center mb-3">
+                                    <AlertCircle size={24} />
+                                </div>
+                                <h4 className="text-sm font-bold text-white mb-1">Video playback unavailable</h4>
+                                <p className="text-xs text-slate-400 max-w-sm mb-4">
+                                    The video file could not be loaded or was removed. You can regenerate it or clear the video reference.
+                                </p>
+                                <div className="flex items-center gap-2">
+                                    <button
+                                        type="button"
+                                        onClick={onRegenerateVideo}
+                                        disabled={isRendering || isDeletingVideo}
+                                        className="px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 font-bold text-xs rounded-lg flex items-center gap-1.5 shadow-md"
+                                    >
+                                        <RefreshCw size={12} />
+                                        <span>Regenerate Video</span>
+                                    </button>
+                                    <button
+                                        type="button"
+                                        onClick={onDeleteVideo}
+                                        disabled={isDeletingVideo}
+                                        className="px-3 py-1.5 bg-white/10 hover:bg-white/20 text-white font-medium text-xs rounded-lg flex items-center gap-1.5 border border-white/10"
+                                    >
+                                        {isDeletingVideo ? <Loader2 size={12} className="animate-spin" /> : <Trash2 size={12} />}
+                                        <span>{isDeletingVideo ? 'Deleting…' : 'Clear / Delete'}</span>
+                                    </button>
+                                </div>
+                            </div>
+                        )}
 
                         {/* Top Floating Telemetry Overlay */}
                         <div className="absolute top-3 left-3 right-3 flex items-center justify-between pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300">

@@ -270,11 +270,21 @@ class VideoDirector:
         effective_max = max(1.0, min(float(max_clip_duration or model_max), model_max))
 
         # 1. Audio Signal Analysis & Timed Lyrics Alignment
-        timed_lines = lyric_sync_engine.align_lyrics(
-            lyrics=job.lyrics or "",
-            duration_sec=total_duration,
-            vocal_stem_path=vocal_stem_path
-        )
+        timed_lines = []
+        if job and getattr(job, "timed_lyrics_json", None):
+            try:
+                raw_timed = json.loads(job.timed_lyrics_json) if isinstance(job.timed_lyrics_json, str) else job.timed_lyrics_json
+                if isinstance(raw_timed, list) and len(raw_timed) > 0:
+                    timed_lines = raw_timed
+            except Exception:
+                timed_lines = []
+
+        if not timed_lines:
+            timed_lines = lyric_sync_engine.align_lyrics(
+                lyrics=job.lyrics or "",
+                duration_sec=total_duration,
+                vocal_stem_path=vocal_stem_path
+            )
 
         audio_file = job.audio_path if job.audio_path and os.path.isfile(job.audio_path) else None
         if audio_file:
@@ -834,17 +844,20 @@ class VideoDirector:
         custom_style_prompt: Optional[str] = None,
         pacing_bias: int = 0,
         visible_cast: Optional[List[str]] = None,
-        user_scenes: Optional[List[Dict[str, Any]]] = None
+        user_scenes: Optional[List[Dict[str, Any]]] = None,
+        use_llm: bool = True,
+        force_refresh: bool = False
     ) -> VideoPlan:
         """
         Produce a production VideoPlan.
         If user_scenes are provided (e.g. customized or reviewed in UI), strictly honors them!
-        Otherwise, runs generate_director_treatment to produce an intelligent AI script.
+        If not force_refresh and job has an existing saved director_treatment in video_config_json, reuses it.
+        Otherwise, generates an intelligent acoustic-aligned scene plan using AI Visual Director when use_llm=True.
         """
         model_max = self.get_model_max_duration(model_name)
         effective_max = max(1.0, min(float(max_clip_duration or model_max), model_max))
 
-        # If user passed custom pre-planned scenes, honor them directly
+        # 1. If user passed custom pre-planned scenes, honor them directly
         if user_scenes and len(user_scenes) > 0:
             clips: List[SceneClip] = []
             for s in user_scenes:
@@ -885,7 +898,62 @@ class VideoDirector:
                 clips=clips
             )
 
-        # Generate fresh AI director treatment
+        # 2. Check if job already has a saved director treatment with scenes in video_config_json
+        if not force_refresh and job and getattr(job, "video_config_json", None):
+            try:
+                cfg = json.loads(job.video_config_json)
+                saved_treatment = cfg.get("director_treatment")
+                if saved_treatment and isinstance(saved_treatment, dict):
+                    saved_scenes = saved_treatment.get("scenes") or []
+                    if saved_scenes and len(saved_scenes) > 0:
+                        clips = []
+                        for s in saved_scenes:
+                            idx = int(s.get("clip_index") or len(clips) + 1)
+                            st = float(s.get("start_time") or 0.0)
+                            et = float(s.get("end_time") or (st + effective_max))
+                            dur = float(s.get("duration") or (et - st))
+                            is_voc = bool(s.get("is_vocal"))
+                            clips.append(SceneClip(
+                                clip_index=idx,
+                                start_time=round(st, 2),
+                                end_time=round(et, 2),
+                                duration=round(dur, 2),
+                                time_str=s.get("time_str") or f"{int(st)}s - {int(et)}s",
+                                is_vocal=is_voc,
+                                scene_type=s.get("scene_type") or (SceneType.VOCAL_PERFORMANCE.value if is_voc else SceneType.CINEMATIC_BROLL.value),
+                                lyrics=s.get("lyrics", ""),
+                                prompt=s.get("prompt", ""),
+                                negative_prompt=s.get("negative_prompt", ""),
+                                camera=s.get("camera", "Cinematic camera movement"),
+                                lighting=s.get("lighting", "Atmospheric studio lighting"),
+                                section_label=s.get("section_label", "Verse"),
+                                musical_energy=int(s.get("musical_energy", 3)),
+                                visual_action=s.get("visual_action", ""),
+                                directors_note=s.get("directors_note", "")
+                            ))
+                        vocal_count = sum(1 for c in clips if c.is_vocal)
+                        resolved_bpm = float(bpm) if bpm and bpm > 0 else self.detect_bpm(job.audio_path, default_bpm=120.0)
+                        return VideoPlan(
+                            job_id=str(job.id),
+                            total_clips=len(clips),
+                            vocal_clips_count=vocal_count,
+                            broll_clips_count=len(clips) - vocal_count,
+                            max_clip_duration=effective_max,
+                            model_max_duration=model_max,
+                            model_name=model_name or "wan_14b",
+                            bpm=resolved_bpm,
+                            visual_style=visual_style,
+                            concept_title=saved_treatment.get("concept_title"),
+                            logline=saved_treatment.get("logline"),
+                            visual_metaphor=saved_treatment.get("visual_metaphor"),
+                            character_profile=saved_treatment.get("character_profile"),
+                            treatment=saved_treatment,
+                            clips=clips
+                        )
+            except Exception as e:
+                logger.debug(f"Could not reuse saved director treatment from video_config_json: {e}")
+
+        # 3. Generate director treatment (using AI Visual Director when use_llm=True)
         treatment = self.generate_director_treatment(
             job=job,
             model_name=model_name,
@@ -895,7 +963,8 @@ class VideoDirector:
             pacing_bias=pacing_bias,
             visible_cast=visible_cast,
             character_desc=character_desc,
-            vocal_stem_path=vocal_stem_path
+            vocal_stem_path=vocal_stem_path,
+            use_llm=use_llm
         )
 
         clips = []
@@ -922,7 +991,7 @@ class VideoDirector:
         vocal_count = sum(1 for c in clips if c.is_vocal)
         resolved_bpm = float(bpm) if bpm and bpm > 0 else self.detect_bpm(job.audio_path, default_bpm=120.0)
 
-        return VideoPlan(
+        plan = VideoPlan(
             job_id=str(job.id),
             total_clips=len(clips),
             vocal_clips_count=vocal_count,
@@ -936,8 +1005,28 @@ class VideoDirector:
             logline=treatment.logline,
             visual_metaphor=treatment.visual_metaphor,
             character_profile=treatment.character_profile,
+            treatment=treatment.to_dict(),
             clips=clips
         )
+
+        # Update in-memory job.video_config_json if job is present
+        if job:
+            try:
+                existing_cfg = {}
+                if getattr(job, "video_config_json", None):
+                    try:
+                        existing_cfg = json.loads(job.video_config_json)
+                    except Exception:
+                        pass
+                existing_cfg["director_treatment"] = treatment.to_dict()
+                existing_cfg["scenes"] = [c.to_dict() for c in clips]
+                existing_cfg["visual_style"] = visual_style
+                existing_cfg["model_name"] = model_name
+                job.video_config_json = json.dumps(existing_cfg, default=str)
+            except Exception as e:
+                logger.debug(f"Could not update job.video_config_json in segment_song: {e}")
+
+        return plan
 
     def generate_storyboard_scenes(
         self,

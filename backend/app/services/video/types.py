@@ -97,6 +97,7 @@ class VideoPlan:
     logline: Optional[str] = None
     visual_metaphor: Optional[str] = None
     character_profile: Optional[str] = None
+    treatment: Optional[Dict[str, Any]] = None
     clips: List[SceneClip] = field(default_factory=list)
 
     def to_dict(self) -> Dict[str, Any]:

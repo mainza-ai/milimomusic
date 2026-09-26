@@ -63,15 +63,18 @@ async def _aiter_slice(path: str, offset: int, length: int) -> AsyncIterator[byt
     def _read_chunk(f, n: int) -> bytes:
         return f.read(n)
 
-    with open(path, "rb") as f:
-        f.seek(offset)
-        remaining = length
-        while remaining > 0:
-            data = await anyio.to_thread.run_sync(_read_chunk, f, min(_CHUNK_SIZE, remaining))
-            if not data:
-                break
-            remaining -= len(data)
-            yield data
+    try:
+        with open(path, "rb") as f:
+            f.seek(offset)
+            remaining = length
+            while remaining > 0:
+                data = await anyio.to_thread.run_sync(_read_chunk, f, min(_CHUNK_SIZE, remaining))
+                if not data:
+                    break
+                remaining -= len(data)
+                yield data
+    except (FileNotFoundError, OSError):
+        return
 
 
 class RangedFileResponse(Response):

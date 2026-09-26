@@ -351,6 +351,7 @@ class ImageService:
                             model_source,
                             torch_dtype=dtype,
                             use_safetensors=True,
+                            local_files_only=True,
                         )
                         pipe.to(device)
                         self._loaded_diffusers_pipeline = pipe

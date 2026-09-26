@@ -18,7 +18,7 @@ import asyncio
 import logging
 import threading
 import subprocess
-from typing import List, Dict, Optional, Any, Tuple
+from typing import List, Dict, Optional, Any, Tuple, Union
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
@@ -293,6 +293,34 @@ class VideoService:
         from app.services.video.video_orchestrator import video_orchestrator
         return video_orchestrator.get_job_keyframes(job_id)
 
+    def clear_job_timeline(self, job: Job) -> Dict[str, Any]:
+        """Purge planned scenes, director treatment, and cached keyframes for a song timeline."""
+        from app.services.video.video_orchestrator import KEYFRAMES_DIR
+        removed_keyframes = 0
+        if os.path.isdir(KEYFRAMES_DIR):
+            prefix = f"keyframe_{job.id}_"
+            for fname in os.listdir(KEYFRAMES_DIR):
+                if fname.startswith(prefix):
+                    try:
+                        os.remove(os.path.join(KEYFRAMES_DIR, fname))
+                        removed_keyframes += 1
+                    except Exception as e:
+                        logger.warning(f"Failed to delete keyframe {fname}: {e}")
+
+        if job.video_config_json:
+            try:
+                cfg = json.loads(job.video_config_json)
+                cfg.pop("director_treatment", None)
+                cfg.pop("scenes", None)
+                job.video_config_json = json.dumps(cfg, default=str)
+            except Exception:
+                job.video_config_json = None
+        return {
+            "status": "cleared",
+            "job_id": str(job.id),
+            "removed_keyframes": removed_keyframes
+        }
+
     @classmethod
     def get_active_video_engine(cls) -> Dict[str, Any]:
         """Resolve the engine the Music Videos page should default to.
@@ -421,8 +449,11 @@ class VideoService:
         pacing_bias: int = 0,
         character_desc: Optional[str] = None,
         visible_cast: Optional[List[str]] = None,
-        user_scenes: Optional[List[Dict[str, Any]]] = None
-    ) -> List[Dict[str, Any]]:
+        user_scenes: Optional[List[Dict[str, Any]]] = None,
+        use_llm: bool = True,
+        force_refresh: bool = False,
+        return_plan: bool = False
+    ) -> Union[List[Dict[str, Any]], Dict[str, Any]]:
         """
         Segment the song into clips respecting model constraints and musical downbeats.
         Delegates to video_director with AI Visual Director and intelligent fallback.
@@ -440,8 +471,12 @@ class VideoService:
             custom_style_prompt=custom_style_prompt,
             pacing_bias=pacing_bias,
             visible_cast=visible_cast,
-            user_scenes=user_scenes
+            user_scenes=user_scenes,
+            use_llm=use_llm,
+            force_refresh=force_refresh
         )
+        if return_plan:
+            return plan.to_dict()
         return [c.to_dict() for c in plan.clips]
 
     def generate_director_treatment(
@@ -843,7 +878,8 @@ class VideoService:
             max_clip_duration=15.0,
             bpm=120.0,
             visual_style=visual_style,
-            custom_style_prompt=custom_style_prompt
+            custom_style_prompt=custom_style_prompt,
+            use_llm=False
         )
         scenes = []
         for c in clips:

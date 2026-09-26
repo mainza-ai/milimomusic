@@ -170,7 +170,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                 <button
                     type="button"
                     onClick={() => setActiveTab('directing')}
-                    className={`flex-1 min-w-0 py-1.5 px-2 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                    className={`flex-1 min-w-0 py-1.5 px-2 rounded-lg text-[11px] sm:text-xs font-bold transition-colors duration-150 flex items-center justify-center gap-1 ${
                         activeTab === 'directing'
                             ? 'bg-white dark:bg-white/15 text-indigo-600 dark:text-indigo-400 shadow-sm'
                             : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
@@ -184,7 +184,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                 <button
                     type="button"
                     onClick={() => setActiveTab('engine')}
-                    className={`flex-1 min-w-0 py-1.5 px-2 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                    className={`flex-1 min-w-0 py-1.5 px-2 rounded-lg text-[11px] sm:text-xs font-bold transition-colors duration-150 flex items-center justify-center gap-1 ${
                         activeTab === 'engine'
                             ? 'bg-white dark:bg-white/15 text-teal-600 dark:text-teal-400 shadow-sm'
                             : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
@@ -198,7 +198,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                 <button
                     type="button"
                     onClick={() => setActiveTab('lipsync')}
-                    className={`flex-1 min-w-0 py-1.5 px-2 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                    className={`flex-1 min-w-0 py-1.5 px-2 rounded-lg text-[11px] sm:text-xs font-bold transition-colors duration-150 flex items-center justify-center gap-1 ${
                         activeTab === 'lipsync'
                             ? 'bg-white dark:bg-white/15 text-cyan-600 dark:text-cyan-400 shadow-sm'
                             : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
@@ -212,7 +212,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                 <button
                     type="button"
                     onClick={() => setActiveTab('cast')}
-                    className={`flex-1 min-w-0 py-1.5 px-2 rounded-lg text-[11px] sm:text-xs font-bold transition-all flex items-center justify-center gap-1 ${
+                    className={`flex-1 min-w-0 py-1.5 px-2 rounded-lg text-[11px] sm:text-xs font-bold transition-colors duration-150 flex items-center justify-center gap-1 ${
                         activeTab === 'cast'
                             ? 'bg-white dark:bg-white/15 text-purple-600 dark:text-purple-400 shadow-sm'
                             : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
@@ -287,7 +287,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
 
                         {/* Custom Directing Prompt Input (When Custom Style Selected) */}
                         {videoStyle === 'custom' && (
-                            <div className="p-3 bg-indigo-500/5 dark:bg-indigo-500/10 border border-indigo-500/30 rounded-2xl space-y-1.5 animate-fade-in">
+                            <div className="p-3 bg-indigo-500/5 dark:bg-indigo-500/10 border border-indigo-500/30 rounded-2xl space-y-1.5">
                                 <div className="flex items-center justify-between text-[11px] font-bold text-indigo-600 dark:text-indigo-400">
                                     <span className="flex items-center gap-1">
                                         <Wand2 size={12} />

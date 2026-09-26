@@ -1441,6 +1441,8 @@ export interface VideoPlanParams {
     auto_continue?: boolean;
     visible_cast?: string[];
     scenes?: any[];
+    use_llm?: boolean;
+    force_refresh?: boolean;
 }
 
 export interface VideoRenderParams {
@@ -1516,6 +1518,10 @@ export const videoApi = {
     },
     deleteVideo: async (jobId: string): Promise<{ status: string; job_id: string; removed_files: number }> => {
         const res = await axios.delete(`${API_BASE_URL}/videos/${jobId}`);
+        return res.data;
+    },
+    clearTimeline: async (jobId: string): Promise<{ status: string; job_id: string; removed_keyframes: number }> => {
+        const res = await axios.delete(`${API_BASE_URL}/videos/timeline/${jobId}`);
         return res.data;
     },
     getVideoModels: async (): Promise<Record<string, { id: string; name: string; max_duration: number; local_weights_present: boolean; family: string; description: string }>> => {

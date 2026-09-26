@@ -31,6 +31,31 @@ class DiffusersLTXGenerator(BaseVideoGenerator):
         except Exception:
             return False
 
+    def _resolve_model_path(self) -> Optional[str]:
+        """Find local LTX-Video weights or return None if weights are not installed locally."""
+        repo_id = "Lightricks/LTX-Video"
+        local_cand = [
+            str(get_models_dir("video") / "Lightricks__LTX-Video"),
+            str(get_models_dir("video") / "LTX-Video"),
+            str(get_models_dir("video") / "ltx_video"),
+            os.path.join(os.getcwd(), "models", "video", "Lightricks__LTX-Video"),
+            os.path.join(os.getcwd(), "models", "video", "LTX-Video"),
+            os.path.join(os.getcwd(), "models", "video", "ltx_video"),
+        ]
+        for c in local_cand:
+            if os.path.isdir(c) and os.path.isfile(os.path.join(c, "model_index.json")):
+                return os.path.abspath(c)
+
+        try:
+            from huggingface_hub import try_to_load_from_cache
+            cached = try_to_load_from_cache(repo_id, "model_index.json")
+            if isinstance(cached, str):
+                return repo_id
+        except Exception:
+            pass
+
+        return None
+
     async def generate_clip(
         self,
         prompt: str,
@@ -46,7 +71,20 @@ class DiffusersLTXGenerator(BaseVideoGenerator):
     ) -> bool:
         """
         Generates fast cinematic video diffusion with LTX-Video.
+        Never triggers silent background model downloads during task execution.
         """
+        model_id = self._resolve_model_path()
+        if not model_id:
+            logger.info("LTX-Video local weights not installed; skipping background download and falling back to procedural animatic.")
+            return await self._fallback.generate_clip(
+                prompt=prompt,
+                duration=duration,
+                out_path=out_path,
+                width=width,
+                height=height,
+                image_path=image_path
+            )
+
         pipe = None
         try:
             import torch
@@ -56,9 +94,8 @@ class DiffusersLTXGenerator(BaseVideoGenerator):
             device = "mps" if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()) else ("cuda" if torch.cuda.is_available() else "cpu")
             dtype = torch.bfloat16 if device in ("cuda", "mps") else torch.float32
 
-            model_id = "Lightricks/LTX-Video"
-            logger.info(f"Loading LTX-Video on {device}...")
-            pipe = LTXPipeline.from_pretrained(model_id, torch_dtype=dtype)
+            logger.info(f"Loading LTX-Video on {device} (local files only)...")
+            pipe = LTXPipeline.from_pretrained(model_id, torch_dtype=dtype, local_files_only=True)
             pipe.to(device)
 
             fps = 24

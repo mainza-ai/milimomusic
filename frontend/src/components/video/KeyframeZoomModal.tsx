@@ -22,7 +22,7 @@ export const KeyframeZoomModal: React.FC<KeyframeZoomModalProps> = ({
     const fullUrl = api.getAudioUrl(keyframeUrl);
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-md">
             <div className="w-full max-w-3xl bg-slate-950 border border-white/15 rounded-3xl shadow-2xl flex flex-col overflow-hidden">
                 {/* Header */}
                 <div className="px-6 py-3.5 border-b border-white/10 flex items-center justify-between">

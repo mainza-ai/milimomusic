@@ -36,8 +36,8 @@ class DiffusersWanGenerator(BaseVideoGenerator):
         except Exception:
             return False
 
-    def _resolve_model_path(self, mode: str = "t2v") -> str:
-        """Find local weights or return Hugging Face Hub model ID."""
+    def _resolve_model_path(self, mode: str = "t2v") -> Optional[str]:
+        """Find local weights or return None if weights are not installed locally."""
         repo_prefix = f"Wan-AI/Wan2.1-{'I2V-14B-720P' if mode == 'i2v' else ('T2V-14B' if self.model_size == '14b' else 'T2V-1.3B')}-Diffusers"
         escaped = repo_prefix.replace("/", "__")
         no_diffusers = escaped.replace("-Diffusers", "")
@@ -53,9 +53,19 @@ class DiffusersWanGenerator(BaseVideoGenerator):
             os.path.join(os.getcwd(), "models", "video", "wan2.1"),
         ]
         for c in local_cand:
-            if os.path.isdir(c) and len(os.listdir(c)) > 0:
+            if os.path.isdir(c) and os.path.isfile(os.path.join(c, "model_index.json")):
                 return os.path.abspath(c)
-        return repo_prefix
+
+        # Check if already present in huggingface cache
+        try:
+            from huggingface_hub import try_to_load_from_cache
+            cached = try_to_load_from_cache(repo_prefix, "model_index.json")
+            if isinstance(cached, str):
+                return repo_prefix
+        except Exception:
+            pass
+
+        return None
 
     async def generate_clip(
         self,
@@ -73,6 +83,7 @@ class DiffusersWanGenerator(BaseVideoGenerator):
         """
         Generate true video diffusion clip using Wan 2.1.
         Uses Image-to-Video if a keyframe image is supplied, otherwise Text-to-Video.
+        Never triggers silent background model downloads during task execution.
         """
         # Calculate target frame count at 16 fps (Wan default)
         target_fps = 16
@@ -91,14 +102,18 @@ class DiffusersWanGenerator(BaseVideoGenerator):
                 from diffusers import WanImageToVideoPipeline, AutoencoderKLWan
 
                 model_id = self._resolve_model_path(mode="i2v")
+                if not model_id:
+                    logger.info(f"Wan 2.1 I2V ({self.model_size}) local weights not installed; skipping background download and falling back to procedural animatic.")
+                    return False
+
                 cache_key = f"i2v:{model_id}"
 
                 if cache_key in _WAN_PIPELINE_CACHE:
                     logger.info(f"Reusing cached Wan 2.1 I2V pipeline ({model_id}).")
                     pipe = _WAN_PIPELINE_CACHE[cache_key]
                 else:
-                    logger.info(f"Loading Wan 2.1 I2V ({self.model_size}) from {model_id} on {device}...")
-                    pipe = WanImageToVideoPipeline.from_pretrained(model_id, torch_dtype=dtype)
+                    logger.info(f"Loading Wan 2.1 I2V ({self.model_size}) from {model_id} on {device} (local files only)...")
+                    pipe = WanImageToVideoPipeline.from_pretrained(model_id, torch_dtype=dtype, local_files_only=True)
                     if device == "cuda":
                         try:
                             pipe.enable_model_cpu_offload()
@@ -135,14 +150,18 @@ class DiffusersWanGenerator(BaseVideoGenerator):
                 from diffusers import WanPipeline
 
                 model_id = self._resolve_model_path(mode="t2v")
+                if not model_id:
+                    logger.info(f"Wan 2.1 T2V ({self.model_size}) local weights not installed; skipping background download and falling back to procedural animatic.")
+                    return False
+
                 cache_key = f"t2v:{model_id}"
 
                 if cache_key in _WAN_PIPELINE_CACHE:
                     logger.info(f"Reusing cached Wan 2.1 T2V pipeline ({model_id}).")
                     pipe = _WAN_PIPELINE_CACHE[cache_key]
                 else:
-                    logger.info(f"Loading Wan 2.1 T2V ({self.model_size}) from {model_id} on {device}...")
-                    pipe = WanPipeline.from_pretrained(model_id, torch_dtype=dtype)
+                    logger.info(f"Loading Wan 2.1 T2V ({self.model_size}) from {model_id} on {device} (local files only)...")
+                    pipe = WanPipeline.from_pretrained(model_id, torch_dtype=dtype, local_files_only=True)
                     if device == "cuda":
                         try:
                             pipe.enable_model_cpu_offload()

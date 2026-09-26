@@ -5,7 +5,8 @@ import {
     Maximize2,
     Layers,
     Grid,
-    Camera
+    Camera,
+    Trash2
 } from 'lucide-react';
 import { api, type VideoClipSegment, type Job } from '../../api';
 
@@ -106,6 +107,7 @@ interface VideoTimelineTrackProps {
     onRetakeClip: (clipIndex: number) => void;
     onZoomKeyframe: (clipIndex: number, url: string) => void;
     onSeekToTime?: (timeSec: number) => void;
+    onClearTimeline?: () => void;
 }
 
 const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
@@ -116,6 +118,7 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
     onRetakeClip,
     onZoomKeyframe,
     onSeekToTime,
+    onClearTimeline,
 }) => {
     const [viewMode, setViewMode] = useState<'timeline' | 'grid'>('timeline');
 
@@ -163,7 +166,24 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                     </span>
                 </div>
 
-                <div className="flex bg-black/[0.04] dark:bg-white/5 p-1 rounded-xl border border-black/[0.06] dark:border-white/10">
+                <div className="flex items-center gap-2">
+                    {onClearTimeline && (
+                        <button
+                            type="button"
+                            onClick={() => {
+                                if (window.confirm("Are you sure you want to clear the timeline? This will purge all planned scenes and cached keyframe stills for this track.")) {
+                                    onClearTimeline();
+                                }
+                            }}
+                            className="px-2.5 py-1 text-xs rounded-xl font-medium text-rose-500 hover:text-rose-600 hover:bg-rose-500/10 border border-rose-500/20 transition-all flex items-center gap-1.5"
+                            title="Purge planned scenes, director notes, and keyframes"
+                        >
+                            <Trash2 size={12} />
+                            <span>Clear Timeline</span>
+                        </button>
+                    )}
+
+                    <div className="flex bg-black/[0.04] dark:bg-white/5 p-1 rounded-xl border border-black/[0.06] dark:border-white/10">
                     <button
                         type="button"
                         onClick={() => setViewMode('timeline')}
@@ -192,6 +212,7 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                     </button>
                 </div>
             </div>
+        </div>
 
             {/* Mode A: Horizontal Multitrack DAW Timeline */}
             {viewMode === 'timeline' && (

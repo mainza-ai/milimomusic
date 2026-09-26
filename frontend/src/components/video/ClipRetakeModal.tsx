@@ -61,7 +61,7 @@ export const ClipRetakeModal: React.FC<ClipRetakeModalProps> = ({
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md animate-fade-in">
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
             <div className="w-full max-w-lg bg-white dark:bg-[#12141c] border border-black/[0.08] dark:border-white/10 rounded-3xl shadow-apple-2xl flex flex-col overflow-hidden">
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-black/[0.06] dark:border-white/10 flex items-center justify-between">

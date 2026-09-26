@@ -413,53 +413,55 @@ async def test_reimagine_scene_endpoint(client, sample_job):
 @pytest.mark.asyncio
 async def test_retake_clip_custom_prompt_keyframe(client, sample_job):
     """Test retake endpoint accepts custom prompt and returns keyframe url."""
-    res = await client.post(
-        f"/videos/retake-clip/{sample_job.id}/1",
-        json={
-            "prompt": "An extreme close up of cyberpunk glasses reflecting laser grids",
-            "visual_style": "neon-cyberpunk",
-            "resolution": "720p"
-        }
-    )
-    assert res.status_code == 200
-    data = res.json()
-    assert data["status"] == "ok"
-    assert data["clip_index"] == 1
-    assert "keyframe_url" in data
-    assert data["prompt"] == "An extreme close up of cyberpunk glasses reflecting laser grids"
+    with patch("app.services.image_service.image_service.generate_scene_background", return_value={"ok": False, "dest_path": None}):
+        res = await client.post(
+            f"/videos/retake-clip/{sample_job.id}/1",
+            json={
+                "prompt": "An extreme close up of cyberpunk glasses reflecting laser grids",
+                "visual_style": "neon-cyberpunk",
+                "resolution": "720p"
+            }
+        )
+        assert res.status_code == 200
+        data = res.json()
+        assert data["status"] == "ok"
+        assert data["clip_index"] == 1
+        assert "keyframe_url" in data
+        assert data["prompt"] == "An extreme close up of cyberpunk glasses reflecting laser grids"
 
 
 @pytest.mark.asyncio
 async def test_keyframes_get_and_post_api_endpoints(client, sample_job):
     """Test generating keyframes via POST and retrieving them via GET /videos/keyframes/{job_id}."""
-    # 1. POST /videos/keyframes/{job_id}
-    post_res = await client.post(
-        f"/videos/keyframes/{sample_job.id}",
-        json={
-            "visual_style": "neon-cyberpunk",
-            "resolution": "720p",
-            "aspect_ratio": "16:9",
-            "force_regenerate": True,
-        }
-    )
-    assert post_res.status_code == 200
-    data = post_res.json()
-    assert data["status"] == "ok"
-    assert "keyframes" in data
-    assert len(data["keyframes"]) >= 3
-    first_kf = data["keyframes"][0]
-    assert first_kf["clip_index"] == 1
-    assert "keyframe_url" in first_kf
+    with patch("app.services.image_service.image_service.generate_scene_background", return_value={"ok": False, "dest_path": None}):
+        # 1. POST /videos/keyframes/{job_id}
+        post_res = await client.post(
+            f"/videos/keyframes/{sample_job.id}",
+            json={
+                "visual_style": "neon-cyberpunk",
+                "resolution": "720p",
+                "aspect_ratio": "16:9",
+                "force_regenerate": True,
+            }
+        )
+        assert post_res.status_code == 200
+        data = post_res.json()
+        assert data["status"] == "ok"
+        assert "keyframes" in data
+        assert len(data["keyframes"]) >= 3
+        first_kf = data["keyframes"][0]
+        assert first_kf["clip_index"] == 1
+        assert "keyframe_url" in first_kf
 
-    # 2. GET /videos/keyframes/{job_id}
-    get_res = await client.get(f"/videos/keyframes/{sample_job.id}")
-    assert get_res.status_code == 200
-    get_data = get_res.json()
-    assert get_data["status"] == "ok"
-    assert get_data["job_id"] == str(sample_job.id)
-    assert "keyframes" in get_data
-    assert len(get_data["keyframes"]) >= 3
-    assert 1 in get_data["keyframes"] or "1" in get_data["keyframes"]
+        # 2. GET /videos/keyframes/{job_id}
+        get_res = await client.get(f"/videos/keyframes/{sample_job.id}")
+        assert get_res.status_code == 200
+        get_data = get_res.json()
+        assert get_data["status"] == "ok"
+        assert get_data["job_id"] == str(sample_job.id)
+        assert "keyframes" in get_data
+        assert len(get_data["keyframes"]) >= 3
+        assert 1 in get_data["keyframes"] or "1" in get_data["keyframes"]
 
 
 @pytest.mark.asyncio
@@ -521,14 +523,15 @@ async def test_generate_scene_keyframes_unique_and_decoupled_from_cover(tmp_path
     ]
 
     # 4. Generate keyframes
-    kf_results = await video_orchestrator.generate_scene_keyframes(
-        job=job,
-        visual_style="neon-cyberpunk",
-        width=1280,
-        height=720,
-        force_regenerate=True,
-        user_scenes=user_scenes
-    )
+    with patch("app.services.image_service.image_service.generate_scene_background", return_value={"ok": False, "dest_path": None}):
+        kf_results = await video_orchestrator.generate_scene_keyframes(
+            job=job,
+            visual_style="neon-cyberpunk",
+            width=1280,
+            height=720,
+            force_regenerate=True,
+            user_scenes=user_scenes
+        )
 
     assert len(kf_results) == 3
 
@@ -544,6 +547,65 @@ async def test_generate_scene_keyframes_unique_and_decoupled_from_cover(tmp_path
 
     # 6. Verify that keyframes for different clips are distinct (not duplicated across clips)
     assert len(set(kf_hashes)) == len(kf_results), "Duplicate keyframe stills were detected between clips!"
+
+
+@pytest.mark.asyncio
+async def test_clear_video_timeline_endpoint(client, sample_job):
+    """Test DELETE /videos/timeline/{job_id} clears planned scenes and keyframes."""
+    # Seed video_config_json with scenes and treatment
+    import json
+    with Session(engine) as session:
+        j = session.get(Job, sample_job.id)
+        j.video_config_json = json.dumps({
+            "director_treatment": {"concept_title": "Test Title", "scenes": []},
+            "scenes": [{"clip_index": 1, "prompt": "Test scene"}],
+            "visual_style": "neon-cyberpunk"
+        })
+        session.add(j)
+        session.commit()
+
+    res = await client.delete(f"/videos/timeline/{sample_job.id}")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "cleared"
+    assert data["job_id"] == str(sample_job.id)
+
+    with Session(engine) as session:
+        j = session.get(Job, sample_job.id)
+        if j.video_config_json:
+            cfg = json.loads(j.video_config_json)
+            assert "director_treatment" not in cfg
+            assert "scenes" not in cfg
+
+
+@pytest.mark.asyncio
+async def test_plan_music_video_treatment_and_force_refresh(client, sample_job):
+    """Test POST /videos/plan/{job_id} returns treatment and persists it to video_config_json."""
+    import json
+    res = await client.post(
+        f"/videos/plan/{sample_job.id}",
+        json={
+            "visual_style": "neon-cyberpunk",
+            "model_name": "wan_14b",
+            "use_llm": False,
+            "force_refresh": True
+        }
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["status"] == "ok"
+    assert "treatment" in data
+    assert data["treatment"] is not None
+    assert "concept_title" in data["treatment"]
+    assert len(data["clips"]) > 0
+
+    with Session(engine) as session:
+        j = session.get(Job, sample_job.id)
+        assert j.video_config_json is not None
+        cfg = json.loads(j.video_config_json)
+        assert "director_treatment" in cfg
+        assert "scenes" in cfg
+
 
 
 

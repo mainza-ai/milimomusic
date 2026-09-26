@@ -9,13 +9,46 @@ interface ModelsManagerModalProps {
     onModelActivated?: () => void;
 }
 
-// Module-level SWR cache so opening Models & HW renders instantly with zero layout shift
+// Persistent SWR cache so opening Models & HW renders instantly with zero layout shift
+const MODELS_CACHE_KEY = 'milimo_cached_models_tree';
+const HARDWARE_CACHE_KEY = 'milimo_cached_hardware_profile';
+
 let cachedModels: ModelVariant[] = [];
 let cachedHardware: HardwareProfile | null = null;
 
+function getInitialModels(): ModelVariant[] {
+    if (cachedModels.length > 0) return cachedModels;
+    try {
+        const stored = localStorage.getItem(MODELS_CACHE_KEY);
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            if (Array.isArray(parsed) && parsed.length > 0) {
+                cachedModels = parsed;
+                return parsed;
+            }
+        }
+    } catch {}
+    return [];
+}
+
+function getInitialHardware(): HardwareProfile | null {
+    if (cachedHardware) return cachedHardware;
+    try {
+        const stored = localStorage.getItem(HARDWARE_CACHE_KEY);
+        if (stored) {
+            const parsed = JSON.parse(stored);
+            if (parsed && typeof parsed.hardware_tier === 'string') {
+                cachedHardware = parsed;
+                return parsed;
+            }
+        }
+    } catch {}
+    return null;
+}
+
 export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, onClose, onModelActivated }) => {
-    const [models, setModels] = useState<ModelVariant[]>(cachedModels);
-    const [hardware, setHardware] = useState<HardwareProfile | null>(cachedHardware);
+    const [models, setModels] = useState<ModelVariant[]>(getInitialModels);
+    const [hardware, setHardware] = useState<HardwareProfile | null>(getInitialHardware);
     const [download, setDownload] = useState<ModelDownloadStatus | null>(null);
     const [downloadError, setDownloadError] = useState<string>('');
     const pollRef = useRef<number | undefined>(undefined);
@@ -40,8 +73,18 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
             ]);
             cachedModels = treeData;
             cachedHardware = hwData;
-            setModels(treeData);
-            setHardware(hwData);
+            try {
+                localStorage.setItem(MODELS_CACHE_KEY, JSON.stringify(treeData));
+                localStorage.setItem(HARDWARE_CACHE_KEY, JSON.stringify(hwData));
+            } catch {}
+            setModels(prev => {
+                if (JSON.stringify(prev) === JSON.stringify(treeData)) return prev;
+                return treeData;
+            });
+            setHardware(prev => {
+                if (JSON.stringify(prev) === JSON.stringify(hwData)) return prev;
+                return hwData;
+            });
         } catch (e) {
             console.error('Failed to load model manager data', e);
         }
@@ -209,7 +252,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                 <div className="flex items-center space-x-2 px-6 pt-4 border-b border-black/[0.06] dark:border-white/10">
                     <button
                         onClick={() => setSelectedTab('audio')}
-                        className={`pb-3 px-3 text-xs font-bold border-b-2 transition-all flex items-center space-x-1.5 ${
+                        className={`pb-3 px-3 text-xs font-bold border-b-2 transition-colors duration-150 flex items-center space-x-1.5 ${
                             selectedTab === 'audio'
                                 ? 'border-teal-500 text-teal-600 dark:text-teal-400'
                                 : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
@@ -223,7 +266,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
 
                     <button
                         onClick={() => setSelectedTab('image')}
-                        className={`pb-3 px-3 text-xs font-bold border-b-2 transition-all flex items-center space-x-1.5 ${
+                        className={`pb-3 px-3 text-xs font-bold border-b-2 transition-colors duration-150 flex items-center space-x-1.5 ${
                             selectedTab === 'image'
                                 ? 'border-teal-500 text-teal-600 dark:text-teal-400'
                                 : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
@@ -237,7 +280,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
 
                     <button
                         onClick={() => setSelectedTab('video')}
-                        className={`pb-3 px-3 text-xs font-bold border-b-2 transition-all flex items-center space-x-1.5 ${
+                        className={`pb-3 px-3 text-xs font-bold border-b-2 transition-colors duration-150 flex items-center space-x-1.5 ${
                             selectedTab === 'video'
                                 ? 'border-teal-500 text-teal-600 dark:text-teal-400'
                                 : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
@@ -256,7 +299,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                 handleRunSearch('music', '');
                             }
                         }}
-                        className={`pb-3 px-3 text-xs font-bold border-b-2 transition-all flex items-center space-x-1.5 ${
+                        className={`pb-3 px-3 text-xs font-bold border-b-2 transition-colors duration-150 flex items-center space-x-1.5 ${
                             selectedTab === 'search'
                                 ? 'border-teal-500 text-teal-600 dark:text-teal-400'
                                 : 'border-transparent text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'

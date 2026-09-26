@@ -2,7 +2,7 @@
 title: Wiki Log
 type: log
 created: 2026-08-19
-updated: 2026-09-25
+updated: 2026-09-26
 ---
 
 # Wiki Log
@@ -2271,3 +2271,57 @@ Implemented autonomous LLM Visual Director & Cinematographer across backend audi
    - `python3 scripts/check_api_parity.py` and `test_api_parity.py::test_api_ui_parity` now pass with 149/149 backend routes called and 154/154 frontend calls resolved.
 2. Provider Registry Default Isolation:
    - Updated `test_provider_registry.py` assertion to account for the default MiniMax Music 3 provider alias (`minimax_music3_mxfp4`), eliminating cross-test singleton mutation errors when `test_production_v2.py` selects model variants earlier in the test session.
+
+## [2026-09-26] fix | Music Video Event Loop Unblocking, Safe Deletion & Resilient Playback
+1. FastAPI Async Event Loop Starvation Prevention:
+   - Diagnosed root cause of video buffering spin and delete button hanging in loop: `plan_music_video` and `generate_director_treatment_endpoint` were `async def` routes invoking blocking sync HTTP calls to oMLX (170 seconds) on the main asyncio event loop, starving Uvicorn from serving HTTP range streams (`/audio/videos/...`) and delete requests (`DELETE /videos/{job_id}`).
+   - Offloaded synchronous planning and LLM generation via `await asyncio.to_thread(...)`, closing database sessions before compute to prevent connection pool exhaustion.
+   - Decoupled automatic timeline segmentation (`use_llm=False`) to run instant acoustic downbeat & lyric alignment (< 50ms) instead of blocking for 3 minutes on 35B LLM generation.
+   - Reused saved director treatments from `job.video_config_json` when available to eliminate redundant regeneration.
+2. Safe Video File Deletion & Static Stream Resilience:
+   - Updated `backend/app/core/ranged_static.py` to catch `FileNotFoundError` and `OSError` inside `_aiter_slice` and `RangedFileResponse`, preventing unhandled 500 crashes during concurrent file removal and range requests.
+   - Cleaned up JSON serialization for `job.status` in `delete_music_video` and ensured deleted video files and DB paths are cleared immediately.
+3. Frontend Resilient Video Playback & Auto-Plan Guard:
+   - In `MusicVideosView.tsx`, guarded `videoApi.planVideo` on keyframe discovery so it only fires if timeline clips are not already hydrated.
+   - Updated `handleDeleteVideo` to explicitly clear `video_path` and update song state immediately.
+   - In `VideoCanvasPlayer.tsx`, added `onError` and `onLoadedData` handlers to `<video>` with a clear fallback overlay and quick action buttons ("Regenerate Video" and "Clear / Delete") to eliminate black screens and infinite loading spins.
+
+## [2026-09-26] remediate | Music Video & Model Manager UI Flickering Elimination
+Comprehensive audit and forensic resolution of UI flickering, image flashing, and visual layout shifts across the Music Videos view and Models Manager:
+1. Models & Hardware Hub (`ModelsManagerModal.tsx`):
+   - Diagnosed root cause: `cachedModels` and `cachedHardware` in-memory module variables reset to `[]` and `null` on every page reload, causing a flash of empty modality tabs (counts of 0) and missing hardware profiler on modal open before API fetch resolved.
+   - Backed initial state with persistent `localStorage` cache (`milimo_cached_models_tree` and `milimo_cached_hardware_profile`) to achieve instantaneous first-render with zero layout shift (CLS = 0).
+   - Guarded `setModels` and `setHardware` state updates with deep structural equality checks (`JSON.stringify(prev) === JSON.stringify(data)`), preventing redundant re-renders when data has not changed.
+   - Replaced jittery `transition-all` on modality tabs with `transition-colors duration-150`.
+2. Music Videos View (`MusicVideosView.tsx`):
+   - Diagnosed keyframe flash loop: `setKeyframes` appended `?t=${Date.now()}` on every 3s polling tick and initial fetch, busting browser image cache and forcing Chrome to re-download and re-decode all keyframe stills continuously.
+   - Removed timestamp query parameters from regular keyframe fetches and guarded `setKeyframes` against re-rendering unchanged images. Timestamps are now strictly reserved for explicit scene retakes.
+   - Fixed treatment fetch loop: Narrowed `useEffect` dependency to `[activeSong?.id]` (removed `clipDuration` and `videoModel`), and added structural equality guards to `setDirectorTreatment` and `setPlanResult`.
+   - Wrapped all action handlers in `useCallback` (`handlePlanScenes`, `handleGenerateDirectorTreatment`, `handleGenerateKeyframes`, `handleCancelKeyframes`, `handleCancelVideoRender`, `handleRenderAdvancedVideo`, `applyStoredVideoConfig`, `handleRegenerateVideo`, `handleRouteToDirector`, `handleDeleteVideo`, `handleGenerateStoryboard`, `handleOpenRetakeModal`, `handleConfirmRetake`, `handleReimagineScene`, `handleDismissTask`) to preserve `React.memo` isolation for child components (`VideoTopBar`, `VideoCanvasPlayer`, `VideoInspectorDock`, `VideoTimelineTrack`).
+3. Compositor & Animation Stutter Cleanup:
+   - Removed `animate-fade-in` transitions from `KeyframeZoomModal.tsx`, `ClipRetakeModal.tsx`, and `VideoInspectorDock.tsx` that caused opacity flickering during scene interactions and model inspector switching.
+   - Replaced `transition-all` on inspector dock tabs with `transition-colors duration-150`.
+4. Verification:
+   - Full frontend production build (`npm run build`) passing with 0 errors.
+
+## [2026-09-26] fix | AI Visual Director Engagement, Zero Silent Downloads & Timeline Clearing
+Forensic resolution of silent background HuggingFace weight downloads, LLM Visual Director engagement regression, and timeline clearing capability:
+1. Zero Silent Background Downloads Safeguard:
+   - Severed active ~84GB HuggingFace CDN download triggered by unannounced `WanImageToVideoPipeline.from_pretrained("Wan-AI/Wan2.1-I2V-14B-720P-Diffusers")`.
+   - Updated `backend/app/services/video/generators/diffusers_wan.py` to enforce `local_files_only=True` on all `WanImageToVideoPipeline` and `WanPipeline` calls, returning `None` instead of repository ID fallback if local directory weights are missing.
+   - Updated `backend/app/services/video/generators/diffusers_ltx.py` to enforce local pre-flight checks and `local_files_only=True`, gracefully degrading to procedural video generator when weights are absent.
+   - Added `local_files_only=True` to `backend/app/services/image_service.py` AutoPipeline loader.
+2. AI Visual Director LLM Engagement:
+   - Diagnosed regression where "Plan Scenes" was bypassing LLM because `video_director.segment_song` hardcoded `use_llm=False` and re-served stale cached treatments indefinitely.
+   - Added `use_llm: bool = True` and `force_refresh: bool = False` parameters across `VideoPlanRequest`, `plan_music_video` endpoint, `video_service.segment_song_for_video`, and `video_director.segment_song`.
+   - Updated frontend `handlePlanScenes` in `MusicVideosView.tsx` to explicitly invoke with `use_llm: true` and `force_refresh: true`.
+   - Updated `plan_music_video` endpoint to persist and return full `treatment` payload, correctly hydrating the Director's Treatment card and cinematography notes.
+   - Reused precomputed `job.timed_lyrics_json` in `video_director.py` to avoid redundant TorchAudio MMS_FA passes.
+3. Timeline Clearing Implementation:
+   - Implemented `DELETE /videos/timeline/{job_id}` in backend (`main.py` and `video_service.py`) to purge `director_treatment` and `scenes` from `job.video_config_json` and delete cached keyframes (`keyframe_{job_id}_*.png`).
+   - Added `clearTimeline` to `frontend/src/api.ts`.
+   - Added a "Clear Timeline" button with confirmation prompt in `VideoTimelineTrack.tsx` header and connected it to `MusicVideosView.tsx`.
+4. Verification:
+   - Frontend `npm run build` compiled clean (exit code 0).
+   - Pytest suite `backend/tests/test_video*.py` passed all 26 unit and regression tests in 7.47s.
+

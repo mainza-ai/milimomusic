@@ -4581,7 +4581,7 @@ def get_video_models():
 
 
 @app.delete("/videos/{job_id}")
-def delete_music_video(job_id: str):
+async def delete_music_video(job_id: str):
     """Delete a track's rendered video (file + DB reference) without touching the track.
 
     Containment-safe: only removes files inside the video output directories
@@ -4623,13 +4623,17 @@ def delete_music_video(job_id: str):
         session.commit()
         session.refresh(job)
 
+        status_val = job.status.value if hasattr(job.status, "value") else str(job.status)
+        job_id_str = str(job.id)
+        title_str = job.title or job.prompt
+
     event_manager.publish("job_update", {
-        "job_id": str(job.id),
-        "status": job.status,
+        "job_id": job_id_str,
+        "status": status_val,
         "video_path": None,
-        "title": job.title or job.prompt,
+        "title": title_str,
     })
-    return {"status": "deleted", "job_id": str(job.id), "removed_files": removed}
+    return {"status": "deleted", "job_id": job_id_str, "removed_files": removed}
 
 
 @app.get("/videos/active-engine")
@@ -4694,31 +4698,65 @@ async def plan_music_video(job_id: str, req: VideoPlanRequest = Body(default=Vid
         else:
             clip_dur = model_max
 
-        clips = video_service.segment_song_for_video(
-            job=job,
-            max_clip_duration=clip_dur,
-            model_name=model_name,
-            bpm=req.bpm,
-            visual_style=req.visual_style or "neon-cyberpunk",
-            custom_style_prompt=req.custom_style_prompt,
-            pacing_bias=req.pacing_bias or 0,
-            character_desc=req.character_desc,
-            visible_cast=req.visible_cast,
-            user_scenes=req.scenes
-        )
-        vocal_count = sum(1 for c in clips if c.get("is_vocal"))
-        broll_count = len(clips) - vocal_count
-        return {
-            "status": "ok",
-            "job_id": job_id,
-            "total_clips": len(clips),
-            "vocal_clips_count": vocal_count,
-            "broll_clips_count": broll_count,
-            "max_clip_duration": clip_dur,
-            "model_max_duration": model_max,
-            "model_name": model_name,
-            "clips": clips
-        }
+    use_llm = req.use_llm if req.use_llm is not None else True
+    force_refresh = req.force_refresh if req.force_refresh is not None else False
+
+    plan_dict = await asyncio.to_thread(
+        video_service.segment_song_for_video,
+        job=job,
+        max_clip_duration=clip_dur,
+        model_name=model_name,
+        bpm=req.bpm,
+        visual_style=req.visual_style or "neon-cyberpunk",
+        custom_style_prompt=req.custom_style_prompt,
+        pacing_bias=req.pacing_bias or 0,
+        character_desc=req.character_desc,
+        visible_cast=req.visible_cast,
+        user_scenes=req.scenes,
+        use_llm=use_llm,
+        force_refresh=force_refresh,
+        return_plan=True
+    )
+
+    clips = plan_dict.get("clips", [])
+    treatment = plan_dict.get("treatment")
+
+    with Session(engine) as session:
+        j = session.get(Job, job.id)
+        if j:
+            existing_cfg = {}
+            if j.video_config_json:
+                try:
+                    existing_cfg = json.loads(j.video_config_json)
+                except Exception:
+                    pass
+            if treatment:
+                existing_cfg["director_treatment"] = treatment
+            existing_cfg["scenes"] = clips
+            existing_cfg["visual_style"] = req.visual_style or "neon-cyberpunk"
+            existing_cfg["model_name"] = model_name
+            j.video_config_json = json.dumps(existing_cfg, default=str)
+            session.add(j)
+            session.commit()
+
+    return {
+        "status": "ok",
+        **plan_dict
+    }
+
+
+@app.delete("/videos/timeline/{job_id}")
+def clear_video_timeline(job_id: str):
+    """Purge planned scenes, director treatment, and cached keyframes for a song timeline."""
+    from app.services.video_service import video_service
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        res = video_service.clear_job_timeline(job)
+        session.add(job)
+        session.commit()
+        return res
 
 
 @app.post("/videos/director-treatment/{job_id}")
@@ -4733,37 +4771,41 @@ async def generate_director_treatment_endpoint(
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        treatment = video_service.generate_director_treatment(
-            job=job,
-            model_name=req.model_name or "wan_14b",
-            max_clip_duration=req.max_clip_duration,
-            visual_style=req.visual_style or "neon-cyberpunk",
-            custom_style_prompt=req.custom_style_prompt,
-            pacing_bias=req.pacing_bias or 0,
-            visible_cast=req.visible_cast,
-            character_desc=req.character_desc
-        )
+    treatment = await asyncio.to_thread(
+        video_service.generate_director_treatment,
+        job=job,
+        model_name=req.model_name or "wan_14b",
+        max_clip_duration=req.max_clip_duration,
+        visual_style=req.visual_style or "neon-cyberpunk",
+        custom_style_prompt=req.custom_style_prompt,
+        pacing_bias=req.pacing_bias or 0,
+        visible_cast=req.visible_cast,
+        character_desc=req.character_desc
+    )
 
-        existing_cfg = {}
-        if job.video_config_json:
-            try:
-                existing_cfg = json.loads(job.video_config_json)
-            except Exception:
-                pass
-        existing_cfg.update({
-            "director_treatment": treatment,
-            "visual_style": req.visual_style,
-            "model_name": req.model_name
-        })
-        job.video_config_json = json.dumps(existing_cfg, default=str)
-        session.add(job)
-        session.commit()
+    with Session(engine) as session:
+        j = session.get(Job, job.id)
+        if j:
+            existing_cfg = {}
+            if j.video_config_json:
+                try:
+                    existing_cfg = json.loads(j.video_config_json)
+                except Exception:
+                    pass
+            existing_cfg.update({
+                "director_treatment": treatment,
+                "visual_style": req.visual_style,
+                "model_name": req.model_name
+            })
+            j.video_config_json = json.dumps(existing_cfg, default=str)
+            session.add(j)
+            session.commit()
 
-        return {
-            "status": "ok",
-            "job_id": job_id,
-            "treatment": treatment
-        }
+    return {
+        "status": "ok",
+        "job_id": job_id,
+        "treatment": treatment
+    }
 
 
 @app.get("/videos/director-treatment/{job_id}")

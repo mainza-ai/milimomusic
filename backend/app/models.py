@@ -228,6 +228,8 @@ class VideoPlanRequest(SQLModel):
     visible_cast: Optional[List[str]] = None
     character_desc: Optional[str] = None
     scenes: Optional[List[Dict[str, Any]]] = None
+    use_llm: Optional[bool] = True
+    force_refresh: Optional[bool] = False
 
 
 class VideoRenderRequest(SQLModel):

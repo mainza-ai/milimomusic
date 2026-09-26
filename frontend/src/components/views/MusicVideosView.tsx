@@ -235,6 +235,10 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     // Planning & Task Tracking
     const [isPlanning, setIsPlanning] = useState(false);
     const [planResult, setPlanResult] = useState<VideoPlanResult | null>(null);
+    const planResultRef = useRef<VideoPlanResult | null>(null);
+    useEffect(() => {
+        planResultRef.current = planResult;
+    }, [planResult]);
 
     // AI Director Treatment State
     const [directorTreatment, setDirectorTreatment] = useState<DirectorTreatment | null>(null);
@@ -249,35 +253,40 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         videoApi.getDirectorTreatment(activeSong.id)
             .then(res => {
                 if (res?.treatment) {
-                    setDirectorTreatment(res.treatment);
+                    setDirectorTreatment(prev => (prev && JSON.stringify(prev) === JSON.stringify(res.treatment)) ? prev : res.treatment);
                     if (res.treatment.scenes && res.treatment.scenes.length > 0) {
                         const scenes = res.treatment.scenes;
-                        setPlanResult({
-                            status: 'ok',
-                            job_id: activeSong.id,
-                            total_clips: scenes.length,
-                            vocal_clips_count: scenes.filter((c: any) => c.scene_type === 'VOCAL_PERFORMANCE' || c.is_vocal).length,
-                            broll_clips_count: scenes.filter((c: any) => c.scene_type !== 'VOCAL_PERFORMANCE' && !c.is_vocal).length,
-                            max_clip_duration: clipDuration,
-                            model_name: videoModel,
-                            clips: scenes.map((s: any, idx: number) => ({
-                                clip_index: s.clip_index || (idx + 1),
-                                start_time: s.start_time ?? (idx * 15),
-                                end_time: s.end_time ?? ((idx + 1) * 15),
-                                duration: s.duration ?? 15,
-                                time_str: s.time_str || `${idx * 15}s - ${(idx + 1) * 15}s`,
-                                is_vocal: s.is_vocal ?? (s.scene_type === 'VOCAL_PERFORMANCE'),
-                                scene_type: s.scene_type || 'CINEMATIC_BROLL',
-                                lyrics: s.lyrics || '',
-                                prompt: s.prompt || '',
-                                camera: s.camera || 'Cinematic tracking shot',
-                                lighting: s.lighting || 'Atmospheric rim lighting',
-                                section_label: s.section_label,
-                                musical_energy: s.musical_energy,
-                                visual_action: s.visual_action,
-                                directors_note: s.directors_note
-                            })),
-                            treatment: res.treatment
+                        setPlanResult(prev => {
+                            if (prev && prev.clips && prev.clips.length === scenes.length) {
+                                return prev;
+                            }
+                            return {
+                                status: 'ok',
+                                job_id: activeSong.id,
+                                total_clips: scenes.length,
+                                vocal_clips_count: scenes.filter((c: any) => c.scene_type === 'VOCAL_PERFORMANCE' || c.is_vocal).length,
+                                broll_clips_count: scenes.filter((c: any) => c.scene_type !== 'VOCAL_PERFORMANCE' && !c.is_vocal).length,
+                                max_clip_duration: clipDuration,
+                                model_name: videoModel,
+                                clips: scenes.map((s: any, idx: number) => ({
+                                    clip_index: s.clip_index || (idx + 1),
+                                    start_time: s.start_time ?? (idx * 15),
+                                    end_time: s.end_time ?? ((idx + 1) * 15),
+                                    duration: s.duration ?? 15,
+                                    time_str: s.time_str || `${idx * 15}s - ${(idx + 1) * 15}s`,
+                                    is_vocal: s.is_vocal ?? (s.scene_type === 'VOCAL_PERFORMANCE'),
+                                    scene_type: s.scene_type || 'CINEMATIC_BROLL',
+                                    lyrics: s.lyrics || '',
+                                    prompt: s.prompt || '',
+                                    camera: s.camera || 'Cinematic tracking shot',
+                                    lighting: s.lighting || 'Atmospheric rim lighting',
+                                    section_label: s.section_label,
+                                    musical_energy: s.musical_energy,
+                                    visual_action: s.visual_action,
+                                    directors_note: s.directors_note
+                                })),
+                                treatment: res.treatment || undefined
+                            };
                         });
                     }
                 } else {
@@ -285,7 +294,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 }
             })
             .catch(() => setDirectorTreatment(null));
-    }, [activeSong?.id, clipDuration, videoModel]);
+    }, [activeSong?.id]);
 
     // Fetch existing scene keyframes when song changes, and auto-hydrate timeline plan if needed
     useEffect(() => {
@@ -296,30 +305,34 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         videoApi.getKeyframes(activeSong.id)
             .then(res => {
                 if (res?.keyframes && Object.keys(res.keyframes).length > 0) {
-                    const bustTime = Date.now();
                     const kfMap: Record<number, string> = {};
                     for (const [idx, url] of Object.entries(res.keyframes)) {
-                        kfMap[Number(idx)] = (url as string).includes('?') ? `${url}&t=${bustTime}` : `${url}?t=${bustTime}`;
+                        kfMap[Number(idx)] = url as string;
                     }
-                    setKeyframes(kfMap);
+                    setKeyframes(prev => {
+                        if (JSON.stringify(prev) === JSON.stringify(kfMap)) return prev;
+                        return kfMap;
+                    });
 
-                    // Ensure timeline is planned so keyframes can be viewed immediately
-                    videoApi.planVideo(activeSong.id, {
-                        model_name: videoModel,
-                        visual_style: videoStyle,
-                        custom_style_prompt: customStylePrompt,
-                        aspect_ratio: aspectRatio,
-                        max_clip_duration: clipDuration
-                    }).then(plan => {
-                        if (plan && plan.clips && plan.clips.length > 0) {
-                            setPlanResult(prev => prev || plan);
-                        }
-                    }).catch(() => {});
+                    // Ensure timeline is planned so keyframes can be viewed immediately if not already hydrated
+                    if (!planResultRef.current?.clips?.length) {
+                        videoApi.planVideo(activeSong.id, {
+                            model_name: videoModel,
+                            visual_style: videoStyle,
+                            custom_style_prompt: customStylePrompt,
+                            aspect_ratio: aspectRatio,
+                            max_clip_duration: clipDuration
+                        }).then(plan => {
+                            if (plan && plan.clips && plan.clips.length > 0) {
+                                setPlanResult(prev => prev || plan);
+                            }
+                        }).catch(() => {});
+                    }
                 } else {
-                    setKeyframes({});
+                    setKeyframes(prev => Object.keys(prev).length === 0 ? prev : {});
                 }
             })
-            .catch(() => setKeyframes({}));
+            .catch(() => setKeyframes(prev => Object.keys(prev).length === 0 ? prev : {}));
     }, [activeSong?.id]);
 
     const [activeTask, setActiveTask] = useState<VideoTaskStatus | null>(null);
@@ -382,7 +395,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     }, [selectedSongId, activeSong?.video_path]);
 
     // Plan Scenes Breakdown
-    const handlePlanScenes = async () => {
+    const handlePlanScenes = useCallback(async () => {
         if (!activeSong) return;
         try {
             setIsPlanning(true);
@@ -400,6 +413,8 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 fidelity_retries: fidelityRetries,
                 auto_continue: autoContinue,
                 visible_cast: visibleCast,
+                use_llm: true,
+                force_refresh: true,
             };
             const plan = await videoApi.planVideo(activeSong.id, params);
             setPlanResult(plan);
@@ -413,10 +428,25 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         } finally {
             setIsPlanning(false);
         }
-    };
+    }, [activeSong, videoModel, clipDuration, videoStyle, customStylePrompt, characterPromptNote, aspectRatio, videoProvider, pacingBias, vocalBypass, fidelityRetries, autoContinue, visibleCast]);
+
+    // Clear Timeline & Cached Scenes
+    const handleClearTimeline = useCallback(async () => {
+        if (!activeSong?.id) return;
+        try {
+            await videoApi.clearTimeline(activeSong.id);
+            setPlanResult(null);
+            setKeyframes({});
+            setDirectorTreatment(null);
+            toast('Timeline, planned scenes, and keyframes cleared.', 'success');
+        } catch (err: any) {
+            console.error('Failed to clear timeline:', err);
+            toast(err?.response?.data?.detail || 'Failed to clear timeline.', 'error');
+        }
+    }, [activeSong?.id]);
 
     // AI Visual Director Treatment Generator
-    const handleGenerateDirectorTreatment = async () => {
+    const handleGenerateDirectorTreatment = useCallback(async () => {
         if (!activeSong) return;
         setIsGeneratingTreatment(true);
         try {
@@ -451,10 +481,11 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         } finally {
             setIsGeneratingTreatment(false);
         }
-    };
+    }, [activeSong, videoStyle, customStylePrompt, characterPromptNote, visibleCast, pacingBias, autoContinue, clipDuration, videoModel]);
 
     // Pre-Render Scene Keyframes for Storyboard Preview
-    const handleGenerateKeyframes = async (forceRegenerate?: boolean) => {
+    // Pre-Render Scene Keyframes for Storyboard Preview
+    const handleGenerateKeyframes = useCallback(async (forceRegenerate?: boolean) => {
         if (!activeSong) return;
         try {
             setIsGeneratingKeyframes(true);
@@ -483,7 +514,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 }
             }
 
-            // Start progressive polling so stills appear as soon as each is rendered on disk
+            // Start progressive polling so stills appear as soon as each is rendered on disk without full-track image thrashing
             if (kfPollRef.current) {
                 window.clearInterval(kfPollRef.current);
             }
@@ -491,12 +522,18 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 try {
                     const pollRes = await videoApi.getKeyframes(activeSong.id);
                     if (pollRes?.keyframes && Object.keys(pollRes.keyframes).length > 0) {
-                        const bustTime = Date.now();
-                        const kfMap: Record<number, string> = {};
-                        for (const [idx, url] of Object.entries(pollRes.keyframes)) {
-                            kfMap[Number(idx)] = (url as string).includes('?') ? `${url}&t=${bustTime}` : `${url}?t=${bustTime}`;
-                        }
-                        setKeyframes(prev => ({ ...prev, ...kfMap }));
+                        setKeyframes(prev => {
+                            let changed = false;
+                            const next = { ...prev };
+                            for (const [idx, url] of Object.entries(pollRes.keyframes)) {
+                                const numIdx = Number(idx);
+                                if (!next[numIdx] || next[numIdx].split('?')[0] !== (url as string).split('?')[0]) {
+                                    next[numIdx] = url as string;
+                                    changed = true;
+                                }
+                            }
+                            return changed ? next : prev;
+                        });
                     }
                 } catch {
                     // ignore polling errors
@@ -518,17 +555,19 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
 
             const onKeyframesCompleted = (finalKeyframes: any[]) => {
                 if (finalKeyframes && finalKeyframes.length > 0) {
-                    const bustTime = Date.now();
-                    const kfMap: Record<number, string> = {};
-                    for (const kf of finalKeyframes) {
-                        if (kf.keyframe_url) {
-                            const url = (kf.keyframe_url as string).includes('?')
-                                ? `${kf.keyframe_url}&t=${bustTime}`
-                                : `${kf.keyframe_url}?t=${bustTime}`;
-                            kfMap[kf.clip_index] = url;
+                    setKeyframes(prev => {
+                        let changed = false;
+                        const next = { ...prev };
+                        for (const kf of finalKeyframes) {
+                            if (kf.keyframe_url) {
+                                if (next[kf.clip_index] !== kf.keyframe_url) {
+                                    next[kf.clip_index] = kf.keyframe_url;
+                                    changed = true;
+                                }
+                            }
                         }
-                    }
-                    setKeyframes(kfMap);
+                        return changed ? next : prev;
+                    });
 
                     // If timeline was not planned yet, automatically populate it from the returned keyframe scenes
                     if (!planResult || !planResult.clips || planResult.clips.length === 0) {
@@ -596,9 +635,9 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             }
             setIsGeneratingKeyframes(false);
         }
-    };
+    }, [activeSong, videoStyle, resolution, customStylePrompt, aspectRatio, planResult?.clips, clipDuration, videoModel]);
 
-    const handleCancelKeyframes = async () => {
+    const handleCancelKeyframes = useCallback(async () => {
         if (!activeSong) return;
         try {
             await videoApi.cancelKeyframeGeneration(activeSong.id);
@@ -612,9 +651,9 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             }
             setIsGeneratingKeyframes(false);
         }
-    };
+    }, [activeSong]);
 
-    const handleCancelVideoRender = async () => {
+    const handleCancelVideoRender = useCallback(async () => {
         if (!activeTask?.id) return;
         try {
             await videoApi.cancelVideoTask(activeTask.id);
@@ -629,10 +668,10 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             }
             setIsRendering(false);
         }
-    };
+    }, [activeTask?.id]);
 
     // Render Advanced Production Video
-    const handleRenderAdvancedVideo = async () => {
+    const handleRenderAdvancedVideo = useCallback(async () => {
         if (!activeSong) return;
         try {
             setIsRendering(true);
@@ -703,9 +742,9 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             toast('Failed to start video rendering. Please check backend service.', 'error');
             setIsRendering(false);
         }
-    };
+    }, [activeSong, videoModel, videoStyle, customStylePrompt, characterPromptNote, resolution, aspectRatio, videoProvider, lipSyncEngine, enableLipSync, burnSubtitles, subtitleStyle, transitionStyle, clipDuration, pacingBias, vocalBypass, fidelityRetries, autoContinue, visibleCast, planResult?.clips, planResult?.total_clips, onUpdateSong]);
 
-    const applyStoredVideoConfig = (job: Job) => {
+    const applyStoredVideoConfig = useCallback((job: Job) => {
         if (!job?.video_config_json) return;
         try {
             const cfg = JSON.parse(job.video_config_json) as Record<string, any>;
@@ -729,49 +768,54 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             if (typeof cfg.burn_lyrics === 'boolean') setBurnSubtitles(cfg.burn_lyrics);
             if (cfg.subtitle_style && ['neon', 'cinematic', 'karaoke'].includes(cfg.subtitle_style)) setSubtitleStyle(cfg.subtitle_style);
         } catch { /* fallback to current state */ }
-    };
+    }, [selectEngine, videoModel]);
 
-    const handleRegenerateVideo = async () => {
+    const handleRegenerateVideo = useCallback(async () => {
         if (!activeSong) return;
         applyStoredVideoConfig(activeSong);
         await handleRenderAdvancedVideo();
-    };
+    }, [activeSong, applyStoredVideoConfig, handleRenderAdvancedVideo]);
 
     const [isRouting, setIsRouting] = useState(false);
 
-    const handleRouteToDirector = async () => {
-        if (!renderedVideoUrl) return;
+    const handleRouteToDirector = useCallback(async () => {
+        if (!renderedVideoUrl) {
+            toast('No rendered video to route.', 'error');
+            return;
+        }
         setIsRouting(true);
         try {
             const filename = renderedVideoUrl.split('/').pop() || renderedVideoUrl;
             await galleryApi.routeMedia(renderedVideoUrl, 'references', activeSong?.id);
             toast(`Dispatched ${filename} to Director References!`, 'success');
         } catch (err: any) {
-            toast(`Dispatch failed: ${err.message}`, 'error');
+            toast(err?.response?.data?.detail || `Dispatch failed: ${err.message}`, 'error');
         } finally {
             setIsRouting(false);
         }
-    };
+    }, [renderedVideoUrl, activeSong?.id]);
 
-    const handleDeleteVideo = async () => {
+    const handleDeleteVideo = useCallback(async () => {
         if (!activeSong) return;
         if (!window.confirm(`Delete the rendered video for "${activeSong.title || activeSong.prompt.slice(0, 40)}"? The track and audio stay untouched.`)) return;
         setIsDeletingVideo(true);
         try {
             await videoApi.deleteVideo(activeSong.id);
             setRenderedVideoUrl(null);
-            onUpdateSong?.({ ...activeSong, video_path: undefined as any, video_config_json: undefined as any });
+            const updated = { ...activeSong, video_path: '', video_config_json: undefined as any };
+            delete (updated as any).video_path;
+            onUpdateSong?.(updated);
             toast('Video deleted.', 'success');
         } catch (e: any) {
             toast(e?.response?.data?.detail || 'Failed to delete video.', 'error');
         } finally {
             setIsDeletingVideo(false);
         }
-    };
+    }, [activeSong, onUpdateSong]);
 
     // Storyboard notes generator
     const [isGeneratingStory, setIsGeneratingStory] = useState(false);
-    const handleGenerateStoryboard = async () => {
+    const handleGenerateStoryboard = useCallback(async () => {
         if (!activeSong) return;
         try {
             setIsGeneratingStory(true);
@@ -810,15 +854,15 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         } finally {
             setIsGeneratingStory(false);
         }
-    };
+    }, [activeSong, videoStyle, customStylePrompt, planResult, videoModel]);
 
     // Retake handlers
-    const handleOpenRetakeModal = (clipIndex: number) => {
+    const handleOpenRetakeModal = useCallback((clipIndex: number) => {
         setRetakeClipIndex(clipIndex);
         setRetakeModalOpen(true);
-    };
+    }, []);
 
-    const handleConfirmRetake = async (clipIndex: number, newPrompt: string, camera: string, lighting: string) => {
+    const handleConfirmRetake = useCallback(async (clipIndex: number, newPrompt: string, camera: string, lighting: string) => {
         if (!activeSong) return;
         setIsRetaking(true);
         try {
@@ -850,9 +894,9 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         } finally {
             setIsRetaking(false);
         }
-    };
+    }, [activeSong, customStylePrompt, aspectRatio, planResult]);
 
-    const handleReimagineScene = async (clipIndex: number, instruction?: string) => {
+    const handleReimagineScene = useCallback(async (clipIndex: number, instruction?: string) => {
         if (!activeSong) return undefined;
         try {
             const currentScene = planResult?.clips?.find(c => c.clip_index === clipIndex);
@@ -875,7 +919,11 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             toast(err?.response?.data?.detail || 'Failed to re-imagine scene.', 'error');
         }
         return undefined;
-    };
+    }, [activeSong, planResult, videoStyle, characterPromptNote]);
+
+    const handleDismissTask = useCallback(() => {
+        setActiveTask(null);
+    }, []);
 
     const activeRetakeSegment = useMemo(() => {
         if (retakeClipIndex === null || !planResult?.clips) return undefined;
@@ -945,7 +993,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             onCancelRender={handleCancelVideoRender}
                             isPlanning={isPlanning}
                             seekTime={timelineSeekTime}
-                            onDismissTask={() => setActiveTask(null)}
+                            onDismissTask={handleDismissTask}
                         />
                     </div>
 
@@ -1009,6 +1057,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                         onRetakeClip={handleOpenRetakeModal}
                         onZoomKeyframe={handleZoomKeyframe}
                         onSeekToTime={handleSeekTimeline}
+                        onClearTimeline={handleClearTimeline}
                     />
                 )}
             </div>

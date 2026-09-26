@@ -240,8 +240,10 @@ class VideoOrchestrator:
                 suffix = fname[len(prefix):-4]
                 try:
                     clip_idx = int(suffix)
-                    kf_map[clip_idx] = f"/audio/videos/keyframes/{fname}"
-                except ValueError:
+                    full_p = os.path.join(KEYFRAMES_DIR, fname)
+                    mtime = int(os.path.getmtime(full_p))
+                    kf_map[clip_idx] = f"/audio/videos/keyframes/{fname}?v={mtime}"
+                except (ValueError, OSError):
                     continue
         return kf_map
 
@@ -261,6 +263,16 @@ class VideoOrchestrator:
         Every scene (vocal performance, narrative, B-roll, instrumental solo) receives
         a dedicated scene still rendered from its director prompt.
         """
+        # If force-regenerating, purge any existing keyframe files for this job to prevent stale caches
+        if force_regenerate and os.path.isdir(KEYFRAMES_DIR):
+            prefix = f"keyframe_{job.id}_"
+            for fname in os.listdir(KEYFRAMES_DIR):
+                if fname.startswith(prefix) and fname.endswith(".png"):
+                    try:
+                        os.remove(os.path.join(KEYFRAMES_DIR, fname))
+                    except OSError:
+                        pass
+
         plan = video_director.segment_song(
             job=job,
             max_clip_duration=15.0,
@@ -276,6 +288,8 @@ class VideoOrchestrator:
             kf_path = os.path.join(KEYFRAMES_DIR, kf_filename)
 
             def _clip_dict(c, c_idx: int) -> Dict[str, Any]:
+                has_file = os.path.isfile(kf_path)
+                mtime = int(os.path.getmtime(kf_path)) if has_file else int(time.time())
                 return {
                     "clip_index": c_idx,
                     "start_time": c.start_time,
@@ -292,8 +306,8 @@ class VideoOrchestrator:
                     "musical_energy": getattr(c, "musical_energy", 3),
                     "section_label": getattr(c, "section_label", None),
                     "lyrics": getattr(c, "lyrics", ""),
-                    "keyframe_path": kf_path if os.path.isfile(kf_path) else None,
-                    "keyframe_url": f"/audio/videos/keyframes/{kf_filename}" if os.path.isfile(kf_path) else None
+                    "keyframe_path": kf_path if has_file else None,
+                    "keyframe_url": f"/audio/videos/keyframes/{kf_filename}?v={mtime}" if has_file else None
                 }
 
             # Preserve existing valid still unless forced or if it is a stale cover copy
@@ -325,6 +339,13 @@ class VideoOrchestrator:
                 if not is_stale_cover:
                     results.append(_clip_dict(clip, clip_idx))
                     continue
+
+            # Ensure clean slate for this keyframe file
+            if os.path.isfile(kf_path):
+                try:
+                    os.remove(kf_path)
+                except OSError:
+                    pass
 
             # Render dedicated scene still from the clip's director prompt
             try:

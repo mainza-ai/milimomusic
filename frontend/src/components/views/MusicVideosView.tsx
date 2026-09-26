@@ -296,7 +296,12 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         videoApi.getKeyframes(activeSong.id)
             .then(res => {
                 if (res?.keyframes && Object.keys(res.keyframes).length > 0) {
-                    setKeyframes(res.keyframes);
+                    const bustTime = Date.now();
+                    const kfMap: Record<number, string> = {};
+                    for (const [idx, url] of Object.entries(res.keyframes)) {
+                        kfMap[Number(idx)] = (url as string).includes('?') ? `${url}&t=${bustTime}` : `${url}?t=${bustTime}`;
+                    }
+                    setKeyframes(kfMap);
                 } else {
                     setKeyframes({});
                 }
@@ -432,11 +437,11 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     };
 
     // Pre-Render Scene Keyframes for Storyboard Preview
-    const handleGenerateKeyframes = async (forceRegenerate: boolean = false) => {
+    const handleGenerateKeyframes = async (forceRegenerate?: boolean) => {
         if (!activeSong) return;
         try {
             setIsGeneratingKeyframes(true);
-            const isForce = typeof forceRegenerate === 'boolean' ? forceRegenerate : false;
+            const isForce = forceRegenerate === true || (typeof forceRegenerate !== 'boolean' && Object.keys(keyframes).length > 0);
             const res = await videoApi.generateKeyframes(
                 activeSong.id,
                 videoStyle,
@@ -447,10 +452,14 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 planResult?.clips
             );
             if (res && res.keyframes) {
+                const bustTime = Date.now();
                 const kfMap: Record<number, string> = {};
                 for (const kf of res.keyframes) {
                     if (kf.keyframe_url) {
-                        kfMap[kf.clip_index] = kf.keyframe_url;
+                        const url = (kf.keyframe_url as string).includes('?')
+                            ? `${kf.keyframe_url}&t=${bustTime}`
+                            : `${kf.keyframe_url}?t=${bustTime}`;
+                        kfMap[kf.clip_index] = url;
                     }
                 }
                 setKeyframes(kfMap);
@@ -690,7 +699,9 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 aspect_ratio: aspectRatio,
             });
             if (res.keyframe_url) {
-                setKeyframes(prev => ({ ...prev, [clipIndex]: res.keyframe_url! }));
+                const bustTime = Date.now();
+                const url = res.keyframe_url.includes('?') ? `${res.keyframe_url}&t=${bustTime}` : `${res.keyframe_url}?t=${bustTime}`;
+                setKeyframes(prev => ({ ...prev, [clipIndex]: url }));
             }
             if (planResult?.clips) {
                 const updatedClips = planResult.clips.map(c => {

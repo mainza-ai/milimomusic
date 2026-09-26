@@ -300,6 +300,54 @@ async def test_active_video_engine_api_sync(client):
     assert restore_res.json()["model_id"] == "wan2_1_t2v_14b"
 
 
+def test_video_generator_registry_and_model_specs():
+    """Verify VideoGeneratorRegistry accurately resolves generators without silent Wan fallthroughs."""
+    from app.services.video.generator_registry import VideoGeneratorRegistry
+    from app.services.video.generators.minimax_h3 import MiniMaxH3Generator
+    from app.services.video.generators.diffusers_wan import DiffusersWanGenerator
+    from app.services.video.generators.diffusers_ltx import DiffusersLTXGenerator
+    from app.services.video.model_specs import get_model_spec
+
+    # 1. MiniMax Hailuo H3 resolution
+    gen_hailuo = VideoGeneratorRegistry.resolve("hailuo_h3", "local")
+    assert isinstance(gen_hailuo, MiniMaxH3Generator)
+    assert gen_hailuo.name == "hailuo_h3"
+
+    gen_minimax = VideoGeneratorRegistry.resolve("minimax_h3", "local")
+    assert isinstance(gen_minimax, MiniMaxH3Generator)
+
+    # 2. Wan variants resolution
+    gen_wan14 = VideoGeneratorRegistry.resolve("wan_14b", "local")
+    assert isinstance(gen_wan14, DiffusersWanGenerator)
+    assert gen_wan14.model_size == "14b"
+
+    gen_wan13 = VideoGeneratorRegistry.resolve("wan_1.3b", "local")
+    assert isinstance(gen_wan13, DiffusersWanGenerator)
+    assert gen_wan13.model_size == "1.3b"
+
+    # 3. LTX-Video resolution
+    gen_ltx = VideoGeneratorRegistry.resolve("ltx_video", "local")
+    assert isinstance(gen_ltx, DiffusersLTXGenerator)
+
+    # 4. Model specs contracts
+    spec_h3 = get_model_spec("hailuo_h3")
+    assert spec_h3.fps == 24
+    assert spec_h3.max_duration == 15.0
+    assert spec_h3.min_frames == 49
+    assert spec_h3.frame_step == 48
+
+    frames, dur = spec_h3.compute_lattice_frames(10.0)
+    assert frames == 49 + 48 * 4  # 241 frames or valid lattice
+    assert dur > 0
+
+    spec_wan = get_model_spec("wan_14b")
+    assert spec_wan.fps == 16
+    assert spec_wan.max_duration == 5.0
+
+
+
+
+
 def test_canonical_audio_and_stem_resolution_regression(tmp_path):
     """Regression test verifying resolve_audio_file and resolve_stem_file handle /audio/ paths and stems."""
     from app.core.paths import get_generated_audio_dir, resolve_audio_file, resolve_stem_file, resolve_image_file

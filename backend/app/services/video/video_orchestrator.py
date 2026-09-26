@@ -614,25 +614,22 @@ class VideoOrchestrator:
             total_clips = plan.total_clips
             self.update_task(task_id, total_clips=total_clips, clips=[c.to_dict() for c in plan.clips])
 
-            # Select generator and lip-sync providers
+            from app.services.video.generator_registry import VideoGeneratorRegistry
+            from app.services.video.model_specs import get_model_spec
+
+            model_spec = get_model_spec(model_name)
+            video_generator = VideoGeneratorRegistry.resolve(model_name, provider_type)
+
             if provider_type == "cloud_fal":
                 lipsync_provider = CloudLipSyncProvider("fal")
-                video_generator = CloudVideoGenerator("fal", model="wan-t2v")
             elif provider_type == "cloud_replicate":
                 lipsync_provider = CloudLipSyncProvider("replicate")
-                video_generator = CloudVideoGenerator("replicate", model="wan-14b")
             else:
                 lipsync_provider = self._local_lipsync
-                if "1.3" in model_name:
-                    video_generator = self._local_wan_1_3b
-                elif "ltx" in model_name:
-                    video_generator = self._local_ltx
-                else:
-                    video_generator = self._local_wan_14b
 
             # Step 2: Render individual scene clips
             self.update_task(task_id, step="Rendering Video Scenes & Lip-Sync Performance", progress=20)
-            is_local = (provider_type not in ("cloud_fal", "cloud_replicate"))
+            is_local = (provider_type not in ("cloud_fal", "cloud_replicate", "cloud_minimax"))
 
             # Phase A: Batch Pre-Render Missing Keyframe Stills (Image Modality)
             if is_local:
@@ -667,24 +664,23 @@ class VideoOrchestrator:
                         pass
 
             try:
-                for idx, clip in enumerate(plan.clips):
-                    if cancel_event.is_set():
-                        logger.info(f"render_advanced_music_video: Cancelled before rendering scene {idx + 1}.")
-                        self.update_task(task_id, status="cancelled", step="Video rendering cancelled by user.", progress=0)
-                        return ""
+                async def _render_all_scenes():
+                    for idx, clip in enumerate(plan.clips):
+                        if cancel_event.is_set():
+                            logger.info(f"render_advanced_music_video: Cancelled before rendering scene {idx + 1}.")
+                            self.update_task(task_id, status="cancelled", step="Video rendering cancelled by user.", progress=0)
+                            return ""
 
-                    clip_file = os.path.join(TEMP_DIR, f"clip_{task_id}_{idx:03d}.mp4")
-                    self.update_task(
-                        task_id,
-                        current_clip=idx + 1,
-                        current_clip_type=clip.scene_type,
-                        step=f"Rendering Scene {idx + 1}/{total_clips} ({'🎤 Vocal Performance' if clip.is_vocal else '🎥 Cinematic B-Roll'})",
-                        progress=20 + int(60 * (idx / total_clips))
-                    )
+                        clip_file = os.path.join(TEMP_DIR, f"clip_{task_id}_{idx:03d}.mp4")
+                        self.update_task(
+                            task_id,
+                            current_clip=idx + 1,
+                            current_clip_type=clip.scene_type,
+                            step=f"Rendering Scene {idx + 1}/{total_clips} ({'🎤 Vocal Performance' if clip.is_vocal else '🎥 Cinematic B-Roll'})",
+                            progress=20 + int(60 * (idx / total_clips))
+                        )
 
-                    async def _render_clip():
                         # Vocal Singing Scene
-                        # Prefer isolated vocal stem; fall back to resolved master audio so lip-sync succeeds even without stem separation
                         vocal_audio_source = vocal_stem or resolved_master
                         if clip.is_vocal and enable_lip_sync and face_image and vocal_audio_source:
                             logger.info(f"Rendering singing performance for Scene {idx + 1} with {lipsync_provider.name} (audio: {os.path.basename(vocal_audio_source)})...")
@@ -724,6 +720,7 @@ class VideoOrchestrator:
                                 image_path=scene_bg,
                                 negative_prompt=clip.negative_prompt,
                                 visual_style=style,
+                                provider=provider_type,
                                 fallback_metadata=fb_meta
                             )
                             if fb_meta.get("fallback_used"):
@@ -731,7 +728,7 @@ class VideoOrchestrator:
                                 task_info.fallback_reason = fb_meta.get("error", "Procedural fallback used")
                             if not success or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
                                 task_info.fallback_used = True
-                                task_info.fallback_reason = "Video generator output empty; falling back to procedural animatic."
+                                task_info.fallback_reason = fb_meta.get("error") or f"{video_generator.name} output empty; falling back to procedural animatic."
                                 # Fallback to procedural generator
                                 await self._procedural.generate_clip(
                                     prompt=clip.prompt,
@@ -739,22 +736,24 @@ class VideoOrchestrator:
                                     out_path=clip_file,
                                     width=w, height=h,
                                     image_path=scene_bg,
-                                    visual_style=style
+                                    visual_style=style,
+                                    fps=model_spec.fps
                                 )
 
-                    if is_local:
-                        async with GlobalHardwareCoordinator.scoped_device(
-                            f"Wan 2.1 Video Clip {idx + 1}/{total_clips}",
-                            modality="video_gen"
-                        ):
-                            await _render_clip()
-                    else:
-                        await _render_clip()
+                        if os.path.isfile(clip_file) and os.path.getsize(clip_file) > 0:
+                            rendered_clips.append(clip_file)
+                            clip.rendered_clip_path = clip_file
+                            clip.status = "completed"
 
-                    if os.path.isfile(clip_file) and os.path.getsize(clip_file) > 0:
-                        rendered_clips.append(clip_file)
-                        clip.rendered_clip_path = clip_file
-                        clip.status = "completed"
+                if is_local:
+                    async with GlobalHardwareCoordinator.scoped_device(
+                        f"Video Generation: {video_generator.name} ({total_clips} scenes)",
+                        modality="video_gen"
+                    ):
+                        await _render_all_scenes()
+                else:
+                    await _render_all_scenes()
+
 
             finally:
                 with self._lock:

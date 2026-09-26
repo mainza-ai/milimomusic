@@ -366,10 +366,23 @@ class VideoService:
         model_id = engine_to_model_map.get(target, target)
 
         tree = model_manager.get_model_tree()
-        match = next((m for m in tree if m["id"] == model_id or m.get("repo_id") == model_id), None)
+        video_models = [m for m in tree if m.get("category") == "video"]
+
+        # Prioritize installed model variants in the same family
+        installed_match = None
+        if "h3" in target or "hailuo" in target or "minimax" in target:
+            installed_match = next((m for m in video_models if ("h3" in m["id"] or "minimax" in m["id"]) and m.get("is_installed")), None)
+        elif "1.3" in target:
+            installed_match = next((m for m in video_models if ("1_3" in m["id"] or "1.3" in m["id"]) and m.get("is_installed")), None)
+        elif "wan" in target:
+            installed_match = next((m for m in video_models if ("14" in m["id"] or "wan" in m["id"]) and m.get("is_installed")), None)
+
+        if installed_match:
+            match = installed_match
+        else:
+            match = next((m for m in tree if m["id"] == model_id or m.get("repo_id") == model_id), None)
 
         if not match:
-            video_models = [m for m in tree if m.get("category") == "video"]
             if "1.3" in target:
                 match = next((m for m in video_models if "1_3" in m["id"] or "1.3" in m["id"]), None)
             elif "wan" in target:

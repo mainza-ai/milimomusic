@@ -407,7 +407,7 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                         <div className="flex items-center gap-2 p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px]">
                             <AlertCircle size={14} className="shrink-0 text-amber-400" />
                             <span>
-                                <strong>{activeTask.id.startsWith('plan_') ? 'Deterministic Fallback Director:' : 'Storyboard Animatic Mode:'}</strong> {activeTask.fallback_reason || (activeTask.id.startsWith('plan_') ? 'LLM service was unreachable or offline; used acoustic downbeat pacing.' : 'diffusers model unavailable')}
+                                <strong>{activeTask.id.startsWith('plan_') ? 'Deterministic Fallback Director:' : 'Cinematic Animatic Mode:'}</strong> {activeTask.fallback_reason || (activeTask.id.startsWith('plan_') ? 'LLM service was unreachable; used acoustic downbeat pacing.' : 'Selected neural diffusion engine offline; used synchronized keyframe animatic.')}
                             </span>
                         </div>
                     )}

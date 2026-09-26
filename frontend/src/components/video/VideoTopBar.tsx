@@ -32,7 +32,7 @@ interface VideoTopBarProps {
     isPlanning: boolean;
     onPlanScenes: () => void;
     isGeneratingKeyframes: boolean;
-    onGenerateKeyframes: () => void;
+    onGenerateKeyframes: (force?: boolean) => void;
     hasKeyframes?: boolean;
     isRendering: boolean;
     onRenderVideo: () => void;
@@ -213,7 +213,7 @@ const VideoTopBarComponent: React.FC<VideoTopBarProps> = ({
                     {/* Pre-Render Keyframes */}
                     <button
                         type="button"
-                        onClick={onGenerateKeyframes}
+                        onClick={() => onGenerateKeyframes(Boolean(hasKeyframes))}
                         disabled={isGeneratingKeyframes || isRendering || !activeSong}
                         className="px-3.5 py-1.5 bg-purple-500/15 hover:bg-purple-500/25 text-purple-700 dark:text-purple-300 font-bold text-xs rounded-xl flex items-center space-x-1.5 border border-purple-500/20 transition-all disabled:opacity-50"
                         title="Pre-render visual keyframe stills for each planned scene before video diffusion"

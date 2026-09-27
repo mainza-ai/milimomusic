@@ -86,5 +86,5 @@ Pre-rendering visual scene keyframes (`POST /videos/keyframes/{job_id}`) provide
 - [Overview](../overview.md) | [Architecture](../architecture.md) | [Stem Separator](stem-separator.md) | [Karaoke & Lyric Sync](karaoke-lyricsync.md)
 - [Global Hardware Coordinator](hardware-coordinator.md) | [Director Mode v2](../concepts/director-mode-v2.md) | [Multitrack Timeline Editor](multitrack-editor.md)
 - [Non-Destructive Multitrack Timeline](../concepts/non-destructive-multitrack-timeline.md) | [Hardware Auto-Tune](../concepts/hardware-autotune-memory-profiles.md)
-- [LLM Service & Providers](llm-service.md)
+- [LLM Service & Providers](llm-service.md) | [Video Troubleshooting Handoff](../concepts/video-generation-troubleshooting-handoff.md)
 

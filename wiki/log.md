@@ -2408,3 +2408,43 @@ Reconciled and expanded the wiki knowledge graph to document the latest video ge
    - Updated the Director Mode v2 & AI Music Video Studio subsystem section to reflect the Generator Registry, Metal memory safeguards, and cancellation hooks.
 3. `index.md`:
    - Bumped `updated:` timestamp and refreshed the catalog summary for the AI Music Video Studio entity.
+
+## [2026-09-26] create | AI Music Video Studio — Issue Catalog & Troubleshooting Handoff
+Authored comprehensive diagnostic and handoff guide (`concepts/video-generation-troubleshooting-handoff.md`) for peer AI agents and engineers troubleshooting local video generation:
+1. Standardized Tracking Labels & Deep Root Causes:
+   - `[ISSUE-VID-01]`: Wan 2.1 1.3B Weight Format Incompatibility (Diffusers directory vs raw standalone checkpoint repo `Wan-AI/Wan2.1-T2V-1.3B`). Model Manager displays "Active & Ready" based on directory presence, but `diffusers_wan.py` returns None because `model_index.json` is missing.
+   - `[ISSUE-VID-02]`: Keyframe Still Generation Status Blindspot in UI. `video_orchestrator.py` actively updates task status (`Diffusing Scene Still 2/8...`), but `MusicVideosView.tsx` polling loop omitted `setActiveTask(taskStatus)`, leaving the HUD progress bar and status text unrendered.
+   - `[ISSUE-VID-03]`: Apple Silicon Metal Buffer Limit (558.11 GB) & Quadratic Attention Scaling ($S = 61,200$). Documented attention slicing, VAE tiling, and MPS dimension clamping ($\le 832\times 480$, $\le 33$ frames).
+   - `[ISSUE-VID-04]`: MiniMax Hailuo H3 33B Local MLX Execution Bottleneck (missing auxiliary Qwen3-VL/VAE MLX runner; 1.2 hrs/clip dense attention).
+   - `[ISSUE-VID-05]`: Keyframe Diffusion Step-Level Progress & Blocking Engine Execution in `image_service.py`.
+   - `[ISSUE-VID-06]`: LTX-Video 0.9B Modulo 32 Spatial & Frame Lattice Divisibility Constraints.
+   - `[ISSUE-VID-07]`: Unified Memory Eviction & Inter-Modal VRAM Collisions (LLM $\rightarrow$ FLUX.2 $\rightarrow$ Video DiT).
+2. Cross-Linking & Navigation:
+   - Linked in `wiki/index.md` under Concepts.
+   - Cross-linked from `wiki/entities/video-studio.md`.
+
+## [2026-09-26] update | Milimo Video Cross-Repository Architectural Transfer
+Investigated the sister repository `https://github.com/mainza-ai/milimovideo` (`/Users/mck/Desktop/milimovideo`) and integrated proven engineering solutions into `wiki/concepts/video-generation-troubleshooting-handoff.md`:
+1. Slot-Based Modality Mutual Exclusion (`MemoryManager`): Formal slot conflicts (`{"video": {"image"}, "image": {"video"}}`) with explicit pre-purge before loading heavy transformers.
+2. Apple Silicon MPS VAE Decode CPU-Offload & Precision Fix: Decodes on CPU in `float32` to eliminate black frames and NaN tensor crashes on Apple Silicon MPS.
+3. Thread-Safe Diffusion Step Callbacks: Uses `asyncio.run_coroutine_threadsafe(broadcast_progress(...), loop)` with step-level cancellation checks.
+4. Conditioning vs. Reference-Only Disambiguation: Solves frozen video artifacts by converting concept/reference portraits into text prompts rather than pinning frame 0.
+5. Autoregressive Chained Video with "Quantum Alignment": Aligning multi-chunk overlaps to the VAE temporal lattice to eliminate transition seams.
+6. Single-Frame Shortcut: Routing `num_frames == 1` requests to fast image pipelines.
+7. Updated Action Items: Added concrete code references and transfer paths for incoming engineers and AI agents.
+
+## [2026-09-26] create | Standalone Image Generation Studio & Visual Asset Gallery
+Authored comprehensive entity architecture and handoff specification for the Standalone Image Generation Studio & Visual Asset Gallery (`entities/image-studio-gallery.md`):
+1. Google Flow-Style Creative Workspace:
+   - Dedicated visual generation canvas decoupled from audio synthesis, featuring prompt enhancement, genre style presets, aspect ratio switching (1:1, 16:9, 9:16, 4:3), and step-by-step diffusion HUD.
+2. Persistent Visual Asset Vault (`VisualAsset`):
+   - Database table archiving every generated cover, concept still, and video scene keyframe with prompt, seed, model, dimensions, and tags.
+3. Universal Cross-Studio Asset Routing:
+   - 1-Click "Set as Album Cover" across Track Detail and Songs views.
+   - 1-Click "Set as Performer Avatar" for LivePortrait singing avatars in the AI Music Video Studio.
+   - 1-Click "Set as Project Artwork" for Studio Projects.
+4. Cross-Repository Architectural Transfer:
+   - Integrated `milimovideo` slot mutual exclusion (`"image"`), MPS VAE CPU-offload, and thread-safe step callbacks into the Image Studio design.
+5. Catalog & Cross-Linking:
+   - Added to `wiki/index.md` under DAW & Production.
+   - Integrated into `wiki/concepts/video-generation-troubleshooting-handoff.md` Section 3.7 and Action Items.

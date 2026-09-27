@@ -43,6 +43,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Voice Studio (SVC)](entities/voice-service.md) — 3-zone vocal production suite: neural voice conversion, live in-browser vocal booth recording, vocal DSP rack (transposition presets, formant preservation, dry/wet mix), tri-state A/B audition transport, and consent-gated profiles.
 - [Neural Singing Voice Conversion (SVC)](entities/neural-svc.md) — zero-shot vocal timbre transfer, formant morphing, pitch transposition, and dry/wet blending.
 - [AI Music Video Studio](entities/video-studio.md) — Video Generator Registry (Wan 2.1, LTX-Video, MiniMax H3, cloud backbones), Apple Silicon Metal attention slicing & memory protection, instant (<200ms) cancellation hooks, LivePortrait neural singing avatar lip-syncing, autonomous musical director, pre-rendered keyframes, and burned karaoke ASS subtitles.
+- [Standalone Image Generation Studio & Visual Asset Gallery](entities/image-studio-gallery.md) — Google Flow-style visual creation canvas, prompt enhancement, style presets, persistent `VisualAsset` vault, and 1-click universal cover / avatar picker.
 - [Session Workspace (DAW)](entities/session-workspace.md) — Listen/Arrange/Piano Roll/Notation/Mix/Lyrics.
 - [Studio Projects](entities/projects.md) — multi-session production workspaces, BPM/Key conditioning, multi-track stems aggregation, and Studio Pack (.zip) export.
 
@@ -96,6 +97,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Modal Store Architecture](concepts/modal-store-architecture.md) — Zustand single-mount modal state management and timeline clip routing. `tags: [frontend, zustand, modal, daw]`
 - [Database Integrity Lifecycle](concepts/database-integrity-lifecycle.md) — SQLite text vs SQLAlchemy GUID 32-hex dialect contract, universal multi-format lookup (`get_job_by_id`), boot-time self-healing migrations, relational cascade nullification, and comprehensive filesystem sweeps. `tags: [database, sqlite, sqlalchemy, sqlmodel, uuid, lifecycle, cascade-delete, data-integrity]`
 - [Artwork & Static Media Architecture](concepts/artwork-and-static-media-architecture.md) — multi-directory fallback static file serving (`RangedStaticFiles`), bidirectional disk mirroring, auto-cover generation lifecycle, and on-demand manual artwork generation/regeneration. `tags: [media, covers, static-files, ranged-static, pipeline, storage]`
+- [Video Generation Troubleshooting & Model Handoff Guide](concepts/video-generation-troubleshooting-handoff.md) — comprehensive diagnostic catalog, model support status, root cause analyses, and action items for Wan 2.1, MiniMax H3, LTX-Video, and keyframe stills on Apple Silicon. `tags: [video, troubleshooting, handoff, wan, minimax-h3, ltx-video, flux, keyframes, metal, mps]`
 
 ## Reports
 

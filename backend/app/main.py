@@ -5118,13 +5118,14 @@ async def render_lyric_video_endpoint(job_id: str, req: LyricVideoRequest = Body
                     config["cover_image_path"] = fresh_job.cover_image_path
 
                 url = await video_service.render_lyric_music_video(fresh_job, task_id, config)
-                with Session(engine) as s:
-                    j = s.get(Job, job.id)
-                    if j:
-                        j.video_path = url
-                        j.video_config_json = json.dumps(config, default=str)
-                        s.add(j)
-                        s.commit()
+                if url:
+                    with Session(engine) as s:
+                        j = s.get(Job, job.id)
+                        if j:
+                            j.video_path = url
+                            j.video_config_json = json.dumps(config, default=str)
+                            s.add(j)
+                            s.commit()
             except asyncio.CancelledError:
                 logger.info(f"Background lyric video render task {task_id} successfully cancelled.")
             except Exception as e:

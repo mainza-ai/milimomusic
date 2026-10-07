@@ -2622,3 +2622,19 @@ Thoroughly investigated and resolved cover art mismatch and video playback error
    - Verified `moov in head: True`, `sample_aspect_ratio=1:1`, and `HTTP 206 Partial Content` streaming.
    - Full test suite passing (`pytest backend/tests/test_lyric_video.py`), `npm run build` passing, and 100% API parity maintained.
    - Pushed cleanly to both `develop` and `main` branches.
+
+## [2026-10-07] fix | Immediate Cancellation & Subprocess Termination for Lyric Video Rendering
+Resolved unresponsive "Stop Render" during lyric video rendering and eliminated orphaned FFmpeg background processes:
+1. **Frontend State & Polling Lifecycle**:
+   - Introduced `activeTaskIdRef = useRef<string | null>(null)` in `MusicVideosView.tsx` to immediately track task IDs synchronously, eliminating race conditions when cancel is clicked before React state updates.
+   - Guaranteed full reset of `isRenderingLyricVideo(false)`, `isRendering(false)`, and `isPlanning(false)` inside `handleCancelVideoRender()` `finally` block, instantly unlocking disabled buttons and returning the UI to interactive state.
+   - Wired `isRenderingLyricVideo` and `onCancelRender` into `VideoTopBar.tsx`, `VideoCanvasPlayer.tsx` modal overlay, and `VideoInspectorDock.tsx` lyrics tab, ensuring accessible, responsive "Stop Render" / "Stop Lyric Video" buttons across all studio viewpoints.
+2. **Backend FFmpeg Process Tracking & Immediate Termination**:
+   - Added `_active_procs: Dict[str, Any]` to `VideoOrchestrator` to track active FFmpeg subprocesses by `task_id`.
+   - Updated `cancel_video_task(task_id)` to invoke `proc.kill()` immediately, killing the running OS subprocess in < 50ms rather than leaving orphaned FFmpeg encoding pipelines running in the background.
+   - Handled `asyncio.CancelledError` in `render_lyric_music_video` and `main.py` `_run_bg()` to clean up partial temp files, update durable task queue status to `cancelled`, and avoid writing incomplete video references to SQLite.
+3. **Verification**:
+   - Unit tests verified: `test_lyric_video_cancellation_kills_proc` and all 7 test cases in `backend/tests/test_lyric_video.py` passed.
+   - Full suite tests passed: 32 tests in `test_video_service.py` and `test_video_pipeline.py`.
+   - Verified `npm run build` passes with zero errors, and 100% API parity verified via `check_api_parity.py`.
+

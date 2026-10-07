@@ -244,24 +244,36 @@ const VideoTopBarComponent: React.FC<VideoTopBarProps> = ({
 
                     {/* Lyric Video Fast-Path Button */}
                     {onRenderLyricVideo && (
-                        <button
-                            type="button"
-                            onClick={onRenderLyricVideo}
-                            disabled={isRenderingLyricVideo || isRendering || !activeSong}
-                            className="px-3.5 py-1.5 bg-gradient-to-r from-cyan-600/90 to-indigo-600/90 hover:from-cyan-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-cyan-500/20 active:scale-95 transition-all disabled:opacity-50"
-                            title="Instant local lyric music video with hardware VideoToolbox acceleration & synced typography (< 45s)"
-                        >
-                            {isRenderingLyricVideo ? <Loader2 size={13} className="animate-spin text-cyan-200" /> : <Type size={13} />}
-                            <span>{isRenderingLyricVideo ? 'Encoding Lyrics…' : 'Lyric Video 🎤'}</span>
-                        </button>
+                        isRenderingLyricVideo && onCancelRender ? (
+                            <button
+                                type="button"
+                                onClick={onCancelRender}
+                                className="px-3.5 py-1.5 bg-rose-500/25 hover:bg-rose-500/35 text-rose-600 dark:text-rose-300 font-bold text-xs rounded-xl flex items-center space-x-1.5 border border-rose-500/40 shadow-sm transition-all active:scale-95 animate-pulse cursor-pointer"
+                                title="Cancel lyric video rendering"
+                            >
+                                <Square size={13} className="fill-current text-rose-500" />
+                                <span>Stop Lyric Video</span>
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={onRenderLyricVideo}
+                                disabled={isRenderingLyricVideo || isRendering || !activeSong}
+                                className="px-3.5 py-1.5 bg-gradient-to-r from-cyan-600/90 to-indigo-600/90 hover:from-cyan-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-cyan-500/20 active:scale-95 transition-all disabled:opacity-50"
+                                title="Instant local lyric music video with hardware VideoToolbox acceleration & synced typography (< 45s)"
+                            >
+                                {isRenderingLyricVideo ? <Loader2 size={13} className="animate-spin text-cyan-200" /> : <Type size={13} />}
+                                <span>{isRenderingLyricVideo ? 'Encoding Lyrics…' : 'Lyric Video 🎤'}</span>
+                            </button>
+                        )
                     )}
 
                     {/* Render Video / Stop Video Render Button */}
-                    {isRendering && onCancelRender ? (
+                    {(isRendering || isRenderingLyricVideo) && onCancelRender ? (
                         <button
                             type="button"
                             onClick={onCancelRender}
-                            className="px-4 py-1.5 bg-rose-500/25 hover:bg-rose-500/35 text-rose-600 dark:text-rose-300 font-bold text-xs rounded-xl flex items-center space-x-1.5 border border-rose-500/40 shadow-sm transition-all active:scale-95"
+                            className="px-4 py-1.5 bg-rose-500/25 hover:bg-rose-500/35 text-rose-600 dark:text-rose-300 font-bold text-xs rounded-xl flex items-center space-x-1.5 border border-rose-500/40 shadow-sm transition-all active:scale-95 cursor-pointer"
                             title="Cancel active video rendering"
                         >
                             <Square size={13} className="fill-current text-rose-500" />
@@ -271,7 +283,7 @@ const VideoTopBarComponent: React.FC<VideoTopBarProps> = ({
                         <button
                             type="button"
                             onClick={onRenderVideo}
-                            disabled={isRendering || !activeSong}
+                            disabled={isRendering || isRenderingLyricVideo || !activeSong}
                             className="px-4 py-1.5 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-teal-500/20 active:scale-95 transition-all disabled:opacity-50"
                             title="Execute multi-scene video diffusion with vocal lip-syncing & subtitle burn"
                         >

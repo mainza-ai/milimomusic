@@ -365,6 +365,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const [activeTask, setActiveTask] = useState<VideoTaskStatus | null>(null);
     const [isRendering, setIsRendering] = useState(false);
     const [renderedVideoUrl, setRenderedVideoUrl] = useState<string | null>(null);
+    const activeTaskIdRef = useRef<string | null>(null);
     const pollRef = useRef<number | undefined>(undefined);
     const kfPollRef = useRef<number | undefined>(undefined);
     const planPollRef = useRef<number | undefined>(undefined);
@@ -378,6 +379,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     // Planning Polling Engine
     const startPlanningPoll = useCallback((taskId: string, songId: string) => {
         if (planPollRef.current) window.clearInterval(planPollRef.current);
+        activeTaskIdRef.current = taskId;
         setIsPlanning(true);
         planPollRef.current = window.setInterval(async () => {
             try {
@@ -840,16 +842,21 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     }, [activeSong]);
 
     const handleCancelVideoRender = useCallback(async () => {
-        if (!activeTask?.id) return;
+        const taskId = activeTaskIdRef.current || activeTask?.id;
         try {
-            await videoApi.cancelVideoTask(activeTask.id);
-            const isPlan = activeTask.id.startsWith('plan_');
-            toast(isPlan ? 'Scene planning cancelled.' : 'Video rendering cancelled.', 'info');
+            if (taskId) {
+                await videoApi.cancelVideoTask(taskId);
+                const isPlan = taskId.startsWith('plan_');
+                toast(isPlan ? 'Scene planning cancelled.' : 'Video rendering cancelled.', 'info');
+            } else {
+                toast('Video rendering cancelled.', 'info');
+            }
             setActiveTask(prev => prev ? { ...prev, status: 'cancelled', step: 'cancelled' } : null);
             if (activeSong?.id) {
                 sessionStorage.removeItem(`milimo_active_planning_${activeSong.id}`);
             }
         } catch (err: any) {
+            console.error('Failed to cancel task:', err);
             toast(err?.response?.data?.detail || 'Failed to cancel task.', 'error');
         } finally {
             if (pollRef.current) {
@@ -860,7 +867,9 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 window.clearInterval(planPollRef.current);
                 planPollRef.current = undefined;
             }
+            activeTaskIdRef.current = null;
             setIsRendering(false);
+            setIsRenderingLyricVideo(false);
             setIsPlanning(false);
         }
     }, [activeTask?.id, activeSong?.id]);
@@ -895,6 +904,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             };
 
             const taskInit = await videoApi.renderAdvancedVideo(activeSong.id, params);
+            activeTaskIdRef.current = taskInit.task_id;
             setActiveTask({
                 id: taskInit.task_id,
                 job_id: activeSong.id,
@@ -914,6 +924,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
 
                     if (status.status === 'completed') {
                         window.clearInterval(pollRef.current);
+                        activeTaskIdRef.current = null;
                         setIsRendering(false);
                         if (status.video_url) {
                             setRenderedVideoUrl(status.video_url);
@@ -923,10 +934,12 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                         }
                     } else if (status.status === 'cancelled') {
                         window.clearInterval(pollRef.current);
+                        activeTaskIdRef.current = null;
                         setIsRendering(false);
                         toast('Video rendering cancelled.', 'info');
                     } else if (status.status === 'error') {
                         window.clearInterval(pollRef.current);
+                        activeTaskIdRef.current = null;
                         setIsRendering(false);
                         toast(status.error || 'Video rendering encountered an error', 'error');
                     }
@@ -935,6 +948,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         } catch (err) {
             console.error('Failed to start video rendering:', err);
             toast('Failed to start video rendering. Please check backend service.', 'error');
+            activeTaskIdRef.current = null;
             setIsRendering(false);
         }
     }, [activeSong, videoModel, videoStyle, customStylePrompt, characterPromptNote, resolution, aspectRatio, videoProvider, lipSyncEngine, enableLipSync, burnSubtitles, subtitleStyle, transitionStyle, clipDuration, pacingBias, vocalBypass, fidelityRetries, autoContinue, visibleCast, planResult?.clips, planResult?.total_clips, onUpdateSong]);
@@ -956,6 +970,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             };
 
             const taskInit = await videoApi.renderLyricVideo(activeSong.id, params);
+            activeTaskIdRef.current = taskInit.task_id;
             setActiveTask({
                 id: taskInit.task_id,
                 job_id: activeSong.id,
@@ -975,6 +990,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
 
                     if (status.status === 'completed') {
                         window.clearInterval(pollRef.current);
+                        activeTaskIdRef.current = null;
                         setIsRenderingLyricVideo(false);
                         if (status.video_url) {
                             const cacheBustedUrl = status.video_url.includes('?')
@@ -988,10 +1004,12 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                         }
                     } else if (status.status === 'cancelled') {
                         window.clearInterval(pollRef.current);
+                        activeTaskIdRef.current = null;
                         setIsRenderingLyricVideo(false);
                         toast('Lyric video rendering cancelled.', 'info');
                     } else if (status.status === 'error') {
                         window.clearInterval(pollRef.current);
+                        activeTaskIdRef.current = null;
                         setIsRenderingLyricVideo(false);
                         toast(status.error || 'Lyric video rendering failed.', 'error');
                     }
@@ -1000,6 +1018,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         } catch (err: any) {
             console.error('Failed to start lyric video rendering:', err);
             toast(err?.response?.data?.detail || 'Failed to start lyric video rendering.', 'error');
+            activeTaskIdRef.current = null;
             setIsRenderingLyricVideo(false);
         }
     }, [activeSong, aspectRatio, resolution, subtitleStyle, lyricBackgroundMode, includeSpectrum, lyricFontFamily, fontSizeOverride, onUpdateSong]);
@@ -1307,7 +1326,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             activeSong={activeSong}
                             renderedVideoUrl={renderedVideoUrl}
                             aspectRatio={aspectRatio}
-                            isRendering={isRendering}
+                            isRendering={isRendering || isRenderingLyricVideo}
                             activeTask={activeTask}
                             isDeletingVideo={isDeletingVideo}
                             onDeleteVideo={handleDeleteVideo}
@@ -1388,6 +1407,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             isRealigningLyrics={isRealigningLyrics}
                             onRenderLyricVideo={handleRenderLyricVideo}
                             isRenderingLyricVideo={isRenderingLyricVideo}
+                            onCancelRender={handleCancelVideoRender}
                             visibleCast={visibleCast}
                             onToggleCastMember={handleToggleCastMember}
                             characterPromptNote={characterPromptNote}

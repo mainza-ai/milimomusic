@@ -59,6 +59,7 @@ class VideoOrchestrator:
     _keyframe_cancels: Dict[str, asyncio.Event] = {}
     _plan_cancels: Dict[str, asyncio.Event] = {}
     _active_render_tasks: Dict[str, asyncio.Task] = {}
+    _active_procs: Dict[str, Any] = {}
     _lock = threading.RLock()
 
     def __new__(cls):
@@ -131,6 +132,16 @@ class VideoOrchestrator:
             ev_plan = self._plan_cancels.get(task_id)
             if ev_plan:
                 ev_plan.set()
+
+            # Immediately terminate running FFmpeg / subprocess if any
+            proc = self._active_procs.get(task_id)
+            if proc and proc.returncode is None:
+                try:
+                    proc.kill()
+                    logger.info(f"VideoOrchestrator: Killed active subprocess for task {task_id}.")
+                except Exception as e:
+                    logger.debug(f"Error killing subprocess for {task_id}: {e}")
+
             bg_task = self._active_render_tasks.get(task_id)
             if bg_task and not bg_task.done():
                 try:
@@ -1576,12 +1587,14 @@ class VideoOrchestrator:
             proc = await asyncio.create_subprocess_exec(
                 *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
             )
+            with self._lock:
+                self._active_procs[task_id] = proc
 
             # Polling loop for cancellation check
             while proc.returncode is None:
                 if cancel_event.is_set():
                     try:
-                        proc.terminate()
+                        proc.kill()
                         await proc.wait()
                     except Exception:
                         pass
@@ -1601,10 +1614,12 @@ class VideoOrchestrator:
                 proc_fb = await asyncio.create_subprocess_exec(
                     *cmd_fb, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
+                with self._lock:
+                    self._active_procs[task_id] = proc_fb
                 while proc_fb.returncode is None:
                     if cancel_event.is_set():
                         try:
-                            proc_fb.terminate()
+                            proc_fb.kill()
                             await proc_fb.wait()
                         except Exception:
                             pass
@@ -1637,6 +1652,16 @@ class VideoOrchestrator:
 
         except asyncio.CancelledError:
             logger.info(f"render_lyric_music_video: Task {task_id} successfully cancelled.")
+            if 'proc' in locals() and proc and proc.returncode is None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            if 'proc_fb' in locals() and proc_fb and proc_fb.returncode is None:
+                try:
+                    proc_fb.kill()
+                except Exception:
+                    pass
             self.update_task(task_id, status="cancelled", step="Lyric video rendering cancelled by user.", progress=0)
             return ""
         except Exception as e:
@@ -1648,13 +1673,24 @@ class VideoOrchestrator:
             self.update_task(task_id, status="failed", error=str(e), progress=0)
             raise e
         finally:
+            with self._lock:
+                self._active_procs.pop(task_id, None)
+                self._video_cancels.pop(task_id, None)
+            if 'proc' in locals() and proc and proc.returncode is None:
+                try:
+                    proc.kill()
+                except Exception:
+                    pass
+            if 'proc_fb' in locals() and proc_fb and proc_fb.returncode is None:
+                try:
+                    proc_fb.kill()
+                except Exception:
+                    pass
             if 'tmp_out_path' in locals() and os.path.isfile(tmp_out_path):
                 try:
                     os.remove(tmp_out_path)
                 except OSError:
                     pass
-            with self._lock:
-                self._video_cancels.pop(task_id, None)
 
 
 video_orchestrator = VideoOrchestrator()

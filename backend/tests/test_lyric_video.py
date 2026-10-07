@@ -156,6 +156,32 @@ async def test_lyric_video_cancellation(client):
 
 
 @pytest.mark.asyncio
+async def test_lyric_video_cancellation_kills_proc(client):
+    from unittest.mock import MagicMock
+    from app.services.video.types import VideoTaskStatusInfo
+    task_id = f"proc_cancel_{uuid.uuid4().hex[:8]}"
+    mock_proc = MagicMock()
+    mock_proc.returncode = None
+    mock_proc.kill = MagicMock()
+
+    with video_orchestrator._lock:
+        video_orchestrator._active_procs[task_id] = mock_proc
+        video_orchestrator._tasks[task_id] = VideoTaskStatusInfo(
+            id=task_id,
+            job_id=str(uuid.uuid4()),
+            status="processing",
+            step="Encoding",
+            progress=50
+        )
+
+    res = await client.post(f"/videos/tasks/{task_id}/cancel")
+    assert res.status_code == 200
+    assert res.json()["ok"] is True
+    mock_proc.kill.assert_called_once()
+    assert video_orchestrator.get_task(task_id)["status"] == "cancelled"
+
+
+@pytest.mark.asyncio
 async def test_render_lyric_music_video_real_pipeline(tmp_path):
     import math
     import wave

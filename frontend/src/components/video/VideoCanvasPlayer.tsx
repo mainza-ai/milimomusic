@@ -404,26 +404,27 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                         />
 
                         {/* Live Rendering Modal Card Overlay */}
-                        {isRendering && (
+                        {(isRendering || isRenderingLyricVideo) && (
                             <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-30">
                                 <div className="w-16 h-16 rounded-2xl bg-teal-500/10 border border-teal-500/20 text-teal-400 flex items-center justify-center shadow-lg relative mb-4 animate-bounce">
                                     <Film size={32} />
                                 </div>
                                 <h3 className="text-lg font-extrabold text-white tracking-tight">
-                                    Rendering Video…
+                                    {isRenderingLyricVideo ? 'Rendering Lyric Video…' : 'Rendering Video…'}
                                 </h3>
                                 <p className="text-xs text-slate-300 mt-1 max-w-sm">
-                                    {activeTask?.step || 'Composing frames and synthesizing visuals…'}
+                                    {activeTask?.step || (isRenderingLyricVideo ? 'Encoding synced typography and visual background…' : 'Composing frames and synthesizing visuals…')}
                                 </p>
                                 {onCancelRender && (
                                     <div className="pt-4">
                                         <button
                                             type="button"
                                             onClick={onCancelRender}
-                                            className="px-4 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs font-bold rounded-xl flex items-center space-x-1.5 shadow-sm transition-all"
+                                            className="px-4 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs font-bold rounded-xl flex items-center space-x-1.5 shadow-sm transition-all cursor-pointer active:scale-95"
+                                            title="Cancel active video rendering"
                                         >
-                                            <Square size={12} className="fill-current" />
-                                            <span>Stop Video Generation</span>
+                                            <Square size={12} className="fill-current text-rose-500" />
+                                            <span>{isRenderingLyricVideo ? 'Stop Lyric Video' : 'Stop Video Generation'}</span>
                                         </button>
                                     </div>
                                 )}
@@ -442,7 +443,7 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                         </div>
 
                         {/* Floating Quick Action Bar */}
-                        {!isRendering && (
+                        {!isRendering && !isRenderingLyricVideo && (
                             <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between z-20 pointer-events-auto">
                                 <div className="flex items-center gap-2">
                                     {onRenderLyricVideo && (

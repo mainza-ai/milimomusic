@@ -14,7 +14,8 @@ import {
     Music,
     Layers,
     Upload,
-    Disc
+    Disc,
+    Square
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import type { VideoModelKey } from '../views/MusicVideosView';
@@ -85,6 +86,7 @@ export interface VideoInspectorProps {
     isRealigningLyrics?: boolean;
     onRenderLyricVideo?: () => void;
     isRenderingLyricVideo?: boolean;
+    onCancelRender?: () => void;
 
     // Cast & Character Seeds
     visibleCast: string[];
@@ -187,6 +189,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
     isRealigningLyrics = false,
     onRenderLyricVideo,
     isRenderingLyricVideo = false,
+    onCancelRender,
 }) => {
     const [activeTab, setActiveTab] = useState<'directing' | 'engine' | 'lyrics' | 'cast'>('directing');
     const [paletteFilter, setPaletteFilter] = useState<'all' | 'cinematic' | 'retro' | 'urban_pop' | 'acoustic_moody' | 'custom'>('all');
@@ -659,28 +662,40 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                         <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
                             Render a studio-grade lyric music video locally using Apple VideoToolbox / libx264, Ken Burns camera drift, and centisecond synced karaoke typography.
                         </p>
-                        <button
-                            type="button"
-                            onClick={onRenderLyricVideo}
-                            disabled={isRenderingLyricVideo}
-                            className={`w-full py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md ${
-                                isRenderingLyricVideo
-                                    ? 'bg-slate-700/50 text-slate-400 cursor-not-allowed'
-                                    : 'bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white shadow-cyan-500/20 active:scale-[0.98]'
-                            }`}
-                        >
-                            {isRenderingLyricVideo ? (
-                                <>
-                                    <Loader2 size={14} className="animate-spin text-cyan-300" />
-                                    <span>Encoding Hardware Stream...</span>
-                                </>
-                            ) : (
-                                <>
-                                    <Zap size={14} className="text-cyan-200" />
-                                    <span>Render Lyric Video 🎤</span>
-                                </>
-                            )}
-                        </button>
+                        {isRenderingLyricVideo && onCancelRender ? (
+                            <button
+                                type="button"
+                                onClick={onCancelRender}
+                                className="w-full py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 active:scale-[0.98] cursor-pointer"
+                                title="Stop active lyric video rendering"
+                            >
+                                <Square size={13} className="fill-current text-rose-400" />
+                                <span>Stop Lyric Video Render</span>
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={onRenderLyricVideo}
+                                disabled={isRenderingLyricVideo}
+                                className={`w-full py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md ${
+                                    isRenderingLyricVideo
+                                        ? 'bg-slate-700/50 text-slate-400 cursor-not-allowed'
+                                        : 'bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white shadow-cyan-500/20 active:scale-[0.98]'
+                                }`}
+                            >
+                                {isRenderingLyricVideo ? (
+                                    <>
+                                        <Loader2 size={14} className="animate-spin text-cyan-300" />
+                                        <span>Encoding Hardware Stream...</span>
+                                    </>
+                                ) : (
+                                    <>
+                                        <Zap size={14} className="text-cyan-200" />
+                                        <span>Render Lyric Video 🎤</span>
+                                    </>
+                                )}
+                            </button>
+                        )}
                     </div>
 
                     {/* Typography & Subtitle Preset Selector */}

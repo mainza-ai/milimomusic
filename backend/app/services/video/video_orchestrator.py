@@ -1463,17 +1463,23 @@ class VideoOrchestrator:
             bg_mode = config.get("background_mode", "cover_art")
             include_spectrum = config.get("include_spectrum", False)
 
-            cover_path = config.get("cover_image_path")
+            # Resolve cover image reliably from config, job, or filesystem
+            cover_raw = config.get("cover_image_path") or getattr(job, "cover_image_path", None)
+            cover_path = resolve_image_file(cover_raw) if cover_raw else None
             if not cover_path or not os.path.isfile(cover_path):
-                cover_path = self.resolve_face_image(job)
+                if cover_raw and os.path.isfile(cover_raw):
+                    cover_path = cover_raw
+                else:
+                    cover_path = self.resolve_face_image(job)
             if not cover_path or not os.path.isfile(cover_path):
-                if job.cover_image_path:
-                    cover_candidate = resolve_image_file(job.cover_image_path)
-                    if cover_candidate and os.path.isfile(cover_candidate):
-                        cover_path = cover_candidate
+                if getattr(job, "cover_image_path", None):
+                    cover_cand = resolve_image_file(job.cover_image_path)
+                    if cover_cand and os.path.isfile(cover_cand):
+                        cover_path = cover_cand
 
             out_filename = f"{job.id}_lyric.mp4"
             out_path = os.path.join(VIDEO_DIR, out_filename)
+            tmp_out_path = os.path.join(TEMP_DIR, f"{job.id}_lyric_{task_id}.mp4")
 
             # Always save a permanent sidecar ASS subtitle file alongside output video
             if ass_path and os.path.isfile(ass_path):
@@ -1505,10 +1511,10 @@ class VideoOrchestrator:
                     if include_spectrum:
                         filter_complex += (
                             f";[1:a]showwaves=s={w}x{int(h * 0.22)}:mode=line:colors=0x00f0ff|0x7000ff:scale=sqrt[waves]"
-                            f";[bg][waves]overlay=(W-w)/2:H-h-60[comp]{current_sub_filter}[v_out]"
+                            f";[bg][waves]overlay=(W-w)/2:H-h-60[comp]{current_sub_filter},setsar=1,format=yuv420p[v_out]"
                         )
                     else:
-                        filter_complex += f";[bg]null{current_sub_filter}[v_out]"
+                        filter_complex += f";[bg]null{current_sub_filter},setsar=1,format=yuv420p[v_out]"
 
                     c = [
                         ffmpeg_bin, "-y",
@@ -1527,9 +1533,10 @@ class VideoOrchestrator:
                         "-c:v", enc, *e_flags,
                         "-pix_fmt", "yuv420p",
                         "-c:a", "aac", "-b:a", "256k",
+                        "-movflags", "+faststart",
                         "-t", f"{total_duration:.3f}",
                         "-shortest",
-                        out_path
+                        tmp_out_path
                     ])
                     return c
                 else:
@@ -1538,7 +1545,7 @@ class VideoOrchestrator:
                     filter_complex = (
                         f"color=c=0x0b0f19:s={w}x{h}:d={total_duration:.3f}:r=30[bg];"
                         f"[0:a]showwaves=s={w}x{int(h * 0.35)}:mode=line:colors={colors}:scale=sqrt[waves];"
-                        f"[bg][waves]overlay=(W-w)/2:(H-h)/2[comp]{current_sub_filter}[v_out]"
+                        f"[bg][waves]overlay=(W-w)/2:(H-h)/2[comp]{current_sub_filter},setsar=1,format=yuv420p[v_out]"
                     )
                     c = [
                         ffmpeg_bin, "-y",
@@ -1556,9 +1563,10 @@ class VideoOrchestrator:
                         "-c:v", enc, *e_flags,
                         "-pix_fmt", "yuv420p",
                         "-c:a", "aac", "-b:a", "256k",
+                        "-movflags", "+faststart",
                         "-t", f"{total_duration:.3f}",
                         "-shortest",
-                        out_path
+                        tmp_out_path
                     ])
                     return c
 
@@ -1586,7 +1594,7 @@ class VideoOrchestrator:
             stdout_b, stderr_b = await proc.communicate()
 
             # Fallback re-encode with libx264 (and soft subtitles if hardsub failed) if encode failed
-            if proc.returncode != 0 or not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
+            if proc.returncode != 0 or not os.path.isfile(tmp_out_path) or os.path.getsize(tmp_out_path) == 0:
                 err_msg = stderr_b.decode("utf-8", errors="ignore")[:300]
                 logger.warning(f"Initial lyric video encode failed ({proc.returncode}): {err_msg}; retrying with fallback encoder...")
                 cmd_fb = _build_ffmpeg_cmd(use_hardsub=False, enc="libx264", e_flags=["-preset", "veryfast", "-crf", "20"])
@@ -1607,16 +1615,23 @@ class VideoOrchestrator:
                         pass
                 await proc_fb.communicate()
 
-            if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
-                raise RuntimeError(f"Failed to generate lyric music video output file: {out_path}")
+            if not os.path.isfile(tmp_out_path) or os.path.getsize(tmp_out_path) == 0:
+                raise RuntimeError(f"Failed to generate lyric music video output file: {tmp_out_path}")
 
-            video_url = f"/audio/videos/{out_filename}"
+            # Atomic rename into final output path to avoid race conditions with browser stream
+            import shutil
+            shutil.move(tmp_out_path, out_path)
+
+            import time
+            timestamp = int(time.time())
+            video_url = f"/audio/videos/{out_filename}?t={timestamp}"
             self.update_task(
                 task_id,
                 status="completed",
                 progress=100,
                 step="Lyric Video Render Complete",
-                video_url=video_url
+                video_url=video_url,
+                result={"video_url": video_url}
             )
             return video_url
 
@@ -1633,6 +1648,11 @@ class VideoOrchestrator:
             self.update_task(task_id, status="failed", error=str(e), progress=0)
             raise e
         finally:
+            if 'tmp_out_path' in locals() and os.path.isfile(tmp_out_path):
+                try:
+                    os.remove(tmp_out_path)
+                except OSError:
+                    pass
             with self._lock:
                 self._video_cancels.pop(task_id, None)
 

@@ -952,6 +952,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 include_spectrum: includeSpectrum,
                 font_family: lyricFontFamily || undefined,
                 font_size_override: fontSizeOverride,
+                cover_image_path: activeSong.cover_image_path || undefined,
             };
 
             const taskInit = await videoApi.renderLyricVideo(activeSong.id, params);
@@ -976,7 +977,10 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                         window.clearInterval(pollRef.current);
                         setIsRenderingLyricVideo(false);
                         if (status.video_url) {
-                            setRenderedVideoUrl(status.video_url);
+                            const cacheBustedUrl = status.video_url.includes('?')
+                                ? `${status.video_url}&cb=${Date.now()}`
+                                : `${status.video_url}?cb=${Date.now()}`;
+                            setRenderedVideoUrl(cacheBustedUrl);
                             if (activeSong && onUpdateSong) {
                                 onUpdateSong({ ...activeSong, video_path: status.video_url });
                             }

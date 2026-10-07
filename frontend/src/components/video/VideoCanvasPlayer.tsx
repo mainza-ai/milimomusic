@@ -94,6 +94,9 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
         setVideoError(false);
         if (renderedVideoUrl) {
             setShowLyricOverlay(false);
+            if (videoRef.current) {
+                videoRef.current.load();
+            }
         }
     }, [renderedVideoUrl]);
 
@@ -167,6 +170,12 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
         };
     }, [isDraggingSplit]);
 
+    const posterUrl = activeSong?.cover_image_path
+        ? api.getAudioUrl(activeSong.cover_image_path)
+        : renderedVideoUrl
+        ? galleryApi.getThumbnailUrl((renderedVideoUrl.split('/').pop() || renderedVideoUrl).split('?')[0])
+        : undefined;
+
     return (
         <div className="space-y-3">
             {/* Main Video Viewport Canvas */}
@@ -180,7 +189,7 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                         <video
                             ref={videoRef}
                             src={api.getAudioUrl(renderedVideoUrl)}
-                            poster={galleryApi.getThumbnailUrl(renderedVideoUrl.split('/').pop() || renderedVideoUrl)}
+                            poster={posterUrl}
                             controls
                             playsInline
                             preload="auto"
@@ -188,11 +197,14 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                             onPlay={() => setIsVideoPlaying(true)}
                             onPause={() => setIsVideoPlaying(false)}
                             onError={() => {
-                                if (videoRef.current?.error) {
+                                const err = videoRef.current?.error;
+                                console.warn('Video playback element error:', err?.code, err?.message);
+                                if (err) {
                                     setVideoError(true);
                                 }
                             }}
                             onLoadedData={() => setVideoError(false)}
+                            onCanPlay={() => setVideoError(false)}
                             onClick={toggleVideoPlayback}
                             className="w-full h-full object-cover rounded-xl cursor-pointer"
                         />

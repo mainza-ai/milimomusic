@@ -5107,10 +5107,17 @@ async def render_lyric_video_endpoint(job_id: str, req: LyricVideoRequest = Body
 
         task_id = str(uuid.uuid4())
         config = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+        if not config.get("cover_image_path") and getattr(job, "cover_image_path", None):
+            config["cover_image_path"] = job.cover_image_path
 
         async def _run_bg():
             try:
-                url = await video_service.render_lyric_music_video(job, task_id, config)
+                with Session(engine) as s:
+                    fresh_job = get_job_by_id(s, job_id) or job
+                if not config.get("cover_image_path") and getattr(fresh_job, "cover_image_path", None):
+                    config["cover_image_path"] = fresh_job.cover_image_path
+
+                url = await video_service.render_lyric_music_video(fresh_job, task_id, config)
                 with Session(engine) as s:
                     j = s.get(Job, job.id)
                     if j:
@@ -5590,14 +5597,15 @@ def get_video_thumbnail(filename: str):
     """Serve cached first-frame JPEG poster for fast gallery loading."""
     from app.services.gallery.media_bridge import MediaBridge
     from app.core.paths import resolve_video_file
+    clean_name = filename.split("?")[0]
     # Search common video locations
-    found = resolve_video_file(filename)
+    found = resolve_video_file(clean_name)
     if not found:
         candidates = [
-            Path("generated_audio") / "videos" / filename,
-            Path("generated_audio") / filename,
-            Path("data/videos") / filename,
-            Path("assets") / filename,
+            Path("generated_audio") / "videos" / clean_name,
+            Path("generated_audio") / clean_name,
+            Path("data/videos") / clean_name,
+            Path("assets") / clean_name,
         ]
         for c in candidates:
             if c.exists():

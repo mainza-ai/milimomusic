@@ -2603,3 +2603,22 @@ Investigated and implemented full end-to-end custom image upload functionality f
    - `npm run build` passes with zero TypeScript errors in 2.28s.
    - All 39 test cases pass (`test_cover_upload.py`, `test_lyric_video.py`, `test_video_service.py`).
 
+
+## [2026-10-07] fix | Lyric Video Cover Art Resolution & Web Playback Engine
+Thoroughly investigated and resolved cover art mismatch and video playback error during lyric video rendering:
+1. **Cover Art Propagation & URL Resolution**:
+   - Resolved `config.get("cover_image_path")` using `resolve_image_file()` in `video_orchestrator.py` to correctly resolve relative web paths like `/covers/...` into absolute filesystem paths before checking `os.path.isfile()`.
+   - Populated `cover_image_path` in `MusicVideosView.tsx` `handleRenderLyricVideo()` so user-selected artwork is explicitly provided in the request payload.
+   - Refreshed fresh `Job` instances inside `_run_bg()` in `backend/app/main.py` so background tasks always access the latest persisted cover artwork.
+2. **Web Video Streaming & Hardware Compatibility**:
+   - Enforced `setsar=1,format=yuv420p` in the FFmpeg filtergraph, eliminating anamorphic pixel aspect ratio (129:128) and deprecated full-range `yuvj420p` that caused WebKit/Chromium hardware decoder rejections.
+   - Added `-movflags +faststart` across all FFmpeg rendering paths to move the MP4 `moov` atom to the head of the file, allowing instant HTML5 byte-range streaming without buffering the full 86MB container.
+   - Implemented atomic file writing (rendering to temporary path in `video_cache/` followed by `shutil.move()` to final output) to prevent client range requests from reading truncated or in-flight files.
+3. **Player Lifecycle & Typography Enhancements**:
+   - Added cache-busting timestamps (`?t=...` / `&cb=...`) to `renderedVideoUrl` on completion and enforced `videoRef.current?.load()` in `VideoCanvasPlayer.tsx` to clear transient error states and force fresh buffer instantiation.
+   - Sanitized poster URLs and prioritized `activeSong.cover_image_path` over thumbnail generation fallbacks.
+   - Enhanced subtitle preset typography with bold 3.6px solid dark outlines, drop shadows, and high-contrast white unsung lyrics for legibility across any artwork background.
+4. **Verification**:
+   - Verified `moov in head: True`, `sample_aspect_ratio=1:1`, and `HTTP 206 Partial Content` streaming.
+   - Full test suite passing (`pytest backend/tests/test_lyric_video.py`), `npm run build` passing, and 100% API parity maintained.
+   - Pushed cleanly to both `develop` and `main` branches.

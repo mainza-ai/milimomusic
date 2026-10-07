@@ -2,12 +2,14 @@ import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react'
 import {
     type Job,
     videoApi,
+    trackApi,
     api,
     galleryApi,
     type VideoPlanResult,
     type VideoTaskStatus,
     type VideoPlanParams,
     type VideoRenderParams,
+    type LyricVideoParams,
     type DirectorTreatment,
     type VideoClipSegment
 } from '../../api';
@@ -219,10 +221,16 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         }
     }, [initialSelectedSongId]);
 
-    // Advanced Lip Sync & Lyric Options
+    // Advanced Lip Sync & Lyric Studio Options
     const [enableLipSync, setEnableLipSync] = useState(true);
     const [burnSubtitles, setBurnSubtitles] = useState(true);
-    const [subtitleStyle, setSubtitleStyle] = useState<'neon' | 'cinematic' | 'karaoke'>('neon');
+    const [subtitleStyle, setSubtitleStyle] = useState<string>('neon');
+    const [lyricBackgroundMode, setLyricBackgroundMode] = useState<string>('cover_art');
+    const [includeSpectrum, setIncludeSpectrum] = useState<boolean>(false);
+    const [lyricFontFamily, setLyricFontFamily] = useState<string>('');
+    const [fontSizeOverride, setFontSizeOverride] = useState<number | undefined>(undefined);
+    const [isRenderingLyricVideo, setIsRenderingLyricVideo] = useState<boolean>(false);
+    const [isRealigningLyrics, setIsRealigningLyrics] = useState<boolean>(false);
 
     // Director Mode v2 Controls (Maestro v2.4.0)
     const [pacingBias, setPacingBias] = useState<number>(0); // -2 (slow/cinematic) to +2 (rapid montage)
@@ -897,6 +905,131 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         }
     }, [activeSong, videoModel, videoStyle, customStylePrompt, characterPromptNote, resolution, aspectRatio, videoProvider, lipSyncEngine, enableLipSync, burnSubtitles, subtitleStyle, transitionStyle, clipDuration, pacingBias, vocalBypass, fidelityRetries, autoContinue, visibleCast, planResult?.clips, planResult?.total_clips, onUpdateSong]);
 
+    // Fast-Path Lyric Music Video Rendering (< 45s)
+    const handleRenderLyricVideo = useCallback(async () => {
+        if (!activeSong) return;
+        try {
+            setIsRenderingLyricVideo(true);
+            const params: LyricVideoParams = {
+                aspect_ratio: aspectRatio,
+                resolution,
+                style_preset: subtitleStyle,
+                background_mode: lyricBackgroundMode,
+                include_spectrum: includeSpectrum,
+                font_family: lyricFontFamily || undefined,
+                font_size_override: fontSizeOverride,
+            };
+
+            const taskInit = await videoApi.renderLyricVideo(activeSong.id, params);
+            setActiveTask({
+                id: taskInit.task_id,
+                job_id: activeSong.id,
+                status: 'processing',
+                step: 'karaoke_encoding',
+                progress: 10,
+                total_clips: 1,
+                current_clip: 0
+            });
+
+            // Poll task status
+            if (pollRef.current) window.clearInterval(pollRef.current);
+            pollRef.current = window.setInterval(async () => {
+                try {
+                    const status = await videoApi.getVideoTaskStatus(taskInit.task_id);
+                    setActiveTask(status);
+
+                    if (status.status === 'completed') {
+                        window.clearInterval(pollRef.current);
+                        setIsRenderingLyricVideo(false);
+                        if (status.video_url) {
+                            setRenderedVideoUrl(status.video_url);
+                            if (activeSong && onUpdateSong) {
+                                onUpdateSong({ ...activeSong, video_path: status.video_url });
+                            }
+                            toast('Lyric music video rendered successfully!', 'success');
+                        }
+                    } else if (status.status === 'cancelled') {
+                        window.clearInterval(pollRef.current);
+                        setIsRenderingLyricVideo(false);
+                        toast('Lyric video rendering cancelled.', 'info');
+                    } else if (status.status === 'error') {
+                        window.clearInterval(pollRef.current);
+                        setIsRenderingLyricVideo(false);
+                        toast(status.error || 'Lyric video rendering failed.', 'error');
+                    }
+                } catch { /* transient error */ }
+            }, 1000);
+        } catch (err: any) {
+            console.error('Failed to start lyric video rendering:', err);
+            toast(err?.response?.data?.detail || 'Failed to start lyric video rendering.', 'error');
+            setIsRenderingLyricVideo(false);
+        }
+    }, [activeSong, aspectRatio, resolution, subtitleStyle, lyricBackgroundMode, includeSpectrum, lyricFontFamily, fontSizeOverride, onUpdateSong]);
+
+    // Acoustic Word Alignment via wav2vec2 MMS_FA
+    const handleRealignLyrics = useCallback(async () => {
+        if (!activeSong?.id) return;
+        try {
+            setIsRealigningLyrics(true);
+            const res = await trackApi.realignLyrics(activeSong.id);
+            if (res.job && onUpdateSong) {
+                onUpdateSong(res.job);
+            }
+            toast('Lyrics acoustically realigned with vocal stems!', 'success');
+        } catch (err: any) {
+            console.error('Failed to realign lyrics:', err);
+            toast(err?.response?.data?.detail || 'Failed to realign lyrics.', 'error');
+        } finally {
+            setIsRealigningLyrics(false);
+        }
+    }, [activeSong?.id, onUpdateSong]);
+
+    // Inline Nudge Lyric Timestamp Offset (Phase 5)
+    const handleNudgeLyric = useCallback(async (lineIndex: number, deltaSec: number) => {
+        if (!activeSong?.id || !activeSong.timed_lyrics_json) return;
+        try {
+            const raw = typeof activeSong.timed_lyrics_json === 'string'
+                ? JSON.parse(activeSong.timed_lyrics_json)
+                : [...activeSong.timed_lyrics_json];
+            if (!Array.isArray(raw)) return;
+
+            // Find matching non-section line
+            let nonSecIdx = 0;
+            let targetIdx = -1;
+            for (let i = 0; i < raw.length; i++) {
+                if (!raw[i].is_section && raw[i].text && raw[i].text.trim()) {
+                    if (nonSecIdx === lineIndex) {
+                        targetIdx = i;
+                        break;
+                    }
+                    nonSecIdx++;
+                }
+            }
+            if (targetIdx === -1) return;
+
+            const item = { ...raw[targetIdx] };
+            item.start = Math.max(0, Math.round(((item.start || 0) + deltaSec) * 100) / 100);
+            item.end = Math.max(item.start + 0.3, Math.round(((item.end || 0) + deltaSec) * 100) / 100);
+            if (Array.isArray(item.words)) {
+                item.words = item.words.map((w: any) => ({
+                    ...w,
+                    start: Math.max(0, Math.round(((w.start || 0) + deltaSec) * 100) / 100),
+                    end: Math.max(0, Math.round(((w.end || 0) + deltaSec) * 100) / 100),
+                }));
+            }
+            raw[targetIdx] = item;
+            const updatedJson = JSON.stringify(raw);
+            const updatedJob = await trackApi.updateTrackMetadata(activeSong.id, { timed_lyrics_json: updatedJson });
+            if (onUpdateSong) {
+                onUpdateSong(updatedJob);
+            }
+            toast(`Lyric timing nudged by ${deltaSec > 0 ? '+' : ''}${deltaSec.toFixed(1)}s`, 'info');
+        } catch (err) {
+            console.error('Failed to nudge lyric line:', err);
+            toast('Failed to save nudged lyric timestamp', 'error');
+        }
+    }, [activeSong, onUpdateSong]);
+
     const applyStoredVideoConfig = useCallback((job: Job) => {
         if (!job?.video_config_json) return;
         try {
@@ -1122,6 +1255,8 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     isRendering={isRendering}
                     onRenderVideo={handleRenderAdvancedVideo}
                     onCancelRender={handleCancelVideoRender}
+                    onRenderLyricVideo={handleRenderLyricVideo}
+                    isRenderingLyricVideo={isRenderingLyricVideo}
                     renderedVideoUrl={renderedVideoUrl}
                     onDownloadVideo={handleDownloadVideo}
                 />
@@ -1147,6 +1282,14 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             isPlanning={isPlanning}
                             seekTime={timelineSeekTime}
                             onDismissTask={handleDismissTask}
+                            isPlayingAudio={isPlaying && playingSongId === activeSong?.id}
+                            stylePreset={subtitleStyle}
+                            backgroundMode={lyricBackgroundMode}
+                            fontFamily={lyricFontFamily}
+                            fontSizeOverride={fontSizeOverride}
+                            onSeek={handleSeekTimeline}
+                            onRenderLyricVideo={handleRenderLyricVideo}
+                            isRenderingLyricVideo={isRenderingLyricVideo}
                         />
                     </div>
 
@@ -1192,6 +1335,18 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             onChangeSubtitleStyle={setSubtitleStyle}
                             transitionStyle={transitionStyle}
                             onChangeTransitionStyle={setTransitionStyle}
+                            backgroundMode={lyricBackgroundMode}
+                            onChangeBackgroundMode={setLyricBackgroundMode}
+                            includeSpectrum={includeSpectrum}
+                            onChangeIncludeSpectrum={setIncludeSpectrum}
+                            fontFamily={lyricFontFamily}
+                            onChangeFontFamily={setLyricFontFamily}
+                            fontSizeOverride={fontSizeOverride}
+                            onChangeFontSizeOverride={setFontSizeOverride}
+                            onRealignLyrics={handleRealignLyrics}
+                            isRealigningLyrics={isRealigningLyrics}
+                            onRenderLyricVideo={handleRenderLyricVideo}
+                            isRenderingLyricVideo={isRenderingLyricVideo}
                             visibleCast={visibleCast}
                             onToggleCastMember={handleToggleCastMember}
                             characterPromptNote={characterPromptNote}
@@ -1213,6 +1368,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                         onSeekToTime={handleSeekTimeline}
                         onClearTimeline={handleClearTimeline}
                         onReorderClips={handleReorderClips}
+                        onNudgeLyric={handleNudgeLyric}
                     />
                 )}
             </div>

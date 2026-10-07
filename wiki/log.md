@@ -2536,5 +2536,30 @@ Executed full implementation and verification of the AI Music Video Studio and V
    - Backend test suites passed (`test_visual_asset_studio.py`, `test_phase3_timeline_and_gallery.py`, `test_scene_plates.py`, `test_video_service.py` — 100% pass rate).
    - Frontend compiled clean (`npm run build` exits 0).
 
+## [2026-10-07] create | Fast-Path Lyric Music Video Studio (Phases 1–5)
+
+Executed full 5-phase implementation and verification of the local-first Lyric Music Video Studio:
+1. **Phase 1 — Hardened Backend Karaoke ASS Engine**:
+   - Implemented `backend/app/services/video/subtitle_styles.py` with 6 production typography presets (`neon`, `spotify`, `kinetic_pop`, `cinematic`, `social_vertical`, `retro_vhs`).
+   - Added word-level centisecond `\kf` karaoke sweeps, dynamic aspect safe zone margins (16:9, 9:16 vertical, 1:1, 21:9), and local font directory fallback bundling.
+   - Comprehensive unit test suite in `backend/tests/test_subtitle_styles.py` (6/6 passing).
+2. **Phase 2 — Fast-Path Hardware Accelerated Video Pipeline**:
+   - Added `LyricVideoRequest` model schema in `backend/app/models.py`.
+   - Built `render_lyric_music_video` in `VideoOrchestrator` and `VideoService` with Apple Silicon `h264_videotoolbox` / `libx264` acceleration (<45s full track render), Ken Burns cover art zoom drift, and audio spectrum overlays.
+   - Added REST endpoint `POST /videos/render-lyric/{job_id}` in `backend/app/main.py` and client `renderLyricVideo` in `frontend/src/api.ts`.
+   - Verified via `backend/tests/test_lyric_video.py` (5/5 passing).
+3. **Phase 3 — 60fps WYSIWYG Canvas Player**:
+   - Created `frontend/src/components/video/LyricCanvasOverlay.tsx` with 60fps RAF synchronization against `useAudioTime()`, CSS linear-gradient fill highlight sweeps, Ken Burns drift, and interactive line-scrubbing.
+   - Embedded seamlessly into `frontend/src/components/video/VideoCanvasPlayer.tsx`.
+4. **Phase 4 — Lyric Studio Inspector Dock & TopBar Controls**:
+   - Upgraded `frontend/src/components/video/VideoInspectorDock.tsx` with dedicated "Lyrics & FX" tab: 1-click Fast-Path Render CTA, 6 preset cards, font family & size override controls, background mode picker, audio spectrum toggle, and "Acoustically Sync Lyrics ⚡ (MMS_FA)" action.
+   - Added "Lyric Video 🎤" button to `frontend/src/components/video/VideoTopBar.tsx`.
+   - Wired full state and polling loop in `frontend/src/components/views/MusicVideosView.tsx`.
+5. **Phase 5 — Multitrack NLE Timeline Lyrics Track**:
+   - Built interactive "Karaoke Lyrics Track" in `frontend/src/components/video/VideoTimelineTrack.tsx` with proportional line pill blocks and click-to-seek alignment.
+   - Implemented micro timestamp nudging (`[-0.1s]` / `[+0.1s]`) saving directly to track metadata in `MusicVideosView.tsx`.
+   - Full test validation: 11/11 tests passing, `scripts/check_api_parity.py` 100% clean, and `npm run build` exits 0 (1.79s).
+
+
 
 

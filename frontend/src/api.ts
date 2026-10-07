@@ -1477,6 +1477,18 @@ export interface VideoRenderParams {
     clips?: any[];
 }
 
+export interface LyricVideoParams {
+    style_preset?: string;
+    aspect_ratio?: '16:9' | '9:16' | '1:1' | '21:9' | string;
+    resolution?: '720p' | '1080p' | string;
+    background_mode?: 'cover_art' | 'spectrum' | 'procedural' | string;
+    font_family?: string;
+    font_size_override?: number;
+    include_spectrum?: boolean;
+    burn_lyrics?: boolean;
+    cover_image_path?: string;
+}
+
 export interface VideoProvider {
     id: string;
     name: string;
@@ -1500,6 +1512,10 @@ export const videoApi = {
     },
     renderAdvancedVideo: async (jobId: string, params: VideoRenderParams = {}): Promise<{ status: string; task_id: string; job_id: string }> => {
         const res = await axios.post(`${API_BASE_URL}/videos/render-advanced/${jobId}`, params);
+        return res.data;
+    },
+    renderLyricVideo: async (jobId: string, params: LyricVideoParams = {}): Promise<{ status: string; task_id: string; job_id: string; message?: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/render-lyric/${jobId}`, params);
         return res.data;
     },
     getVideoTaskStatus: async (taskId: string): Promise<VideoTaskStatus> => {

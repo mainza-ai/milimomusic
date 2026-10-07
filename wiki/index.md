@@ -2,7 +2,7 @@
 title: Milimo Music Wiki — Index
 type: index
 created: 2026-08-19
-updated: 2026-09-26
+updated: 2026-10-07
 ---
 
 # Milimo Music Wiki — Index
@@ -42,7 +42,7 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Karaoke & Lyric Sync](entities/karaoke-lyricsync.md) — TorchAudio MMS_FA neural forced alignment, sub-100ms word sync, .lrc/.srt export.
 - [Voice Studio (SVC)](entities/voice-service.md) — 3-zone vocal production suite: neural voice conversion, live in-browser vocal booth recording, vocal DSP rack (transposition presets, formant preservation, dry/wet mix), tri-state A/B audition transport, and consent-gated profiles.
 - [Neural Singing Voice Conversion (SVC)](entities/neural-svc.md) — zero-shot vocal timbre transfer, formant morphing, pitch transposition, and dry/wet blending.
-- [AI Music Video Studio](entities/video-studio.md) — Video Generator Registry (Wan 2.1, LTX-Video, MiniMax H3, cloud backbones), Apple Silicon Metal attention slicing & memory protection, instant (<200ms) cancellation hooks, LivePortrait neural singing avatar lip-syncing, autonomous musical director, pre-rendered keyframes, and burned karaoke ASS subtitles.
+- [AI Music Video Studio](entities/video-studio.md) — Video Generator Registry (Wan 2.1, LTX-Video, MiniMax H3, cloud backbones), Apple Silicon Metal attention slicing & memory protection, instant (<200ms) cancellation hooks, LivePortrait neural singing avatar lip-syncing, Fast-Path Lyric Music Video Studio (<45s VideoToolbox render), 6 typography presets with centisecond \kf karaoke sweeps, autonomous musical director, pre-rendered keyframes, and NLE timeline lyrics track.
 - [Standalone Image Generation Studio & Visual Asset Gallery](entities/image-studio-gallery.md) — Google Flow-style visual creation canvas, prompt enhancement, style presets, persistent `VisualAsset` vault, and 1-click universal cover / avatar picker.
 - [Session Workspace (DAW)](entities/session-workspace.md) — Listen/Arrange/Piano Roll/Notation/Mix/Lyrics.
 - [Studio Projects](entities/projects.md) — multi-session production workspaces, BPM/Key conditioning, multi-track stems aggregation, and Studio Pack (.zip) export.

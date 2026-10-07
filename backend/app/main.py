@@ -108,6 +108,7 @@ from app.models import (
     StudioUserProfileUpdate,
     VideoPlanRequest,
     VideoRenderRequest,
+    LyricVideoRequest,
     DirectorTreatmentRequest,
     ReimagineSceneRequest,
     KeyframesRequest,
@@ -5031,6 +5032,47 @@ async def render_advanced_music_video_endpoint(job_id: str, req: VideoRenderRequ
         }
 
 
+@app.post("/videos/render-lyric/{job_id}")
+async def render_lyric_video_endpoint(job_id: str, req: LyricVideoRequest = Body(default=LyricVideoRequest())):
+    """Start fast-path local lyric music video rendering (< 45s) with word-level karaoke sync and hardware acceleration."""
+    from app.services.video_service import video_service
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if not job.audio_path:
+            raise HTTPException(status_code=400, detail="Job has no completed audio to render.")
+
+        task_id = str(uuid.uuid4())
+        config = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+
+        async def _run_bg():
+            try:
+                url = await video_service.render_lyric_music_video(job, task_id, config)
+                with Session(engine) as s:
+                    j = s.get(Job, job.id)
+                    if j:
+                        j.video_path = url
+                        j.video_config_json = json.dumps(config, default=str)
+                        s.add(j)
+                        s.commit()
+            except asyncio.CancelledError:
+                logger.info(f"Background lyric video render task {task_id} successfully cancelled.")
+            except Exception as e:
+                logger.error(f"Background lyric video render failed for {job_id}: {e}")
+            finally:
+                video_service.unregister_render_task(task_id)
+
+        bg_task = asyncio.create_task(_run_bg())
+        video_service.register_render_task(task_id, bg_task)
+        return {
+            "status": "queued",
+            "task_id": task_id,
+            "job_id": job_id,
+            "message": "Fast-path lyric video rendering started in background."
+        }
+
+
 @app.get("/videos/tasks/{task_id}")
 def get_video_task_status(task_id: str):
     """Check status and progress of an active background music video render task."""
@@ -5485,17 +5527,20 @@ async def events():
 def get_video_thumbnail(filename: str):
     """Serve cached first-frame JPEG poster for fast gallery loading."""
     from app.services.gallery.media_bridge import MediaBridge
+    from app.core.paths import resolve_video_file
     # Search common video locations
-    candidates = [
-        Path("generated_audio") / filename,
-        Path("data/videos") / filename,
-        Path("assets") / filename,
-    ]
-    found = None
-    for c in candidates:
-        if c.exists():
-            found = str(c)
-            break
+    found = resolve_video_file(filename)
+    if not found:
+        candidates = [
+            Path("generated_audio") / "videos" / filename,
+            Path("generated_audio") / filename,
+            Path("data/videos") / filename,
+            Path("assets") / filename,
+        ]
+        for c in candidates:
+            if c.exists():
+                found = str(c)
+                break
     if not found:
         raise HTTPException(status_code=404, detail="Video file not found")
 

@@ -10,7 +10,8 @@ import {
     ZoomIn,
     ZoomOut,
     ChevronLeft,
-    ChevronRight
+    ChevronRight,
+    Type
 } from 'lucide-react';
 import { api, type VideoClipSegment, type Job } from '../../api';
 
@@ -103,6 +104,35 @@ function getShotIntentBadge(sceneType?: string) {
     }
 }
 
+interface TimedLyricLine {
+    id: string;
+    text: string;
+    start: number;
+    end: number;
+    words?: Array<{ word: string; start: number; end: number }>;
+}
+
+function parseTimedLyrics(job?: Job): TimedLyricLine[] {
+    if (!job?.timed_lyrics_json) return [];
+    try {
+        const raw = typeof job.timed_lyrics_json === 'string'
+            ? JSON.parse(job.timed_lyrics_json)
+            : job.timed_lyrics_json;
+        if (!Array.isArray(raw)) return [];
+        return raw
+            .filter((item: any) => !item.is_section && item.text && item.text.trim())
+            .map((item: any, idx: number) => ({
+                id: `line-${idx}`,
+                text: item.text.trim(),
+                start: Math.max(0, Number(item.start) || 0),
+                end: Math.max((Number(item.start) || 0) + 0.3, Number(item.end) || 0),
+                words: Array.isArray(item.words) ? item.words : undefined
+            }));
+    } catch {
+        return [];
+    }
+}
+
 interface VideoTimelineTrackProps {
     clips: VideoClipSegment[];
     keyframes: Record<number, string>;
@@ -114,6 +144,7 @@ interface VideoTimelineTrackProps {
     onSeekToTime?: (timeSec: number) => void;
     onClearTimeline?: () => void;
     onReorderClips?: (reordered: VideoClipSegment[]) => void;
+    onNudgeLyric?: (lineIndex: number, deltaSec: number) => void;
 }
 
 const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
@@ -127,6 +158,7 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
     onSeekToTime,
     onClearTimeline,
     onReorderClips,
+    onNudgeLyric,
 }) => {
     const [viewMode, setViewMode] = useState<'timeline' | 'grid'>('timeline');
     const [zoomPxPerSec, setZoomPxPerSec] = useState<number>(36); // Proportional scale: 20 to 80 px/sec
@@ -156,6 +188,10 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
     const songSections = useMemo(() => {
         return parseSections(activeSong, totalDurationSec);
     }, [activeSong, totalDurationSec]);
+
+    const timedLyrics = useMemo(() => {
+        return parseTimedLyrics(activeSong);
+    }, [activeSong]);
 
     const handleShiftClip = (idx: number, direction: 'left' | 'right') => {
         if (!onReorderClips || clips.length < 2) return;
@@ -433,6 +469,83 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                 </div>
                             );
                         })}
+                    </div>
+
+                    {/* Track 3: Synced Karaoke Lyrics Track */}
+                    <div className="pt-1.5 space-y-1">
+                        <div className="flex items-center justify-between text-[10px] text-slate-500 px-1">
+                            <span className="font-bold flex items-center gap-1.5 text-cyan-600 dark:text-cyan-400">
+                                <Type size={12} className="text-cyan-400" />
+                                <span>Karaoke Lyrics Track</span>
+                                {timedLyrics.length > 0 && (
+                                    <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-cyan-500/10 text-cyan-500 border border-cyan-500/20">
+                                        {timedLyrics.length} lines
+                                    </span>
+                                )}
+                            </span>
+                            <span className="text-[9px] font-mono text-slate-400">
+                                Click line to seek · Nudge [±0.1s] timing
+                            </span>
+                        </div>
+
+                        {timedLyrics.length > 0 ? (
+                            <div
+                                style={{ width: `${Math.max(600, Math.round(totalDurationSec * zoomPxPerSec))}px` }}
+                                className="relative h-9 rounded-xl border border-cyan-500/20 bg-cyan-500/[0.03] overflow-hidden select-none"
+                            >
+                                {timedLyrics.map((line, lIdx) => {
+                                    const leftPx = Math.round(line.start * zoomPxPerSec);
+                                    const widthPx = Math.max(90, Math.round((line.end - line.start) * zoomPxPerSec));
+
+                                    return (
+                                        <div
+                                            key={line.id}
+                                            style={{
+                                                position: 'absolute',
+                                                left: `${leftPx}px`,
+                                                width: `${widthPx}px`
+                                            }}
+                                            onClick={() => onSeekToTime?.(line.start)}
+                                            className="group absolute top-1 bottom-1 rounded-lg border border-cyan-500/30 bg-white/90 dark:bg-black/70 shadow-sm flex items-center justify-between px-2 cursor-pointer hover:border-cyan-400 hover:bg-cyan-500/15 transition-all"
+                                            title={`"${line.text}" (${line.start.toFixed(2)}s - ${line.end.toFixed(2)}s) · Click to jump playhead`}
+                                        >
+                                            <span className="text-[10px] font-semibold text-slate-800 dark:text-slate-200 truncate pr-1">
+                                                {line.text}
+                                            </span>
+
+                                            {/* Micro Nudge Controls on Hover */}
+                                            {onNudgeLyric && (
+                                                <div
+                                                    className="hidden group-hover:flex items-center gap-0.5 flex-shrink-0"
+                                                    onClick={(e) => e.stopPropagation()}
+                                                >
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => onNudgeLyric(lIdx, -0.1)}
+                                                        className="px-1 py-0.5 rounded text-[8px] font-mono font-bold bg-black/10 dark:bg-white/10 text-slate-400 hover:text-cyan-400 hover:bg-black/20"
+                                                        title="Nudge line 0.1s earlier"
+                                                    >
+                                                        -0.1
+                                                    </button>
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => onNudgeLyric(lIdx, 0.1)}
+                                                        className="px-1 py-0.5 rounded text-[8px] font-mono font-bold bg-black/10 dark:bg-white/10 text-slate-400 hover:text-cyan-400 hover:bg-black/20"
+                                                        title="Nudge line 0.1s later"
+                                                    >
+                                                        +0.1
+                                                    </button>
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="h-7 rounded-xl border border-dashed border-black/10 dark:border-white/10 flex items-center justify-center text-[10px] text-slate-400 font-mono">
+                                <span>No timed lyrics found · Click "Acoustically Sync Lyrics ⚡" in Inspector Dock to align</span>
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

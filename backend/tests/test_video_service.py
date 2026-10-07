@@ -240,7 +240,8 @@ async def test_ass_karaoke_subtitle_generation(sample_job, tmp_path):
     )
     assert "[Script Info]" in ass_content
     assert "Format: Layer, Start, End, Style" in ass_content
-    assert "Driving through the neon night" in ass_content
+    assert all(w in ass_content for w in ["Driving", "through", "the", "neon", "night"])
+    assert r"\kf" in ass_content
 
 
 def test_resolve_engine_for_video_model():

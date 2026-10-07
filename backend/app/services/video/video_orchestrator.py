@@ -25,6 +25,10 @@ from app.services.video.types import (
     VideoProviderInfo, VideoProviderType, LipSyncEngineType, VideoModelType
 )
 from app.services.video.video_director import video_director, STYLE_PALETTES
+from app.services.video.subtitle_styles import (
+    generate_karaoke_ass_script, get_fonts_dir, resolve_preset, SUBTITLE_PRESETS,
+    detect_hardware_encoder, find_ffmpeg_executable, has_subtitles_filter
+)
 from app.services.video.lip_sync.base import BaseLipSyncProvider
 from app.services.video.lip_sync.live_portrait import LivePortraitProvider
 from app.services.video.lip_sync.cloud_lipsync import CloudLipSyncProvider
@@ -250,58 +254,30 @@ class VideoOrchestrator:
         width: int = 1280,
         height: int = 720,
         style: str = "neon-cyberpunk",
-        subtitle_style: str = "neon"
+        subtitle_style: str = "neon",
+        aspect_ratio: str = "16:9",
+        font_family: Optional[str] = None,
+        font_size_override: Optional[int] = None,
     ) -> str:
         """
-        Generate Advanced SubStation Alpha (.ass) subtitle content with karaoke highlights.
+        Generate Advanced SubStation Alpha (.ass) subtitle content with word-level karaoke highlights.
         """
-        palette = STYLE_PALETTES.get(style, STYLE_PALETTES["neon-cyberpunk"])
-        r, g, b = palette["primary_color"]
-        primary_ass = f"&H00{b:02X}{g:02X}{r:02X}"
-        ar, ag, ab = palette["accent_color"]
-        accent_ass = f"&H00{ab:02X}{ag:02X}{ar:02X}"
+        palette = STYLE_PALETTES.get(style, STYLE_PALETTES.get("neon-cyberpunk", {}))
+        colors = None
+        if palette and "primary_color" in palette and "accent_color" in palette:
+            colors = (palette["primary_color"], palette["accent_color"])
 
-        font_size = int(height * 0.048)
-        margin_v = int(height * 0.08)
-
-        ass_lines = [
-            "[Script Info]",
-            "Title: Milimo Music Synchronized Video",
-            "ScriptType: v4.00+",
-            f"PlayResX: {width}",
-            f"PlayResY: {height}",
-            "ScaledBorderAndShadow: yes",
-            "",
-            "[V4+ Styles]",
-            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-            f"Style: Default,Arial,{font_size},{primary_ass},{accent_ass},&H00090A10,&H80000000,1,0,0,0,100,100,0,0,1,2.5,1.5,2,40,40,{margin_v},1",
-            "",
-            "[Events]",
-            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
-        ]
-
-        def fmt_ass_time(sec: float) -> str:
-            m = int(sec // 60)
-            s = int(sec % 60)
-            cs = int(round((sec - int(sec)) * 100))
-            h = m // 60
-            m = m % 60
-            return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
-
-        for line in timed_lines:
-            text = line.get("text", "").strip()
-            if not text:
-                continue
-            start_t = fmt_ass_time(line.get("start", 0.0))
-            end_t = fmt_ass_time(line.get("end", 0.0))
-            # If karaoke style is enabled, wrap text with karaoke duration tag
-            if subtitle_style == "karaoke":
-                dur_cs = int(round((line.get("end", 0.0) - line.get("start", 0.0)) * 100))
-                ass_lines.append(f"Dialogue: 0,{start_t},{end_t},Default,,0,0,0,,{{\\k{dur_cs}}}{text}")
-            else:
-                ass_lines.append(f"Dialogue: 0,{start_t},{end_t},Default,,0,0,0,,{text}")
-
-        return "\n".join(ass_lines)
+        return generate_karaoke_ass_script(
+            timed_lines=timed_lines,
+            width=width,
+            height=height,
+            visual_style=style,
+            subtitle_style=subtitle_style,
+            aspect_ratio=aspect_ratio,
+            font_family=font_family,
+            font_size_override=font_size_override,
+            palette_colors=colors,
+        )
 
     def get_job_keyframes(self, job_id: str) -> Dict[int, str]:
         """Scan KEYFRAMES_DIR and return existing keyframes map {clip_index: url} for job."""
@@ -1004,7 +980,8 @@ class VideoOrchestrator:
                         timed_lines=timed_lines,
                         width=w, height=h,
                         style=style,
-                        subtitle_style=subtitle_style
+                        subtitle_style=subtitle_style,
+                        aspect_ratio=aspect_ratio,
                     )
                     ass_path = os.path.join(TEMP_DIR, f"subtitles_{task_id}.ass")
                     with open(ass_path, "w", encoding="utf-8") as f_sub:
@@ -1017,11 +994,13 @@ class VideoOrchestrator:
             if ass_path and os.path.isfile(ass_path):
                 # Escape path for FFmpeg filter
                 escaped_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+                fonts_dir = get_fonts_dir()
+                fonts_opt = f":fontsdir='{fonts_dir.replace('\\', '/').replace(':', '\\:')}'" if fonts_dir else ""
                 cmd_final = [
                     "ffmpeg", "-y",
                     "-i", stitched_video,
                     "-i", resolved_master,
-                    "-filter_complex", f"[0:v]subtitles='{escaped_ass}'[v]",
+                    "-filter_complex", f"[0:v]subtitles='{escaped_ass}'{fonts_opt}[v]",
                     "-map", "[v]", "-map", "1:a:0",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
                     "-c:a", "aac", "-b:a", "256k",
@@ -1369,5 +1348,294 @@ class VideoOrchestrator:
         _, err_concat = await proc.communicate()
         return os.path.isfile(stitched_video) and os.path.getsize(stitched_video) > 0
 
+    async def render_lyric_music_video(
+        self,
+        job: Job,
+        task_id: str,
+        config: Dict[str, Any]
+    ) -> str:
+        """
+        Fast-path local lyric music video rendering pipeline (< 45s).
+        Combines hardware-accelerated video encoding (VideoToolbox / NVENC / CPU libx264),
+        smooth Ken Burns camera drift on artwork, audio-reactive frequency spectrum visualizer,
+        and pixel-perfect word-level karaoke ASS subtitles.
+        """
+        cancel_event = asyncio.Event()
+        with self._lock:
+            self._video_cancels[task_id] = cancel_event
+            tinfo = VideoTaskStatusInfo(
+                id=task_id,
+                job_id=str(job.id),
+                status="processing",
+                step="Initializing Fast-Path Lyric Video Engine",
+                progress=5,
+                total_clips=1,
+                current_clip=1
+            )
+            self._tasks[task_id] = tinfo
+            try:
+                task_queue.enqueue_task(
+                    task_id=task_id,
+                    task_type="lyric_video_rendering",
+                    payload={"job_id": str(job.id), "config": config},
+                    initial_status="processing",
+                    initial_message="Initializing Fast-Path Lyric Video Engine"
+                )
+            except Exception as _e:
+                logger.debug(f"Could not enqueue lyric video task: {_e}")
+
+        try:
+            if cancel_event.is_set():
+                raise asyncio.CancelledError("Lyric video rendering cancelled by user.")
+
+            resolved_master = self.resolve_audio_path(job.audio_path)
+            if not resolved_master or not os.path.isfile(resolved_master):
+                raise FileNotFoundError(f"Master audio file not found for job: {job.audio_path}")
+
+            total_duration = 180.0
+            try:
+                import soundfile as sf
+                total_duration = float(sf.info(resolved_master).duration)
+            except Exception:
+                if getattr(job, "duration_ms", None):
+                    total_duration = float(job.duration_ms) / 1000.0
+
+            aspect_ratio = config.get("aspect_ratio", "16:9")
+            resolution = config.get("resolution", "720p")
+            if aspect_ratio == "9:16":
+                w, h = (1080, 1920) if resolution == "1080p" else (720, 1280)
+            elif aspect_ratio == "1:1":
+                w, h = (1080, 1080) if resolution == "1080p" else (720, 720)
+            elif aspect_ratio == "21:9":
+                w, h = (2560, 1080) if resolution == "1080p" else (1680, 720)
+            else:
+                w, h = (1920, 1080) if resolution == "1080p" else (1280, 720)
+
+            # Generate Subtitles
+            self.update_task(task_id, step="Aligning Word Timestamps & Formatting Typography", progress=20)
+            timed_lines = []
+            if job.timed_lyrics_json:
+                try:
+                    timed_lines = json.loads(job.timed_lyrics_json)
+                except Exception:
+                    timed_lines = []
+
+            if not timed_lines and job.lyrics:
+                stems_dict = json.loads(job.stems_json) if job.stems_json else {}
+                vocal_stem = stems_dict.get("vocals") or stems_dict.get("part_vocals") or resolved_master
+                timed_lines = lyric_sync_engine.align_lyrics(
+                    job.lyrics, duration_sec=total_duration, vocal_stem_path=vocal_stem
+                )
+
+            style_preset = config.get("style_preset", "neon")
+            burn_lyrics = config.get("burn_lyrics", True)
+            ass_path = None
+
+            if burn_lyrics and timed_lines:
+                try:
+                    ass_content = self.generate_karaoke_ass(
+                        timed_lines=timed_lines,
+                        width=w,
+                        height=h,
+                        style=config.get("visual_style", "neon-cyberpunk"),
+                        subtitle_style=style_preset,
+                        aspect_ratio=aspect_ratio,
+                        font_family=config.get("font_family"),
+                        font_size_override=config.get("font_size_override"),
+                    )
+                    ass_path = os.path.join(TEMP_DIR, f"lyric_{task_id}.ass")
+                    with open(ass_path, "w", encoding="utf-8") as f_ass:
+                        f_ass.write(ass_content)
+                except Exception as ex:
+                    logger.warning(f"Could not generate ASS subtitles for lyric video: {ex}")
+                    ass_path = None
+
+            if cancel_event.is_set():
+                raise asyncio.CancelledError("Lyric video rendering cancelled by user.")
+
+            self.update_task(task_id, step="Building Motion Background & Audio Reactive Visualizer", progress=40)
+
+            # Detect optimal ffmpeg executable and hardware acceleration encoder
+            ffmpeg_bin = find_ffmpeg_executable()
+            encoder, enc_flags = detect_hardware_encoder(ffmpeg_bin)
+            logger.info(f"Lyric Video: Using ffmpeg '{ffmpeg_bin}', video encoder '{encoder}' with flags {enc_flags}")
+
+            bg_mode = config.get("background_mode", "cover_art")
+            include_spectrum = config.get("include_spectrum", False)
+
+            cover_path = config.get("cover_image_path")
+            if not cover_path or not os.path.isfile(cover_path):
+                cover_path = self.resolve_face_image(job)
+            if not cover_path or not os.path.isfile(cover_path):
+                if job.cover_image_path:
+                    cover_candidate = resolve_image_file(job.cover_image_path)
+                    if cover_candidate and os.path.isfile(cover_candidate):
+                        cover_path = cover_candidate
+
+            out_filename = f"{job.id}_lyric.mp4"
+            out_path = os.path.join(VIDEO_DIR, out_filename)
+
+            # Always save a permanent sidecar ASS subtitle file alongside output video
+            if ass_path and os.path.isfile(ass_path):
+                try:
+                    sidecar_ass_path = os.path.join(VIDEO_DIR, f"{job.id}_lyric.ass")
+                    import shutil
+                    shutil.copyfile(ass_path, sidecar_ass_path)
+                except Exception as _e:
+                    logger.debug(f"Could not copy ASS sidecar: {_e}")
+
+            # Check if active ffmpeg binary supports burning in subtitles via libass
+            can_hardsub = has_subtitles_filter(ffmpeg_bin) and bool(ass_path and os.path.isfile(ass_path))
+            sub_filter = ""
+            if can_hardsub and ass_path:
+                escaped_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+                fonts_dir = get_fonts_dir()
+                fonts_opt = f":fontsdir='{fonts_dir.replace('\\', '/').replace(':', '\\:')}'" if fonts_dir else ""
+                sub_filter = f",subtitles='{escaped_ass}'{fonts_opt}"
+
+            def _build_ffmpeg_cmd(use_hardsub: bool, enc: str, e_flags: List[str]) -> List[str]:
+                current_sub_filter = sub_filter if (use_hardsub and can_hardsub) else ""
+                has_soft_sub = (not current_sub_filter) and bool(ass_path and os.path.isfile(ass_path))
+
+                if cover_path and os.path.isfile(cover_path) and bg_mode != "spectrum":
+                    filter_complex = (
+                        f"[0:v]scale={int(w * 1.25)}:{int(h * 1.25)},"
+                        f"zoompan=z='min(zoom+0.0006,1.20)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}:fps=30[bg]"
+                    )
+                    if include_spectrum:
+                        filter_complex += (
+                            f";[1:a]showwaves=s={w}x{int(h * 0.22)}:mode=line:colors=0x00f0ff|0x7000ff:scale=sqrt[waves]"
+                            f";[bg][waves]overlay=(W-w)/2:H-h-60[comp]{current_sub_filter}[v_out]"
+                        )
+                    else:
+                        filter_complex += f";[bg]null{current_sub_filter}[v_out]"
+
+                    c = [
+                        ffmpeg_bin, "-y",
+                        "-loop", "1", "-i", cover_path,
+                        "-i", resolved_master,
+                    ]
+                    if has_soft_sub:
+                        c.extend(["-i", ass_path])
+                    c.extend([
+                        "-filter_complex", filter_complex,
+                        "-map", "[v_out]", "-map", "1:a:0"
+                    ])
+                    if has_soft_sub:
+                        c.extend(["-map", "2:s:0", "-c:s", "mov_text"])
+                    c.extend([
+                        "-c:v", enc, *e_flags,
+                        "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-b:a", "256k",
+                        "-t", f"{total_duration:.3f}",
+                        "-shortest",
+                        out_path
+                    ])
+                    return c
+                else:
+                    palette = STYLE_PALETTES.get(config.get("visual_style", "neon-cyberpunk"), STYLE_PALETTES["neon-cyberpunk"])
+                    colors = palette.get("colors", "0x00f0ff|0x7000ff")
+                    filter_complex = (
+                        f"color=c=0x0b0f19:s={w}x{h}:d={total_duration:.3f}:r=30[bg];"
+                        f"[0:a]showwaves=s={w}x{int(h * 0.35)}:mode=line:colors={colors}:scale=sqrt[waves];"
+                        f"[bg][waves]overlay=(W-w)/2:(H-h)/2[comp]{current_sub_filter}[v_out]"
+                    )
+                    c = [
+                        ffmpeg_bin, "-y",
+                        "-i", resolved_master,
+                    ]
+                    if has_soft_sub:
+                        c.extend(["-i", ass_path])
+                    c.extend([
+                        "-filter_complex", filter_complex,
+                        "-map", "[v_out]", "-map", "0:a:0"
+                    ])
+                    if has_soft_sub:
+                        c.extend(["-map", "1:s:0", "-c:s", "mov_text"])
+                    c.extend([
+                        "-c:v", enc, *e_flags,
+                        "-pix_fmt", "yuv420p",
+                        "-c:a", "aac", "-b:a", "256k",
+                        "-t", f"{total_duration:.3f}",
+                        "-shortest",
+                        out_path
+                    ])
+                    return c
+
+            cmd = _build_ffmpeg_cmd(use_hardsub=can_hardsub, enc=encoder, e_flags=enc_flags)
+
+            self.update_task(task_id, step="Encoding Lyric Video with Hardware Acceleration", progress=60)
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+
+            # Polling loop for cancellation check
+            while proc.returncode is None:
+                if cancel_event.is_set():
+                    try:
+                        proc.terminate()
+                        await proc.wait()
+                    except Exception:
+                        pass
+                    raise asyncio.CancelledError("Lyric video rendering cancelled by user.")
+                try:
+                    await asyncio.wait_for(proc.wait(), timeout=0.5)
+                except asyncio.TimeoutError:
+                    pass
+
+            stdout_b, stderr_b = await proc.communicate()
+
+            # Fallback re-encode with libx264 (and soft subtitles if hardsub failed) if encode failed
+            if proc.returncode != 0 or not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
+                err_msg = stderr_b.decode("utf-8", errors="ignore")[:300]
+                logger.warning(f"Initial lyric video encode failed ({proc.returncode}): {err_msg}; retrying with fallback encoder...")
+                cmd_fb = _build_ffmpeg_cmd(use_hardsub=False, enc="libx264", e_flags=["-preset", "veryfast", "-crf", "20"])
+                proc_fb = await asyncio.create_subprocess_exec(
+                    *cmd_fb, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                while proc_fb.returncode is None:
+                    if cancel_event.is_set():
+                        try:
+                            proc_fb.terminate()
+                            await proc_fb.wait()
+                        except Exception:
+                            pass
+                        raise asyncio.CancelledError("Lyric video rendering cancelled by user.")
+                    try:
+                        await asyncio.wait_for(proc_fb.wait(), timeout=0.5)
+                    except asyncio.TimeoutError:
+                        pass
+                await proc_fb.communicate()
+
+            if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
+                raise RuntimeError(f"Failed to generate lyric music video output file: {out_path}")
+
+            video_url = f"/audio/videos/{out_filename}"
+            self.update_task(
+                task_id,
+                status="completed",
+                progress=100,
+                step="Lyric Video Render Complete",
+                video_url=video_url
+            )
+            return video_url
+
+        except asyncio.CancelledError:
+            logger.info(f"render_lyric_music_video: Task {task_id} successfully cancelled.")
+            self.update_task(task_id, status="cancelled", step="Lyric video rendering cancelled by user.", progress=0)
+            return ""
+        except Exception as e:
+            if cancel_event.is_set():
+                logger.info(f"render_lyric_music_video: Task {task_id} aborted cleanly due to cancellation.")
+                self.update_task(task_id, status="cancelled", step="Lyric video rendering cancelled by user.", progress=0)
+                return ""
+            logger.error(f"render_lyric_music_video: Failed for task {task_id}: {e}", exc_info=True)
+            self.update_task(task_id, status="failed", error=str(e), progress=0)
+            raise e
+        finally:
+            with self._lock:
+                self._video_cancels.pop(task_id, None)
+
 
 video_orchestrator = VideoOrchestrator()
+

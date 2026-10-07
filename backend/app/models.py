@@ -257,6 +257,18 @@ class VideoRenderRequest(SQLModel):
     clips: Optional[List[Dict[str, Any]]] = None
 
 
+class LyricVideoRequest(SQLModel):
+    style_preset: Optional[str] = "neon"
+    aspect_ratio: Optional[str] = "16:9"
+    resolution: Optional[str] = "720p"
+    background_mode: Optional[str] = "cover_art"
+    font_family: Optional[str] = None
+    font_size_override: Optional[int] = None
+    include_spectrum: Optional[bool] = False
+    burn_lyrics: Optional[bool] = True
+    cover_image_path: Optional[str] = None
+
+
 class DirectorTreatmentRequest(SQLModel):
     model_name: Optional[str] = "wan_14b"
     max_clip_duration: Optional[float] = None

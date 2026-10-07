@@ -10,9 +10,13 @@ import {
     Layers,
     Video,
     X,
-    Square
+    Square,
+    Mic,
+    Play
 } from 'lucide-react';
 import { api, galleryApi, type Job, type VideoTaskStatus } from '../../api';
+import { useAudioTime } from '../../context/AudioEngineContext';
+import { LyricCanvasOverlay } from './LyricCanvasOverlay';
 import type { AspectRatioType } from './VideoTopBar';
 
 interface VideoCanvasPlayerProps {
@@ -32,6 +36,15 @@ interface VideoCanvasPlayerProps {
     isPlanning?: boolean;
     seekTime?: number | null;
     onDismissTask?: () => void;
+    // Fast-Path Lyric Studio & WYSIWYG
+    isPlayingAudio?: boolean;
+    stylePreset?: string;
+    backgroundMode?: string;
+    fontFamily?: string;
+    fontSizeOverride?: number;
+    onSeek?: (timeSec: number) => void;
+    onRenderLyricVideo?: () => void;
+    isRenderingLyricVideo?: boolean;
 }
 
 const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
@@ -51,19 +64,46 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
     isPlanning = false,
     seekTime,
     onDismissTask,
+    isPlayingAudio = false,
+    stylePreset = 'neon',
+    backgroundMode = 'cover_art',
+    fontFamily,
+    fontSizeOverride,
+    onSeek,
+    onRenderLyricVideo,
+    isRenderingLyricVideo = false,
 }) => {
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
+
+    // Audio Engine synchronization for 60fps lyric sweeps
+    const { currentTime: audioCurrentTime } = useAudioTime();
+    const [videoCurrentTime, setVideoCurrentTime] = useState(0);
+    const [showLyricOverlay, setShowLyricOverlay] = useState(true);
+
+    const effectiveTime = renderedVideoUrl ? videoCurrentTime : audioCurrentTime;
 
     // split comparison state
     const [splitCompareActive, setSplitCompareActive] = useState(false);
     const [splitRatio, setSplitRatio] = useState(0.5); // 0 to 1
     const [isDraggingSplit, setIsDraggingSplit] = useState(false);
     const [videoError, setVideoError] = useState(false);
+    const [isVideoPlaying, setIsVideoPlaying] = useState(false);
 
     useEffect(() => {
         setVideoError(false);
     }, [renderedVideoUrl]);
+
+    const toggleVideoPlayback = () => {
+        if (!videoRef.current) return;
+        if (videoRef.current.paused) {
+            videoRef.current.play().catch((err) => {
+                console.warn('Video playback request error:', err);
+            });
+        } else {
+            videoRef.current.pause();
+        }
+    };
 
     // Sync playhead when seeking from timeline with settle guard
     useEffect(() => {
@@ -74,6 +114,17 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
             }
         }
     }, [seekTime]);
+
+    // Sync video with external isPlayingAudio transport if user toggles DAW play button
+    useEffect(() => {
+        if (videoRef.current && renderedVideoUrl) {
+            if (isPlayingAudio && videoRef.current.paused) {
+                videoRef.current.play().catch(() => {});
+            } else if (!isPlayingAudio && !videoRef.current.paused) {
+                videoRef.current.pause();
+            }
+        }
+    }, [isPlayingAudio, renderedVideoUrl]);
 
     // Aspect ratio classes
     const aspectClass =
@@ -129,10 +180,58 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                             poster={galleryApi.getThumbnailUrl(renderedVideoUrl.split('/').pop() || renderedVideoUrl)}
                             controls
                             playsInline
-                            onError={() => setVideoError(true)}
+                            preload="auto"
+                            onTimeUpdate={(e) => setVideoCurrentTime(e.currentTarget.currentTime)}
+                            onPlay={() => setIsVideoPlaying(true)}
+                            onPause={() => setIsVideoPlaying(false)}
+                            onError={() => {
+                                if (videoRef.current?.error) {
+                                    setVideoError(true);
+                                }
+                            }}
                             onLoadedData={() => setVideoError(false)}
-                            className="w-full h-full object-cover rounded-xl"
+                            onClick={toggleVideoPlayback}
+                            className="w-full h-full object-cover rounded-xl cursor-pointer"
                         />
+
+                        {/* Center Play Button HUD when Paused */}
+                        {!isVideoPlaying && !videoError && (
+                            <div
+                                onClick={toggleVideoPlayback}
+                                className="absolute inset-0 flex items-center justify-center bg-black/25 hover:bg-black/35 backdrop-blur-[1px] transition-all cursor-pointer z-10"
+                            >
+                                <button
+                                    type="button"
+                                    className="w-16 h-16 sm:w-20 sm:h-20 rounded-full bg-teal-500/95 hover:bg-teal-400 text-slate-950 flex items-center justify-center shadow-apple-2xl transform hover:scale-110 active:scale-95 transition-all duration-200 pl-1"
+                                    title="Play Video"
+                                >
+                                    <Play size={36} className="fill-current text-slate-950" />
+                                </button>
+                            </div>
+                        )}
+
+                        {/* Live Subtitle Overlay Preview over rendered video */}
+                        {showLyricOverlay && activeSong && (
+                            <div className="absolute inset-0 pointer-events-none">
+                                <LyricCanvasOverlay
+                                    activeSong={activeSong}
+                                    currentTime={videoCurrentTime}
+                                    isPlaying={Boolean(videoRef.current && !videoRef.current.paused)}
+                                    stylePreset={stylePreset}
+                                    aspectRatio={aspectRatio}
+                                    backgroundMode={backgroundMode}
+                                    fontFamily={fontFamily}
+                                    fontSizeOverride={fontSizeOverride}
+                                    isOverVideo={true}
+                                    onSeek={(t) => {
+                                        if (videoRef.current) {
+                                            videoRef.current.currentTime = t;
+                                        }
+                                        onSeek?.(t);
+                                    }}
+                                />
+                            </div>
+                        )}
 
                         {/* Playback Error Fallback Overlay */}
                         {videoError && (
@@ -176,6 +275,18 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                             </div>
 
                             <div className="flex items-center gap-2 pointer-events-auto">
+                                <button
+                                    type="button"
+                                    onClick={() => setShowLyricOverlay(!showLyricOverlay)}
+                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold backdrop-blur-md border transition-all ${
+                                        showLyricOverlay
+                                            ? 'bg-teal-500/80 text-slate-950 border-teal-400 font-extrabold shadow-sm'
+                                            : 'bg-black/60 text-slate-300 border-white/20 hover:text-white'
+                                    }`}
+                                    title="Toggle Live Synchronized Subtitles Overlay"
+                                >
+                                    {showLyricOverlay ? '🎤 Subtitles: ON' : '🎤 Subtitles: OFF'}
+                                </button>
                                 <button
                                     type="button"
                                     onClick={() => setSplitCompareActive(!splitCompareActive)}
@@ -261,67 +372,123 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                             </button>
                         </div>
                     </>
+                ) : activeSong ? (
+                    /* WYSIWYG Live Lyric Canvas Player & Pre-Render Mode */
+                    <div className="relative w-full h-full flex flex-col items-center justify-center">
+                        <LyricCanvasOverlay
+                            activeSong={activeSong}
+                            currentTime={effectiveTime}
+                            isPlaying={isPlayingAudio}
+                            stylePreset={stylePreset}
+                            aspectRatio={aspectRatio}
+                            backgroundMode={backgroundMode}
+                            fontFamily={fontFamily}
+                            fontSizeOverride={fontSizeOverride}
+                            isOverVideo={false}
+                            onSeek={onSeek}
+                        />
+
+                        {/* Live Rendering Modal Card Overlay */}
+                        {isRendering && (
+                            <div className="absolute inset-0 bg-slate-950/80 backdrop-blur-md flex flex-col items-center justify-center p-6 text-center z-30">
+                                <div className="w-16 h-16 rounded-2xl bg-teal-500/10 border border-teal-500/20 text-teal-400 flex items-center justify-center shadow-lg relative mb-4 animate-bounce">
+                                    <Film size={32} />
+                                </div>
+                                <h3 className="text-lg font-extrabold text-white tracking-tight">
+                                    Rendering Video…
+                                </h3>
+                                <p className="text-xs text-slate-300 mt-1 max-w-sm">
+                                    {activeTask?.step || 'Composing frames and synthesizing visuals…'}
+                                </p>
+                                {onCancelRender && (
+                                    <div className="pt-4">
+                                        <button
+                                            type="button"
+                                            onClick={onCancelRender}
+                                            className="px-4 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs font-bold rounded-xl flex items-center space-x-1.5 shadow-sm transition-all"
+                                        >
+                                            <Square size={12} className="fill-current" />
+                                            <span>Stop Video Generation</span>
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+
+                        {/* Top Floating Telemetry Overlay */}
+                        <div className="absolute top-3 left-3 flex items-center gap-2 z-20 pointer-events-none">
+                            <div className="flex items-center gap-1.5 bg-black/70 backdrop-blur-md px-2.5 py-1 rounded-lg border border-white/10 text-[10px] font-mono font-bold text-teal-300">
+                                <span>🎵 {activeSong.title || 'Track Preview'}</span>
+                                <span className="text-white/40">·</span>
+                                <span className="text-white/80">{aspectRatio}</span>
+                                <span className="text-white/40">·</span>
+                                <span className="text-cyan-400">WYSIWYG Lyric Canvas</span>
+                            </div>
+                        </div>
+
+                        {/* Floating Quick Action Bar */}
+                        {!isRendering && (
+                            <div className="absolute bottom-4 left-4 right-4 flex items-center justify-between z-20 pointer-events-auto">
+                                <div className="flex items-center gap-2">
+                                    {onRenderLyricVideo && (
+                                        <button
+                                            type="button"
+                                            onClick={onRenderLyricVideo}
+                                            disabled={isRendering || isRenderingLyricVideo}
+                                            className="px-4 py-2 bg-gradient-to-r from-teal-400 to-cyan-400 hover:from-teal-300 hover:to-cyan-300 text-slate-950 font-bold text-xs rounded-xl flex items-center gap-1.5 shadow-lg shadow-teal-500/20 active:scale-95 transition-all disabled:opacity-50"
+                                            title="Render fast local lyric video in under 30 seconds"
+                                        >
+                                            {isRenderingLyricVideo ? <Loader2 size={13} className="animate-spin" /> : <Mic size={13} />}
+                                            <span>Create Lyric Video 🎤</span>
+                                        </button>
+                                    )}
+                                </div>
+
+                                <div className="flex items-center gap-2">
+                                    {onPlanScenes && (
+                                        <button
+                                            type="button"
+                                            onClick={onPlanScenes}
+                                            disabled={isPlanning}
+                                            className="px-3.5 py-2 bg-black/60 hover:bg-black/80 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 backdrop-blur-md border border-white/15 transition-all disabled:opacity-50"
+                                        >
+                                            {isPlanning ? <Loader2 size={13} className="animate-spin text-teal-400" /> : <Layers size={13} />}
+                                            <span>Plan Scenes</span>
+                                        </button>
+                                    )}
+                                    {onRenderVideo && (
+                                        <button
+                                            type="button"
+                                            onClick={onRenderVideo}
+                                            disabled={isRendering}
+                                            className="px-3.5 py-2 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded-xl flex items-center gap-1.5 backdrop-blur-md border border-white/15 transition-all disabled:opacity-50"
+                                        >
+                                            <Video size={13} />
+                                            <span>Render Full Video</span>
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        )}
+                    </div>
                 ) : (
-                    /* Empty Slate / Ready to Render View */
+                    /* Empty Slate / No Track Selected View */
                     <div className="p-8 flex flex-col items-center justify-center max-w-md space-y-4">
                         <div className="relative">
                             <div className="absolute inset-0 bg-teal-500/20 rounded-full blur-xl animate-pulse" />
                             <div className="w-16 h-16 rounded-2xl bg-teal-500/10 border border-teal-500/20 text-teal-400 flex items-center justify-center shadow-lg relative">
-                                <Film size={32} className={isRendering ? 'animate-bounce' : ''} />
+                                <Film size={32} />
                             </div>
                         </div>
 
                         <div>
                             <h3 className="text-lg font-extrabold text-white tracking-tight">
-                                {isRendering ? 'Generating Music Video…' : (activeSong?.title || 'AI Music Video Studio')}
+                                AI Music Video Studio
                             </h3>
                             <p className="text-xs text-slate-400 mt-1 line-clamp-2">
-                                {isRendering
-                                    ? `Executing multi-scene generation and stem alignment (Stage: ${activeTask?.step || 'diffusion'})…`
-                                    : activeSong
-                                    ? `Directing: "${activeSong.prompt}"`
-                                    : 'Select a track to start multi-scene video production.'}
+                                Select a completed track from the top bar to preview live lyrics and create a music video.
                             </p>
                         </div>
-
-                        {isRendering && onCancelRender && (
-                            <div className="pt-2">
-                                <button
-                                    type="button"
-                                    onClick={onCancelRender}
-                                    className="px-4 py-2 bg-rose-500/20 hover:bg-rose-500/30 text-rose-300 border border-rose-500/40 text-xs font-bold rounded-xl flex items-center space-x-1.5 shadow-sm transition-all"
-                                >
-                                    <Square size={12} className="fill-current" />
-                                    <span>Stop Video Generation</span>
-                                </button>
-                            </div>
-                        )}
-
-                        {!isRendering && activeSong && (
-                            <div className="flex items-center gap-2 pt-2">
-                                {onPlanScenes && (
-                                    <button
-                                        type="button"
-                                        onClick={onPlanScenes}
-                                        disabled={isPlanning}
-                                        className="px-4 py-2 bg-white/10 hover:bg-white/20 text-white font-bold text-xs rounded-xl flex items-center space-x-1.5 backdrop-blur-md transition-all disabled:opacity-50"
-                                    >
-                                        {isPlanning ? <Loader2 size={13} className="animate-spin" /> : <Layers size={13} />}
-                                        <span>Plan Scene Breakdown</span>
-                                    </button>
-                                )}
-                                {onRenderVideo && (
-                                    <button
-                                        type="button"
-                                        onClick={onRenderVideo}
-                                        className="px-4 py-2 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-teal-500/20 transition-all active:scale-95"
-                                    >
-                                        <Video size={13} />
-                                        <span>Render Production Video</span>
-                                    </button>
-                                )}
-                            </div>
-                        )}
                     </div>
                 )}
             </div>

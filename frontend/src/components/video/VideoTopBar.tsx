@@ -38,6 +38,8 @@ interface VideoTopBarProps {
     isRendering: boolean;
     onRenderVideo: () => void;
     onCancelRender?: () => void;
+    onRenderLyricVideo?: () => void;
+    isRenderingLyricVideo?: boolean;
     renderedVideoUrl: string | null;
     onDownloadVideo?: () => void;
 }
@@ -63,6 +65,8 @@ const VideoTopBarComponent: React.FC<VideoTopBarProps> = ({
     isRendering,
     onRenderVideo,
     onCancelRender,
+    onRenderLyricVideo,
+    isRenderingLyricVideo = false,
     renderedVideoUrl,
     onDownloadVideo,
 }) => {
@@ -235,6 +239,20 @@ const VideoTopBarComponent: React.FC<VideoTopBarProps> = ({
                         >
                             {isGeneratingKeyframes ? <Loader2 size={13} className="animate-spin" /> : <Sparkles size={13} />}
                             <span>{isGeneratingKeyframes ? 'Keyframes…' : (hasKeyframes ? 'Regenerate Stills' : 'Pre-Render Stills')}</span>
+                        </button>
+                    )}
+
+                    {/* Lyric Video Fast-Path Button */}
+                    {onRenderLyricVideo && (
+                        <button
+                            type="button"
+                            onClick={onRenderLyricVideo}
+                            disabled={isRenderingLyricVideo || isRendering || !activeSong}
+                            className="px-3.5 py-1.5 bg-gradient-to-r from-cyan-600/90 to-indigo-600/90 hover:from-cyan-500 hover:to-indigo-500 text-white font-bold text-xs rounded-xl flex items-center space-x-1.5 shadow-md shadow-cyan-500/20 active:scale-95 transition-all disabled:opacity-50"
+                            title="Instant local lyric music video with hardware VideoToolbox acceleration & synced typography (< 45s)"
+                        >
+                            {isRenderingLyricVideo ? <Loader2 size={13} className="animate-spin text-cyan-200" /> : <Type size={13} />}
+                            <span>{isRenderingLyricVideo ? 'Encoding Lyrics…' : 'Lyric Video 🎤'}</span>
                         </button>
                     )}
 

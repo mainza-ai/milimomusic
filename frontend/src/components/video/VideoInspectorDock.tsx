@@ -8,7 +8,11 @@ import {
     Film,
     Wand2,
     Check,
-    Clapperboard
+    Clapperboard,
+    Loader2,
+    Zap,
+    Music,
+    Layers
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import type { VideoModelKey } from '../views/MusicVideosView';
@@ -56,10 +60,24 @@ export interface VideoInspectorProps {
     onChangeLipSyncEngine: (e: 'live_portrait' | 'fallback') => void;
     burnSubtitles: boolean;
     onChangeBurnSubtitles: (val: boolean) => void;
-    subtitleStyle: 'neon' | 'cinematic' | 'karaoke';
-    onChangeSubtitleStyle: (style: 'neon' | 'cinematic' | 'karaoke') => void;
+    subtitleStyle: string;
+    onChangeSubtitleStyle: (style: string) => void;
     transitionStyle: 'beat_cut' | 'crossfade' | 'flash' | 'whip_pan' | 'glitch';
     onChangeTransitionStyle: (trans: 'beat_cut' | 'crossfade' | 'flash' | 'whip_pan' | 'glitch') => void;
+
+    // Fast-Path Lyric Studio & Typography
+    backgroundMode?: string;
+    onChangeBackgroundMode?: (mode: string) => void;
+    includeSpectrum?: boolean;
+    onChangeIncludeSpectrum?: (val: boolean) => void;
+    fontFamily?: string;
+    onChangeFontFamily?: (font: string) => void;
+    fontSizeOverride?: number;
+    onChangeFontSizeOverride?: (size: number | undefined) => void;
+    onRealignLyrics?: () => void;
+    isRealigningLyrics?: boolean;
+    onRenderLyricVideo?: () => void;
+    isRenderingLyricVideo?: boolean;
 
     // Cast & Character Seeds
     visibleCast: string[];
@@ -147,8 +165,20 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
     onToggleCastMember,
     characterPromptNote = '',
     onChangeCharacterPromptNote,
+    backgroundMode = 'cover_art',
+    onChangeBackgroundMode,
+    includeSpectrum = false,
+    onChangeIncludeSpectrum,
+    fontFamily = '',
+    onChangeFontFamily,
+    fontSizeOverride,
+    onChangeFontSizeOverride,
+    onRealignLyrics,
+    isRealigningLyrics = false,
+    onRenderLyricVideo,
+    isRenderingLyricVideo = false,
 }) => {
-    const [activeTab, setActiveTab] = useState<'directing' | 'engine' | 'lipsync' | 'cast'>('directing');
+    const [activeTab, setActiveTab] = useState<'directing' | 'engine' | 'lyrics' | 'cast'>('directing');
     const [paletteFilter, setPaletteFilter] = useState<'all' | 'cinematic' | 'retro' | 'urban_pop' | 'acoustic_moody' | 'custom'>('all');
 
     const pacingLabels = {
@@ -197,16 +227,16 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
 
                 <button
                     type="button"
-                    onClick={() => setActiveTab('lipsync')}
+                    onClick={() => setActiveTab('lyrics')}
                     className={`flex-1 min-w-0 py-1.5 px-2 rounded-lg text-[11px] sm:text-xs font-bold transition-colors duration-150 flex items-center justify-center gap-1 ${
-                        activeTab === 'lipsync'
+                        activeTab === 'lyrics'
                             ? 'bg-white dark:bg-white/15 text-cyan-600 dark:text-cyan-400 shadow-sm'
                             : 'text-slate-500 hover:text-slate-800 dark:hover:text-slate-300'
                     }`}
-                    title="Lip-Sync & Subtitles"
+                    title="Lyrics, Typography & Video FX"
                 >
-                    <Mic size={12} className="flex-shrink-0" />
-                    <span className="truncate">Sync & FX</span>
+                    <Type size={12} className="flex-shrink-0" />
+                    <span className="truncate">Lyrics & FX</span>
                 </button>
 
                 <button
@@ -602,9 +632,220 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                 </div>
             )}
 
-            {/* Tab 3: Lip-Syncing, Subtitles & FX */}
-            {activeTab === 'lipsync' && (
-                <div className="space-y-4 overflow-y-auto pr-1">
+            {/* Tab 3: Lyric Studio, Typography & Video FX */}
+            {activeTab === 'lyrics' && (
+                <div className="space-y-4 overflow-y-auto pr-1 max-h-[600px] scrollbar-thin">
+                    {/* 1-Click Fast Render Lyric Video Card */}
+                    <div className="p-3.5 bg-gradient-to-br from-cyan-500/10 via-indigo-500/10 to-purple-500/10 border border-cyan-500/30 rounded-2xl space-y-2.5">
+                        <div className="flex items-center justify-between">
+                            <span className="text-[11px] font-bold uppercase tracking-wider text-cyan-500 dark:text-cyan-400 flex items-center gap-1.5">
+                                <Zap size={13} className="text-cyan-400" />
+                                <span>Fast-Path Video Engine</span>
+                            </span>
+                            <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-600 dark:text-cyan-300 font-bold border border-cyan-500/30">
+                                &lt; 45s Render
+                            </span>
+                        </div>
+                        <p className="text-[11px] text-slate-600 dark:text-slate-300 leading-relaxed">
+                            Render a studio-grade lyric music video locally using Apple VideoToolbox / libx264, Ken Burns camera drift, and centisecond synced karaoke typography.
+                        </p>
+                        <button
+                            type="button"
+                            onClick={onRenderLyricVideo}
+                            disabled={isRenderingLyricVideo}
+                            className={`w-full py-2.5 px-3 rounded-xl font-bold text-xs flex items-center justify-center gap-2 transition-all shadow-md ${
+                                isRenderingLyricVideo
+                                    ? 'bg-slate-700/50 text-slate-400 cursor-not-allowed'
+                                    : 'bg-gradient-to-r from-cyan-600 to-indigo-600 hover:from-cyan-500 hover:to-indigo-500 text-white shadow-cyan-500/20 active:scale-[0.98]'
+                            }`}
+                        >
+                            {isRenderingLyricVideo ? (
+                                <>
+                                    <Loader2 size={14} className="animate-spin text-cyan-300" />
+                                    <span>Encoding Hardware Stream...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Zap size={14} className="text-cyan-200" />
+                                    <span>Render Lyric Video 🎤</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
+
+                    {/* Typography & Subtitle Preset Selector */}
+                    <div className="p-3.5 bg-black/[0.02] dark:bg-white/5 border border-black/[0.06] dark:border-white/10 rounded-2xl space-y-3">
+                        <div className="flex items-center justify-between">
+                            <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                                <Type size={14} className="text-cyan-500" />
+                                <span>Karaoke Typography Preset</span>
+                            </label>
+                            <label className="flex items-center gap-1.5 cursor-pointer text-[11px] text-slate-500 hover:text-slate-700 dark:hover:text-slate-300">
+                                <span>Burn Subtitles</span>
+                                <input
+                                    type="checkbox"
+                                    checked={burnSubtitles}
+                                    onChange={(e) => onChangeBurnSubtitles(e.target.checked)}
+                                    className="w-3.5 h-3.5 rounded border-slate-700 text-cyan-500 cursor-pointer accent-cyan-500"
+                                />
+                            </label>
+                        </div>
+
+                        <div className="grid grid-cols-2 gap-2">
+                            {[
+                                { id: 'neon', name: 'Cyberpunk Neon', desc: 'Glowing cyan & magenta', badge: 'GLOW' },
+                                { id: 'spotify', name: 'Spotify Canvas', desc: 'Minimal white pill', badge: 'CANVAS' },
+                                { id: 'kinetic_pop', name: 'Kinetic Pop', desc: 'Bouncy pop typography', badge: 'POP' },
+                                { id: 'cinematic', name: 'Cinematic Wide', desc: 'Serif & letterbox bar', badge: 'CINEMA' },
+                                { id: 'social_vertical', name: 'Social Vertical', desc: 'Reels / TikTok stacked', badge: 'MOBILE' },
+                                { id: 'retro_vhs', name: 'Retro VHS', desc: 'CRT phosphor scanlines', badge: 'RETRO' },
+                            ].map((preset) => (
+                                <button
+                                    key={preset.id}
+                                    type="button"
+                                    onClick={() => onChangeSubtitleStyle(preset.id)}
+                                    className={`p-2.5 rounded-xl text-left border transition-all ${
+                                        subtitleStyle === preset.id
+                                            ? 'bg-cyan-500/15 border-cyan-500/50 text-cyan-700 dark:text-cyan-300 font-bold shadow-sm'
+                                            : 'border-black/[0.06] dark:border-white/5 bg-black/[0.02] dark:bg-white/[0.02] text-slate-600 dark:text-slate-400 hover:border-black/20 dark:hover:border-white/20'
+                                    }`}
+                                >
+                                    <div className="flex items-center justify-between mb-0.5">
+                                        <span className="text-xs font-bold leading-tight">{preset.name}</span>
+                                        <span className="text-[8px] font-mono font-bold px-1 py-0.2 rounded bg-black/10 dark:bg-white/10 text-slate-400">
+                                            {preset.badge}
+                                        </span>
+                                    </div>
+                                    <div className="text-[10px] text-slate-400 leading-tight truncate">{preset.desc}</div>
+                                </button>
+                            ))}
+                        </div>
+
+                        {/* Font Family & Size Override */}
+                        <div className="pt-2 border-t border-black/[0.04] dark:border-white/5 space-y-2">
+                            <div className="flex items-center justify-between text-xs">
+                                <span className="text-slate-500 font-medium">Font Family</span>
+                                <select
+                                    value={fontFamily || ''}
+                                    onChange={(e) => onChangeFontFamily?.(e.target.value)}
+                                    className="text-xs apple-input rounded-lg px-2 py-1 max-w-[160px] bg-white dark:bg-black/30 border border-black/10 dark:border-white/10"
+                                >
+                                    <option value="">Preset Default</option>
+                                    <option value="Inter, sans-serif">Inter (Modern Sans)</option>
+                                    <option value="Montserrat, sans-serif">Montserrat (Bold Pop)</option>
+                                    <option value="Playfair Display, serif">Playfair (Serif)</option>
+                                    <option value="Cinzel, serif">Cinzel (Cinematic)</option>
+                                    <option value="Courier New, monospace">Courier (Retro VHS)</option>
+                                </select>
+                            </div>
+
+                            <div className="flex items-center justify-between text-xs">
+                                <span className="text-slate-500 font-medium">Font Size Override</span>
+                                <div className="flex items-center gap-2">
+                                    <input
+                                        type="range"
+                                        min={24}
+                                        max={64}
+                                        value={fontSizeOverride || 38}
+                                        onChange={(e) => onChangeFontSizeOverride?.(Number(e.target.value))}
+                                        className="w-24 accent-cyan-500 cursor-pointer"
+                                    />
+                                    <span className="text-[11px] font-mono w-10 text-right text-slate-600 dark:text-slate-300">
+                                        {fontSizeOverride ? `${fontSizeOverride}px` : 'Auto'}
+                                    </span>
+                                    {fontSizeOverride && (
+                                        <button
+                                            type="button"
+                                            onClick={() => onChangeFontSizeOverride?.(undefined)}
+                                            className="text-[10px] text-cyan-500 hover:underline"
+                                            title="Reset font size to preset default"
+                                        >
+                                            Reset
+                                        </button>
+                                    )}
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    {/* Visual Background Engine & Audio Spectrum */}
+                    <div className="p-3.5 bg-black/[0.02] dark:bg-white/5 border border-black/[0.06] dark:border-white/10 rounded-2xl space-y-3">
+                        <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                            <Layers size={14} className="text-indigo-400" />
+                            <span>Visual Background Mode</span>
+                        </label>
+                        <div className="grid grid-cols-3 gap-1.5">
+                            {[
+                                { id: 'cover_art', label: 'Cover Drift', desc: 'Ken Burns 4K Pan' },
+                                { id: 'spectrum', label: 'Audio Spectrum', desc: 'Reactive Visualizer' },
+                                { id: 'procedural', label: 'Mood Platter', desc: 'Dynamic Animatics' },
+                            ].map((mode) => (
+                                <button
+                                    key={mode.id}
+                                    type="button"
+                                    onClick={() => onChangeBackgroundMode?.(mode.id)}
+                                    className={`p-2 rounded-xl text-center border transition-all ${
+                                        backgroundMode === mode.id
+                                            ? 'bg-indigo-500/15 border-indigo-500/40 text-indigo-600 dark:text-indigo-300 font-bold'
+                                            : 'border-transparent bg-black/[0.02] dark:bg-white/[0.02] text-slate-400 hover:text-slate-200'
+                                    }`}
+                                >
+                                    <div className="text-[11px] font-bold">{mode.label}</div>
+                                    <div className="text-[8px] text-slate-400 truncate">{mode.desc}</div>
+                                </button>
+                            ))}
+                        </div>
+
+                        <div className="flex items-center justify-between pt-1 border-t border-black/[0.04] dark:border-white/5">
+                            <label className="text-[11px] font-medium text-slate-600 dark:text-slate-300 flex items-center gap-1.5">
+                                <Music size={12} className="text-indigo-400" />
+                                <span>Include Audio Frequency Spectrum</span>
+                            </label>
+                            <input
+                                type="checkbox"
+                                checked={includeSpectrum}
+                                onChange={(e) => onChangeIncludeSpectrum?.(e.target.checked)}
+                                className="w-4 h-4 rounded border-slate-700 text-indigo-500 cursor-pointer accent-indigo-500"
+                            />
+                        </div>
+                    </div>
+
+                    {/* Acoustic Lyrics Forced Alignment (MMS_FA) */}
+                    <div className="p-3.5 bg-black/[0.02] dark:bg-white/5 border border-black/[0.06] dark:border-white/10 rounded-2xl space-y-2">
+                        <div className="flex items-center justify-between">
+                            <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
+                                <Sparkles size={14} className="text-amber-400" />
+                                <span>Acoustic Word Alignment</span>
+                            </label>
+                            <span className="text-[9px] font-mono text-slate-400">TorchAudio MMS_FA</span>
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                            Resynchronize word-level timestamps to vocal audio stems using local wav2vec2 forced alignment.
+                        </p>
+                        <button
+                            type="button"
+                            onClick={onRealignLyrics}
+                            disabled={isRealigningLyrics}
+                            className={`w-full py-2 px-3 rounded-xl text-xs font-semibold border flex items-center justify-center gap-2 transition-all ${
+                                isRealigningLyrics
+                                    ? 'bg-amber-500/10 border-amber-500/30 text-amber-400 cursor-not-allowed'
+                                    : 'border-amber-500/30 bg-amber-500/5 hover:bg-amber-500/15 text-amber-500 dark:text-amber-300'
+                            }`}
+                        >
+                            {isRealigningLyrics ? (
+                                <>
+                                    <Loader2 size={13} className="animate-spin text-amber-400" />
+                                    <span>Aligning Word Phonemes...</span>
+                                </>
+                            ) : (
+                                <>
+                                    <Sparkles size={13} className="text-amber-400" />
+                                    <span>Acoustically Sync Lyrics ⚡</span>
+                                </>
+                            )}
+                        </button>
+                    </div>
+
                     {/* Vocal Lip-Syncing Card */}
                     <div className="p-3.5 bg-black/[0.02] dark:bg-white/5 border border-black/[0.06] dark:border-white/10 rounded-2xl space-y-3">
                         <div className="flex items-center justify-between">
@@ -648,41 +889,6 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                                         <div className="text-[9px] text-slate-400">Fast volume-reactive mouth motion</div>
                                     </button>
                                 </div>
-                            </div>
-                        )}
-                    </div>
-
-                    {/* Subtitle / Lyric Burning Card */}
-                    <div className="p-3.5 bg-black/[0.02] dark:bg-white/5 border border-black/[0.06] dark:border-white/10 rounded-2xl space-y-3">
-                        <div className="flex items-center justify-between">
-                            <label className="text-xs font-bold text-slate-800 dark:text-slate-200 flex items-center gap-1.5">
-                                <Type size={14} className="text-cyan-500" />
-                                <span>Burn Subtitles / Lyrics</span>
-                            </label>
-                            <input
-                                type="checkbox"
-                                checked={burnSubtitles}
-                                onChange={(e) => onChangeBurnSubtitles(e.target.checked)}
-                                className="w-4 h-4 rounded border-slate-700 text-cyan-500 cursor-pointer accent-cyan-500"
-                            />
-                        </div>
-
-                        {burnSubtitles && (
-                            <div className="flex gap-2 pt-1 border-t border-black/[0.04] dark:border-white/5">
-                                {(['neon', 'cinematic', 'karaoke'] as const).map((style) => (
-                                    <button
-                                        key={style}
-                                        type="button"
-                                        onClick={() => onChangeSubtitleStyle(style)}
-                                        className={`flex-1 py-1.5 text-xs rounded-xl border capitalize font-semibold transition-all ${
-                                            subtitleStyle === style
-                                                ? 'bg-cyan-500/15 border-cyan-500/40 text-cyan-600 dark:text-cyan-400 font-bold'
-                                                : 'border-transparent bg-black/[0.02] dark:bg-white/5 text-slate-400'
-                                        }`}
-                                    >
-                                        {style}
-                                    </button>
-                                ))}
                             </div>
                         )}
                     </div>

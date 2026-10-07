@@ -597,55 +597,27 @@ class VideoService:
         timed_lines: List[Dict[str, Any]],
         width: int = 1280,
         height: int = 720,
-        style: str = "neon-cyberpunk"
+        style: str = "neon-cyberpunk",
+        subtitle_style: str = "neon",
+        aspect_ratio: str = "16:9",
+        font_family: Optional[str] = None,
+        font_size_override: Optional[int] = None,
     ) -> str:
         """
         Generate an Advanced SubStation Alpha (.ass) subtitle file
         with karaoke highlight tags and studio typography.
         """
-        palette = STYLE_PALETTES.get(style, STYLE_PALETTES["neon-cyberpunk"])
-        r, g, b = palette["primary_color"]
-        # In ASS color format &HAABBGGRR
-        primary_ass = f"&H00{b:02X}{g:02X}{r:02X}"
-        ar, ag, ab = palette["accent_color"]
-        accent_ass = f"&H00{ab:02X}{ag:02X}{ar:02X}"
-
-        font_size = int(height * 0.045)
-        margin_v = int(height * 0.08)
-
-        ass_lines = [
-            "[Script Info]",
-            "Title: Milimo Music Synchronized Video",
-            "ScriptType: v4.00+",
-            f"PlayResX: {width}",
-            f"PlayResY: {height}",
-            "ScaledBorderAndShadow: yes",
-            "",
-            "[V4+ Styles]",
-            "Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding",
-            f"Style: Default,Arial,{font_size},{primary_ass},{accent_ass},&H00090A10,&H80000000,1,0,0,0,100,100,0,0,1,2.5,1.5,2,40,40,{margin_v},1",
-            "",
-            "[Events]",
-            "Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text"
-        ]
-
-        def fmt_ass_time(sec: float) -> str:
-            m = int(sec // 60)
-            s = int(sec % 60)
-            cs = int(round((sec - int(sec)) * 100))
-            h = m // 60
-            m = m % 60
-            return f"{h}:{m:02d}:{s:02d}.{cs:02d}"
-
-        for line in timed_lines:
-            text = line.get("text", "").strip()
-            if not text:
-                continue
-            start_t = fmt_ass_time(line.get("start", 0.0))
-            end_t = fmt_ass_time(line.get("end", 0.0))
-            ass_lines.append(f"Dialogue: 0,{start_t},{end_t},Default,,0,0,0,,{text}")
-
-        return "\n".join(ass_lines)
+        from app.services.video.video_orchestrator import video_orchestrator
+        return video_orchestrator.generate_karaoke_ass(
+            timed_lines=timed_lines,
+            width=width,
+            height=height,
+            style=style,
+            subtitle_style=subtitle_style,
+            aspect_ratio=aspect_ratio,
+            font_family=font_family,
+            font_size_override=font_size_override,
+        )
 
     async def render_lip_sync_clip(
         self,
@@ -1038,6 +1010,22 @@ class VideoService:
         """
         from app.services.video.video_orchestrator import video_orchestrator
         return await video_orchestrator.render_advanced_music_video(
+            job=job,
+            task_id=task_id,
+            config=config
+        )
+
+    async def render_lyric_music_video(
+        self,
+        job: Job,
+        task_id: str,
+        config: Dict[str, Any]
+    ) -> str:
+        """
+        Render a fast-path local lyric music video (< 45s) via VideoOrchestrator.
+        """
+        from app.services.video.video_orchestrator import video_orchestrator
+        return await video_orchestrator.render_lyric_music_video(
             job=job,
             task_id=task_id,
             config=config

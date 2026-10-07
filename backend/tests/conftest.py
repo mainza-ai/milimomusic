@@ -17,6 +17,8 @@ if str(mulacover_dir) not in sys.path:
 
 # Test Database Isolation: ensure tests NEVER pollute the production jobs.db!
 os.environ.setdefault("MILIMO_DB_NAME", "test_jobs.db")
+# Fast Test Mode: bypass slow live 35B LLM models and heavy unmocked diffusion during tests
+os.environ.setdefault("MILIMO_FAST_TEST_MODE", "1")
 
 
 @pytest.fixture(scope="session", autouse=True)

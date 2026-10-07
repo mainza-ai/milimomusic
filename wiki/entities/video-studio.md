@@ -2,8 +2,8 @@
 title: AI Music Video Studio
 type: entity
 created: 2026-09-07
-updated: 2026-09-26
-tags: [video, studio, wan, liveportrait, ltx-video, minimax-h3, diffusers, lipsync, karaoke, ass, director, timeline, cancellation, attention-slicing]
+updated: 2026-10-07
+tags: [video, studio, wan, liveportrait, ltx-video, minimax-h3, diffusers, lipsync, karaoke, ass, director, timeline, cancellation, attention-slicing, lyric-video, typography, videotoolbox]
 aliases: [VideoStudio, MusicVideosView, VideoService, VideoOrchestrator, VideoGeneratorRegistry]
 ---
 
@@ -86,6 +86,34 @@ Pre-rendering visual scene keyframes (`POST /videos/keyframes/{job_id}`) provide
   - **People-Free Plates**: pre-build stills append `SCENE_PREGEN_PROMPT_SUFFIX` ("no people, no human face…") because Wan morphs faces baked into an i2v seed into the worst artifact in the video; album covers keep `COVER_PROMPT_SUFFIX`, and storyboard **vocal** stills keep the performer visible since lip-sync — not Wan — drives those shots. A staged keyframe without a matching sidecar is never allowed to seed Wan.
   - **Storyboard Reuse**: `generate_scene_keyframes` routes cinematic scenes through the same API (`auto_unload=False`, `index_start=clip_index`) and stages plate + sidecar to `keyframes/keyframe_{job}_{scene}.png`, so the still the user approves is the exact frame Wan seeds from and render time pays no second diffusion. Covered by `backend/tests/test_scene_plates.py`.
 - **Progressive Frontend Polling & Auto-Hydration**: In `MusicVideosView.tsx`, the timeline tracks are eagerly populated when still generation begins, and a 3-second progressive polling loop queries `GET /videos/keyframes/{job_id}`, progressively displaying each scene still on the timeline as soon as it is written to disk.
+
+## 7. Fast-Path Lyric Music Video Studio (< 45s Hardware Encoded)
+
+For artists desiring instant, broadcast-ready lyric music videos without lengthy multi-scene diffusion passes, the platform incorporates a dedicated **Fast-Path Lyric Video Engine** (`POST /videos/render-lyric/{job_id}`):
+- **Hardware Acceleration Pipeline**: Employs macOS Apple Silicon `h264_videotoolbox` (or Linux `libx264` preset `fast`) to transcode full 3-minute tracks in under 45 seconds at high bitrate ($4.5$–$6.0$ Mbps) with AAC 320 kbps stereo audio.
+- **Visual Background Modes & Dynamic Drift**:
+  - `cover_art`: Smooth cinematic Ken Burns camera drift (`zoompan=z='min(zoom+0.0003,1.15)':d=...`) applied to high-resolution album cover artwork or custom stills.
+  - `spectrum`: Procedural audio-reactive frequency spectrum visualizer overlaid onto dark gradient canvases.
+  - `procedural`: Multi-scene mood platter animatics with soft color oscillations.
+- **Word-Level Centisecond Karaoke ASS Scripting (`subtitle_styles.py`)**:
+  - Automatically compiles word phoneme timestamps from TorchAudio MMS forced alignment into SSA/ASS scripts with centisecond `{\kf<cs>}` karaoke tags.
+  - 6 Production Typography Presets:
+    - `neon`: Cyberpunk Neon (Cyan fill `&H00FFFF&`, Magenta outline `&HFF00FF&`, heavy glow).
+    - `spotify`: Spotify Canvas (Crisp white fill `&HFFFFFF&`, modern bold grotesque, translucent dark pill backing).
+    - `kinetic_pop`: Kinetic Pop (Vibrant golden amber fill `&H00D7FF&`, dark shadow, bouncy rhythm).
+    - `cinematic`: Cinematic Wide (Elegant serif, gold rim, wide letterspacing).
+    - `social_vertical`: Social Vertical (9:16 mobile portrait stacked layout with centered dynamic anchor).
+    - `retro_vhs`: Retro VHS (Analog CRT phosphor green fill `&H33FF33&`, scanline glow, monospace typewriter styling).
+  - Aspect Ratio Safe Zones: Dynamic margin clamping ($V_{\text{margin}}$ and $H_{\text{margin}}$) guaranteeing subtitles never collide with UI controls in 16:9, 9:16 vertical (Reels/TikTok), 1:1, or 21:9.
+  - Local Font Bundling: Bundles local font fallback directory with ASS `fontsdir` integration, preventing generic fallback font failures.
+- **WYSIWYG 60fps Canvas Player (`LyricCanvasOverlay.tsx`)**:
+  - In-browser interactive preview running at 60fps via `requestAnimationFrame` and synced directly to audio playback time.
+  - Hardware-accelerated CSS `background: linear-gradient(to right, ...)` fill sweeps for live karaoke word highlights.
+  - Interactive scrubbing: clicking any lyric line in the player jumps the playhead to that exact lyric start time.
+- **Multitrack NLE Timeline Lyrics Track (`VideoTimelineTrack.tsx`)**:
+  - Visual interactive track displaying all timed lyric phrases with proportional duration widths.
+  - Micro timestamp nudging buttons (`-0.1s` / `+0.1s`) on each line pill to instantly adjust timing offsets directly to the database.
+  - 1-click "Acoustically Sync Lyrics ⚡" button invoking wav2vec2 forced alignment on isolated vocal stems.
 
 ## Related pages
 - [Overview](../overview.md) | [Architecture](../architecture.md) | [Stem Separator](stem-separator.md) | [Karaoke & Lyric Sync](karaoke-lyricsync.md)

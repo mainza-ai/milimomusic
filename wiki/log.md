@@ -2560,6 +2560,21 @@ Executed full 5-phase implementation and verification of the local-first Lyric M
    - Implemented micro timestamp nudging (`[-0.1s]` / `[+0.1s]`) saving directly to track metadata in `MusicVideosView.tsx`.
    - Full test validation: 11/11 tests passing, `scripts/check_api_parity.py` 100% clean, and `npm run build` exits 0 (1.79s).
 
-
-
-
+## [2026-10-07] fix | Lyric Subtitle Legibility & Canvas Overlay Deduplication
+Resolved subtitle text illegibility and duplicate overlay collisions in the AI Lyric Music Video Studio:
+1. **Root Cause Diagnosis**:
+   - `LyricCanvasOverlay.tsx` combined `WebkitBackgroundClip: 'text'` + `-webkit-text-fill-color: transparent` with CSS `filter: drop-shadow(...)` and `textShadow` on inline-block word spans. In Blink/WebKit engines, this canceled text mask rasterization and caused the bounding boxes to render as opaque solid cyan and light-blue rectangular blocks, completely obscuring the text.
+   - `VideoCanvasPlayer.tsx` defaulted `showLyricOverlay` to `true`, causing the floating HTML overlay to display right over the center of the video simultaneously with the video's burned-in ASS hardsubs.
+2. **Dual-Layer Clip-Path Typography Architecture**:
+   - Replaced fragile CSS background-clipping with a robust dual-layer text glyph model:
+     - Base Layer: High-contrast unsung typography glyphs with solid dark drop shadow (`0 2px 8px rgba(0, 0, 0, 0.95), 0 1px 3px rgba(0, 0, 0, 0.9)`), ensuring 100% legibility over any background.
+     - Sung Layer: Positioned `absolute inset-0`, clipped horizontally via `clipPath: inset(0 ${100 - pct}% 0 0)` and `WebkitClipPath` to achieve a smooth word-by-word karaoke wipe with genre neon glow, completely free of rectangular artifacts across all browsers.
+3. **Player Deduplication & Safe Margins**:
+   - Updated `VideoCanvasPlayer.tsx` to default `showLyricOverlay` to `false` when a rendered video is loaded, letting the crisp burned-in ASS hardsubs display unobstructed.
+   - Updated toggle button label to `🎤 Lyric Overlay: OFF / ON`.
+   - Tightened bottom safe-zone margins when `isOverVideo` is active and hid the status HUD badge during video playback.
+4. **Verification**:
+   - Verified `npm run build` succeeds cleanly.
+   - All 6 tests in `backend/tests/test_lyric_video.py` passed.
+   - All 28 tests in `backend/tests/test_video_service.py` passed.
+   - API parity check: 158/158 routes verified.

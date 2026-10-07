@@ -79,7 +79,7 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
     // Audio Engine synchronization for 60fps lyric sweeps
     const { currentTime: audioCurrentTime } = useAudioTime();
     const [videoCurrentTime, setVideoCurrentTime] = useState(0);
-    const [showLyricOverlay, setShowLyricOverlay] = useState(true);
+    const [showLyricOverlay, setShowLyricOverlay] = useState(false);
 
     const effectiveTime = renderedVideoUrl ? videoCurrentTime : audioCurrentTime;
 
@@ -92,6 +92,9 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
 
     useEffect(() => {
         setVideoError(false);
+        if (renderedVideoUrl) {
+            setShowLyricOverlay(false);
+        }
     }, [renderedVideoUrl]);
 
     const toggleVideoPlayback = () => {
@@ -283,9 +286,9 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                                             ? 'bg-teal-500/80 text-slate-950 border-teal-400 font-extrabold shadow-sm'
                                             : 'bg-black/60 text-slate-300 border-white/20 hover:text-white'
                                     }`}
-                                    title="Toggle Live Synchronized Subtitles Overlay"
+                                    title="Toggle Synchronized Overlay Subtitles over Video"
                                 >
-                                    {showLyricOverlay ? '🎤 Subtitles: ON' : '🎤 Subtitles: OFF'}
+                                    {showLyricOverlay ? '🎤 Lyric Overlay: ON' : '🎤 Lyric Overlay: OFF'}
                                 </button>
                                 <button
                                     type="button"

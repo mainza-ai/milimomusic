@@ -184,13 +184,17 @@ export const LyricCanvasOverlay: React.FC<LyricCanvasOverlayProps> = ({
     // Alignment Classes
     const containerAlignmentClass = useMemo(() => {
         if (activeAlignment === 'vertical_safe') {
-            return 'justify-center items-center text-center px-8';
+            return 'justify-center items-center text-center px-6';
         }
         if (activeAlignment === 'left') {
-            return 'justify-end items-start text-left px-12 pb-14';
+            return isOverVideo
+                ? 'justify-end items-start text-left px-8 pb-8'
+                : 'justify-end items-start text-left px-12 pb-14';
         }
-        return 'justify-end items-center text-center px-8 pb-12';
-    }, [activeAlignment]);
+        return isOverVideo
+            ? 'justify-end items-center text-center px-8 pb-8'
+            : 'justify-end items-center text-center px-8 pb-12';
+    }, [activeAlignment, isOverVideo]);
 
     const activeWords = useMemo(() => {
         if (!activeLine) return [];
@@ -254,24 +258,27 @@ export const LyricCanvasOverlay: React.FC<LyricCanvasOverlayProps> = ({
             {/* Karaoke Subtitles Overlay Viewport */}
             <div className={`absolute inset-0 flex flex-col ${containerAlignmentClass} ${isOverVideo ? 'pointer-events-none' : 'pointer-events-auto'} z-10 transition-all`}>
                 {timedLines.length === 0 ? (
-                    <div className="text-center p-6 bg-black/40 backdrop-blur-md rounded-2xl border border-white/10 max-w-md">
-                        <p className="text-xs font-mono text-teal-300">★ WYSIWYG Lyric Canvas Preview ★</p>
-                        <p className="text-xs text-slate-300 mt-1">
-                            {activeSong?.lyrics
-                                ? 'Parsing synchronized lyric timestamps…'
-                                : 'No lyrics detected for this track. Add lyrics in Composer to enable karaoke videos.'}
-                        </p>
-                    </div>
+                    !isOverVideo ? (
+                        <div className="text-center p-6 bg-black/40 backdrop-blur-md rounded-2xl border border-white/10 max-w-md">
+                            <p className="text-xs font-mono text-teal-300">★ WYSIWYG Lyric Canvas Preview ★</p>
+                            <p className="text-xs text-slate-300 mt-1">
+                                {activeSong?.lyrics
+                                    ? 'Parsing synchronized lyric timestamps…'
+                                    : 'No lyrics detected for this track. Add lyrics in Composer to enable karaoke videos.'}
+                            </p>
+                        </div>
+                    ) : null
                 ) : (
                     <div className="w-full max-w-4xl space-y-2">
                         {/* 1. Previous Line (Faded, clickable to rewind) */}
                         {prevLine && stylePreset === 'spotify' && (
                             <div
                                 onClick={() => onSeek?.(prevLine.start)}
-                                className="cursor-pointer transition-opacity duration-300 opacity-35 hover:opacity-75 text-sm md:text-base font-medium"
+                                className="cursor-pointer transition-opacity duration-300 opacity-40 hover:opacity-85 text-sm md:text-base font-medium"
                                 style={{
                                     fontFamily: fontFamily || preset.fontFamily,
                                     color: preset.unsungColor,
+                                    textShadow: '0 2px 6px rgba(0, 0, 0, 0.9)',
                                 }}
                             >
                                 {prevLine.text}
@@ -285,12 +292,14 @@ export const LyricCanvasOverlay: React.FC<LyricCanvasOverlayProps> = ({
                                 className="cursor-pointer font-bold leading-tight select-none transition-all py-1"
                                 style={{
                                     fontFamily: fontFamily || preset.fontFamily,
-                                    fontSize: fontSizeOverride ? `${fontSizeOverride}px` : 'clamp(20px, 3.8vw, 38px)',
+                                    fontSize: fontSizeOverride ? `${fontSizeOverride}px` : 'clamp(18px, 3.2vw, 32px)',
                                     textTransform: preset.textTransform || 'none',
                                     letterSpacing: preset.letterSpacing || 'normal',
                                 }}
                             >
-                                <div className="inline-flex flex-wrap items-center gap-x-2 gap-y-1">
+                                <div className={`flex flex-wrap items-center gap-x-2.5 gap-y-1.5 ${
+                                    activeAlignment === 'left' ? 'justify-start text-left' : 'justify-center text-center'
+                                }`}>
                                     {activeWords.map((wInfo, wIdx) => {
                                         // Calculate word-level sweep progress [0.0 - 1.0]
                                         const wDur = Math.max(0.05, wInfo.end - wInfo.start);
@@ -302,18 +311,41 @@ export const LyricCanvasOverlay: React.FC<LyricCanvasOverlayProps> = ({
                                         return (
                                             <span
                                                 key={wIdx}
-                                                className={`inline-block transition-transform duration-75 ${
-                                                    stylePreset === 'kinetic_pop' && isSinging ? 'scale-110 drop-shadow-md' : 'scale-100'
+                                                className={`relative inline-block align-baseline transition-transform duration-75 ${
+                                                    stylePreset === 'kinetic_pop' && isSinging ? 'scale-110' : 'scale-100'
                                                 }`}
-                                                style={{
-                                                    background: `linear-gradient(90deg, ${preset.sungColor} 0%, ${preset.sungColor} ${pct}%, ${preset.unsungColor} ${pct}%, ${preset.unsungColor} 100%)`,
-                                                    WebkitBackgroundClip: 'text',
-                                                    WebkitTextFillColor: 'transparent',
-                                                    filter: isSinging && preset.glow !== 'none' ? `drop-shadow(${preset.glow})` : undefined,
-                                                    textShadow: preset.glow !== 'none' && (isSung || isSinging) ? preset.glow : undefined,
-                                                }}
                                             >
-                                                {wInfo.word}
+                                                {/* Base Layer: Crisp Unsung Text with Dark Drop Shadow */}
+                                                <span
+                                                    className="block whitespace-nowrap select-none"
+                                                    style={{
+                                                        color: preset.unsungColor,
+                                                        textShadow: '0 2px 8px rgba(0, 0, 0, 0.95), 0 1px 3px rgba(0, 0, 0, 0.9)',
+                                                    }}
+                                                >
+                                                    {wInfo.word}
+                                                </span>
+
+                                                {/* Progressive Karaoke Sweep Layer (Clipped Horizontally from Right) */}
+                                                <span
+                                                    aria-hidden="true"
+                                                    className="absolute inset-0 pointer-events-none select-none block overflow-hidden whitespace-nowrap"
+                                                    style={{
+                                                        color: preset.sungColor,
+                                                        clipPath: `inset(0 ${Math.max(0, 100 - Number(pct)).toFixed(1)}% 0 0)`,
+                                                        WebkitClipPath: `inset(0 ${Math.max(0, 100 - Number(pct)).toFixed(1)}% 0 0)`,
+                                                        textShadow:
+                                                            preset.glow !== 'none' && (isSung || isSinging)
+                                                                ? `${preset.glow}, 0 2px 8px rgba(0, 0, 0, 0.95)`
+                                                                : '0 2px 8px rgba(0, 0, 0, 0.95)',
+                                                        filter:
+                                                            isSinging && preset.glow !== 'none'
+                                                                ? `drop-shadow(${preset.glow})`
+                                                                : undefined,
+                                                    }}
+                                                >
+                                                    {wInfo.word}
+                                                </span>
                                             </span>
                                         );
                                     })}
@@ -321,8 +353,11 @@ export const LyricCanvasOverlay: React.FC<LyricCanvasOverlayProps> = ({
                             </div>
                         ) : (
                             /* Interlude / Silence Indicator */
-                            <div className="py-2 text-center opacity-40">
-                                <span className="text-xs font-mono tracking-widest text-slate-400 uppercase">
+                            <div className="py-2 text-center opacity-50">
+                                <span
+                                    className="text-xs font-mono tracking-widest text-slate-300 uppercase"
+                                    style={{ textShadow: '0 2px 6px rgba(0, 0, 0, 0.9)' }}
+                                >
                                     ♪ ♪ ♪
                                 </span>
                             </div>
@@ -332,10 +367,11 @@ export const LyricCanvasOverlay: React.FC<LyricCanvasOverlayProps> = ({
                         {nextLine && stylePreset === 'spotify' && (
                             <div
                                 onClick={() => onSeek?.(nextLine.start)}
-                                className="cursor-pointer transition-opacity duration-300 opacity-35 hover:opacity-75 text-sm md:text-base font-medium"
+                                className="cursor-pointer transition-opacity duration-300 opacity-40 hover:opacity-85 text-sm md:text-base font-medium"
                                 style={{
                                     fontFamily: fontFamily || preset.fontFamily,
                                     color: preset.unsungColor,
+                                    textShadow: '0 2px 6px rgba(0, 0, 0, 0.9)',
                                 }}
                             >
                                 {nextLine.text}
@@ -345,15 +381,17 @@ export const LyricCanvasOverlay: React.FC<LyricCanvasOverlayProps> = ({
                 )}
             </div>
 
-            {/* Bottom Status HUD Indicator */}
-            <div className="absolute top-3 right-3 z-20 flex items-center gap-2 pointer-events-auto">
-                <div className="px-2.5 py-1 bg-black/60 backdrop-blur-md rounded-lg border border-white/10 text-[10px] font-mono text-teal-300 flex items-center gap-1.5 shadow-md">
-                    <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
-                    <span className="capitalize">{stylePreset} Typography</span>
-                    <span className="text-white/40">·</span>
-                    <span className="text-white/80">{currentTime.toFixed(1)}s</span>
+            {/* Bottom Status HUD Indicator (Preview Canvas mode only) */}
+            {!isOverVideo && (
+                <div className="absolute top-3 right-3 z-20 flex items-center gap-2 pointer-events-auto">
+                    <div className="px-2.5 py-1 bg-black/60 backdrop-blur-md rounded-lg border border-white/10 text-[10px] font-mono text-teal-300 flex items-center gap-1.5 shadow-md">
+                        <span className="w-1.5 h-1.5 rounded-full bg-teal-400 animate-pulse" />
+                        <span className="capitalize">{stylePreset} Typography</span>
+                        <span className="text-white/40">·</span>
+                        <span className="text-white/80">{currentTime.toFixed(1)}s</span>
+                    </div>
                 </div>
-            </div>
+            )}
         </div>
     );
 };

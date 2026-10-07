@@ -36,7 +36,7 @@ from app.services.video.generators.cloud_video import CloudVideoGenerator
 from app.services.video.generators.procedural import ProceduralVideoGenerator
 from app.core.hardware_lock import GlobalHardwareCoordinator
 from app.core.task_queue import task_queue
-from app.services.video.stem_audio_reactive import extract_stem_reactive_modulation
+from app.services.video.stem_audio_reactive import extract_stem_reactive_modulation, apply_stem_reactive_fx
 
 logger = logging.getLogger(__name__)
 
@@ -412,7 +412,7 @@ class VideoOrchestrator:
                         task_id,
                         current_clip=idx + 1,
                         total_clips=total_scenes,
-                        step=f"Diffusing Scene Still {idx + 1}/{total_scenes} ({'🎤 Vocal' if clip.is_vocal else '🎥 Cinematic'})",
+                        step=f"Pre-building scene backgrounds... {idx + 1}/{total_scenes} ({'🎤 Vocal' if clip.is_vocal else '🎥 Cinematic'})",
                         progress=10 + int(85 * (idx / max(1, total_scenes)))
                     )
 
@@ -468,6 +468,13 @@ class VideoOrchestrator:
                         except Exception:
                             pass
 
+                    # Cinematic plates must carry the people-free pre-build sidecar: a still
+                    # without a matching fingerprint was diffused from a different (or
+                    # unconstrained) prompt and must not seed Wan i2v.
+                    if not is_stale_cover and not clip.is_vocal:
+                        if not self._scene_plate_is_current(kf_path, width, height, str(clip.prompt or ""), visual_style):
+                            is_stale_cover = True
+
                     if not is_stale_cover:
                         results.append(_clip_dict(clip, clip_idx))
                         continue
@@ -479,18 +486,37 @@ class VideoOrchestrator:
                     except OSError:
                         pass
 
-                # Render dedicated scene still from the clip's director prompt
+                # Render the scene still from the clip's director prompt. Cinematic scenes
+                # go through the people-free scene pre-build so the frame the user approves
+                # here is exactly the plate Wan later seeds from; vocal scenes keep the
+                # performer-visible still, since lip-sync (not Wan) drives those shots.
                 try:
                     from app.services.image_service import image_service
-                    res = image_service.generate_scene_background(
-                        prompt=clip.prompt,
-                        style=visual_style,
-                        width=width,
-                        height=height,
-                        auto_unload=False
-                    )
-                    if res.get("ok") and res.get("dest_path") and os.path.isfile(res["dest_path"]):
-                        shutil.copy(res["dest_path"], kf_path)
+                    if clip.is_vocal:
+                        res = image_service.generate_scene_background(
+                            prompt=clip.prompt,
+                            style=visual_style,
+                            width=width,
+                            height=height,
+                            auto_unload=False
+                        )
+                        staged_src = res.get("dest_path") if (res.get("ok") and res.get("dest_path")) else None
+                    else:
+                        plate_batch = image_service.pregenerate_scene_backgrounds(
+                            job_id=job.id,
+                            prompts=[str(clip.prompt or "")],
+                            style=visual_style,
+                            width=width,
+                            height=height,
+                            index_start=clip_idx,
+                            auto_unload=False,
+                            cancel_check=lambda: cancel_event.is_set(),
+                        )
+                        staged_src = (plate_batch.get("stills") or {}).get(0)
+                    if staged_src and os.path.isfile(staged_src):
+                        shutil.copy(staged_src, kf_path)
+                        if not clip.is_vocal:
+                            image_service.stamp_scene_plate(kf_path, str(clip.prompt or ""), visual_style)
                     else:
                         # Procedural fallback still if diffusion is unavailable
                         image_service._generate_raster_cover(
@@ -536,6 +562,142 @@ class VideoOrchestrator:
                 logger.warning(f"Error during post-keyframe cleanup: {e}")
 
         return results
+
+    @staticmethod
+    def _scene_plate_is_current(kf_path: str, width: int, height: int, prompt: str = "", style: str = "") -> bool:
+        """True when a staged keyframe can be reused as this scene's Wan plate.
+
+        Reuse needs the pixels to actually fit the requested frame: a square
+        leftover (album-cover copy) is never a widescreen plate, and a plate
+        rendered at another resolution/aspect gets re-diffused. It also needs the
+        `.prompt` sidecar the people-free pre-build writes — a plate without a
+        matching sidecar was diffused from a different (or unconstrained) prompt,
+        so it is not allowed to seed Wan.
+        """
+        try:
+            if not os.path.isfile(kf_path) or os.path.getsize(kf_path) <= 0:
+                return False
+            if prompt:
+                sidecar = kf_path + ".prompt"
+                if not os.path.isfile(sidecar):
+                    return False
+                from app.services.image_service import image_service
+                with open(sidecar, "r", encoding="utf-8") as fh:
+                    cached_fp = fh.read().strip()
+                # `approved:` = a frame the user hand-picked via a scene retake. It is
+                # final by definition, so a differing director prompt never invalidates
+                # it — only the pixel checks below can send it back to diffusion.
+                if not cached_fp.startswith("approved:"):
+                    if cached_fp != image_service.prompt_fingerprint(prompt, style):
+                        return False
+            from PIL import Image
+            with Image.open(kf_path) as im:
+                w, h = im.size
+        except Exception:
+            return False
+
+        req_w, req_h = max(1, int(width)), max(1, int(height))
+        if abs(w - h) <= 2 and abs(req_w - req_h) > 2:
+            return False
+        req_ar, cur_ar = req_w / req_h, w / h
+        if abs(req_ar - cur_ar) > 0.08 * max(req_ar, cur_ar):
+            return False
+        # Anything much smaller upscales into mush once Wan seeds from it.
+        return min(w, h) >= int(0.5 * min(req_w, req_h))
+
+    async def _prebuild_scene_plates(
+        self,
+        job: Job,
+        clips: List[Any],
+        task_id: str,
+        style: str,
+        width: int,
+        height: int,
+        cancel_event: asyncio.Event,
+    ) -> Dict[int, str]:
+        """Diffuse every missing scene plate in ONE image-model load.
+
+        Runs ahead of the clip loop so the image pipeline loads once, renders all
+        N plates and unloads once — replacing the old per-clip load then one still
+        then unload cycle that dominated wall time — and emits real
+        "Pre-building scene backgrounds... i/N" progress while it works.
+        Returns {clip_index: staged_keyframe_path}.
+        """
+        from app.services.image_service import image_service
+
+        pending: List[Tuple[int, Any]] = []
+        for idx, clip in enumerate(clips):
+            if getattr(clip, "is_vocal", False):
+                continue
+            clip_idx = int(clip.clip_index or (idx + 1))
+            kf_path = os.path.join(KEYFRAMES_DIR, f"keyframe_{job.id}_{clip_idx:03d}.png")
+            if not self._scene_plate_is_current(kf_path, width, height, str(getattr(clip, "prompt", "") or ""), style):
+                pending.append((clip_idx, clip))
+
+        if not pending:
+            logger.info(f"Scene pre-build skipped for job {job.id}: every scene plate already current")
+            return {}
+
+        total = len(pending)
+        logger.info(f"Pre-building {total} scene background plates for job {job.id} in a single image load")
+
+        def _on_prebuild_progress(evt: Dict[str, Any]) -> None:
+            done = int(evt.get("scene_index", 0) or 0) + 1
+            status = str(evt.get("status") or "rendering")
+            label = {
+                "reused": "reusing cached plate",
+                "rendering": "diffusing",
+                "rendered": "plate ready",
+                "failed": "diffusion unavailable",
+            }.get(status, status)
+            try:
+                self.update_task(
+                    task_id,
+                    step=f"Pre-building scene backgrounds... {done}/{total} ({label})",
+                    progress=12 + int(8 * done / max(1, total)),
+                )
+            except Exception as _e:
+                logger.debug(f"Scene pre-build progress update skipped: {_e}")
+
+        async with GlobalHardwareCoordinator.scoped_device(
+            f"Scene Background Pre-Build ({total} plates)", modality="image_gen"
+        ):
+            loop = asyncio.get_running_loop()
+            batch = await loop.run_in_executor(
+                None,
+                lambda: image_service.pregenerate_scene_backgrounds(
+                    job_id=job.id,
+                    prompts=[str(getattr(clip, "prompt", "") or "") for _cidx, clip in pending],
+                    style=style,
+                    width=width,
+                    height=height,
+                    progress_cb=_on_prebuild_progress,
+                    cancel_check=lambda: cancel_event.is_set(),
+                )
+            )
+
+        raw_stills = batch.get("stills") or {}
+        staged: Dict[int, str] = {}
+        for order, (clip_idx, clip) in enumerate(pending):
+            src = raw_stills.get(order, raw_stills.get(str(order)))
+            kf_path = os.path.join(KEYFRAMES_DIR, f"keyframe_{job.id}_{clip_idx:03d}.png")
+            if not src or not os.path.isfile(src):
+                logger.warning(f"Scene {clip_idx}: no background plate produced; Wan falls back per-scene")
+                continue
+            try:
+                shutil.copy(src, kf_path)
+                image_service.stamp_scene_plate(kf_path, str(getattr(clip, "prompt", "") or ""), style)
+                staged[clip_idx] = kf_path
+            except OSError as exc:
+                logger.warning(f"Failed staging scene plate for scene {clip_idx}: {exc}")
+
+        if batch.get("cancelled"):
+            logger.info(f"Scene pre-build cancelled for job {job.id} after {len(staged)} plates")
+        logger.info(
+            f"Scene pre-build job {job.id}: {batch.get('generated', 0)} rendered, "
+            f"{batch.get('reused', 0)} reused, {batch.get('failed', 0)} failed"
+        )
+        return staged
 
     async def render_advanced_music_video(
         self,
@@ -648,42 +810,26 @@ class VideoOrchestrator:
             else:
                 lipsync_provider = self._local_lipsync
 
-            # Step 2: Render individual scene clips
-            self.update_task(task_id, step="Rendering Video Scenes & Lip-Sync Performance", progress=20)
             is_local = (provider_type not in ("cloud_fal", "cloud_replicate", "cloud_minimax"))
 
-            # Phase A: Batch Pre-Render Missing Keyframe Stills (Image Modality)
+            # Phase A: build every missing scene plate in ONE image-model load, while
+            # the image model is the only thing on the accelerator (progress 12→20%).
+            # The clip loop below never loads the image pipeline again.
             if is_local:
-                async with GlobalHardwareCoordinator.scoped_device("Keyframe Stills Generation", modality="image_gen"):
-                    for idx, clip in enumerate(plan.clips):
-                        if cancel_event.is_set():
-                            logger.info(f"render_advanced_music_video: Cancelled during Phase A stills generation.")
-                            self.update_task(task_id, status="cancelled", step="Video rendering cancelled by user.", progress=0)
-                            return ""
+                scene_plates = await self._prebuild_scene_plates(
+                    job=job,
+                    clips=plan.clips,
+                    task_id=task_id,
+                    style=style,
+                    width=w,
+                    height=h,
+                    cancel_event=cancel_event,
+                )
+                if scene_plates:
+                    self.update_task(task_id, step="Scene background plates ready", progress=20)
 
-                        if not clip.is_vocal:
-                            clip_idx = int(clip.clip_index or (idx + 1))
-                            pre_rendered_kf = os.path.join(KEYFRAMES_DIR, f"keyframe_{job.id}_{clip_idx:03d}.png")
-                            if not (os.path.isfile(pre_rendered_kf) and os.path.getsize(pre_rendered_kf) > 0):
-                                try:
-                                    from app.services.image_service import image_service
-                                    bg = image_service.generate_scene_background(
-                                        prompt=clip.prompt,
-                                        style=style,
-                                        width=w, height=h,
-                                        auto_unload=False
-                                    )
-                                    if bg.get("ok") and bg.get("dest_path") and os.path.isfile(bg["dest_path"]):
-                                        shutil.copy(bg["dest_path"], pre_rendered_kf)
-                                except Exception as e:
-                                    logger.warning(f"Keyframe batch generation skipped for scene {clip_idx}: {e}")
-                    # Immediately unload image diffusion models and clear MLX/CUDA memory
-                    try:
-                        from app.services.image_service import image_service
-                        image_service.unload_models()
-                    except Exception:
-                        pass
-
+            # Step 2: Render individual scene clips
+            self.update_task(task_id, step="Rendering Video Scenes & Lip-Sync Performance", progress=20)
             if cancel_event.is_set():
                 logger.info("render_advanced_music_video: Cancelled before scene rendering.")
                 self.update_task(task_id, status="cancelled", step="Video rendering cancelled by user.", progress=0)
@@ -781,6 +927,19 @@ class VideoOrchestrator:
                                 )
 
                         if os.path.isfile(clip_file) and os.path.getsize(clip_file) > 0:
+                            if stem_reactivity and config.get("enable_audio_reactive", True):
+                                rx_file = os.path.join(TEMP_DIR, f"reactive_{task_id}_{idx:03d}.mp4")
+                                rx_ok = await apply_stem_reactive_fx(
+                                    clip_path=clip_file,
+                                    out_path=rx_file,
+                                    start_time=clip.start_time,
+                                    duration=clip.duration,
+                                    stem_reactivity=stem_reactivity,
+                                    fps=model_spec.fps
+                                )
+                                if rx_ok and os.path.isfile(rx_file) and os.path.getsize(rx_file) > 0:
+                                    clip_file = rx_file
+
                             rendered_clips.append(clip_file)
                             clip.rendered_clip_path = clip_file
                             clip.status = "completed"
@@ -816,26 +975,16 @@ class VideoOrchestrator:
 
 
             # Step 3: Scene Assembly & Concat
-            self.update_task(task_id, step="Assembling & Stitching Video Scenes", progress=82)
-            concat_list_path = os.path.join(TEMP_DIR, f"concat_{task_id}.txt")
-            with open(concat_list_path, "w") as f:
-                for cf in rendered_clips:
-                    f.write(f"file '{os.path.abspath(cf)}'\n")
-
+            self.update_task(task_id, step=f"Assembling & Stitching Video Scenes ({transition_style})", progress=82)
             stitched_video = os.path.join(TEMP_DIR, f"stitched_{task_id}.mp4")
-            cmd_concat = [
-                "ffmpeg", "-y",
-                "-f", "concat", "-safe", "0",
-                "-i", concat_list_path,
-                "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
-                "-c:a", "aac", "-b:a", "192k",
-                stitched_video
-            ]
-            proc = await asyncio.create_subprocess_exec(*cmd_concat, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            _, err_concat = await proc.communicate()
-
-            if not os.path.isfile(stitched_video) or os.path.getsize(stitched_video) == 0:
-                raise RuntimeError(f"Video scene stitching failed: {err_concat.decode('utf-8', errors='ignore')[:200]}")
+            stitch_ok = await self._stitch_video_segments_with_transitions(
+                rendered_clips=rendered_clips,
+                transition_style=transition_style,
+                stitched_video=stitched_video,
+                task_id=task_id
+            )
+            if not stitch_ok or not os.path.isfile(stitched_video) or os.path.getsize(stitched_video) == 0:
+                raise RuntimeError("Video scene stitching failed.")
 
             # Step 4: Subtitle Burning & Master Audio Remuxing
             self.update_task(task_id, step="Burning Synchronized Karaoke Subtitles & Master Remux", progress=92)
@@ -1104,6 +1253,121 @@ class VideoOrchestrator:
         finally:
             with self._lock:
                 self._plan_cancels.pop(task_id, None)
+
+    async def _probe_clip_duration(self, file_path: str) -> float:
+        """Probe video file duration in seconds using ffprobe."""
+        try:
+            cmd = [
+                "ffprobe", "-v", "error",
+                "-show_entries", "format=duration",
+                "-of", "default=noprint_wrappers=1:nokey=1",
+                file_path
+            ]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            out, _ = await proc.communicate()
+            val = float(out.decode().strip())
+            return max(0.5, val)
+        except Exception:
+            return 3.0
+
+    async def _stitch_video_segments_with_transitions(
+        self,
+        rendered_clips: List[str],
+        transition_style: str,
+        stitched_video: str,
+        task_id: str,
+    ) -> bool:
+        """Stitch video clips using either FFmpeg xfade (dissolve, wipe, flash, glitch)
+        or sample-accurate concat demuxer (beat_cut)."""
+        if not rendered_clips:
+            return False
+
+        if len(rendered_clips) == 1:
+            cmd = ["ffmpeg", "-y", "-i", rendered_clips[0], "-c", "copy", stitched_video]
+            proc = await asyncio.create_subprocess_exec(
+                *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            await proc.communicate()
+            return os.path.isfile(stitched_video) and os.path.getsize(stitched_video) > 0
+
+        # Map transition names to FFmpeg xfade transition types
+        xfade_map = {
+            "crossfade": "fade",
+            "dissolve": "dissolve",
+            "whip_pan": "smoothleft",
+            "flash": "fadewhite",
+            "glitch": "pixelize",
+        }
+        xfade_type = xfade_map.get(transition_style.lower())
+
+        if xfade_type:
+            try:
+                durations: List[float] = []
+                for cf in rendered_clips:
+                    dur = await self._probe_clip_duration(cf)
+                    durations.append(dur)
+
+                min_dur = min(durations) if durations else 2.0
+                trans_dur = min(0.5, max(0.2, min_dur * 0.25))
+
+                inputs: List[str] = []
+                for cf in rendered_clips:
+                    inputs.extend(["-i", os.path.abspath(cf)])
+
+                filter_parts: List[str] = []
+                last_v = "0:v"
+                current_offset = durations[0] - trans_dur
+
+                for idx in range(1, len(rendered_clips)):
+                    out_v = f"v{idx}" if idx < len(rendered_clips) - 1 else "v_out"
+                    filter_parts.append(
+                        f"[{last_v}][{idx}:v]xfade=transition={xfade_type}:duration={trans_dur:.2f}:offset={max(0.1, current_offset):.2f}[{out_v}]"
+                    )
+                    last_v = out_v
+                    if idx < len(rendered_clips) - 1:
+                        current_offset += durations[idx] - trans_dur
+
+                filter_complex = ";".join(filter_parts)
+                cmd_xfade = [
+                    "ffmpeg", "-y",
+                    *inputs,
+                    "-filter_complex", filter_complex,
+                    "-map", "[v_out]",
+                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
+                    "-c:a", "aac", "-b:a", "192k",
+                    stitched_video
+                ]
+                logger.info(f"Stitching {len(rendered_clips)} scenes with FFmpeg xfade ({transition_style} -> {xfade_type})...")
+                proc = await asyncio.create_subprocess_exec(
+                    *cmd_xfade, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                )
+                _, err = await proc.communicate()
+                if os.path.isfile(stitched_video) and os.path.getsize(stitched_video) > 0:
+                    logger.info(f"Successfully stitched scenes with {transition_style} xfade.")
+                    return True
+                logger.warning(f"xfade transition failed ({err.decode('utf-8', errors='ignore')[:150]}); falling back to concat demuxer.")
+            except Exception as e:
+                logger.warning(f"Error executing xfade stitching: {e}; falling back to concat demuxer.")
+
+        # Fallback / beat_cut: Fast concat demuxer
+        concat_list_path = os.path.join(TEMP_DIR, f"concat_{task_id}.txt")
+        with open(concat_list_path, "w") as f:
+            for cf in rendered_clips:
+                f.write(f"file '{os.path.abspath(cf)}'\n")
+
+        cmd_concat = [
+            "ffmpeg", "-y",
+            "-f", "concat", "-safe", "0",
+            "-i", concat_list_path,
+            "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
+            "-c:a", "aac", "-b:a", "192k",
+            stitched_video
+        ]
+        proc = await asyncio.create_subprocess_exec(*cmd_concat, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
+        _, err_concat = await proc.communicate()
+        return os.path.isfile(stitched_video) and os.path.getsize(stitched_video) > 0
 
 
 video_orchestrator = VideoOrchestrator()

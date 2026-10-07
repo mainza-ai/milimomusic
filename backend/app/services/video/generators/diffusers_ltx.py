@@ -98,12 +98,36 @@ class DiffusersLTXGenerator(BaseVideoGenerator):
             pipe = LTXPipeline.from_pretrained(model_id, torch_dtype=dtype, local_files_only=True)
             pipe.to(device)
 
+            if device == "mps":
+                if hasattr(pipe, "enable_attention_slicing"):
+                    pipe.enable_attention_slicing("auto")
+                if hasattr(pipe, "enable_vae_tiling"):
+                    pipe.enable_vae_tiling()
+                if hasattr(pipe, "vae") and hasattr(pipe.vae, "to"):
+                    pipe.vae.to(dtype=torch.float32)
+
             fps = 24
-            num_frames = max(25, int(round(duration * fps)))
-            # Align width and height to 32
+            raw_frames = max(9, int(round(duration * fps)))
+            # Enforce (F - 1) % 8 == 0 constraint for LTX-Video temporal VAE
+            num_frames = max(9, ((raw_frames - 1) // 8) * 8 + 1)
+
+            # Align width and height to 32 with aspect-ratio preservation
             mod = 32
-            w = (min(1280, width) // mod) * mod
-            h = (min(720, height) // mod) * mod
+            if height > width:
+                # Vertical (e.g. 9:16)
+                target_w = min(720, max(384, width))
+                target_h = min(1280, max(384, height))
+            elif width > height:
+                # Landscape (e.g. 16:9)
+                target_w = min(1280, max(384, width))
+                target_h = min(720, max(384, height))
+            else:
+                # Square (1:1)
+                target_w = min(720, max(384, width))
+                target_h = min(720, max(384, height))
+
+            w = (target_w // mod) * mod
+            h = (target_h // mod) * mod
 
             cancel_event = kwargs.get("cancel_event")
             cancel_check = kwargs.get("cancel_check")

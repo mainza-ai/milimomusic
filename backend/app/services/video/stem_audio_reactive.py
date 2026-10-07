@@ -101,3 +101,88 @@ def extract_stem_reactive_modulation(
         "camera_zoom": camera_zoom,
         "beat_hits": beat_hits,
     }
+
+
+def build_stem_reactive_filter(
+    start_time: float,
+    duration: float,
+    stem_reactivity: Optional[Dict[str, Any]],
+    fps: int = 24,
+) -> Optional[str]:
+    """Build an FFmpeg video filter expression modulating brightness and contrast
+    synchronously with detected kick and snare onsets.
+    """
+    if not stem_reactivity or not stem_reactivity.get("beat_hits"):
+        return None
+
+    beat_hits = stem_reactivity["beat_hits"]
+    start_frame = max(0, int(round(start_time * fps)))
+    end_frame = min(len(beat_hits), int(round((start_time + duration) * fps)))
+
+    if start_frame >= end_frame:
+        return None
+
+    clip_hits = beat_hits[start_frame:end_frame]
+    hit_times = [round(i / fps, 3) for i, hit in enumerate(clip_hits) if hit]
+
+    if not hit_times:
+        return None
+
+    # Thin out hits that are too close (< 0.2s) to prevent strobe flicker
+    thinned_hits: List[float] = []
+    for t in hit_times:
+        if not thinned_hits or (t - thinned_hits[-1] >= 0.20):
+            thinned_hits.append(t)
+        if len(thinned_hits) >= 16:  # Capped for compact FFmpeg command line
+            break
+
+    if not thinned_hits:
+        return None
+
+    # Construct decay pulse expression: between(t, ti, ti+0.12)*(1-(t-ti)/0.12)
+    pulse_terms = [f"(between(t,{t},{t+0.12:.3f})*(1-(t-{t})/0.12))" for t in thinned_hits]
+    pulse_sum = "+".join(pulse_terms)
+
+    # Mild rhythmic exposure boost (+4% brightness, +5% contrast on kick/snare)
+    filter_expr = f"eq=brightness='0.035*({pulse_sum})':contrast='1.0+0.05*({pulse_sum})'"
+    return filter_expr
+
+
+async def apply_stem_reactive_fx(
+    clip_path: str,
+    out_path: str,
+    start_time: float,
+    duration: float,
+    stem_reactivity: Optional[Dict[str, Any]],
+    fps: int = 24,
+) -> bool:
+    """Apply beat-synced reactive contrast/exposure pulse to a rendered clip."""
+    import asyncio
+    import os
+
+    filter_expr = build_stem_reactive_filter(start_time, duration, stem_reactivity, fps)
+    if not filter_expr:
+        return False
+
+    cmd = [
+        "ffmpeg", "-y",
+        "-i", clip_path,
+        "-vf", filter_expr,
+        "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "ultrafast",
+        "-c:a", "copy",
+        out_path
+    ]
+    try:
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        _, err = await proc.communicate()
+        if os.path.isfile(out_path) and os.path.getsize(out_path) > 0:
+            logger.info(f"Applied stem audio-reactive pulse filter to {os.path.basename(clip_path)}")
+            return True
+        logger.warning(f"Reactive pulse filter failed: {err.decode('utf-8', errors='ignore')[:150]}")
+        return False
+    except Exception as ex:
+        logger.warning(f"Error applying audio-reactive filter: {ex}")
+        return False
+

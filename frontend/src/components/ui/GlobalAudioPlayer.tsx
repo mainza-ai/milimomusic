@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState } from 'react';
 import { type Job, type TimedLine, API_BASE_URL, api } from '../../api';
 import { useAudioEngine } from '../../context/AudioEngineContext';
 import { DEFAULT_COVER_ART } from '../../constants/assets';
@@ -25,9 +25,11 @@ import {
   ListMusic,
   Trash2,
   FileText,
-  Loader2
+  Loader2,
+  ArrowDownCircle
 } from 'lucide-react';
 import { SpectralVisualizer } from './SpectralVisualizer';
+import { useLyricsAutoScroll } from '../../hooks/useLyricsAutoScroll';
 
 interface GlobalAudioPlayerProps {
   onOpenWorkspace: (job: Job) => void;
@@ -75,7 +77,6 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
   // Synchronized Lyrics State
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
-  const lyricsScrollRef = useRef<HTMLDivElement | null>(null);
 
   const timedLyrics: TimedLine[] = currentSong?.timed_lyrics_json
     ? typeof currentSong.timed_lyrics_json === 'string'
@@ -118,15 +119,16 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
     return -1;
   })();
 
-  // Auto-scroll active lyric line into center view
-  useEffect(() => {
-    if (isLyricsOpen && activeLineIndex !== -1 && lyricsScrollRef.current) {
-      const activeEl = lyricsScrollRef.current.querySelector(`[data-line-idx="${activeLineIndex}"]`);
-      if (activeEl) {
-        activeEl.scrollIntoView({ behavior: 'smooth', block: 'center' });
-      }
-    }
-  }, [activeLineIndex, isLyricsOpen]);
+  const {
+    containerRef: lyricsScrollRef,
+    isAutoScrollPaused,
+    resumeAutoScroll,
+    handleScroll: handleLyricsScroll,
+    handleWheel: handleLyricsWheel
+  } = useLyricsAutoScroll({
+    activeLineIndex,
+    enabled: isLyricsOpen && timedLyrics.length > 0
+  });
 
   const handleCopyLyrics = () => {
     if (!rawLyrics) return;
@@ -336,7 +338,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
 
       {/* Synchronized Lyrics Drawer */}
       {isLyricsOpen && (
-        <div className="w-full max-w-5xl bg-white/95 dark:bg-[#12141c]/95 border border-black/[0.08] dark:border-white/10 shadow-apple-2xl rounded-3xl p-5 mb-3 pointer-events-auto flex flex-col max-h-[380px] animate-fade-in">
+        <div className="w-full max-w-5xl bg-white/95 dark:bg-[#12141c]/95 border border-black/[0.08] dark:border-white/10 shadow-apple-2xl rounded-3xl p-5 mb-3 pointer-events-auto flex flex-col max-h-[380px] animate-fade-in relative">
           <div className="flex items-center justify-between pb-3 border-b border-black/[0.06] dark:border-white/10">
             <div className="flex items-center space-x-2">
               <Mic2 size={18} className="text-teal-600 dark:text-teal-400" />
@@ -384,6 +386,8 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
 
           <div
             ref={lyricsScrollRef}
+            onScroll={handleLyricsScroll}
+            onWheel={handleLyricsWheel}
             className="flex-1 overflow-y-auto py-4 space-y-3 custom-scrollbar text-center px-4"
           >
             {timedLyrics.length > 0 ? (
@@ -393,7 +397,7 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
 
                 if (isSection) {
                   return (
-                    <div key={idx} className="py-2">
+                    <div key={idx} data-line-idx={idx} className="py-2">
                       <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-teal-600 dark:text-teal-400 bg-teal-500/10 px-3 py-1 rounded-full border border-teal-500/20">
                         {line.text}
                       </span>
@@ -405,10 +409,13 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
                   <div
                     key={idx}
                     data-line-idx={idx}
-                    onClick={() => handleSeekToTime(line.start)}
+                    onClick={() => {
+                      handleSeekToTime(line.start);
+                      resumeAutoScroll();
+                    }}
                     className={`cursor-pointer transition-all duration-300 px-4 py-2 rounded-2xl ${
                       isActive
-                        ? 'text-teal-600 dark:text-teal-300 font-extrabold text-base sm:text-lg scale-105 bg-teal-500/10 shadow-sm'
+                        ? 'text-teal-600 dark:text-teal-300 font-extrabold text-base sm:text-lg scale-105 bg-teal-500/10 shadow-sm ring-1 ring-teal-500/30'
                         : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-sm'
                     }`}
                   >
@@ -452,6 +459,20 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
               </div>
             )}
           </div>
+
+          {/* Floating Sync Lyrics Button when paused by user scrolling */}
+          {isAutoScrollPaused && timedLyrics.length > 0 && (
+            <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 animate-fade-in pointer-events-auto">
+              <button
+                onClick={resumeAutoScroll}
+                className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold shadow-apple-md backdrop-blur-md transition-all active:scale-95 border border-white/20"
+                title="Resume auto-scrolling lyrics"
+              >
+                <ArrowDownCircle size={14} />
+                <span>Sync Lyrics</span>
+              </button>
+            </div>
+          )}
         </div>
       )}
 

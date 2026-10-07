@@ -12,7 +12,7 @@ import uuid
 import hashlib
 import shutil
 from concurrent.futures import ThreadPoolExecutor
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Callable, List
 from app.services.model_manager import model_manager
 from app.core.paths import get_data_dir
 
@@ -37,6 +37,17 @@ COVER_PROMPT_SUFFIX = (
 SCENE_PROMPT_SUFFIX = (
     "cinematic film still, wide establishing shot, natural composition, "
     "no text, no watermark, photorealistic"
+)
+
+# Storyboard scene backgrounds are B-roll plates that Wan animates afterwards.
+# They carry their own scene number in the frame, so a face baked into the still
+# turns into the worst artifact in the whole video (Wan morphs and duplicates
+# faces across the clip). This suffix is scene-prebuild only: album covers keep
+# COVER_PROMPT_SUFFIX unchanged.
+SCENE_PREGEN_PROMPT_SUFFIX = (
+    "cinematic film still, wide establishing shot, natural composition, "
+    "photorealistic, no text, no watermark, "
+    "no people, no person, no human face, no facial features, no character on screen"
 )
 
 # Title overlay bounds (production guard: never render unbounded text).
@@ -663,6 +674,293 @@ class ImageService:
             pass
 
         return res
+
+
+    @staticmethod
+    def prompt_fingerprint(prompt: str, style: str = "") -> str:
+        """Stable fingerprint of the exact prompt + style a still was rendered from."""
+        return hashlib.sha256(f"{(style or '').strip()}\n{(prompt or '').strip()}".encode("utf-8")).hexdigest()[:16]
+
+    @staticmethod
+    def stamp_scene_plate(dest_path: str, prompt: str, style: str = "", approved: bool = False) -> bool:
+        """Record the prompt+style fingerprint beside a staged scene plate.
+
+        A plate is only trusted (reusable, and allowed to seed Wan image-to-video)
+        when its sidecar matches the director prompt it is supposed to depict. Call
+        this once per diffusion-produced still — never for procedural placeholder
+        frames, which must not silently become video seeds.
+
+        `approved=True` marks a frame the user hand-picked (a scene retake): the
+        sidecar is prefixed `approved:` so the pre-build treats it as final and
+        never diffuses over it, even when the storyboard prompt differs.
+        """
+        try:
+            fp = ImageService.prompt_fingerprint(prompt, style)
+            with open(dest_path + ".prompt", "w", encoding="utf-8") as fh:
+                fh.write(f"approved:{fp}" if approved else fp)
+            return True
+        except OSError:
+            return False
+
+    @staticmethod
+    def _scene_still_filename(job_id: Any, scene_index: int) -> str:
+        return f"scene_pregen_{job_id}_{int(scene_index):03d}.png"
+
+    @staticmethod
+    def scene_still_is_current(dest_path: str, prompt: str, width: int, height: int, style: str = "") -> bool:
+        """True when a cached scene still can be reused for this exact job/scene.
+
+        Reuse requires: file exists and is non-empty, its sidecar fingerprint
+        matches the current prompt verbatim, and the pixels match the requested
+        frame size (a square leftover is a stale cover copy, never a scene plate).
+        """
+        try:
+            if not os.path.isfile(dest_path) or os.path.getsize(dest_path) <= 0:
+                return False
+            cached_fp = ""
+            try:
+                with open(dest_path + ".prompt", "r", encoding="utf-8") as fh:
+                    cached_fp = fh.read().strip()
+            except OSError:
+                cached_fp = ""
+            if cached_fp != ImageService.prompt_fingerprint(prompt, style):
+                return False
+            from PIL import Image
+            with Image.open(dest_path) as im:
+                w, h = im.size
+            if abs(w - h) <= 2 and not (abs(width - height) <= 2):
+                return False
+            if abs(w - int(width)) > 1 or abs(h - int(height)) > 1:
+                return False
+            return True
+        except Exception:
+            return False
+
+    def pregenerate_scene_backgrounds(
+        self,
+        job_id: Any,
+        prompts: List[str],
+        style: str = "cinematic film still",
+        width: int = 1280,
+        height: int = 720,
+        index_start: int = 0,
+        model_id: Optional[str] = None,
+        steps: Optional[int] = None,
+        guidance: Optional[float] = None,
+        auto_unload: bool = True,
+        progress_cb: Optional[Callable[[Dict[str, Any]], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> Dict[str, Any]:
+        """Render every storyboard scene plate in ONE batched diffusion pass.
+
+        Called before the clip render loop so the image pipeline loads once,
+        renders N stills, and unloads once — instead of the previous per-clip
+        load → single still → unload cycle that dominated wall time.
+
+        Stills are cached per (job, scene) and keyed on a prompt fingerprint,
+        so re-rendering a job reuses every untouched scene instead of
+        re-diffusing the whole storyboard. `progress_cb` receives
+        {phase, scene_index, total, generated, reused, failed, status, message}
+        so the caller can stream real per-scene progress; `cancel_check` is
+        polled before every scene so Cancel stops within one scene.
+        """
+        total = len(prompts)
+        generated = reused = failed = 0
+        stills: Dict[int, str] = {}
+        cancelled = False
+        engine_used = "none"
+        last_error: Optional[str] = None
+
+        width = max(320, min(1920, int(width)))
+        height = max(320, min(1920, int(height)))
+
+        def _emit(**payload: Any) -> None:
+            if not progress_cb:
+                return
+            try:
+                progress_cb({
+                    "phase": "scene_prebuild",
+                    "scene_index": payload.get("scene_index"),
+                    "total": total,
+                    "generated": generated,
+                    "reused": reused,
+                    "failed": failed,
+                    **payload,
+                })
+            except Exception:
+                pass
+
+        logger.info(
+            f"Scene pre-build start: {total} scene stills @ {width}x{height} "
+            f"for job {job_id} (style={style})"
+        )
+
+        # Resolve the image model once for the whole batch; the pipeline itself
+        # loads on the first render and stays hot until the finally below.
+        chosen_model_id, _model_info, local_path, repo_id, is_installed = \
+            self._resolve_image_model(model_id)
+
+        try:
+            for idx, raw_prompt in enumerate(prompts):
+                if cancel_check and cancel_check():
+                    cancelled = True
+                    logger.info(f"Scene pre-build cancelled at scene {idx + 1}/{total} for job {job_id}")
+                    break
+
+                prompt = (raw_prompt or "").strip() or "cinematic abstract motion blurs over dark stage"
+                scene_no = int(index_start) + idx
+                dest_path = os.path.join(SCENE_STILLS_DIR, self._scene_still_filename(job_id, scene_no))
+
+                if self.scene_still_is_current(dest_path, prompt, width, height, style):
+                    reused += 1
+                    stills[idx] = dest_path
+                    _emit(
+                        scene_index=idx, status="reused",
+                        message=f"Scene {idx + 1}/{total}: reusing cached background (prompt unchanged)",
+                    )
+                    continue
+
+                _emit(
+                    scene_index=idx, status="rendering",
+                    message=f"Scene {idx + 1}/{total}: pre-building background still",
+                )
+
+                ok = False
+                res: Dict[str, Any] = {}
+                try:
+                    res = self._render_diffusion_image(
+                        full_prompt=f"{prompt}, {style}, {SCENE_PREGEN_PROMPT_SUFFIX}",
+                        width=width,
+                        height=height,
+                        chosen_model_id=chosen_model_id,
+                        local_path=local_path,
+                        repo_id=repo_id,
+                        is_installed=is_installed,
+                        dest_path=dest_path,
+                        steps=steps,
+                        guidance=guidance,
+                        log_label=f"scene prebuild {idx + 1}/{total}",
+                    )
+                    if res.get("engine") and res["engine"] != "none":
+                        engine_used = res["engine"]
+                    ok = bool(res.get("engine") and res["engine"] != "none")
+                except Exception as exc:
+                    last_error = str(exc)[:300]
+                    logger.warning(f"Scene pre-build failed for scene {idx + 1} of {total}: {exc}")
+                    ok = False
+
+                if ok and os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:
+                    self.stamp_scene_plate(dest_path, prompt, style)
+                    generated += 1
+                    stills[idx] = dest_path
+                    _emit(
+                        scene_index=idx, status="rendered",
+                        message=f"Scene {idx + 1}/{total}: background still ready",
+                    )
+                else:
+                    if res.get("diffusion_error"):
+                        last_error = res.get("diffusion_error")
+                    failed += 1
+                    _emit(
+                        scene_index=idx, status="failed",
+                        message=f"Scene {idx + 1}/{total}: no diffusion weights — the video service will use its procedural fallback for this scene",
+                        error=last_error,
+                    )
+
+            logger.info(
+                f"Scene pre-build finished for job {job_id}: "
+                f"{generated} rendered, {reused} reused, {failed} failed"
+                + (" (cancelled)" if cancelled else "")
+            )
+        finally:
+            # One unload for the whole batch instead of one per clip. Callers that
+            # invoke this per scene (storyboard pass) pass auto_unload=False so the
+            # pipeline stays hot and only pays one load/unload for the run.
+            if auto_unload:
+                try:
+                    self.unload_models()
+                except Exception as exc:
+                    logger.debug(f"Scene pre-build model unload skipped: {exc}")
+                try:
+                    from app.core.hardware_lock import GlobalHardwareCoordinator
+                    GlobalHardwareCoordinator.flush_memory()
+                except Exception:
+                    pass
+
+        return {
+            "ok": (not cancelled) and total > 0 and failed == 0,
+            "cancelled": cancelled,
+            "total": total,
+            "generated": generated,
+            "reused": reused,
+            "failed": failed,
+            "stills": stills,
+            "engine": engine_used if engine_used != "none" else None,
+            "diffusion_error": last_error,
+        }
+
+    def generate_visual_asset(
+        self,
+        prompt: str,
+        style: str = "cinematic concept art",
+        aspect_ratio: str = "1:1",
+        asset_type: str = "concept_art",
+        title: Optional[str] = None,
+        negative_prompt: Optional[str] = None,
+        model_id: Optional[str] = None,
+        linked_job_id: Optional[str] = None,
+        linked_project_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Generate a visual asset and record it in the persistent SQLite VisualAsset catalog."""
+        cover_res = self.generate_cover(
+            prompt=prompt,
+            style=style,
+            aspect_ratio=aspect_ratio,
+            model_id=model_id,
+            title=title,
+        )
+        image_url = cover_res.get("url")
+        dest_path = cover_res.get("dest_path")
+
+        width, height = 1024, 1024
+        if aspect_ratio == "16:9":
+            width, height = 1024, 576
+        elif aspect_ratio == "9:16":
+            width, height = 576, 1024
+        elif aspect_ratio == "4:3":
+            width, height = 1024, 768
+
+        from app.models import VisualAsset
+        from app.main import engine
+        from sqlmodel import Session
+
+        asset = VisualAsset(
+            asset_type=asset_type or "concept_art",
+            title=title or prompt[:40],
+            prompt=prompt,
+            negative_prompt=negative_prompt,
+            style=style,
+            aspect_ratio=aspect_ratio,
+            image_url=image_url,
+            image_path=dest_path,
+            model_id=cover_res.get("model_id"),
+            width=width,
+            height=height,
+            linked_job_id=str(linked_job_id) if linked_job_id else None,
+            linked_project_id=str(linked_project_id) if linked_project_id else None,
+        )
+        with Session(engine) as session:
+            session.add(asset)
+            session.commit()
+            session.refresh(asset)
+
+        dumped = asset.model_dump() if hasattr(asset, "model_dump") else asset.dict()
+        return {
+            "success": True,
+            "asset": dumped,
+            "image_url": image_url,
+            "engine": cover_res.get("engine"),
+        }
 
 
 image_service = ImageService()

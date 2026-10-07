@@ -546,6 +546,27 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         }
     }, [activeSong?.id]);
 
+    // Reorder Timeline Scenes
+    const handleReorderClips = useCallback((newClips: VideoClipSegment[]) => {
+        let curTime = 0;
+        const chained = newClips.map((c, i) => {
+            const start = curTime;
+            const end = start + c.duration;
+            curTime = end;
+            const min = Math.floor(start / 60);
+            const sec = Math.floor(start % 60);
+            return {
+                ...c,
+                clip_index: i + 1,
+                start_time: start,
+                end_time: end,
+                time_str: `${min}:${sec.toString().padStart(2, '0')}`
+            };
+        });
+        setPlanResult(prev => prev ? { ...prev, clips: chained } : null);
+        toast('Scene sequence updated.', 'info');
+    }, []);
+
     // AI Visual Director Treatment Generator
     const handleGenerateDirectorTreatment = useCallback(async () => {
         if (!activeSong) return;
@@ -705,10 +726,31 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             };
 
             if (taskId) {
+                setActiveTask({
+                    task_id: taskId,
+                    status: 'processing',
+                    progress: 5,
+                    message: 'Pre-building scene keyframe plates...'
+                } as any);
+
                 while (true) {
                     await new Promise(resolve => setTimeout(resolve, 2000));
                     try {
                         const taskStatus: any = await videoApi.getVideoTaskStatus(taskId);
+                        setActiveTask(taskStatus);
+
+                        if (taskStatus.keyframes && Array.isArray(taskStatus.keyframes)) {
+                            setKeyframes(prev => {
+                                const next = { ...prev };
+                                taskStatus.keyframes.forEach((kf: any) => {
+                                    if (kf.clip_index !== undefined && kf.url) {
+                                        next[kf.clip_index] = kf.url;
+                                    }
+                                });
+                                return next;
+                            });
+                        }
+
                         if (taskStatus.status === 'completed') {
                             onKeyframesCompleted(taskStatus.keyframes || []);
                             break;
@@ -735,6 +777,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 kfPollRef.current = undefined;
             }
             setIsGeneratingKeyframes(false);
+            setActiveTask(null);
         }
     }, [activeSong, videoStyle, resolution, customStylePrompt, aspectRatio, planResult?.clips, clipDuration, videoModel]);
 
@@ -1164,10 +1207,12 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                         keyframes={keyframes}
                         aspectRatio={aspectRatio}
                         activeSong={activeSong}
+                        transitionStyle={transitionStyle}
                         onRetakeClip={handleOpenRetakeModal}
                         onZoomKeyframe={handleZoomKeyframe}
                         onSeekToTime={handleSeekTimeline}
                         onClearTimeline={handleClearTimeline}
+                        onReorderClips={handleReorderClips}
                     />
                 )}
             </div>

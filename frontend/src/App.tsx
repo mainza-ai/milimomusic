@@ -37,6 +37,7 @@ import { ErrorBoundary } from './components/ErrorBoundary';
 import { PlaylistsView } from './components/views/PlaylistsView';
 import { ProjectsView } from './components/views/ProjectsView';
 import { MusicVideosView } from './components/views/MusicVideosView';
+import { ImageStudioView } from './components/views/ImageStudioView';
 import { VocalStudioView } from './components/views/VocalStudioView';
 import { ProfileView } from './components/views/ProfileView';
 import { TrackDetailView } from './components/views/TrackDetailView';
@@ -80,7 +81,8 @@ import {
   Search,
   Pause,
   SkipForward,
-  SkipBack
+  SkipBack,
+  Image as ImageIcon
 } from 'lucide-react';
 
 export type NavView =
@@ -90,6 +92,7 @@ export type NavView =
   | 'projects'
   | 'playlists'
   | 'videos'
+  | 'images'
   | 'vocal-studio'
   | 'profile'
   | 'workspace'
@@ -395,6 +398,15 @@ function App() {
         icon: Video,
         shortcut: '6',
         action: () => setCurrentNav('videos'),
+      },
+      {
+        id: 'nav-images',
+        title: 'Image Generation Studio & Gallery',
+        subtitle: 'Standalone FLUX & MLX visual synthesis, concept artwork & covers',
+        category: 'Navigation',
+        icon: ImageIcon,
+        shortcut: '8',
+        action: () => setCurrentNav('images'),
       },
       {
         id: 'nav-vocal-studio',
@@ -1290,6 +1302,7 @@ function App() {
               { id: 'artists', label: 'Artists', icon: Users },
               { id: 'playlists', label: 'Playlists', icon: ListMusic },
               { id: 'videos', label: 'Music videos', icon: Video },
+              { id: 'images', label: 'Image Studio', icon: ImageIcon },
               { id: 'vocal-studio', label: 'Vocal Studio', icon: Mic },
               { id: 'profile', label: 'Profile', icon: User },
               { id: 'workspace', label: 'DAW Workspace', icon: Sliders }
@@ -1827,6 +1840,16 @@ function App() {
             playingSongId={playingSong?.id}
             onUpdateSong={(updatedSong) => {
               setHistory(prev => prev.map(s => s.id === updatedSong.id ? updatedSong : s));
+            }}
+          />
+        ) : currentNav === 'images' ? (
+          <ImageStudioView
+            songs={history}
+            onSetSongCover={(songId, coverUrl) => {
+              setHistory(prev => prev.map(s => s.id === songId ? { ...s, cover_image_path: coverUrl } : s));
+              if (selectedTrack?.id === songId) {
+                setSelectedTrack(prev => prev ? { ...prev, cover_image_path: coverUrl } : prev);
+              }
             }}
           />
         ) : currentNav === 'vocal-studio' ? (

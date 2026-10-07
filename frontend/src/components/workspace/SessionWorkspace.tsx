@@ -19,7 +19,8 @@ import {
     Repeat,
     Loader2,
     Sparkles,
-    Wand2
+    Wand2,
+    ArrowDownCircle
 } from 'lucide-react';
 import { useAudioControls } from '../../context/AudioEngineContext';
 import { API_BASE_URL, api, getStemMeta } from '../../api';
@@ -27,6 +28,7 @@ import type { Job, TimedLine, StemsMap, NoteEvent } from '../../api';
 import { pushHotkeyScope, isTextEntryTarget, hasModifier } from '../../utils/hotkeyScope';
 import { safeJsonParse } from '../../utils/safeJsonParse';
 import { getAudioContext } from '../../utils/audioContext';
+import { useLyricsAutoScroll } from '../../hooks/useLyricsAutoScroll';
 import { ArrangeTimeline } from './ArrangeTimeline';
 import { PianoRoll } from './PianoRoll';
 import { NotationViewer } from './NotationViewer';
@@ -398,6 +400,17 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         }
         return -1;
     })();
+
+    const {
+        containerRef: lyricsContainerRef,
+        isAutoScrollPaused,
+        resumeAutoScroll,
+        handleScroll: handleLyricsScroll,
+        handleWheel: handleLyricsWheel
+    } = useLyricsAutoScroll({
+        activeLineIndex,
+        enabled: mode === 'lyrics' && timedLyrics.length > 0
+    });
 
     const resetAudioNodes = () => {
         Object.keys(stemGainRefs.current).forEach(id => {
@@ -1541,72 +1554,97 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
                         </div>
 
                         {/* Lyrics Container */}
-                        <div className="flex-1 overflow-y-auto pr-2 space-y-4 font-sans select-text">
-                            {timedLyrics.length > 0 ? (
-                                timedLyrics.map((line, idx) => {
-                                    const isCurrent = idx === activeLineIndex;
-                                    const isPast = idx < activeLineIndex;
-                                    const isSection = (line as any).is_section || (line.text.startsWith('[') && line.text.endsWith(']'));
+                        <div className="flex-1 relative min-h-0 flex flex-col">
+                            <div
+                                ref={lyricsContainerRef}
+                                onScroll={handleLyricsScroll}
+                                onWheel={handleLyricsWheel}
+                                className="flex-1 overflow-y-auto pr-2 space-y-4 font-sans select-text custom-scrollbar"
+                            >
+                                {timedLyrics.length > 0 ? (
+                                    timedLyrics.map((line, idx) => {
+                                        const isCurrent = idx === activeLineIndex;
+                                        const isPast = idx < activeLineIndex;
+                                        const isSection = (line as any).is_section || (line.text.startsWith('[') && line.text.endsWith(']'));
 
-                                    if (isSection) {
+                                        if (isSection) {
+                                            return (
+                                                <div key={idx} data-line-idx={idx} className="pt-4 pb-1">
+                                                    <span className="text-xs font-mono font-bold uppercase tracking-widest text-teal-600 dark:text-teal-400 bg-teal-500/10 px-3 py-1 rounded-full border border-teal-500/20">
+                                                        {line.text}
+                                                    </span>
+                                                </div>
+                                            );
+                                        }
+
                                         return (
-                                            <div key={idx} className="pt-4 pb-1">
-                                                <span className="text-xs font-mono font-bold uppercase tracking-widest text-teal-600 dark:text-teal-400 bg-teal-500/10 px-3 py-1 rounded-full border border-teal-500/20">
-                                                    {line.text}
-                                                </span>
+                                            <div
+                                                key={idx}
+                                                data-line-idx={idx}
+                                                onClick={() => {
+                                                    handleSeek(line.start);
+                                                    resumeAutoScroll();
+                                                }}
+                                                className={`cursor-pointer transition-all duration-300 rounded-2xl px-4 py-2.5 ${
+                                                    isCurrent
+                                                        ? 'bg-teal-500/15 dark:bg-teal-500/20 text-teal-900 dark:text-teal-200 font-extrabold text-lg sm:text-xl scale-[1.01] shadow-apple-sm ring-1 ring-teal-500/30'
+                                                        : isPast
+                                                        ? 'text-slate-500 dark:text-slate-400 font-medium text-base hover:text-teal-600 dark:hover:text-teal-400'
+                                                        : 'text-slate-400 dark:text-slate-500 font-normal text-base hover:text-slate-800 dark:hover:text-slate-200'
+                                                }`}
+                                            >
+                                                <div className="flex items-center justify-between gap-4">
+                                                    {isCurrent && line.words && line.words.length > 0 ? (
+                                                        <span className="inline-flex flex-wrap gap-1.5">
+                                                            {line.words.map((w: any, wIdx: number) => {
+                                                                const isWordSung = currentTime >= w.start;
+                                                                return (
+                                                                    <span
+                                                                        key={wIdx}
+                                                                        className={`transition-colors duration-150 ${
+                                                                            isWordSung
+                                                                                ? 'text-teal-800 dark:text-teal-200 font-black'
+                                                                                : 'text-slate-400 dark:text-slate-500 opacity-60'
+                                                                        }`}
+                                                                    >
+                                                                        {w.word}
+                                                                    </span>
+                                                                );
+                                                            })}
+                                                        </span>
+                                                    ) : (
+                                                        <span>{line.text}</span>
+                                                    )}
+                                                    <span className="text-xs font-mono text-slate-400 opacity-60">
+                                                        {formatTime(line.start)}
+                                                    </span>
+                                                </div>
                                             </div>
                                         );
-                                    }
+                                    })
+                                ) : job.lyrics ? (
+                                    <pre className="text-sm font-sans leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
+                                        {job.lyrics}
+                                    </pre>
+                                ) : (
+                                    <div className="h-full flex flex-col items-center justify-center text-center p-12 text-slate-400 space-y-3">
+                                        <Mic2 size={32} className="opacity-40" />
+                                        <p className="text-sm">No lyrics found for this session track.</p>
+                                    </div>
+                                )}
+                            </div>
 
-                                    return (
-                                        <div
-                                            key={idx}
-                                            onClick={() => handleSeek(line.start)}
-                                            className={`cursor-pointer transition-all duration-300 rounded-2xl px-4 py-2.5 ${
-                                                isCurrent
-                                                    ? 'bg-teal-500/15 dark:bg-teal-500/20 text-teal-900 dark:text-teal-200 font-extrabold text-lg sm:text-xl scale-[1.01] shadow-apple-sm'
-                                                    : isPast
-                                                    ? 'text-slate-500 dark:text-slate-400 font-medium text-base hover:text-teal-600 dark:hover:text-teal-400'
-                                                    : 'text-slate-400 dark:text-slate-500 font-normal text-base hover:text-slate-800 dark:hover:text-slate-200'
-                                            }`}
-                                        >
-                                            <div className="flex items-center justify-between gap-4">
-                                                {isCurrent && line.words && line.words.length > 0 ? (
-                                                    <span className="inline-flex flex-wrap gap-1.5">
-                                                        {line.words.map((w: any, wIdx: number) => {
-                                                            const isWordSung = currentTime >= w.start;
-                                                            return (
-                                                                <span
-                                                                    key={wIdx}
-                                                                    className={`transition-colors duration-150 ${
-                                                                        isWordSung
-                                                                            ? 'text-teal-800 dark:text-teal-200 font-black'
-                                                                            : 'text-slate-400 dark:text-slate-500 opacity-60'
-                                                                    }`}
-                                                                >
-                                                                    {w.word}
-                                                                </span>
-                                                            );
-                                                        })}
-                                                    </span>
-                                                ) : (
-                                                    <span>{line.text}</span>
-                                                )}
-                                                <span className="text-xs font-mono text-slate-400 opacity-60">
-                                                    {formatTime(line.start)}
-                                                </span>
-                                            </div>
-                                        </div>
-                                    );
-                                })
-                            ) : job.lyrics ? (
-                                <pre className="text-sm font-sans leading-relaxed text-slate-800 dark:text-slate-200 whitespace-pre-wrap">
-                                    {job.lyrics}
-                                </pre>
-                            ) : (
-                                <div className="h-full flex flex-col items-center justify-center text-center p-12 text-slate-400 space-y-3">
-                                    <Mic2 size={32} className="opacity-40" />
-                                    <p className="text-sm">No lyrics found for this session track.</p>
+                            {/* Floating Sync Lyrics Button when paused by user scrolling */}
+                            {isAutoScrollPaused && timedLyrics.length > 0 && (
+                                <div className="absolute bottom-4 left-1/2 -translate-x-1/2 z-10 animate-fade-in pointer-events-auto">
+                                    <button
+                                        onClick={resumeAutoScroll}
+                                        className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-full bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold shadow-apple-md backdrop-blur-md transition-all active:scale-95 border border-white/20"
+                                        title="Resume auto-scrolling lyrics"
+                                    >
+                                        <ArrowDownCircle size={14} />
+                                        <span>Sync Lyrics</span>
+                                    </button>
                                 </div>
                             )}
                         </div>

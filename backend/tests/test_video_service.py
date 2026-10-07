@@ -206,7 +206,8 @@ async def test_plan_video_endpoint(client, sample_job):
 @pytest.mark.asyncio
 async def test_generate_keyframes_endpoint(client, sample_job):
     """Test POST /videos/keyframes/{job_id} returns keyframe list."""
-    with patch("app.services.image_service.image_service.generate_scene_background", return_value={"ok": False, "dest_path": None}):
+    with patch("app.services.image_service.image_service.generate_scene_background", return_value={"ok": False, "dest_path": None}), \
+         patch("app.services.image_service.image_service.pregenerate_scene_backgrounds", return_value={"ok": False, "stills": {}, "generated": 0, "reused": 0, "failed": 0}):
         response = await client.post(
             f"/videos/keyframes/{sample_job.id}",
             json={
@@ -461,7 +462,8 @@ async def test_reimagine_scene_endpoint(client, sample_job):
 @pytest.mark.asyncio
 async def test_retake_clip_custom_prompt_keyframe(client, sample_job):
     """Test retake endpoint accepts custom prompt and returns keyframe url."""
-    with patch("app.services.image_service.image_service.generate_scene_background", return_value={"ok": False, "dest_path": None}):
+    with patch("app.services.image_service.image_service.generate_scene_background", return_value={"ok": False, "dest_path": None}), \
+         patch("app.services.image_service.image_service.pregenerate_scene_backgrounds", return_value={"ok": False, "stills": {}, "generated": 0, "reused": 0, "failed": 0}):
         res = await client.post(
             f"/videos/retake-clip/{sample_job.id}/1",
             json={
@@ -481,7 +483,8 @@ async def test_retake_clip_custom_prompt_keyframe(client, sample_job):
 @pytest.mark.asyncio
 async def test_keyframes_get_and_post_api_endpoints(client, sample_job):
     """Test generating keyframes via POST and retrieving them via GET /videos/keyframes/{job_id}."""
-    with patch("app.services.image_service.image_service.generate_scene_background", return_value={"ok": False, "dest_path": None}):
+    with patch("app.services.image_service.image_service.generate_scene_background", return_value={"ok": False, "dest_path": None}), \
+         patch("app.services.image_service.image_service.pregenerate_scene_backgrounds", return_value={"ok": False, "stills": {}, "generated": 0, "reused": 0, "failed": 0}):
         # 1. POST /videos/keyframes/{job_id}
         post_res = await client.post(
             f"/videos/keyframes/{sample_job.id}",
@@ -571,7 +574,8 @@ async def test_generate_scene_keyframes_unique_and_decoupled_from_cover(tmp_path
     ]
 
     # 4. Generate keyframes
-    with patch("app.services.image_service.image_service.generate_scene_background", return_value={"ok": False, "dest_path": None}):
+    with patch("app.services.image_service.image_service.generate_scene_background", return_value={"ok": False, "dest_path": None}), \
+         patch("app.services.image_service.image_service.pregenerate_scene_backgrounds", return_value={"ok": False, "stills": {}, "generated": 0, "reused": 0, "failed": 0}):
         kf_results = await video_orchestrator.generate_scene_keyframes(
             job=job,
             visual_style="neon-cyberpunk",

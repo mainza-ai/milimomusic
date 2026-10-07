@@ -681,3 +681,50 @@ class StudioUserProfileUpdate(SQLModel):
     social_links: Optional[Dict[str, str]] = None
     preferences: Optional[Dict[str, Any]] = None
 
+
+class VisualAssetType(str, Enum):
+    ALBUM_COVER = "album_cover"
+    CONCEPT_ART = "concept_art"
+    SCENE_KEYFRAME = "scene_keyframe"
+    CHARACTER_PLATE = "character_plate"
+    CUSTOM = "custom"
+
+
+class VisualAsset(SQLModel, table=True):
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    asset_type: str = Field(default="concept_art", index=True)
+    title: Optional[str] = None
+    prompt: str
+    negative_prompt: Optional[str] = None
+    style: Optional[str] = None
+    aspect_ratio: str = Field(default="1:1")
+    image_url: str
+    image_path: str
+    model_id: Optional[str] = None
+    seed: Optional[int] = None
+    width: int = Field(default=1024)
+    height: int = Field(default=1024)
+    linked_job_id: Optional[str] = Field(default=None, index=True)
+    linked_project_id: Optional[str] = Field(default=None, index=True)
+    is_favorite: bool = Field(default=False)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class VisualAssetCreate(SQLModel):
+    prompt: str
+    title: Optional[str] = None
+    negative_prompt: Optional[str] = None
+    style: Optional[str] = "cinematic album cover"
+    aspect_ratio: Optional[str] = "1:1"
+    asset_type: Optional[str] = "concept_art"
+    model_id: Optional[str] = None
+    linked_job_id: Optional[str] = None
+    linked_project_id: Optional[str] = None
+
+
+class VisualAssetUpdate(SQLModel):
+    title: Optional[str] = None
+    is_favorite: Optional[bool] = None
+    asset_type: Optional[str] = None
+
+

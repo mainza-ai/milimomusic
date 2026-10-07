@@ -1769,5 +1769,78 @@ export const trainingApi = {
     },
 };
 
+// --- Standalone Image Studio & Visual Asset Gallery API ---
+
+export interface VisualAsset {
+    id: string;
+    asset_type: 'album_cover' | 'concept_art' | 'scene_keyframe' | 'character_plate' | 'custom';
+    title?: string;
+    prompt: string;
+    negative_prompt?: string;
+    style?: string;
+    aspect_ratio: string;
+    image_url: string;
+    image_path: string;
+    model_id?: string;
+    seed?: number;
+    width: number;
+    height: number;
+    linked_job_id?: string;
+    linked_project_id?: string;
+    is_favorite: boolean;
+    created_at: string;
+}
+
+export interface VisualAssetCreate {
+    prompt: string;
+    title?: string;
+    negative_prompt?: string;
+    style?: string;
+    aspect_ratio?: string;
+    asset_type?: string;
+    model_id?: string;
+    linked_job_id?: string;
+    linked_project_id?: string;
+}
+
+export const imageStudioApi = {
+    getGallery: async (params?: {
+        asset_type?: string;
+        job_id?: string;
+        project_id?: string;
+        favorite_only?: boolean;
+        limit?: number;
+        offset?: number;
+    }): Promise<{ assets: VisualAsset[]; total: number }> => {
+        const query = new URLSearchParams();
+        if (params?.asset_type) query.set('asset_type', params.asset_type);
+        if (params?.job_id) query.set('job_id', params.job_id);
+        if (params?.project_id) query.set('project_id', params.project_id);
+        if (params?.favorite_only) query.set('favorite_only', 'true');
+        if (params?.limit) query.set('limit', params.limit.toString());
+        if (params?.offset) query.set('offset', params.offset.toString());
+        const qs = query.toString();
+        const res = await axios.get(`${API_BASE_URL}/images/gallery${qs ? `?${qs}` : ''}`);
+        return res.data;
+    },
+    generateImage: async (payload: VisualAssetCreate): Promise<{ success: boolean; asset: VisualAsset; image_url: string; engine?: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/images/generate`, payload);
+        return res.data;
+    },
+    setAsCover: async (assetId: string, jobId: string): Promise<{ success: boolean; job_id: string; cover_image_path: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/images/assets/${assetId}/set-cover/${jobId}`);
+        return res.data;
+    },
+    deleteAsset: async (assetId: string): Promise<{ success: boolean; deleted_id: string }> => {
+        const res = await axios.delete(`${API_BASE_URL}/images/assets/${assetId}`);
+        return res.data;
+    },
+    updateAsset: async (assetId: string, payload: { title?: string; is_favorite?: boolean; asset_type?: string }): Promise<{ success: boolean; asset: VisualAsset }> => {
+        const res = await axios.patch(`${API_BASE_URL}/images/assets/${assetId}`, payload);
+        return res.data;
+    },
+};
+
+
 
 

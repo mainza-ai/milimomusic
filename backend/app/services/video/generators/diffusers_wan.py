@@ -131,6 +131,12 @@ class DiffusersWanGenerator(BaseVideoGenerator):
                         p.vae.enable_slicing()
                     except Exception:
                         pass
+                if device == "mps" and hasattr(p.vae, "to"):
+                    try:
+                        p.vae.to(dtype=torch.float32)
+                        logger.info("DiffusersWanGenerator: Ensured VAE on MPS uses float32 precision.")
+                    except Exception as ex:
+                        logger.debug(f"Could not convert VAE to float32 on MPS: {ex}")
 
         def step_end_callback(pipeline, step_index: int, timestep: int, callback_kwargs: dict):
             if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):

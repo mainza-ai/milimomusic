@@ -115,7 +115,10 @@ from app.models import (
     CoverGenerationRequest,
     LeadSheetExtractRequest,
     TrackExtendRequest,
-    TrackInpaintRequest
+    TrackInpaintRequest,
+    VisualAsset,
+    VisualAssetCreate,
+    VisualAssetUpdate
 )
 from app.agents.registry import AGENTS, get_agent, list_agents
 from app.agents.runtime.context import RunContext
@@ -2823,6 +2826,112 @@ def generate_cover_image(req: CoverImageRequest):
     )
 
 
+# ---------------------------------------------------------------------------
+# Visual Asset Gallery Studio Endpoints (Universal Local Asset Vault)
+# ---------------------------------------------------------------------------
+@app.get("/images/gallery")
+def get_visual_gallery(
+    asset_type: Optional[str] = None,
+    job_id: Optional[str] = None,
+    project_id: Optional[str] = None,
+    favorite_only: bool = False,
+    limit: int = 50,
+    offset: int = 0
+):
+    """Retrieve visual assets stored in the local studio gallery."""
+    from app.models import VisualAsset
+    from sqlmodel import select
+    with Session(engine) as session:
+        statement = select(VisualAsset)
+        if asset_type:
+            statement = statement.where(VisualAsset.asset_type == asset_type)
+        if job_id:
+            statement = statement.where(VisualAsset.linked_job_id == job_id)
+        if project_id:
+            statement = statement.where(VisualAsset.linked_project_id == project_id)
+        if favorite_only:
+            statement = statement.where(VisualAsset.is_favorite == True)
+        statement = statement.order_by(VisualAsset.created_at.desc()).offset(offset).limit(limit)
+        results = session.exec(statement).all()
+        return {"assets": results, "total": len(results)}
+
+
+@app.post("/images/generate")
+def generate_gallery_image(req: VisualAssetCreate):
+    """Generate a new image in the Image Studio and catalog it in the visual gallery."""
+    from app.services.image_service import image_service
+    return image_service.generate_visual_asset(
+        prompt=req.prompt,
+        title=req.title,
+        negative_prompt=req.negative_prompt,
+        style=req.style or "cinematic concept art",
+        aspect_ratio=req.aspect_ratio or "1:1",
+        asset_type=req.asset_type or "concept_art",
+        model_id=req.model_id,
+        linked_job_id=req.linked_job_id,
+        linked_project_id=req.linked_project_id,
+    )
+
+
+@app.post("/images/assets/{asset_id}/set-cover/{job_id}")
+def set_asset_as_job_cover(asset_id: UUID, job_id: UUID):
+    """Assign an asset from the visual gallery as the official cover artwork for a track."""
+    from app.models import VisualAsset, Job
+    with Session(engine) as session:
+        asset = session.get(VisualAsset, asset_id)
+        if not asset:
+            raise HTTPException(status_code=404, detail="Visual asset not found.")
+        job = session.get(Job, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track job not found.")
+
+        job.cover_image_path = asset.image_url
+        asset.linked_job_id = str(job_id)
+        session.add(job)
+        session.add(asset)
+        session.commit()
+        return {"success": True, "job_id": str(job_id), "cover_image_path": job.cover_image_path}
+
+
+@app.delete("/images/assets/{asset_id}")
+def delete_visual_asset(asset_id: UUID):
+    """Delete a visual asset from the local studio gallery."""
+    from app.models import VisualAsset
+    with Session(engine) as session:
+        asset = session.get(VisualAsset, asset_id)
+        if not asset:
+            raise HTTPException(status_code=404, detail="Visual asset not found.")
+        if asset.image_path and os.path.isfile(asset.image_path):
+            try:
+                os.remove(asset.image_path)
+            except Exception:
+                pass
+        session.delete(asset)
+        session.commit()
+        return {"success": True, "deleted_id": str(asset_id)}
+
+
+@app.patch("/images/assets/{asset_id}")
+def update_visual_asset(asset_id: UUID, req: VisualAssetUpdate):
+    """Update title, favorite status, or type of a visual asset."""
+    from app.models import VisualAsset
+    with Session(engine) as session:
+        asset = session.get(VisualAsset, asset_id)
+        if not asset:
+            raise HTTPException(status_code=404, detail="Visual asset not found.")
+        if req.title is not None:
+            asset.title = req.title
+        if req.is_favorite is not None:
+            asset.is_favorite = req.is_favorite
+        if req.asset_type is not None:
+            asset.asset_type = req.asset_type
+        session.add(asset)
+        session.commit()
+        session.refresh(asset)
+        return {"success": True, "asset": asset}
+
+
+
 def _resolve_job_artist_name(session: Session, job: Job) -> Optional[str]:
     """Resolve the owning artist name for a track's cover byline.
 
@@ -5067,6 +5176,10 @@ async def retake_video_clip_endpoint(job_id: str, clip_index: int, payload: dict
                 )
                 if gen.get("ok") and gen.get("dest_path") and os.path.isfile(gen["dest_path"]):
                     shutil.copy(gen["dest_path"], kf_path)
+                    # Record what this frame was diffused from, and mark it user-approved:
+                    # a retake is the shot the user picked, so the scene pre-build must
+                    # never re-diffuse over it — even if the storyboard prompt differs.
+                    image_service.stamp_scene_plate(kf_path, prompt.strip(), visual_style, approved=True)
                     rendered_ok = True
             except Exception as e:
                 logger.warning(f"Could not generate retake keyframe: {e}")

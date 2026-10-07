@@ -2,7 +2,7 @@
 title: Wiki Log
 type: log
 created: 2026-08-19
-updated: 2026-09-26
+updated: 2026-10-07
 ---
 
 # Wiki Log
@@ -2448,3 +2448,93 @@ Authored comprehensive entity architecture and handoff specification for the Sta
 5. Catalog & Cross-Linking:
    - Added to `wiki/index.md` under DAW & Production.
    - Integrated into `wiki/concepts/video-generation-troubleshooting-handoff.md` Section 3.7 and Action Items.
+
+## [2026-09-26] feat | Batched People-Free Scene Background Pre-Generation
+
+Implemented in `backend/app/services/image_service.py` + `backend/app/services/video/video_orchestrator.py`; documented on `entities/video-studio.md` (§6) rather than as a new page, since it extends the existing Keyframe Stills section.
+1. `ImageService.pregenerate_scene_backgrounds(job_id, prompts, style, width, height, index_start, auto_unload, progress_cb, cancel_check)`:
+   - Renders every scene plate in one batch: the image model resolves once, loads once, and unloads once for the whole batch instead of per clip.
+   - Caches each plate at `video_cache/scene_stills/scene_pregen_{job}_{scene}.png` with a `.prompt` sidecar = `sha256(style + "\n" + prompt)[:16]`; reuse needs a matching sidecar and pixels that fit the requested frame.
+   - Appends `SCENE_PREGEN_PROMPT_SUFFIX` (people-free) — distinct from `COVER_PROMPT_SUFFIX` and `SCENE_PROMPT_SUFFIX`.
+2. `VideoOrchestrator._prebuild_scene_plates` runs ahead of the clip loop inside one `GlobalHardwareCoordinator.scoped_device(modality="image_gen")` block, stages plates to `keyframes/keyframe_{job}_{scene}.png`, and reports `Pre-building scene backgrounds... i/N (…)` across 12→20 %. `_scene_plate_is_current` gates which plates may seed Wan i2v (sidecar match + aspect/size).
+3. `generate_scene_keyframes` now routes cinematic scenes through the same API (`auto_unload=False`, `index_start=clip_index`), so an approved storyboard plate is reused at render time with no second diffusion; vocal scenes keep performer-visible stills because lip-sync drives them.
+4. Regression coverage added: `backend/tests/test_scene_plates.py` (14 tests — batching counts, cache hits/invalidation, cancel, progress, plate validation).
+
+## [2026-09-26] update | User-Approved Scene Retakes Bypass Prompt Fingerprint Invalidation
+
+Follow-up to the scene pre-build work above; documented on `entities/video-studio.md` §6 ("Approved Retakes Are Final").
+1. Problem: the new `.prompt` sidecar gate compares the plate fingerprint to the *director* prompt. A retake is diffused from a user-typed custom prompt, so its fingerprint would not match and the pre-build would silently re-diffuse over the frame the user just picked — a regression against the old "any existing keyframe file wins" behavior.
+2. `ImageService.stamp_scene_plate(..., approved=True)` now writes `approved:<fingerprint>`; `VideoOrchestrator._scene_plate_is_current` accepts an `approved:` sidecar without prompt equality (frame size/aspect guards unchanged). `POST /videos/retake-clip/{job_id}/{clip_index}` is the only approved caller, so batch-rendered plates are still strictly invalidated by prompt or style changes.
+3. `backend/tests/test_scene_plates.py` grew to 16 tests: approved retake with a differing prompt survives the pre-build untouched, a wrong-shape approved plate is still rejected, and a plain mismatched stamp is re-diffused.
+
+## [2026-10-07] create | Real-Time Synchronized Lyrics Auto-Scroll & Smart Pause Hook
+
+Investigated and resolved issue where synchronized lyrics did not auto-scroll during playback across all views (`TrackDetailView`, `SessionWorkspace`, and `GlobalAudioPlayer`).
+1. Root Causes Diagnosed:
+   - `TrackDetailView.tsx`: Karaoke container lacked a React ref, scroll event handlers, `data-line-idx` DOM hooks, and auto-scrolling logic. Additionally, `activeLineIndex` failed to skip structural section headers (e.g., `[VERSE 1]`).
+   - `SessionWorkspace.tsx`: Mode 5 ("Lyrics") lacked refs, `data-line-idx` hooks, and scrolling logic.
+   - `GlobalAudioPlayer.tsx`: Relied on `element.scrollIntoView({ behavior: 'smooth', block: 'center' })` which causes ancestor and page scroll jumps rather than container-bounded scrolling, with no pause mechanism when users browsed lyrics manually.
+2. Production-Grade React Hook:
+   - Created `frontend/src/hooks/useLyricsAutoScroll.ts`:
+     - Strictly container-scoped: Uses `container.scrollTo()` relative math to center the active line (`relativeTop - container.clientHeight / 2 + activeRect.height / 2`), eliminating page-level jumping.
+     - Proximity smoothing: Refined `activeLineIndex` across views to skip section headers (`isSectionLine`) and compute non-section line time boundaries.
+     - User interaction detection: Pauses auto-scrolling on manual scroll or mouse wheel, auto-resuming after a 4-second idle timeout.
+     - Floating "Sync Lyrics" button: Apple Music-style pill button allowing instant 1-click re-centering.
+     - Click-to-seek alignment: Clicking any lyric line seeks playback and immediately re-aligns auto-scrolling.
+3. Full Verification:
+   - Validated complete frontend production build with `tsc -b && vite build` (zero errors).
+   - Confirmed live HMR updates across all components in running Vite dev server.
+
+## [2026-10-07] audit | AI Music Video Studio Exhaustive Forensic Audit
+
+Completed an exhaustive end-to-end architectural, code, and UX audit of the entire AI Music Video Studio subsystem (`backend/app/services/video/` and `frontend/src/components/video/`):
+1. **Health Scorecard & Overall Readiness**:
+   - System scored **67.6% (D+)**: Macro-architecture (director planning, beat-snapping, keyframe plate generation, cloud bursting) is solid, but local neural video diffusion suffers from packaging mismatches, UI polling blindspots, and inert post-processing pipelines.
+2. **Key Root Causes Diagnosed**:
+   - `[ISSUE-VID-01]`: Wan 2.1 1.3B fails because local weights on disk are raw PyTorch/safetensors, whereas `DiffusersWanGenerator` requires the official converted Hugging Face Diffusers layout (`model_index.json`).
+   - `[ISSUE-VID-02]`: Keyframe still generation HUD blindspot caused by missing `setActiveTask(taskStatus)` inside `handleGenerateKeyframes` polling loop in `MusicVideosView.tsx`.
+   - `[ISSUE-VID-03]`: Metal quadratic memory crash ($558 GB$ un-fused $S = 61,200$ attention tensor) mitigated via attention slicing, VAE tiling, and MPS dimension clamping ($S \le 14,040$).
+   - `[ISSUE-VID-04]`: MiniMax H3 33B local weights lack text-encoder/VAE runners, properly categorized as Cloud Bursting model.
+   - `[ISSUE-VID-05]`: Synchronous `mflux` execution lacks step-by-step progress callbacks.
+   - `[ISSUE-VID-06]`: LTX-Video aspect ratio distortion caused by landscape-biased dimension clamping and missing modulo 8 temporal lattice enforcement.
+   - `[ISSUE-VID-07]`: Eager local LLM unloading verified to prevent unified memory collisions with FLUX.2.
+   - `[ISSUE-VID-08]` *(Newly Uncovered)*: Stem audio reactivity envelopes extracted by `stem_audio_reactive.py` are discarded in `video_orchestrator.py` without driving video filters or motion.
+   - `[ISSUE-VID-09]` *(Newly Uncovered)*: `transition_style` configuration is parsed but ignored by FFmpeg concat demuxer, producing only hard cuts.
+3. **NLE & Timeline Gaps**:
+   - Fixed-width `w-60` clip cards break musical proportionality; lack of multi-track alignment (waveforms, karaoke lyrics, lip-sync intervals); lack of drag-and-drop reordering and clip trimming handles.
+4. **Deliverables Produced**:
+   - Published full 5-part forensic report artifact: `music_video_studio_comprehensive_audit.md`.
+   - Updated `wiki/concepts/video-generation-troubleshooting-handoff.md` with Issues 08 and 09.
+
+## [2026-10-07] fix | Wan 2.1 1.3B Diffusers Weights Ingestion [ISSUE-VID-01]
+
+Executed Option A to resolve `[ISSUE-VID-01]` (Wan 2.1 1.3B weight format incompatibility):
+1. Downloaded the official Hugging Face Diffusers repository `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` (~27 GB across all 31 files) into `models/video/Wan-AI__Wan2.1-T2V-1.3B-Diffusers`.
+2. Verified all required Diffusers subfolders and files: `model_index.json`, `scheduler/`, `text_encoder/`, `tokenizer/`, `transformer/`, `vae/`.
+3. Verified in Python that `DiffusersWanGenerator("1.3b")._resolve_model_path("t2v")` correctly resolves the path and `VideoGeneratorRegistry.resolve("wan_1.3b").is_available` returns `True`.
+4. Updated `wiki/concepts/video-generation-troubleshooting-handoff.md` status table and section details.
+
+## [2026-10-07] create | AI Music Video Studio & Standalone Image Studio Overhaul (Phases 0–4)
+
+Executed full implementation and verification of the AI Music Video Studio and Visual Asset Vault audit plan:
+1. **Phase 0 — Core Local Diffusion Engines**:
+   - Resolved `[ISSUE-VID-02]`: Fixed HUD spinning freeze in `frontend/src/components/views/MusicVideosView.tsx` by wiring `setActiveTask(taskStatus)` into `handleGenerateKeyframes` polling loop.
+   - Resolved `[ISSUE-VID-06]`: Overhauled `backend/app/services/video/generators/diffusers_ltx.py` to support aspect-aware dimensions (16:9, 9:16, 1:1, 4:3), enforced $(F-1) \pmod 8 == 0$, and added MPS attention slicing and VAE tiling.
+   - Enforced `torch.float32` for VAE on Apple Silicon MPS in `diffusers_wan.py` to eliminate black frame decoding bugs.
+2. **Phase 1 — Kinetic Stem Modulation & Transitions**:
+   - `backend/app/services/video/stem_audio_reactive.py`: Implemented `build_stem_reactive_filter` and `apply_stem_reactive_fx` driving beat-synced exposure and camera kicks from Demucs drum/bass onsets.
+   - `backend/app/services/video/video_orchestrator.py`: Implemented `_stitch_video_segments_with_transitions` using FFmpeg `xfade` filter chains (fade, dissolve, whip pan, flash, glitch) with sample-accurate concat demuxer fallback.
+3. **Phase 2 — DAW/NLE Proportional Timeline**:
+   - `frontend/src/components/video/VideoTimelineTrack.tsx`: Replaced fixed `w-60` cards with duration-proportional scaling (`clip.duration * zoomPxPerSec`), zoom slider (18–80 px/s), song section ruler, transition pills, and scene reordering (`[<]`, `[>]`).
+   - `frontend/src/components/views/MusicVideosView.tsx`: Added `handleReorderClips` dynamically recalculating continuous timeline timestamps (`start_time`, `end_time`, `time_str`).
+4. **Phase 3 & 4 — Standalone Image Generation Studio & Universal Gallery Vault**:
+   - Database & Models: Created `VisualAsset` SQLModel table and Pydantic schemas in `backend/app/models.py`.
+   - Backend Engine & REST API: Added `/images/gallery`, `/images/generate`, `/images/assets/{id}`, and `/images/assets/{id}/set-cover/{job_id}` in `backend/app/main.py` and `ImageService.generate_visual_asset`.
+   - Frontend Studio View: Created `frontend/src/components/views/ImageStudioView.tsx` (Google Flow / Midjourney style) with prompt seeds, style chips, aspect ratio selector, live generation HUD, and Masonry gallery with favorite/delete/set-cover actions.
+   - Universal Picker Modal: Created `frontend/src/components/gallery/ChooseFromGalleryModal.tsx` and integrated it directly into `TrackDetailView.tsx` and `App.tsx` left rail navigation.
+5. **Full Verification**:
+   - Backend test suites passed (`test_visual_asset_studio.py`, `test_phase3_timeline_and_gallery.py`, `test_scene_plates.py`, `test_video_service.py` — 100% pass rate).
+   - Frontend compiled clean (`npm run build` exits 0).
+
+
+

@@ -3,7 +3,7 @@ title: AI Music Video Studio — Issue Catalog & Troubleshooting Handoff
 type: concept
 tags: [video, troubleshooting, handoff, wan, minimax-h3, ltx-video, flux, keyframes, metal, mps, milimovideo]
 created: 2026-09-26
-updated: 2026-09-26
+updated: 2026-10-07
 sources: [sources/maestro-creative-studio.md]
 aliases: [VideoTroubleshooting, VideoHandoff, VideoGenerationIssues, MilimoVideoInsights]
 ---
@@ -23,13 +23,16 @@ During local generation testing on Apple Silicon (M3 Max), several bottlenecks a
 
 | Issue ID | Subsystem / Model | Severity | Observable Symptom | Technical Root Cause | Status |
 |---|---|---|---|---|---|
-| **`[ISSUE-VID-01]`** | Wan 2.1 1.3B | **High** | UI reports "Active & Ready", but generation fails or falls back to animatics | Downloaded weights are raw standalone PyTorch/safetensors, whereas `DiffusersWanGenerator` requires HuggingFace Diffusers directory format (`model_index.json`). | Root Cause Identified; Conversion / Path Fix Needed |
+| **`[ISSUE-VID-01]`** | Wan 2.1 1.3B | **High** | UI reports "Active & Ready", but generation fails or falls back to animatics | Downloaded weights are raw standalone PyTorch/safetensors, whereas `DiffusersWanGenerator` requires HuggingFace Diffusers directory format (`model_index.json`). | **Resolved**: Converted Diffusers weights downloaded and verified at `models/video/Wan-AI__Wan2.1-T2V-1.3B-Diffusers` |
 | **`[ISSUE-VID-02]`** | Keyframe Stills UI | **Medium** | Pre-rendering stills shows spinning button, but no step-by-step progress or clip count in HUD | React `activeTask` state is never updated during keyframe polling in `MusicVideosView.tsx`. | Root Cause Identified; 1-Line State Fix Needed |
 | **`[ISSUE-VID-03]`** | Metal Memory / MPS | **Critical** (Mitigated) | Un-fused attention crash: `Invalid buffer size: 558.11 GB` | At $1280 \times 720 \times 65$ frames, un-fused $S = 61,200$ attention tensor scales quadratically ($O(S^2)$). | Fixed via attention slicing, VAE tiling, and MPS dimension clamping |
 | **`[ISSUE-VID-04]`** | MiniMax Hailuo H3 | **Medium** | Local generation creates 24 fps animatic preview instead of full diffusion | Local 35.3 GB MLX weights contain only DiT weights without text-encoder/VAE MLX runner; 33B dense attention requires ~1.2 hrs/clip. | Architectural Constraint; Documented & Animatic Fallback Active |
 | **`[ISSUE-VID-05]`** | Keyframe Diffusion Engine | **Low** | Still generation takes ~5 min/scene with zero intermediate step updates | `mflux` runs synchronously in `image_service.py` without diffusion step callbacks to the task queue. | Improvement Opportunity; Expose Step Callbacks |
 | **`[ISSUE-VID-06]`** | LTX-Video 0.9B | **Low** | Diffusion fails or produces distorted aspect ratio | Requires width/height divisible by 32 and frame lattice $F \equiv 1 \pmod 8$, differing from Wan's modulo 16 / modulo 4 rule. | Addressed in `model_specs.py` & `diffusers_ltx.py` |
 | **`[ISSUE-VID-07]`** | Memory Collisions | **High** (Mitigated) | Memory exhaustion during transition from Director planning to Still diffusion | 35B Local LLM stays resident in unified memory (22.7 GB) while FLUX.2 (9B) attempts to allocate. | Fixed via eager LLM unloads in `video_orchestrator.py` |
+| **`[ISSUE-VID-08]`** | Audio Reactivity | **Medium** | "Audio-Reactive Video" produces static motion with no pulse or beat-synced camera work | `extract_stem_reactive_modulation` extracts envelopes but variables are discarded; generators and FFmpeg filters ignore them. | Uncovered in Audit; Pipeline Wiring Needed |
+| **`[ISSUE-VID-09]`** | FFmpeg Stitching | **Medium** | Transitions (Crossfade, Whip Pan) selected in settings are ignored, resulting in hard cuts | `_stitch_video_segments` relies exclusively on FFmpeg `concat` demuxer and ignores `transition_style` configuration. | Uncovered in Audit; `xfade` Filter Graph Needed |
+
 
 ---
 
@@ -76,13 +79,9 @@ During local generation testing on Apple Silicon (M3 Max), several bottlenecks a
             return os.path.abspath(c)
     ```
     Because `model_index.json` is missing in `models/video/Wan-AI__Wan2.1-T2V-1.3B`, `_resolve_model_path` returns `None`.
-- **Handoff Remediation Plan for Incoming AI / Engineer**:
-  1. **Option A (HuggingFace Diffusers Native Format - Recommended)**: Download or link the converted Diffusers weights from `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` using:
-     ```bash
-     huggingface-cli download Wan-AI/Wan2.1-T2V-1.3B-Diffusers --local-dir models/video/Wan-AI__Wan2.1-T2V-1.3B-Diffusers
-     ```
-  2. **Option B (In-Place Checkpoint Converter)**: Use the official Diffusers Wan converter script (`diffusers/scripts/convert_wan_to_diffusers.py`) to convert the existing `.safetensors` and `.pth` files into a valid Diffusers subfolder directory with `model_index.json`.
-  3. **Option C (`from_single_file` / Custom Loader)**: Apply the single-file loading pattern proven in `milimovideo/backend/models/flux_wrapper.py` using `from_single_file()` with explicit component mapping.
+- **Status & Resolution**:
+  - **Resolved via Option A**: Downloaded the complete official Diffusers snapshot from `Wan-AI/Wan2.1-T2V-1.3B-Diffusers` (~27 GB across all 31 files) into `models/video/Wan-AI__Wan2.1-T2V-1.3B-Diffusers`.
+  - Verified: `DiffusersWanGenerator._resolve_model_path("t2v")` correctly resolves to the directory and `is_available` returns `True`. Native 1.3B diffusion pipeline is now active and ready.
 
 ---
 
@@ -222,6 +221,36 @@ During local generation testing on Apple Silicon (M3 Max), several bottlenecks a
   - `GlobalHardwareCoordinator.flush_memory()` purges PyTorch MPS and MLX caches between pipeline phases.
 
 ---
+
+### `[ISSUE-VID-08]` Stem Audio Reactivity Pipeline Disconnect (Inert Envelopes)
+
+- **Target Files**:
+  - `backend/app/services/video/video_orchestrator.py` (lines 771–781)
+  - `backend/app/services/video/stem_audio_reactive.py`
+- **Severity**: Medium (Unfulfilled feature promise)
+- **Observable Symptoms**:
+  - Videos exported with "Audio Reactive" settings show static motion with no rhythmic pulse, bounce, or camera zoom synced to beats.
+- **Deep Technical Root Cause**:
+  - `video_orchestrator.py` calls `extract_stem_reactive_modulation()` and logs the result, but the returned envelopes (`reactivity_data`) are discarded. They are never passed to the video generator parameters nor to the final FFmpeg post-processing filters.
+- **Remediation Plan**:
+  - Connect `reactivity_data` to FFmpeg `zoompan` or `eq` filters during assembly to modulate camera zoom and exposure with bass/drum energy curves.
+
+---
+
+### `[ISSUE-VID-09]` Scene Transition Configuration Ignored (Always Hard Cuts)
+
+- **Target Files**:
+  - `backend/app/services/video/video_orchestrator.py` (`_stitch_video_segments`, lines 783–840)
+- **Severity**: Medium (Aesthetic limitation)
+- **Observable Symptoms**:
+  - Choosing "Dissolve" or "Whip Pan" transition styles in render settings still produces hard cuts between scenes.
+- **Deep Technical Root Cause**:
+  - `_stitch_video_segments()` reads `transition_style` from config, but relies exclusively on the FFmpeg `concat` demuxer (`-f concat -safe 0 -i clips.txt -c copy`), which only supports hard concatenation.
+- **Remediation Plan**:
+  - Implement an FFmpeg complex filter graph (`xfade`) when `transition_style != "cut"` to create true beat-synced dissolves, wipes, and crossfades.
+
+---
+
 
 ## 3. Cross-Repository Architectural Transfer: Insights from Milimo Video
 

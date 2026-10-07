@@ -7,6 +7,8 @@ import {
     voiceApi,
     projectApi,
     coverApi,
+    imageStudioApi,
+    type VisualAsset,
     getStemMeta,
     API_BASE_URL,
     api
@@ -51,10 +53,14 @@ import {
     Disc,
     FastForward,
     Wand2,
-    X
+    X,
+    ArrowDownCircle,
+    Image as ImageIcon
 } from 'lucide-react';
 import { InpaintModal } from '../InpaintModal';
+import { ChooseFromGalleryModal } from '../gallery/ChooseFromGalleryModal';
 import { useModalStore } from '../../stores/useModalStore';
+import { useLyricsAutoScroll } from '../../hooks/useLyricsAutoScroll';
 
 interface TrackDetailViewProps {
     track: Job;
@@ -122,8 +128,21 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
     const [stemSourceMode, setStemSourceMode] = useState<'muscriptor' | 'neural'>('muscriptor');
     const [isGeneratingCover, setIsGeneratingCover] = useState(false);
     const [isArtworkModalOpen, setIsArtworkModalOpen] = useState(false);
+    const [isGalleryPickerOpen, setIsGalleryPickerOpen] = useState(false);
     const [showInpaintModal, setShowInpaintModal] = useState<boolean>(false);
     const { openCoverStudio, openExtendTrack } = useModalStore();
+
+    const handleSelectGalleryAsset = async (asset: VisualAsset) => {
+        try {
+            await imageStudioApi.setAsCover(asset.id, track.id);
+            const updated = { ...track, cover_image_path: asset.image_url };
+            setTrack(updated);
+            onTrackUpdated?.(updated);
+            toast('Album cover updated from local gallery!', 'success');
+        } catch (err: any) {
+            toast('Failed to set album cover from gallery', 'error');
+        }
+    };
 
     useEffect(() => {
         const handleKeyDown = (e: KeyboardEvent) => {
@@ -285,22 +304,48 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
     const [isRealigningLyrics, setIsRealigningLyrics] = useState(false);
     const [lyricsDisplayMode, setLyricsDisplayMode] = useState<'karaoke' | 'raw'>('karaoke');
 
+    const isSectionLine = (l: any) => {
+        if (!l) return false;
+        return Boolean(l.is_section || (typeof l.text === 'string' && l.text.startsWith('[') && l.text.endsWith(']')));
+    };
+
     const activeLineIndex = (() => {
         if (timedLyrics.length === 0) return -1;
+        let lastSungIdx = -1;
         for (let i = 0; i < timedLyrics.length; i++) {
             const line = timedLyrics[i];
-            const nextLine = timedLyrics[i + 1];
-            const lineStart = line.start;
-            const lineEnd = nextLine ? nextLine.start : (line.end || line.start + 6);
-            if (currentTime >= lineStart && currentTime < lineEnd) {
+            if (isSectionLine(line)) continue;
+            lastSungIdx = i;
+
+            // Find next non-section line to define upper time boundary
+            let nextSungStart = line.end || (line.start + 5.0);
+            for (let j = i + 1; j < timedLyrics.length; j++) {
+                if (!isSectionLine(timedLyrics[j])) {
+                    nextSungStart = timedLyrics[j].start;
+                    break;
+                }
+            }
+
+            if (currentTime >= line.start && currentTime < nextSungStart) {
                 return i;
             }
         }
-        if (currentTime >= timedLyrics[timedLyrics.length - 1].start) {
-            return timedLyrics.length - 1;
+        if (lastSungIdx !== -1 && currentTime >= (timedLyrics[lastSungIdx]?.start ?? 0)) {
+            return lastSungIdx;
         }
         return -1;
     })();
+
+    const {
+        containerRef: lyricsContainerRef,
+        isAutoScrollPaused,
+        resumeAutoScroll,
+        handleScroll: handleLyricsScroll,
+        handleWheel: handleLyricsWheel
+    } = useLyricsAutoScroll({
+        activeLineIndex,
+        enabled: activeTab === 'lyrics' && lyricsDisplayMode === 'karaoke' && timedLyrics.length > 0
+    });
 
     const handleRealignLyrics = async () => {
         setIsRealigningLyrics(true);
@@ -630,7 +675,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                 handleGenerateArtwork();
                             }}
                             disabled={isGeneratingCover}
-                            className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all z-10 disabled:opacity-50 cursor-pointer shadow-sm"
+                            className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all z-10 disabled:opacity-50 cursor-pointer shadow-sm hover:scale-105"
                             title={track.cover_image_path ? "Regenerate Artwork" : "Generate Cover Artwork"}
                         >
                             {isGeneratingCover ? (
@@ -638,6 +683,17 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                             ) : (
                                 <Sparkles size={14} className="text-amber-300" />
                             )}
+                        </button>
+                        {/* Choose from Visual Asset Gallery Button */}
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                setIsGalleryPickerOpen(true);
+                            }}
+                            className="absolute bottom-2 right-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all z-10 cursor-pointer shadow-sm hover:scale-105"
+                            title="Choose from Visual Asset Gallery"
+                        >
+                            <ImageIcon size={14} className="text-cyan-300" />
                         </button>
                     </div>
 
@@ -1484,60 +1540,85 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                 </div>
 
                                 {timedLyrics.length > 0 && lyricsDisplayMode === 'karaoke' ? (
-                                    <div className="space-y-3 max-h-80 overflow-y-auto pr-2 custom-scrollbar text-center py-2">
-                                        {timedLyrics.map((line: any, idx: number) => {
-                                            const isActive = idx === activeLineIndex;
-                                            const isSection = line.is_section || (line.text.startsWith('[') && line.text.endsWith(']'));
+                                    <div className="relative">
+                                        <div
+                                            ref={lyricsContainerRef}
+                                            onScroll={handleLyricsScroll}
+                                            onWheel={handleLyricsWheel}
+                                            className="space-y-3 max-h-80 overflow-y-auto pr-2 custom-scrollbar text-center py-2 relative"
+                                        >
+                                            {timedLyrics.map((line: any, idx: number) => {
+                                                const isActive = idx === activeLineIndex;
+                                                const isSection = line.is_section || (line.text.startsWith('[') && line.text.endsWith(']'));
 
-                                            if (isSection) {
+                                                if (isSection) {
+                                                    return (
+                                                        <div key={idx} data-line-idx={idx} className="py-2">
+                                                            <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-teal-600 dark:text-teal-400 bg-teal-500/10 px-3 py-1 rounded-full border border-teal-500/20">
+                                                                {line.text}
+                                                            </span>
+                                                        </div>
+                                                    );
+                                                }
+
                                                 return (
-                                                    <div key={idx} className="py-2">
-                                                        <span className="text-[11px] font-mono font-bold uppercase tracking-widest text-teal-600 dark:text-teal-400 bg-teal-500/10 px-3 py-1 rounded-full border border-teal-500/20">
-                                                            {line.text}
-                                                        </span>
+                                                    <div
+                                                        key={idx}
+                                                        data-line-idx={idx}
+                                                        onClick={() => {
+                                                            engineSeek(line.start);
+                                                            resumeAutoScroll();
+                                                        }}
+                                                        className={`cursor-pointer transition-all duration-300 px-4 py-2 rounded-2xl ${
+                                                            isActive
+                                                                ? 'bg-teal-500/15 dark:bg-teal-500/20 text-teal-900 dark:text-teal-200 font-black text-base sm:text-lg scale-[1.01] shadow-apple-sm ring-1 ring-teal-500/30'
+                                                                : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-sm font-medium'
+                                                        }`}
+                                                    >
+                                                        {isActive && line.words && line.words.length > 0 ? (
+                                                            <span className="inline-flex flex-wrap justify-center gap-1.5">
+                                                                {line.words.map((w: any, wIdx: number) => {
+                                                                    const isWordSung = currentTime >= w.start;
+                                                                    return (
+                                                                        <span
+                                                                            key={wIdx}
+                                                                            className={`transition-colors duration-150 ${
+                                                                                isWordSung
+                                                                                    ? 'text-teal-700 dark:text-teal-300 font-black'
+                                                                                    : 'text-slate-400 dark:text-slate-500 opacity-60'
+                                                                            }`}
+                                                                        >
+                                                                            {w.word}
+                                                                        </span>
+                                                                    );
+                                                                })}
+                                                            </span>
+                                                        ) : (
+                                                            <span>{line.text}</span>
+                                                        )}
+                                                        {isActive && (
+                                                            <span className="text-[10px] font-mono block opacity-60 mt-0.5">
+                                                                {formatTime(line.start)}
+                                                            </span>
+                                                        )}
                                                     </div>
                                                 );
-                                            }
+                                            })}
+                                        </div>
 
-                                            return (
-                                                <div
-                                                    key={idx}
-                                                    onClick={() => engineSeek(line.start)}
-                                                    className={`cursor-pointer transition-all duration-300 px-4 py-2 rounded-2xl ${
-                                                        isActive
-                                                            ? 'bg-teal-500/15 dark:bg-teal-500/20 text-teal-900 dark:text-teal-200 font-black text-base sm:text-lg scale-[1.01] shadow-apple-sm'
-                                                            : 'text-slate-400 dark:text-slate-500 hover:text-slate-700 dark:hover:text-slate-300 text-sm font-medium'
-                                                    }`}
+                                        {/* Floating Sync Lyrics Button when paused by user scrolling */}
+                                        {isAutoScrollPaused && (
+                                            <div className="absolute bottom-3 left-1/2 -translate-x-1/2 z-10 animate-fade-in pointer-events-auto">
+                                                <button
+                                                    onClick={resumeAutoScroll}
+                                                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-full bg-teal-600 hover:bg-teal-500 text-white text-xs font-semibold shadow-apple-md backdrop-blur-md transition-all active:scale-95 border border-white/20"
+                                                    title="Resume auto-scrolling lyrics"
                                                 >
-                                                    {isActive && line.words && line.words.length > 0 ? (
-                                                        <span className="inline-flex flex-wrap justify-center gap-1.5">
-                                                            {line.words.map((w: any, wIdx: number) => {
-                                                                const isWordSung = currentTime >= w.start;
-                                                                return (
-                                                                    <span
-                                                                        key={wIdx}
-                                                                        className={`transition-colors duration-150 ${
-                                                                            isWordSung
-                                                                                ? 'text-teal-700 dark:text-teal-300 font-black'
-                                                                                : 'text-slate-400 dark:text-slate-500 opacity-60'
-                                                                        }`}
-                                                                    >
-                                                                        {w.word}
-                                                                    </span>
-                                                                );
-                                                            })}
-                                                        </span>
-                                                    ) : (
-                                                        <span>{line.text}</span>
-                                                    )}
-                                                    {isActive && (
-                                                        <span className="text-[10px] font-mono block opacity-60 mt-0.5">
-                                                            {formatTime(line.start)}
-                                                        </span>
-                                                    )}
-                                                </div>
-                                            );
-                                        })}
+                                                    <ArrowDownCircle size={14} />
+                                                    <span>Sync Lyrics</span>
+                                                </button>
+                                            </div>
+                                        )}
                                     </div>
                                 ) : track.lyrics ? (
                                     <div className="font-mono text-xs leading-loose whitespace-pre-wrap max-h-80 overflow-y-auto p-4 rounded-2xl bg-black/[0.02] dark:bg-white/[0.02] border border-black/[0.04] dark:border-white/5">
@@ -1974,6 +2055,14 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                     jobId={track.id}
                     duration={track.duration_ms ? track.duration_ms / 1000 : 60}
                     title={track.title || track.prompt}
+                />
+            )}
+            {isGalleryPickerOpen && (
+                <ChooseFromGalleryModal
+                    isOpen={isGalleryPickerOpen}
+                    onClose={() => setIsGalleryPickerOpen(false)}
+                    onSelectAsset={handleSelectGalleryAsset}
+                    targetJobTitle={track.title || track.prompt}
                 />
             )}
         </div>

@@ -2,7 +2,7 @@
 title: Session Workspace (DAW)
 type: entity
 created: 2026-08-20
-updated: 2026-09-09
+updated: 2026-10-07
 tags: [daw, workspace, piano-roll, notation, mixer, arrange, multitrack, web-audio]
 aliases: [SessionWorkspace, DAW, Web Audio DAW]
 ---
@@ -53,8 +53,7 @@ channels (see [Stem Separation](stem-separator.md) for the dual-engine detail).
   with volume fader, stereo pan, Solo/Mute, animated LED peak meters, **GM program badge** on
   per-instrument channels, MASTER bus at **-14.0 LUFS**, and a
   **Matchering DNS Reference Master** button (see [Matchering](matchering-mastering.md)).
-- **Lyrics** — synchronized karaoke view with section-header pills, click-to-seek lines,
-  Copy Text, fallback to plain lyrics.
+- **Lyrics** — synchronized karaoke view with section-header pills, container-scoped auto-scrolling with perfect active-line vertical centering (`useLyricsAutoScroll`), user manual scroll/wheel detection with smart 4s auto-resume, 1-click floating "Sync Lyrics" button, click-to-seek lines, Copy Text, and fallback to plain lyrics.
 
 ## Multitrack playback engine (Web Audio transport)
 Since the v2 playback refactor the DAW uses a **Web Audio multitrack transport** instead of

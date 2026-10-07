@@ -178,10 +178,10 @@ The Image Studio incorporates the core engineering solutions identified during t
 
 | Milestone | Deliverables | Status |
 |---|---|---|
-| **Phase 1: Database & Asset Vault** | `VisualAsset` SQLModel table, database migration, asset registration hooks in `image_service.py` for covers and keyframes. | **Ready for Implementation** |
-| **Phase 2: Backend REST & SSE API** | `POST /api/image-studio/generate`, `GET /api/image-studio/assets`, `DELETE /api/image-studio/assets/{id}`, `POST /api/tracks/{job_id}/set-artwork`, cancellation hooks. | **Ready for Implementation** |
-| **Phase 3: Frontend Image Studio Canvas** | `ImageStudioView.tsx`, Google Flow-style prompt bar, style chips, aspect ratio selector, live diffusion HUD. | **Ready for Implementation** |
-| **Phase 4: Gallery & Universal Modal Picker** | Media gallery grid, zoom lightbox, "Choose from Gallery" picker modal integrated into `TrackDetailView`, `SongsView`, and `MusicVideosView`. | **Ready for Implementation** |
+| **Phase 1: Database & Asset Vault** | `VisualAsset` SQLModel table, database migration, asset registration hooks in `image_service.py` for covers and keyframes. | **Shipped & Verified** |
+| **Phase 2: Backend REST & API** | `POST /images/generate`, `GET /images/gallery`, `DELETE /images/assets/{id}`, `PATCH /images/assets/{id}`, `POST /images/assets/{id}/set-cover/{job_id}`. | **Shipped & Verified** |
+| **Phase 3: Frontend Image Studio Canvas** | `ImageStudioView.tsx`, Google Flow-style prompt bar, style chips, aspect ratio selector, live generation HUD, navigation routing in `App.tsx`. | **Shipped & Verified** |
+| **Phase 4: Gallery & Universal Modal Picker** | Media gallery grid, zoom lightbox, `ChooseFromGalleryModal.tsx` universal picker integrated into `TrackDetailView` and Image Studio. | **Shipped & Verified** |
 
 ---
 

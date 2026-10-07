@@ -1802,6 +1802,10 @@ function App() {
             onDelete={handleDeleteJob}
             onSelectTrack={handleSelectTrack}
             onOpenVideo={handleOpenVideo}
+            onTrackUpdated={(updated) => {
+              if (selectedTrack?.id === updated.id) setSelectedTrack(updated);
+              setHistory(prev => prev.map(j => j.id === updated.id ? updated : j));
+            }}
           />
         ) : currentNav === 'artists' ? (
           <ErrorBoundary sectionName="Artists">

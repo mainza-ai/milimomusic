@@ -2769,9 +2769,17 @@ async def upload_cover_image(file: UploadFile = File(...)):
     """Upload custom cover art (PNG/JPG/WEBP). SVG excluded (stored-XSS, audit A7);
     content sniffed against magic bytes; size capped; name randomized."""
     from app.core.uploads import save_upload
+    primary_dir = str(get_data_dir() / "covers")
     dest_path, filename = await save_upload(
-        file, os.path.join("data", "covers"), kind="image"
+        file, primary_dir, kind="image"
     )
+
+    backend_dest = os.path.abspath(os.path.join("data", "covers", filename))
+    if os.path.abspath(dest_path) != backend_dest and os.path.exists(dest_path):
+        try:
+            shutil.copy2(dest_path, backend_dest)
+        except Exception:
+            pass
 
     return {
         "url": f"/covers/{filename}",
@@ -3971,6 +3979,60 @@ def generate_job_cover(job_id: str, req: Optional[JobCoverGenerateRequest] = Non
         job.image_prompt = prompt
         job.updated_at = datetime.now(timezone.utc)
         session.add(job)
+        session.commit()
+        session.refresh(job)
+
+        event_manager.publish("job_update", {
+            "job_id": str(job.id),
+            "status": job.status,
+            "cover_image_path": job.cover_image_path,
+            "title": job.title or job.prompt,
+        })
+        return job
+
+
+@app.post("/jobs/{job_id}/upload-cover", response_model=Job)
+async def upload_job_cover(job_id: str, file: UploadFile = File(...)):
+    """Upload custom image (PNG/JPG/JPEG/WEBP) and assign it directly as the track's cover photo."""
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+
+        from app.core.uploads import save_upload
+        primary_dir = str(get_data_dir() / "covers")
+        dest_path, filename = await save_upload(file, primary_dir, kind="image")
+
+        backend_dest = os.path.abspath(os.path.join("data", "covers", filename))
+        if os.path.abspath(dest_path) != backend_dest and os.path.exists(dest_path):
+            try:
+                shutil.copy2(dest_path, backend_dest)
+            except Exception:
+                pass
+
+        cover_url = f"/covers/{filename}"
+        job.cover_image_path = cover_url
+        job.updated_at = datetime.now(timezone.utc)
+        session.add(job)
+
+        # Catalog in VisualAsset gallery so user can view/re-use in Image Studio
+        try:
+            from app.models import VisualAsset
+            asset = VisualAsset(
+                title=f"{job.title or 'Track'} Cover Art",
+                prompt=f"User upload ({file.filename or 'custom_cover'})",
+                image_url=cover_url,
+                image_path=dest_path,
+                asset_type="album_cover",
+                style="user_upload",
+                aspect_ratio="1:1",
+                linked_job_id=str(job.id),
+                linked_project_id=str(job.project_id) if job.project_id else None,
+            )
+            session.add(asset)
+        except Exception as _e:
+            logger.debug(f"Could not catalog user-uploaded cover in VisualAsset: {_e}")
+
         session.commit()
         session.refresh(job)
 

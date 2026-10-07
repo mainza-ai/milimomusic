@@ -12,13 +12,20 @@ import {
     Loader2,
     Zap,
     Music,
-    Layers
+    Layers,
+    Upload,
+    Disc
 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import type { VideoModelKey } from '../views/MusicVideosView';
-import type { DirectorTreatment } from '../../api';
+import { type DirectorTreatment, type Job, coverApi } from '../../api';
 
 export interface VideoInspectorProps {
+    // Current Song & Background Custom Cover
+    activeSong?: Job | null;
+    onTriggerCoverUpload?: () => void;
+    isUploadingCover?: boolean;
+
     // LLM Visual Director & Cinematographer
     directorTreatment?: DirectorTreatment | null;
     onGenerateTreatment?: () => void;
@@ -122,6 +129,9 @@ const AESTHETIC_STYLES: AestheticStyle[] = [
 ];
 
 const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
+    activeSong,
+    onTriggerCoverUpload,
+    isUploadingCover = false,
     directorTreatment,
     onGenerateTreatment,
     isGeneratingTreatment = false,
@@ -795,6 +805,56 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                                 </button>
                             ))}
                         </div>
+
+                        {/* Cover Image Preview & Upload for Cover Drift */}
+                        {backgroundMode === 'cover_art' && activeSong && (
+                            <div className="pt-2 pb-1 border-t border-black/[0.04] dark:border-white/5 flex items-center justify-between gap-3">
+                                <div className="flex items-center gap-2.5 min-w-0">
+                                    <div className="w-10 h-10 rounded-xl overflow-hidden bg-black/10 dark:bg-white/5 border border-black/10 dark:border-white/10 flex-shrink-0 flex items-center justify-center">
+                                        {activeSong.cover_image_path ? (
+                                            <img
+                                                src={coverApi.getCoverUrl(activeSong.cover_image_path)}
+                                                alt={activeSong.title || 'Track Cover'}
+                                                className="w-full h-full object-cover"
+                                                onError={(e) => {
+                                                    (e.target as HTMLImageElement).src = '/milimo_logo.png';
+                                                }}
+                                            />
+                                        ) : (
+                                            <Disc size={18} className="text-slate-400" />
+                                        )}
+                                    </div>
+                                    <div className="min-w-0">
+                                        <p className="text-xs font-semibold text-slate-800 dark:text-slate-200 truncate">
+                                            {activeSong.cover_image_path ? 'Current Cover Photo' : 'No Cover Set'}
+                                        </p>
+                                        <p className="text-[10px] text-slate-400 truncate">
+                                            Drifts across 4K Ken Burns canvas
+                                        </p>
+                                    </div>
+                                </div>
+
+                                <button
+                                    type="button"
+                                    onClick={onTriggerCoverUpload}
+                                    disabled={isUploadingCover}
+                                    className="px-2.5 py-1.5 rounded-xl bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-600 dark:text-indigo-400 font-bold text-xs flex items-center gap-1.5 transition-all border border-indigo-500/20 flex-shrink-0 disabled:opacity-50 cursor-pointer active:scale-95"
+                                    title="Upload Custom Image for Video Background"
+                                >
+                                    {isUploadingCover ? (
+                                        <>
+                                            <Loader2 size={12} className="animate-spin text-indigo-400" />
+                                            <span>Uploading...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Upload size={12} />
+                                            <span>Upload Image</span>
+                                        </>
+                                    )}
+                                </button>
+                            </div>
+                        )}
 
                         <div className="flex items-center justify-between pt-1 border-t border-black/[0.04] dark:border-white/5">
                             <label className="text-[11px] font-medium text-slate-600 dark:text-slate-300 flex items-center gap-1.5">

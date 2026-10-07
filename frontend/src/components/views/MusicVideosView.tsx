@@ -5,6 +5,7 @@ import {
     trackApi,
     api,
     galleryApi,
+    coverApi,
     type VideoPlanResult,
     type VideoTaskStatus,
     type VideoPlanParams,
@@ -95,6 +96,39 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
 
     // Active song instance
     const activeSong = completedSongs.find(s => s.id === selectedSongId);
+
+    // Custom Background Cover Photo Upload
+    const coverInputRef = useRef<HTMLInputElement>(null);
+    const [isUploadingCover, setIsUploadingCover] = useState(false);
+
+    const handleTriggerCoverUpload = useCallback(() => {
+        coverInputRef.current?.click();
+    }, []);
+
+    const handleCoverFileChange = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !activeSong) return;
+        const allowed = ['image/png', 'image/jpeg', 'image/webp'];
+        if (!allowed.includes(file.type)) {
+            toast('Please upload a valid image file (PNG, JPEG, or WEBP).', 'error');
+            return;
+        }
+        setIsUploadingCover(true);
+        try {
+            const updated = await coverApi.uploadJobCover(activeSong.id, file);
+            if (updated && updated.id) {
+                onUpdateSong?.(updated);
+                toast('Video background cover updated successfully!', 'success');
+            }
+        } catch (err: any) {
+            toast(err?.response?.data?.detail?.error?.message || err?.response?.data?.detail || err?.message || 'Failed to upload cover photo', 'error');
+        } finally {
+            setIsUploadingCover(false);
+            if (coverInputRef.current) {
+                coverInputRef.current.value = '';
+            }
+        }
+    }, [activeSong, onUpdateSong]);
 
     // Style & Model Engine settings
     const [videoModel, setVideoModel] = useState<VideoModelKey>(() => {
@@ -1296,6 +1330,9 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     {/* Right Tabbed Inspector Dock */}
                     <div className="xl:col-span-5 2xl:col-span-5 min-h-[500px]">
                         <VideoInspectorDock
+                            activeSong={activeSong}
+                            onTriggerCoverUpload={handleTriggerCoverUpload}
+                            isUploadingCover={isUploadingCover}
                             directorTreatment={directorTreatment}
                             onGenerateTreatment={handleGenerateDirectorTreatment}
                             isGeneratingTreatment={isGeneratingTreatment}
@@ -1391,6 +1428,15 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 clipIndex={zoomKeyframe?.clipIndex ?? null}
                 keyframeUrl={zoomKeyframe?.url ?? null}
                 clipSegment={zoomKeyframe ? planResult?.clips?.find(c => c.clip_index === zoomKeyframe.clipIndex) : undefined}
+            />
+
+            {/* Hidden Input for Custom Cover Upload in Video Studio */}
+            <input
+                ref={coverInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={handleCoverFileChange}
             />
 
             {/* Global Creator Footer */}

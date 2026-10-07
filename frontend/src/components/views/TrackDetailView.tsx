@@ -47,7 +47,6 @@ import {
     Repeat1,
     Gauge,
     FolderKanban,
-    FolderPlus,
     Maximize2,
     ExternalLink,
     Disc,
@@ -55,7 +54,10 @@ import {
     Wand2,
     X,
     ArrowDownCircle,
-    Image as ImageIcon
+    Image as ImageIcon,
+    Upload,
+    Loader2,
+    FolderPlus
 } from 'lucide-react';
 import { InpaintModal } from '../InpaintModal';
 import { ChooseFromGalleryModal } from '../gallery/ChooseFromGalleryModal';
@@ -169,6 +171,61 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
             toast(err?.message || 'Failed to generate cover artwork', 'error');
         } finally {
             setIsGeneratingCover(false);
+        }
+    };
+
+    const coverUploadInputRef = useRef<HTMLInputElement>(null);
+    const [isUploadingCover, setIsUploadingCover] = useState(false);
+    const [isDraggingCover, setIsDraggingCover] = useState(false);
+
+    const handleUploadCover = async (file: File) => {
+        if (!file) return;
+        const validTypes = ['image/png', 'image/jpeg', 'image/jpg', 'image/webp'];
+        if (!validTypes.includes(file.type.toLowerCase()) && !file.name.match(/\.(png|jpe?g|webp)$/i)) {
+            toast('Please upload a valid image file (PNG, JPG, or WEBP).', 'error');
+            return;
+        }
+        if (file.size > 15 * 1024 * 1024) {
+            toast('Image exceeds the maximum file size (15MB).', 'error');
+            return;
+        }
+        setIsUploadingCover(true);
+        try {
+            const updatedJob = await coverApi.uploadJobCover(track.id, file);
+            if (updatedJob && updatedJob.id) {
+                setTrack(updatedJob);
+                onTrackUpdated?.(updatedJob);
+                toast('Custom cover photo uploaded successfully!', 'success');
+            }
+        } catch (err: any) {
+            toast(err?.response?.data?.detail?.error?.message || err?.message || 'Failed to upload cover photo', 'error');
+        } finally {
+            setIsUploadingCover(false);
+            if (coverUploadInputRef.current) {
+                coverUploadInputRef.current.value = '';
+            }
+        }
+    };
+
+    const handleArtworkDragOver = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDraggingCover(true);
+    };
+
+    const handleArtworkDragLeave = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDraggingCover(false);
+    };
+
+    const handleArtworkDrop = (e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setIsDraggingCover(false);
+        const file = e.dataTransfer.files?.[0];
+        if (file) {
+            handleUploadCover(file);
         }
     };
 
@@ -636,7 +693,28 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
 
                 <div className="flex flex-col sm:flex-row items-start sm:items-center gap-5 md:gap-6">
                     {/* Artwork Container */}
-                    <div className="relative w-28 h-28 sm:w-32 sm:h-32 md:w-36 md:h-36 rounded-2xl overflow-hidden bg-black/5 dark:bg-white/5 border border-black/10 dark:border-white/10 shadow-apple-md flex-shrink-0 group">
+                    <div
+                        onDragOver={handleArtworkDragOver}
+                        onDragLeave={handleArtworkDragLeave}
+                        onDrop={handleArtworkDrop}
+                        className={`relative w-28 h-28 sm:w-32 sm:h-32 md:w-36 md:h-36 rounded-2xl overflow-hidden bg-black/5 dark:bg-white/5 border ${
+                            isDraggingCover
+                                ? 'border-teal-400 dark:border-teal-400 ring-4 ring-teal-500/30'
+                                : 'border-black/10 dark:border-white/10'
+                        } shadow-apple-md flex-shrink-0 group transition-all`}
+                    >
+                        {/* Hidden Custom Cover File Input */}
+                        <input
+                            type="file"
+                            ref={coverUploadInputRef}
+                            accept="image/png,image/jpeg,image/webp"
+                            onChange={(e) => {
+                                const file = e.target.files?.[0];
+                                if (file) handleUploadCover(file);
+                            }}
+                            className="hidden"
+                        />
+
                         {track.cover_image_path ? (
                             <img
                                 src={coverApi.getCoverUrl(track.cover_image_path)}
@@ -649,6 +727,23 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                 <span className="text-[10px] font-mono">No Artwork</span>
                             </div>
                         )}
+
+                        {/* Interactive Drag & Drop Overlay */}
+                        {isDraggingCover && (
+                            <div className="absolute inset-0 z-30 bg-teal-500/90 backdrop-blur-sm rounded-2xl flex flex-col items-center justify-center text-slate-950 p-2 text-center border-2 border-dashed border-white shadow-xl animate-pulse">
+                                <Upload size={24} className="mb-1" />
+                                <span className="text-[10px] font-extrabold uppercase tracking-wider">Drop to Set Cover</span>
+                            </div>
+                        )}
+
+                        {/* Uploading In-Flight Progress Overlay */}
+                        {isUploadingCover && (
+                            <div className="absolute inset-0 z-30 bg-black/75 backdrop-blur-sm rounded-2xl flex flex-col items-center justify-center text-teal-300 p-2 text-center">
+                                <Loader2 size={24} className="animate-spin mb-1 text-teal-400" />
+                                <span className="text-[10px] font-bold">Uploading Cover…</span>
+                            </div>
+                        )}
+
                         <button
                             onClick={handleToggleMasterPlay}
                             className="absolute inset-0 bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity flex items-center justify-center text-white cursor-pointer"
@@ -683,6 +778,18 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                             ) : (
                                 <Sparkles size={14} className="text-amber-300" />
                             )}
+                        </button>
+                        {/* Upload Custom Cover Photo Button */}
+                        <button
+                            onClick={(e) => {
+                                e.stopPropagation();
+                                coverUploadInputRef.current?.click();
+                            }}
+                            disabled={isUploadingCover}
+                            className="absolute bottom-2 left-2 p-1.5 rounded-lg bg-black/60 hover:bg-black/80 text-white backdrop-blur-md opacity-0 group-hover:opacity-100 transition-all z-10 cursor-pointer shadow-sm hover:scale-105"
+                            title="Upload Custom Image as Cover Photo (PNG, JPG, WEBP)"
+                        >
+                            <Upload size={14} className="text-teal-300" />
                         </button>
                         {/* Choose from Visual Asset Gallery Button */}
                         <button
@@ -1996,12 +2103,29 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                         </div>
 
                         {/* Full Size Image Display */}
-                        <div className="relative w-full aspect-square max-w-[460px] sm:max-w-[500px] rounded-2xl overflow-hidden shadow-2xl border border-black/10 dark:border-white/10 bg-black/10 flex items-center justify-center">
+                        <div
+                            onDragOver={handleArtworkDragOver}
+                            onDragLeave={handleArtworkDragLeave}
+                            onDrop={handleArtworkDrop}
+                            className={`relative w-full aspect-square max-w-[460px] sm:max-w-[500px] rounded-2xl overflow-hidden shadow-2xl border ${isDraggingCover ? 'border-primary ring-2 ring-primary/40' : 'border-black/10 dark:border-white/10'} bg-black/10 flex items-center justify-center transition-all`}
+                        >
                             <img
                                 src={coverApi.getCoverUrl(track.cover_image_path)}
                                 alt={track.title || 'Full Cover Artwork'}
                                 className="w-full h-full object-cover select-none"
                             />
+                            {isDraggingCover && (
+                                <div className="absolute inset-0 bg-primary/20 backdrop-blur-xs flex flex-col items-center justify-center text-primary-foreground p-4 text-center z-10 animate-in fade-in duration-150">
+                                    <Upload size={32} className="animate-bounce mb-2 text-primary" />
+                                    <p className="font-bold text-sm text-primary">Drop image to update cover</p>
+                                </div>
+                            )}
+                            {isUploadingCover && (
+                                <div className="absolute inset-0 bg-black/50 backdrop-blur-xs flex flex-col items-center justify-center text-white p-4 text-center z-10">
+                                    <Loader2 size={32} className="animate-spin mb-2 text-primary" />
+                                    <p className="font-semibold text-sm">Uploading artwork...</p>
+                                </div>
+                            )}
                         </div>
 
                         {/* Actions Toolbar */}
@@ -2019,9 +2143,27 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                 <button
                                     onClick={() => api.downloadUrlAsFile(coverApi.getCoverUrl(track.cover_image_path), `${(track.title || 'album_artwork').replace(/\s+/g, '_')}.png`)}
                                     className="px-3.5 py-2 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-semibold text-xs flex items-center gap-1.5 transition-colors border border-black/10 dark:border-white/10 cursor-pointer"
-                                 title="Download PNG">
+                                    title="Download PNG">
                                     <Download size={13} />
                                     <span>Download PNG</span>
+                                </button>
+                                <button
+                                    onClick={() => coverUploadInputRef.current?.click()}
+                                    disabled={isUploadingCover}
+                                    className="px-3.5 py-2 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-semibold text-xs flex items-center gap-1.5 transition-colors border border-black/10 dark:border-white/10 cursor-pointer disabled:opacity-50"
+                                    title="Upload Custom Cover Image"
+                                >
+                                    {isUploadingCover ? (
+                                        <>
+                                            <Loader2 size={13} className="animate-spin" />
+                                            <span>Uploading...</span>
+                                        </>
+                                    ) : (
+                                        <>
+                                            <Upload size={13} />
+                                            <span>Upload Custom</span>
+                                        </>
+                                    )}
                                 </button>
                             </div>
 

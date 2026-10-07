@@ -2578,3 +2578,28 @@ Resolved subtitle text illegibility and duplicate overlay collisions in the AI L
    - All 6 tests in `backend/tests/test_lyric_video.py` passed.
    - All 28 tests in `backend/tests/test_video_service.py` passed.
    - API parity check: 158/158 routes verified.
+
+## [2026-10-07] create | Custom User Cover Photo Upload Pipeline Across Studio
+Investigated and implemented full end-to-end custom image upload functionality for track cover artwork across backend and frontend:
+1. **Backend Secure Upload Engine**:
+   - Added `POST /jobs/{job_id}/upload-cover` in `backend/app/main.py`.
+   - Utilizes `save_upload` with magic byte content sniffing (PNG, JPEG, WEBP), 8MB limit, randomized secure filenames, and SVG/executable rejection to prevent stored-XSS and path traversal.
+   - Directly updates `job.cover_image_path` in SQLite `jobs.db`, registers the image in `VisualAsset` catalog, and emits real-time SSE `job_update` event.
+   - Dual-mirrors uploads between `get_data_dir() / "covers"` and `data/covers/` to guarantee zero 404s under any runtime mount configuration.
+   - Added test suite `backend/tests/test_cover_upload.py` (5/5 tests passing).
+2. **Frontend Client & API Parity**:
+   - Added `coverApi.uploadJobCover(jobId: string, file: File)` to `frontend/src/api.ts`.
+   - Verified 100% strict API parity via `scripts/check_api_parity.py` (159 routes, all called; 164 client calls, all resolve).
+3. **Cross-Studio UI Integrations**:
+   - **Track Detail Studio (`TrackDetailView.tsx`)**:
+     - Drag-and-drop overlay and dedicated "Upload" button on the main artwork card.
+     - Drag-and-drop overlay and "Upload Custom" button on the Enlarged Artwork Modal toolbar beside Download PNG and Regenerate buttons.
+   - **Song Library (`SongsView.tsx`)**:
+     - Table View: Hover overlay with quick upload action and drag-and-drop directly on track thumbnail with in-flight spinner.
+     - Grid View: Drag-and-drop support on artwork card and quick glassmorphic upload button in the top-right corner.
+   - **Video Studio (`VideoInspectorDock.tsx` & `MusicVideosView.tsx`)**:
+     - In the "Lyrics & FX" inspector dock under "Visual Background Mode", when set to "Cover Drift", displays current cover preview and provides "Upload Image" button that updates the video's background cover in real-time.
+4. **Verification**:
+   - `npm run build` passes with zero TypeScript errors in 2.28s.
+   - All 39 test cases pass (`test_cover_upload.py`, `test_lyric_video.py`, `test_video_service.py`).
+

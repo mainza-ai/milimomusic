@@ -1,9 +1,10 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { type Job, type Project, projectApi, coverApi } from '../../api';
-import { Play, Pause, Heart, Sliders, Search, Music, Disc, Sparkles, Trash2, Mic2, Copy, Check, X, Layers, Info, Video, FolderKanban } from 'lucide-react';
+import { Play, Pause, Heart, Sliders, Search, Music, Disc, Sparkles, Trash2, Mic2, Copy, Check, X, Layers, Info, Video, FolderKanban, Upload, Loader2 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { AppFooter } from '../ui/AppFooter';
 import { useModalStore } from '../../stores/useModalStore';
+import { toast } from '../../utils/toast';
 
 interface SongsViewProps {
     songs: Job[];
@@ -16,6 +17,7 @@ interface SongsViewProps {
     onDelete?: (jobId: string) => void;
     onSelectTrack?: (job: Job) => void;
     onOpenVideo?: (job: Job) => void;
+    onTrackUpdated?: (job: Job) => void;
 }
 
 // Module-level cache for project lookup in song rows/cards
@@ -31,7 +33,8 @@ export const SongsView: React.FC<SongsViewProps> = ({
     onExtend,
     onDelete,
     onSelectTrack,
-    onOpenVideo
+    onOpenVideo,
+    onTrackUpdated
 }) => {
     const [search, setSearch] = useState('');
     const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
@@ -40,6 +43,72 @@ export const SongsView: React.FC<SongsViewProps> = ({
     const { openCoverStudio } = useModalStore();
     const [copiedId, setCopiedId] = useState<string | null>(null);
     const [projects, setProjects] = useState<Project[]>(cachedSongsProjects);
+
+    // Custom Cover Photo Upload
+    const fileInputRef = useRef<HTMLInputElement>(null);
+    const [uploadTargetSongId, setUploadTargetSongId] = useState<string | null>(null);
+    const [uploadingSongId, setUploadingSongId] = useState<string | null>(null);
+    const [dragOverSongId, setDragOverSongId] = useState<string | null>(null);
+
+    const handleTriggerUpload = (songId: string, e?: React.MouseEvent) => {
+        e?.stopPropagation();
+        setUploadTargetSongId(songId);
+        fileInputRef.current?.click();
+    };
+
+    const performCoverUpload = async (songId: string, file: File) => {
+        const allowed = ['image/png', 'image/jpeg', 'image/webp'];
+        if (!allowed.includes(file.type)) {
+            toast('Please upload a valid image file (PNG, JPEG, or WEBP).', 'error');
+            return;
+        }
+        setUploadingSongId(songId);
+        try {
+            const updated = await coverApi.uploadJobCover(songId, file);
+            if (updated && updated.id) {
+                onTrackUpdated?.(updated);
+                toast('Cover photo updated successfully!', 'success');
+            }
+        } catch (err: any) {
+            toast(err?.response?.data?.detail?.error?.message || err?.response?.data?.detail || err?.message || 'Failed to upload cover photo', 'error');
+        } finally {
+            setUploadingSongId(null);
+            setUploadTargetSongId(null);
+            if (fileInputRef.current) {
+                fileInputRef.current.value = '';
+            }
+        }
+    };
+
+    const handleFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file || !uploadTargetSongId) return;
+        await performCoverUpload(uploadTargetSongId, file);
+    };
+
+    const handleCardDragOver = (songId: string, e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOverSongId(songId);
+    };
+
+    const handleCardDragLeave = (songId: string, e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        if (dragOverSongId === songId) {
+            setDragOverSongId(null);
+        }
+    };
+
+    const handleCardDrop = (songId: string, e: React.DragEvent) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setDragOverSongId(null);
+        const file = e.dataTransfer.files?.[0];
+        if (file) {
+            performCoverUpload(songId, file);
+        }
+    };
 
     useEffect(() => {
         projectApi.listProjects().then(list => {
@@ -223,8 +292,11 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                                         {/* Artwork Thumbnail */}
                                                         <div
                                                             onClick={() => onSelectTrack?.(song)}
-                                                            className="w-10 h-10 rounded-xl bg-gradient-to-tr from-teal-500/20 to-cyan-500/20 border border-black/[0.08] dark:border-white/10 p-0.5 flex-shrink-0 flex items-center justify-center relative overflow-hidden group/art cursor-pointer hover:scale-105 transition-transform"
-                                                            title="Inspect Track Studio"
+                                                            onDragOver={(e) => handleCardDragOver(song.id, e)}
+                                                            onDragLeave={(e) => handleCardDragLeave(song.id, e)}
+                                                            onDrop={(e) => handleCardDrop(song.id, e)}
+                                                            className={`w-10 h-10 rounded-xl bg-gradient-to-tr from-teal-500/20 to-cyan-500/20 border ${dragOverSongId === song.id ? 'border-teal-400 ring-2 ring-teal-400/50' : 'border-black/[0.08] dark:border-white/10'} p-0.5 flex-shrink-0 flex items-center justify-center relative overflow-hidden group/art cursor-pointer hover:scale-105 transition-all`}
+                                                            title="Inspect Track Studio or drop/click to upload cover"
                                                         >
                                                             <img
                                                                 src={coverApi.getCoverUrl(song.cover_image_path)}
@@ -234,7 +306,25 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                                                     (e.target as HTMLImageElement).src = '/milimo_logo.png';
                                                                 }}
                                                             />
-                                                            <Disc size={16} className="absolute text-teal-400 drop-shadow opacity-0 group-hover/art:opacity-100 transition-opacity" />
+                                                            {uploadingSongId === song.id ? (
+                                                                <div className="absolute inset-0 bg-black/60 flex items-center justify-center rounded-lg z-10">
+                                                                    <Loader2 size={14} className="animate-spin text-teal-400" />
+                                                                </div>
+                                                            ) : dragOverSongId === song.id ? (
+                                                                <div className="absolute inset-0 bg-teal-500/50 flex items-center justify-center rounded-lg z-10">
+                                                                    <Upload size={14} className="animate-bounce text-white" />
+                                                                </div>
+                                                            ) : (
+                                                                <button
+                                                                    type="button"
+                                                                    onClick={(e) => handleTriggerUpload(song.id, e)}
+                                                                    className="absolute inset-0 bg-black/50 opacity-0 group-hover/art:opacity-100 flex items-center justify-center transition-opacity rounded-lg text-white hover:text-teal-300 z-10"
+                                                                    title="Upload custom cover photo"
+                                                                    aria-label="Upload custom cover photo"
+                                                                >
+                                                                    <Upload size={13} />
+                                                                </button>
+                                                            )}
                                                         </div>
 
                                                         <div className="min-w-0 max-w-sm">
@@ -419,7 +509,12 @@ export const SongsView: React.FC<SongsViewProps> = ({
                             return (
                             <GlassCard key={song.id} className="p-4 space-y-3 group hover:border-teal-500/40 transition-all flex flex-col justify-between">
                                 <div className="space-y-3">
-                                    <div className="relative aspect-video rounded-xl bg-gradient-to-br from-teal-500/20 to-cyan-500/20 flex items-center justify-center overflow-hidden border border-black/[0.06] dark:border-white/10">
+                                    <div
+                                        onDragOver={(e) => handleCardDragOver(song.id, e)}
+                                        onDragLeave={(e) => handleCardDragLeave(song.id, e)}
+                                        onDrop={(e) => handleCardDrop(song.id, e)}
+                                        className={`relative aspect-video rounded-xl bg-gradient-to-br from-teal-500/20 to-cyan-500/20 flex items-center justify-center overflow-hidden border ${dragOverSongId === song.id ? 'border-teal-400 ring-2 ring-teal-400/50' : 'border-black/[0.06] dark:border-white/10'}`}
+                                    >
                                         {song.cover_image_path ? (
                                             <img
                                                 src={coverApi.getCoverUrl(song.cover_image_path)}
@@ -432,16 +527,49 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                         ) : (
                                             <Disc size={32} className="text-teal-500 group-hover:scale-110 transition-transform" />
                                         )}
-                                        <button
-                                            onClick={() => onPlay(song)}
-                                            title={isCurrentPlaying ? `Pause ${song.title || 'track'}` : `Play ${song.title || 'track'}`}
-                                            aria-label={isCurrentPlaying ? `Pause ${song.title || 'track'}` : `Play ${song.title || 'track'}`}
-                                            className={`absolute inset-0 bg-black/40 ${isCurrentPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} flex items-center justify-center transition-opacity`}
-                                        >
-                                            <div className="w-10 h-10 rounded-full bg-teal-500 text-slate-950 flex items-center justify-center shadow-lg font-bold">
-                                                {isCurrentPlaying ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
+
+                                        {/* Drag Over Overlay */}
+                                        {dragOverSongId === song.id && (
+                                            <div className="absolute inset-0 bg-teal-500/40 backdrop-blur-xs flex flex-col items-center justify-center text-white z-20 animate-in fade-in">
+                                                <Upload size={22} className="animate-bounce mb-1 text-teal-200" />
+                                                <span className="text-xs font-bold">Drop image to update cover</span>
                                             </div>
-                                        </button>
+                                        )}
+
+                                        {/* Uploading In Progress Overlay */}
+                                        {uploadingSongId === song.id && (
+                                            <div className="absolute inset-0 bg-black/60 backdrop-blur-xs flex flex-col items-center justify-center text-white z-20">
+                                                <Loader2 size={22} className="animate-spin mb-1 text-teal-400" />
+                                                <span className="text-xs font-semibold">Updating cover...</span>
+                                            </div>
+                                        )}
+
+                                        {/* Play Button Overlay */}
+                                        {dragOverSongId !== song.id && uploadingSongId !== song.id && (
+                                            <button
+                                                onClick={() => onPlay(song)}
+                                                title={isCurrentPlaying ? `Pause ${song.title || 'track'}` : `Play ${song.title || 'track'}`}
+                                                aria-label={isCurrentPlaying ? `Pause ${song.title || 'track'}` : `Play ${song.title || 'track'}`}
+                                                className={`absolute inset-0 bg-black/40 ${isCurrentPlaying ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'} flex items-center justify-center transition-opacity`}
+                                            >
+                                                <div className="w-10 h-10 rounded-full bg-teal-500 text-slate-950 flex items-center justify-center shadow-lg font-bold">
+                                                    {isCurrentPlaying ? <Pause size={16} /> : <Play size={16} className="ml-0.5" />}
+                                                </div>
+                                            </button>
+                                        )}
+
+                                        {/* Quick Upload Button on Grid Card */}
+                                        {uploadingSongId !== song.id && (
+                                            <button
+                                                type="button"
+                                                onClick={(e) => handleTriggerUpload(song.id, e)}
+                                                className="absolute top-2 right-2 p-1.5 rounded-lg bg-black/50 hover:bg-black/80 text-white/80 hover:text-white backdrop-blur-sm transition-all opacity-0 group-hover:opacity-100 shadow-md z-10"
+                                                title="Upload custom cover photo"
+                                                aria-label="Upload custom cover photo"
+                                            >
+                                                <Upload size={13} />
+                                            </button>
+                                        )}
                                     </div>
 
                                     <div 
@@ -605,6 +733,14 @@ export const SongsView: React.FC<SongsViewProps> = ({
                     </div>
                 </div>
             )}
+            {/* Hidden Input for Custom Cover Upload */}
+            <input
+                ref={fileInputRef}
+                type="file"
+                accept="image/png,image/jpeg,image/webp"
+                className="hidden"
+                onChange={handleFileChange}
+            />
         </div>
     );
 };

@@ -901,6 +901,14 @@ export const coverApi = {
     generateJobCover: async (jobId: string, params?: { prompt?: string; style?: string; model_id?: string; aspect_ratio?: string; artist?: string }): Promise<Job> => {
         const res = await axios.post(`${API_BASE_URL}/jobs/${jobId}/generate-cover`, params || {}, { timeout: 180000 });
         return res.data;
+    },
+    uploadJobCover: async (jobId: string, file: File): Promise<Job> => {
+        const formData = new FormData();
+        formData.append('file', file);
+        const res = await axios.post(`${API_BASE_URL}/jobs/${jobId}/upload-cover`, formData, {
+            headers: { 'Content-Type': 'multipart/form-data' }
+        });
+        return res.data;
     }
 };
 

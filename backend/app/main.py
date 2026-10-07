@@ -5107,6 +5107,7 @@ async def render_lyric_video_endpoint(job_id: str, req: LyricVideoRequest = Body
 
         task_id = str(uuid.uuid4())
         config = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+        config["mode"] = "lyric_studio"
         if not config.get("cover_image_path") and getattr(job, "cover_image_path", None):
             config["cover_image_path"] = job.cover_image_path
 

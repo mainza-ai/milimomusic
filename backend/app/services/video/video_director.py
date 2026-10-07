@@ -13,6 +13,7 @@ import math
 import json
 import asyncio
 import logging
+import concurrent.futures
 from typing import List, Dict, Optional, Any, Tuple, Callable
 
 from app.models import Job
@@ -489,10 +490,17 @@ class VideoDirector:
 
         fallback_reason = None
         try:
-            response_text, provider, model = LLMService.generate_text_via_active(
-                full_prompt,
-                options={"temperature": 0.7}
-            )
+            with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(
+                    LLMService.generate_text_via_active,
+                    full_prompt,
+                    options={"temperature": 0.7}
+                )
+                try:
+                    response_text, provider, model = future.result(timeout=15.0)
+                except concurrent.futures.TimeoutError:
+                    logger.warning("AI Visual Director LLM call timed out after 15.0s — using intelligent heuristic fallback.")
+                    response_text, provider, model = None, "timeout_fallback", "heuristic"
             if cancel_check and cancel_check():
                 raise asyncio.CancelledError("Planning cancelled by user after LLM invocation.")
 

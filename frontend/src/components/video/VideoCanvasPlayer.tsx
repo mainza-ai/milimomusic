@@ -364,16 +364,21 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                                 <span>{isRouting ? 'Routing…' : 'To Director'}</span>
                             </button>
 
-                            <button
-                                type="button"
-                                onClick={onRegenerateVideo}
-                                disabled={isRendering || isDeletingVideo}
-                                className="px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 font-bold text-[11px] rounded-lg flex items-center gap-1.5 shadow-md transition-all disabled:opacity-50"
-                                title="Re-render with the exact stored pipeline configuration"
-                            >
-                                {isRendering ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
-                                <span>{isRendering ? 'Rendering…' : 'Regenerate'}</span>
-                            </button>
+                            {(() => {
+                                const isLyric = Boolean(activeSong?.video_path?.includes('_lyric'));
+                                return (
+                                    <button
+                                        type="button"
+                                        onClick={onRegenerateVideo}
+                                        disabled={isRendering || isDeletingVideo}
+                                        className="px-3 py-1.5 bg-gradient-to-r from-cyan-500 to-teal-500 hover:from-cyan-400 hover:to-teal-400 text-slate-950 font-bold text-[11px] rounded-lg flex items-center gap-1.5 shadow-md transition-all disabled:opacity-50"
+                                        title={isLyric ? "Re-render lyric video in selected aspect ratio (< 45s)" : "Re-render multi-clip AI video"}
+                                    >
+                                        {isRendering ? <Loader2 size={12} className="animate-spin" /> : <RefreshCw size={12} />}
+                                        <span>{isRendering ? 'Rendering…' : (isLyric ? 'Regenerate Lyric Video' : 'Regenerate AI Video')}</span>
+                                    </button>
+                                );
+                            })()}
 
                             <button
                                 type="button"

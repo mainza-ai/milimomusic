@@ -6,6 +6,7 @@ per-scene regeneration, beat transitions, ASS karaoke burning, and master remuxi
 
 import os
 import re
+import math
 import json
 import uuid
 import shutil
@@ -368,7 +369,8 @@ class VideoOrchestrator:
         except Exception:
             pass
 
-        plan = video_director.segment_song(
+        plan = await asyncio.to_thread(
+            video_director.segment_song,
             job=job,
             max_clip_duration=15.0,
             visual_style=visual_style,
@@ -768,7 +770,8 @@ class VideoOrchestrator:
                 logger.info(f"Stem audio-reactivity analysis completed ({stem_reactivity.get('total_frames')} frames)")
             except Exception as e:
                 logger.warning(f"Stem audio-reactivity analysis skipped: {e}")
-            plan = video_director.segment_song(
+            plan = await asyncio.to_thread(
+                video_director.segment_song,
                 job=job,
                 max_clip_duration=config.get("max_clip_duration"),
                 model_name=model_name,
@@ -1515,9 +1518,13 @@ class VideoOrchestrator:
                 has_soft_sub = (not current_sub_filter) and bool(ass_path and os.path.isfile(ass_path))
 
                 if cover_path and os.path.isfile(cover_path) and bg_mode != "spectrum":
+                    target_w = int(w * 1.25)
+                    target_h = int(h * 1.25)
+                    total_frames = max(1, int(math.ceil(total_duration * 30)))
                     filter_complex = (
-                        f"[0:v]scale={int(w * 1.25)}:{int(h * 1.25)},"
-                        f"zoompan=z='min(zoom+0.0006,1.20)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d=1:s={w}x{h}:fps=30[bg]"
+                        f"[0:v]scale=w={target_w}:h={target_h}:force_original_aspect_ratio=increase,"
+                        f"crop={target_w}:{target_h},setsar=1,"
+                        f"zoompan=z='min(zoom+0.0006,1.20)':x='iw/2-(iw/zoom/2)':y='ih/2-(ih/zoom/2)':d={total_frames}:s={w}x{h}:fps=30[bg]"
                     )
                     if include_spectrum:
                         filter_complex += (
@@ -1529,7 +1536,7 @@ class VideoOrchestrator:
 
                     c = [
                         ffmpeg_bin, "-y",
-                        "-loop", "1", "-i", cover_path,
+                        "-i", cover_path,
                         "-i", resolved_master,
                     ]
                     if has_soft_sub:

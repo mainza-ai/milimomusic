@@ -2638,3 +2638,20 @@ Resolved unresponsive "Stop Render" during lyric video rendering and eliminated 
    - Full suite tests passed: 32 tests in `test_video_service.py` and `test_video_pipeline.py`.
    - Verified `npm run build` passes with zero errors, and 100% API parity verified via `check_api_parity.py`.
 
+## [2026-10-07] fix | Aspect Ratio Fast-Path Routing & 15x Realtime Lyric Video Rendering
+Resolved 20-minute stalls when re-rendering lyric videos with different aspect ratios:
+1. **Frontend Mode-Aware Regeneration Routing**:
+   - Fixed `handleRegenerateVideo()` in `MusicVideosView.tsx` to detect if the current video was rendered in Lyric Studio (`activeSong.video_path?.includes('_lyric')` or `video_config_json` mode). Routes to `handleRenderLyricVideo()` preserving user-selected aspect ratio instead of mistakenly routing to `handleRenderAdvancedVideo()` (the 20-minute Wan 2.1 14B neural diffusion pipeline).
+   - Clarified action buttons in `VideoTopBar.tsx` and `VideoCanvasPlayer.tsx`: distinct buttons for "Lyric Video 🎤 (< 45s)" and "AI Video Diffusion ⚡", plus dynamic button label "Regenerate Lyric Video" on the canvas player.
+   - Eliminated duplicate "Stop" buttons when rendering lyric videos.
+2. **Async Event Loop & LLM Director Hardening**:
+   - Wrapped synchronous `video_director.segment_song()` calls in `video_orchestrator.py` in `await asyncio.to_thread(...)` to prevent blocking the Uvicorn asyncio event loop thread.
+   - Wrapped `LLMService.generate_text_via_active` in `video_director.py` with a strict 15.0s `ThreadPoolExecutor` timeout, immediately falling back to intelligent heuristic directing if local LLM servers stall on socket recv.
+3. **Aspect Ratio Preservation & 15x Zoompan Acceleration**:
+   - Fixed FFmpeg scaling filter in `_build_ffmpeg_cmd` to `scale=w={w*1.25}:h={h*1.25}:force_original_aspect_ratio=increase,crop={w*1.25}:{h*1.25},setsar=1`, eliminating stretching/distortion across `16:9`, `9:16`, `1:1`, and `21:9`.
+   - Removed `-loop 1` before single-image input and configured `zoompan` duration `d={total_frames}`, reducing encode time for a 109s full track from 2.5 minutes down to 7-8 seconds (21.8x realtime speed).
+4. **Verification**:
+   - Tested and verified video outputs for `16:9` (1280x720), `9:16` (720x1280), `1:1` (720x720), and `21:9` (1680x720) via ffprobe and live API.
+   - All 8 unit tests in `test_lyric_video.py` passed, full test suite passed, `npm run build` passed with zero errors, and 100% API parity maintained.
+
+

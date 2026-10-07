@@ -1115,9 +1115,25 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
 
     const handleRegenerateVideo = useCallback(async () => {
         if (!activeSong) return;
-        applyStoredVideoConfig(activeSong);
-        await handleRenderAdvancedVideo();
-    }, [activeSong, applyStoredVideoConfig, handleRenderAdvancedVideo]);
+        const isLyricVideo = Boolean(
+            activeSong.video_path?.includes('_lyric') ||
+            (activeSong.video_config_json && (() => {
+                try {
+                    const cfg = JSON.parse(activeSong.video_config_json);
+                    return cfg.mode === 'lyric_studio' || Boolean(cfg.style_preset);
+                } catch {
+                    return false;
+                }
+            })())
+        );
+
+        if (isLyricVideo) {
+            await handleRenderLyricVideo();
+        } else {
+            applyStoredVideoConfig(activeSong);
+            await handleRenderAdvancedVideo();
+        }
+    }, [activeSong, handleRenderLyricVideo, applyStoredVideoConfig, handleRenderAdvancedVideo]);
 
     const [isRouting, setIsRouting] = useState(false);
 

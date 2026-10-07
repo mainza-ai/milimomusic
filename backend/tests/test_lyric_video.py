@@ -252,3 +252,80 @@ async def test_render_lyric_music_video_real_pipeline(tmp_path):
         os.remove(rendered_disk_path)
     except OSError:
         pass
+
+
+@pytest.mark.asyncio
+async def test_render_lyric_music_video_aspect_ratios(tmp_path):
+    """Verify fast-path rendering succeeds across all supported aspect ratios (9:16, 1:1, 21:9)."""
+    import wave
+    import struct
+    import math
+    from PIL import Image
+    from app.services.video.video_orchestrator import VIDEO_DIR
+
+    wav_path = tmp_path / "ar_test.wav"
+    sample_rate = 22050
+    duration_s = 1.0
+    with wave.open(str(wav_path), "w") as wf:
+        wf.setnchannels(1)
+        wf.setsampwidth(2)
+        wf.setframerate(sample_rate)
+        data = bytearray()
+        for i in range(int(sample_rate * duration_s)):
+            sample = int(32767 * 0.3 * math.sin(2 * math.pi * 440 * i / sample_rate))
+            data.extend(struct.pack("<h", sample))
+        wf.writeframes(data)
+
+    cover_path = tmp_path / "ar_cover.png"
+    img = Image.new("RGB", (400, 400), color=(50, 80, 120))
+    img.save(str(cover_path))
+
+    aspect_ratios = ["9:16", "1:1", "21:9"]
+    for ar in aspect_ratios:
+        job_id = uuid.uuid4()
+        job = Job(
+            id=job_id,
+            title=f"Aspect Ratio {ar} Test",
+            prompt="Electronic",
+            status=JobStatus.COMPLETED,
+            audio_path=str(wav_path),
+            cover_image_path=str(cover_path),
+            lyrics="Beat drops now",
+            timed_lyrics_json=json.dumps([
+                {
+                    "text": "Beat drops now",
+                    "start": 0.1,
+                    "end": 0.9,
+                    "words": [
+                        {"word": "Beat", "start": 0.1, "end": 0.3},
+                        {"word": "drops", "start": 0.35, "end": 0.65},
+                        {"word": "now", "start": 0.7, "end": 0.9}
+                    ]
+                }
+            ])
+        )
+
+        task_id = f"test_ar_{ar.replace(':', '_')}_{uuid.uuid4().hex[:6]}"
+        rendered_url = await video_orchestrator.render_lyric_music_video(
+            job=job,
+            task_id=task_id,
+            config={
+                "style_preset": "neon",
+                "aspect_ratio": ar,
+                "resolution": "720p",
+                "background_mode": "cover_art",
+                "burn_lyrics": True
+            }
+        )
+
+        assert rendered_url is not None
+        rendered_filename = os.path.basename(rendered_url.split("?")[0])
+        rendered_disk_path = os.path.join(VIDEO_DIR, rendered_filename)
+        assert os.path.isfile(rendered_disk_path)
+        assert os.path.getsize(rendered_disk_path) > 1000
+
+        try:
+            os.remove(rendered_disk_path)
+        except OSError:
+            pass
+

@@ -1812,15 +1812,16 @@ export const imageStudioApi = {
         limit?: number;
         offset?: number;
     }): Promise<{ assets: VisualAsset[]; total: number }> => {
-        const query = new URLSearchParams();
-        if (params?.asset_type) query.set('asset_type', params.asset_type);
-        if (params?.job_id) query.set('job_id', params.job_id);
-        if (params?.project_id) query.set('project_id', params.project_id);
-        if (params?.favorite_only) query.set('favorite_only', 'true');
-        if (params?.limit) query.set('limit', params.limit.toString());
-        if (params?.offset) query.set('offset', params.offset.toString());
-        const qs = query.toString();
-        const res = await axios.get(`${API_BASE_URL}/images/gallery${qs ? `?${qs}` : ''}`);
+        const res = await axios.get(`${API_BASE_URL}/images/gallery`, {
+            params: {
+                asset_type: params?.asset_type,
+                job_id: params?.job_id,
+                project_id: params?.project_id,
+                favorite_only: params?.favorite_only,
+                limit: params?.limit,
+                offset: params?.offset,
+            }
+        });
         return res.data;
     },
     generateImage: async (payload: VisualAssetCreate): Promise<{ success: boolean; asset: VisualAsset; image_url: string; engine?: string }> => {

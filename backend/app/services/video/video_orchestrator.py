@@ -169,25 +169,44 @@ class VideoOrchestrator:
         return True
 
     def cancel_keyframe_generation(self, job_id: str) -> bool:
+        clean_target = str(job_id).replace("-", "").strip().lower()
         matching_tasks = []
         with self._lock:
-            ev = self._keyframe_cancels.get(str(job_id))
-            if ev:
-                ev.set()
+            # 1. Trigger all matching cancel events (raw key or normalized UUID)
+            for k, ev in list(self._keyframe_cancels.items()):
+                if str(k).replace("-", "").strip().lower() == clean_target or str(k) == str(job_id):
+                    ev.set()
+
+            # 2. Cancel matching background asyncio tasks and collect task IDs
             for tid, tinfo in self._tasks.items():
-                if tinfo.job_id == str(job_id) and tid.startswith("kf_"):
+                t_job = str(tinfo.job_id).replace("-", "").strip().lower()
+                if (t_job == clean_target or tinfo.job_id == str(job_id)) and tid.startswith("kf_"):
                     matching_tasks.append(tid)
+                    bg = self._active_render_tasks.get(tid)
+                    if bg and not bg.done():
+                        try:
+                            bg.cancel()
+                            logger.info(f"VideoOrchestrator: Cancelled background task for keyframes {tid}")
+                        except Exception as e:
+                            logger.debug(f"Error cancelling asyncio keyframe task {tid}: {e}")
 
+        # 3. Update task status in memory and durable SQLite queue
         for tid in matching_tasks:
-            self.update_task(tid, status="cancelled", step="Keyframe generation cancelled by user.")
+            self.update_task(tid, status="cancelled", step="Keyframe generation cancelled by user.", progress=0)
+            try:
+                task_queue.fail_task(tid, "Cancelled by user")
+            except Exception:
+                pass
 
+        # 4. Abort in-flight MLX/diffusers diffusion immediately (< 500ms)
         try:
             from app.services.image_service import image_service
-            image_service.unload_models()
+            image_service.cancel_active_diffusion()
             from app.core.hardware_lock import GlobalHardwareCoordinator
             GlobalHardwareCoordinator.flush_memory()
-        except Exception:
-            pass
+        except Exception as e:
+            logger.debug(f"Error aborting active diffusion: {e}")
+
         return True
 
     def resolve_audio_path(self, path: Optional[str]) -> Optional[str]:
@@ -487,7 +506,8 @@ class VideoOrchestrator:
                             style=visual_style,
                             width=width,
                             height=height,
-                            auto_unload=False
+                            auto_unload=False,
+                            cancel_check=lambda: cancel_event.is_set(),
                         )
                         staged_src = res.get("dest_path") if (res.get("ok") and res.get("dest_path")) else None
                     else:
@@ -502,6 +522,11 @@ class VideoOrchestrator:
                             cancel_check=lambda: cancel_event.is_set(),
                         )
                         staged_src = (plate_batch.get("stills") or {}).get(0)
+
+                    if cancel_event.is_set():
+                        logger.info(f"generate_scene_keyframes: Cancelled during clip {clip_idx}")
+                        break
+
                     if staged_src and os.path.isfile(staged_src):
                         shutil.copy(staged_src, kf_path)
                         if not clip.is_vocal:
@@ -515,6 +540,11 @@ class VideoOrchestrator:
                             height=height,
                             dest_path=kf_path
                         )
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    logger.info(f"generate_scene_keyframes: Cancelled by user at clip {clip_idx}")
+                    if task_id:
+                        self.update_task(task_id, status="cancelled", step="Keyframe generation cancelled by user.", progress=0)
+                    break
                 except Exception as e:
                     logger.warning(f"Failed to generate keyframe image for clip {clip_idx} ({e})")
                     try:
@@ -1613,11 +1643,11 @@ class VideoOrchestrator:
 
             stdout_b, stderr_b = await proc.communicate()
 
-            # Fallback re-encode with libx264 (and soft subtitles if hardsub failed) if encode failed
+            # Fallback re-encode with libx264 (retaining hardsub subtitles first) if initial encode failed
             if proc.returncode != 0 or not os.path.isfile(tmp_out_path) or os.path.getsize(tmp_out_path) == 0:
                 err_msg = stderr_b.decode("utf-8", errors="ignore")[:300]
-                logger.warning(f"Initial lyric video encode failed ({proc.returncode}): {err_msg}; retrying with fallback encoder...")
-                cmd_fb = _build_ffmpeg_cmd(use_hardsub=False, enc="libx264", e_flags=["-preset", "veryfast", "-crf", "20"])
+                logger.warning(f"Initial lyric video encode failed ({proc.returncode}): {err_msg}; retrying with libx264 fallback encoder...")
+                cmd_fb = _build_ffmpeg_cmd(use_hardsub=can_hardsub, enc="libx264", e_flags=["-preset", "veryfast", "-crf", "20"])
                 proc_fb = await asyncio.create_subprocess_exec(
                     *cmd_fb, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
                 )
@@ -1635,7 +1665,30 @@ class VideoOrchestrator:
                         await asyncio.wait_for(proc_fb.wait(), timeout=0.5)
                     except asyncio.TimeoutError:
                         pass
-                await proc_fb.communicate()
+                _, err_fb = await proc_fb.communicate()
+
+                # Last-resort fallback with soft subs if hardsub filter itself failed
+                if (proc_fb.returncode != 0 or not os.path.isfile(tmp_out_path) or os.path.getsize(tmp_out_path) == 0) and can_hardsub:
+                    logger.warning(f"Hardsub fallback also failed ({proc_fb.returncode}); falling back to soft subtitles...")
+                    cmd_soft = _build_ffmpeg_cmd(use_hardsub=False, enc="libx264", e_flags=["-preset", "veryfast", "-crf", "20"])
+                    proc_soft = await asyncio.create_subprocess_exec(
+                        *cmd_soft, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+                    )
+                    with self._lock:
+                        self._active_procs[task_id] = proc_soft
+                    while proc_soft.returncode is None:
+                        if cancel_event.is_set():
+                            try:
+                                proc_soft.kill()
+                                await proc_soft.wait()
+                            except Exception:
+                                pass
+                            raise asyncio.CancelledError("Lyric video rendering cancelled by user.")
+                        try:
+                            await asyncio.wait_for(proc_soft.wait(), timeout=0.5)
+                        except asyncio.TimeoutError:
+                            pass
+                    await proc_soft.communicate()
 
             if not os.path.isfile(tmp_out_path) or os.path.getsize(tmp_out_path) == 0:
                 raise RuntimeError(f"Failed to generate lyric music video output file: {tmp_out_path}")

@@ -5221,11 +5221,16 @@ async def generate_video_keyframes(job_id: str, req: KeyframesRequest = Body(def
                         user_scenes=req.scenes,
                         task_id=task_id
                     )
+                except asyncio.CancelledError:
+                    logger.info(f"Background keyframe generation task {task_id} successfully cancelled.")
                 except Exception as e:
                     logger.error(f"Background keyframe generation failed for {job_id}: {e}")
                     video_service.update_task(task_id, status="error", error=str(e))
+                finally:
+                    video_service.unregister_render_task(task_id)
 
-            asyncio.create_task(_run_kf_bg())
+            bg_task = asyncio.create_task(_run_kf_bg())
+            video_service.register_render_task(task_id, bg_task)
             return {
                 "status": "queued",
                 "task_id": task_id,

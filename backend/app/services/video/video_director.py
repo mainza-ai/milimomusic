@@ -489,6 +489,7 @@ class VideoDirector:
             raise asyncio.CancelledError("Planning cancelled by user before LLM invocation.")
 
         fallback_reason = None
+        timeout_sec = float(os.environ.get("MILIMO_DIRECTOR_TIMEOUT", "45.0"))
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(
@@ -497,10 +498,11 @@ class VideoDirector:
                     options={"temperature": 0.7}
                 )
                 try:
-                    response_text, provider, model = future.result(timeout=15.0)
+                    response_text, provider, model = future.result(timeout=timeout_sec)
                 except concurrent.futures.TimeoutError:
-                    logger.warning("AI Visual Director LLM call timed out after 15.0s — using intelligent heuristic fallback.")
+                    logger.warning(f"AI Visual Director LLM call timed out after {timeout_sec:.1f}s — using intelligent heuristic fallback.")
                     response_text, provider, model = None, "timeout_fallback", "heuristic"
+                    fallback_reason = f"Local LLM loading/inference timed out after {int(timeout_sec)}s; using acoustic downbeat pacing."
             if cancel_check and cancel_check():
                 raise asyncio.CancelledError("Planning cancelled by user after LLM invocation.")
 
@@ -538,14 +540,14 @@ class VideoDirector:
                         model=model
                     )
                 else:
-                    fallback_reason = "LLM response did not contain valid scene storyboard JSON"
-            else:
-                fallback_reason = "LLM returned empty response"
+                    fallback_reason = f"LLM ({provider}/{model}) output did not match scene storyboard schema; using acoustic downbeat pacing."
+            elif not fallback_reason:
+                fallback_reason = f"LLM ({provider}/{model}) returned empty output; using acoustic downbeat pacing."
         except (asyncio.CancelledError, KeyboardInterrupt):
             raise
         except Exception as e:
             logger.warning(f"AI Visual Director LLM invocation failed ({e}), using intelligent fallback.")
-            fallback_reason = str(e)
+            fallback_reason = f"LLM invocation error ({e}); using acoustic downbeat pacing."
         finally:
             try:
                 LLMService.unload_local_model()

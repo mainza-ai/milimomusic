@@ -11,12 +11,24 @@ import logging
 import uuid
 import hashlib
 import shutil
+import time
+import asyncio
+import concurrent.futures
 from concurrent.futures import ThreadPoolExecutor
 from typing import Optional, Dict, Any, Callable, List
 from app.services.model_manager import model_manager
 from app.core.paths import get_data_dir
 
 logger = logging.getLogger(__name__)
+
+class _MlxCancelSubscriber:
+    """In-loop callback subscriber for mflux Flux2Klein denoising loop."""
+    def __init__(self, check_fn: Callable[[], bool]):
+        self.check_fn = check_fn
+
+    def call_in_loop(self, **kwargs):
+        if self.check_fn and self.check_fn():
+            raise KeyboardInterrupt("MLX diffusion cancelled by user")
 
 COVERS_DIR = str(get_data_dir() / "covers")
 os.makedirs(COVERS_DIR, exist_ok=True)
@@ -63,11 +75,25 @@ class ImageService:
     _loaded_mlx_model_id = None
     _loaded_diffusers_pipeline = None
     _loaded_diffusers_model_id = None
+    _diffusion_cancelled: bool = False
 
     def __new__(cls):
         if cls._instance is None:
             cls._instance = super(ImageService, cls).__new__(cls)
         return cls._instance
+
+    def cancel_active_diffusion(self) -> None:
+        """Immediately abort any running MLX or diffusers image generation process and release hardware."""
+        global _mlx_executor
+        logger.info("ImageService: cancel_active_diffusion called — terminating executor and purging pipeline.")
+        self._diffusion_cancelled = True
+        try:
+            _mlx_executor.shutdown(wait=False, cancel_futures=True)
+        except Exception as e:
+            logger.debug(f"Error shutting down _mlx_executor: {e}")
+        _mlx_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx_image_gen")
+        self.unload_models()
+        self._diffusion_cancelled = False
 
     def unload_models(self) -> bool:
         """Completely release loaded MLX and Diffusers image models and purge accelerator caches."""
@@ -200,10 +226,14 @@ class ImageService:
         height: int,
         seed: int,
         dest_path: str,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> None:
         """Executes MLX FLUX.2 inference strictly inside the dedicated _mlx_executor thread."""
         from mflux.models.common.config import ModelConfig
         from mflux.models.flux2.variants import Flux2Klein
+
+        if (cancel_check and cancel_check()) or getattr(self, "_diffusion_cancelled", False):
+            raise asyncio.CancelledError("MLX diffusion cancelled before execution.")
 
         if self._loaded_mlx_model_id != model_source or self._loaded_mlx_pipeline is None:
             logger.info(f"Loading Flux2Klein model from {model_source} in dedicated MLX thread (is_9b={is_9b}, is_base={is_base})...")
@@ -216,16 +246,33 @@ class ImageService:
         else:
             logger.info(f"Reusing in-memory Flux2Klein model ({model_source}) in dedicated MLX thread...")
 
+        # Register cancel subscriber into mflux's CallbackRegistry
+        if hasattr(self._loaded_mlx_pipeline, "callbacks") and self._loaded_mlx_pipeline.callbacks is not None:
+            self._loaded_mlx_pipeline.callbacks.in_loop = [
+                cb for cb in self._loaded_mlx_pipeline.callbacks.in_loop
+                if not isinstance(cb, _MlxCancelSubscriber)
+            ]
+            self._loaded_mlx_pipeline.callbacks.register(
+                _MlxCancelSubscriber(lambda: getattr(self, "_diffusion_cancelled", False) or (cancel_check() if cancel_check else False))
+            )
+
         logger.info(f"Generating image via mflux Flux2Klein (steps={steps}, guidance={guidance}, seed={seed}, size={width}x{height})...")
-        image = self._loaded_mlx_pipeline.generate_image(
-            seed=seed,
-            prompt=prompt,
-            num_inference_steps=steps,
-            width=width,
-            height=height,
-            guidance=guidance,
-        )
-        image.save(dest_path)
+        try:
+            image = self._loaded_mlx_pipeline.generate_image(
+                seed=seed,
+                prompt=prompt,
+                num_inference_steps=steps,
+                width=width,
+                height=height,
+                guidance=guidance,
+            )
+            image.save(dest_path)
+        except (KeyboardInterrupt, Exception) as exc:
+            from mflux.utils.exceptions import StopImageGenerationException
+            if isinstance(exc, (KeyboardInterrupt, StopImageGenerationException)) or getattr(self, "_diffusion_cancelled", False) or (cancel_check and cancel_check()):
+                logger.info(f"MLX diffusion aborted at step: {exc}")
+                raise asyncio.CancelledError("MLX diffusion cancelled by user.")
+            raise
 
     def _resolve_image_model(
         self, model_id: Optional[str] = None
@@ -277,6 +324,7 @@ class ImageService:
         steps: Optional[int] = None,
         guidance: Optional[float] = None,
         log_label: str = "image",
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Any]:
         """Attempt MLX FLUX.2 then PyTorch-diffusers text-to-image rendering.
 
@@ -285,6 +333,9 @@ class ImageService:
         what a diffusion miss means (cover: raster fallback; scene: procedural
         ffmpeg branch in the video service).
         """
+        if (cancel_check and cancel_check()) or getattr(self, "_diffusion_cancelled", False):
+            raise asyncio.CancelledError("Image diffusion cancelled by user.")
+
         engine_used = "none"
         diffusion_error: Optional[str] = None
         model_source = local_path if (local_path and os.path.exists(local_path)) else repo_id
@@ -336,10 +387,33 @@ class ImageService:
                         height=height,
                         seed=seed,
                         dest_path=dest_path,
+                        cancel_check=cancel_check,
                     )
-                    future.result(timeout=600)
+
+                    start_poll = time.time()
+                    while not future.done():
+                        if (cancel_check and cancel_check()) or getattr(self, "_diffusion_cancelled", False):
+                            logger.info(f"Cancellation detected during MLX {log_label} diffusion — aborting.")
+                            future.cancel()
+                            self.cancel_active_diffusion()
+                            raise asyncio.CancelledError(f"MLX diffusion {log_label} cancelled by user.")
+                        try:
+                            future.result(timeout=0.2)
+                        except concurrent.futures.TimeoutError:
+                            pass
+                        if time.time() - start_poll > 600.0:
+                            future.cancel()
+                            raise TimeoutError(f"MLX diffusion {log_label} timed out after 600s")
+
+                    if (cancel_check and cancel_check()) or getattr(self, "_diffusion_cancelled", False):
+                        raise asyncio.CancelledError(f"MLX diffusion {log_label} cancelled by user.")
+
                     engine_used = "mflux_flux2_mlx"
                     logger.info(f"MLX FLUX.2 Klein diffusion {log_label} rendered at {dest_path} (steps={eff_steps}, guidance={eff_guidance})")
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    self._loaded_mlx_pipeline = None
+                    self._loaded_mlx_model_id = None
+                    raise
                 except Exception as e:
                     self._loaded_mlx_pipeline = None
                     self._loaded_mlx_model_id = None
@@ -347,6 +421,8 @@ class ImageService:
                     logger.warning(f"MLX diffusion {log_label} error ({e}); trying diffusers fallback.")
 
             if engine_used == "none":
+                if (cancel_check and cancel_check()) or getattr(self, "_diffusion_cancelled", False):
+                    raise asyncio.CancelledError(f"Diffusion {log_label} cancelled before diffusers fallback.")
                 try:
                     import torch
                     from diffusers import AutoPipelineForText2Image
@@ -371,13 +447,24 @@ class ImageService:
                     diff_steps = steps if steps is not None else (4 if is_turbo_or_schnell else 20)
                     diff_guidance = guidance if guidance is not None else (0.0 if is_turbo_or_schnell else 3.5)
 
-                    image = pipe(
-                        prompt=full_prompt,
-                        num_inference_steps=diff_steps,
-                        guidance_scale=diff_guidance,
-                        width=width,
-                        height=height,
-                    ).images[0]
+                    def _diff_cancel_callback(p, step, ts, callback_kwargs):
+                        if (cancel_check and cancel_check()) or getattr(self, "_diffusion_cancelled", False):
+                            raise KeyboardInterrupt("Diffusers generation cancelled by user")
+                        return callback_kwargs
+
+                    pipe_kwargs = {
+                        "prompt": full_prompt,
+                        "num_inference_steps": diff_steps,
+                        "guidance_scale": diff_guidance,
+                        "width": width,
+                        "height": height,
+                    }
+                    try:
+                        pipe_kwargs["callback_on_step_end"] = _diff_cancel_callback
+                    except Exception:
+                        pass
+
+                    image = pipe(**pipe_kwargs).images[0]
                     image.save(dest_path, "PNG")
                     engine_used = "diffusers_neural_diffusion"
                     logger.info(f"Diffusers diffusion {log_label} rendered at {dest_path}")
@@ -615,6 +702,7 @@ class ImageService:
         steps: Optional[int] = None,
         guidance: Optional[float] = None,
         auto_unload: bool = True,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> Dict[str, Any]:
         """Render a per-scene video background still (B-roll / Ken Burns source).
 
@@ -645,6 +733,7 @@ class ImageService:
             steps=steps,
             guidance=guidance,
             log_label="scene background",
+            cancel_check=cancel_check,
         )
         engine_used = diffusion_res["engine"]
         diffusion_error = diffusion_res["diffusion_error"]
@@ -840,10 +929,15 @@ class ImageService:
                         steps=steps,
                         guidance=guidance,
                         log_label=f"scene prebuild {idx + 1}/{total}",
+                        cancel_check=cancel_check,
                     )
                     if res.get("engine") and res["engine"] != "none":
                         engine_used = res["engine"]
                     ok = bool(res.get("engine") and res["engine"] != "none")
+                except (asyncio.CancelledError, KeyboardInterrupt):
+                    cancelled = True
+                    logger.info(f"Scene pre-build cancelled at scene {idx + 1}/{total} for job {job_id}")
+                    break
                 except Exception as exc:
                     last_error = str(exc)[:300]
                     logger.warning(f"Scene pre-build failed for scene {idx + 1} of {total}: {exc}")

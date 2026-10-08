@@ -2654,4 +2654,22 @@ Resolved 20-minute stalls when re-rendering lyric videos with different aspect r
    - Tested and verified video outputs for `16:9` (1280x720), `9:16` (720x1280), `1:1` (720x720), and `21:9` (1680x720) via ffprobe and live API.
    - All 8 unit tests in `test_lyric_video.py` passed, full test suite passed, `npm run build` passed with zero errors, and 100% API parity maintained.
 
+## [2026-10-08] fix | Immediate Keyframe Diffusion Cancellation & Visual Director Timeout Diagnostics
+Resolved runaway FLUX.2 keyframe image diffusion when clicking "Stop Stills" and fixed misleading "LLM returned empty response" fallback alert:
+1. **Instant Keyframe Diffusion Cancellation (< 500ms)**:
+   - Added `cancel_active_diffusion()` to `ImageService` which unloads MLX/diffusers pipelines, sets an in-loop cancellation flag, flushes Metal memory, and restarts `_mlx_executor` without waiting on blocked threads.
+   - Registered `_MlxCancelSubscriber` into `mflux`'s `CallbackRegistry.in_loop` which raises `KeyboardInterrupt` at the immediate next denoise step, caught cleanly and translated to `asyncio.CancelledError`.
+   - Replaced blocking `future.result(timeout=600)` in `_render_diffusion_image` with a 0.2s polling loop checking cancellation flags.
+   - Normalized UUIDs (stripping hyphens) in `cancel_keyframe_generation` in `video_orchestrator.py` to match stored cancel events and task IDs regardless of string formatting.
+   - Registered background keyframe asyncio tasks with `video_service.register_render_task` so cancelling aborts the task immediately.
+2. **Accurate Visual Director Error Diagnostics & 45s Timeout Budget**:
+   - Increased local LLM Visual Director timeout budget from 15.0s to 45.0s (`MILIMO_DIRECTOR_TIMEOUT`), providing sufficient headroom for 27B/35B models (e.g. Qwen 27B via OMLX) to load weights into unified memory and generate full 28-scene JSON.
+   - Explicitly distinguished `TimeoutError` from empty responses and JSON schema parse failures in `_call_llm_visual_director`, eliminating the misleading `LLM returned empty response` banner.
+3. **Hardsub Subtitle Preservation**:
+   - Updated lyric video fallback encode in `video_orchestrator.py` to retain `use_hardsub=can_hardsub` with `libx264` first before falling back to soft subtitles as a last resort.
+4. **Verification**:
+   - Full test suite passed: 31 tests in `test_video_service.py` and 8 tests in `test_lyric_video.py`.
+   - 100% API parity verified: 159 routes, all called; 164 client calls, all resolve.
+   - Frontend production build (`npm run build`) succeeded with 0 errors.
+
 

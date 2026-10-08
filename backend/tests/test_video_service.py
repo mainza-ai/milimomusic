@@ -816,6 +816,66 @@ async def test_minimax_h3_step_cancellation():
         )
 
 
+@pytest.mark.asyncio
+async def test_cancel_keyframe_generation_hyphen_normalization(client, sample_job):
+    """Test that cancel_keyframe_generation matches jobs with or without hyphens and triggers cancel_active_diffusion."""
+    import asyncio
+    from app.services.video.video_orchestrator import video_orchestrator, VideoTaskStatusInfo
+    from app.services.image_service import image_service
+
+    raw_uuid = str(sample_job.id)
+    clean_uuid = raw_uuid.replace("-", "")
+    task_id = f"kf_{clean_uuid[:10]}"
+
+    ev = asyncio.Event()
+    with video_orchestrator._lock:
+        video_orchestrator._keyframe_cancels[raw_uuid] = ev
+        video_orchestrator._tasks[task_id] = VideoTaskStatusInfo(
+            id=task_id,
+            job_id=raw_uuid,
+            status="processing",
+            step="Pre-building scene backgrounds... 1/8",
+            progress=15
+        )
+
+    # Cancel using the clean_uuid (without hyphens) to ensure normalization works
+    res = await client.post(f"/videos/keyframes/{clean_uuid}/cancel")
+    assert res.status_code == 200
+    assert res.json()["ok"] is True
+    assert ev.is_set()
+
+    task_status = video_orchestrator.get_task(task_id)
+    assert task_status is not None
+    assert task_status["status"] == "cancelled"
 
 
+def test_image_service_cancel_active_diffusion():
+    """Verify ImageService.cancel_active_diffusion resets executor cleanly without errors."""
+    from app.services.image_service import image_service
+    image_service.cancel_active_diffusion()
+    assert image_service._loaded_mlx_pipeline is None
+    assert image_service._diffusion_cancelled is False
 
+
+def test_video_director_timeout_diagnostics(sample_job, monkeypatch):
+    """Verify VideoDirector reports timeout explicitly instead of 'empty response'."""
+    from app.services.video.video_director import video_director
+    from app.services.llm_service import LLMService
+
+    def mock_hang(*args, **kwargs):
+        import time
+        time.sleep(1.0)
+        return "not used", "omlx", "Qwen3.8-27B"
+
+    monkeypatch.setattr(LLMService, "generate_text_via_active", mock_hang)
+    monkeypatch.delenv("MILIMO_FAST_TEST_MODE", raising=False)
+    monkeypatch.setenv("MILIMO_DIRECTOR_TIMEOUT", "0.1")
+
+    treatment = video_director.generate_director_treatment(
+        job=sample_job,
+        use_llm=True
+    )
+    assert treatment is not None
+    assert treatment.llm_used is False
+    assert "timed out after 0s" in (treatment.fallback_reason or "")
+    assert "empty response" not in (treatment.fallback_reason or "").lower()

@@ -500,7 +500,7 @@ class VideoDirector:
             raise asyncio.CancelledError("Planning cancelled by user before LLM invocation.")
 
         fallback_reason = None
-        timeout_sec = float(os.environ.get("MILIMO_DIRECTOR_TIMEOUT", "60.0"))
+        timeout_sec = float(os.environ.get("MILIMO_DIRECTOR_TIMEOUT", "300.0"))
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(
@@ -514,7 +514,8 @@ class VideoDirector:
                 except concurrent.futures.TimeoutError:
                     logger.warning(f"AI Visual Director LLM call timed out after {timeout_sec:.1f}s.")
                     response_text, provider, model = None, "timeout_fallback", "heuristic"
-                    fallback_reason = f"Local LLM loading/inference timed out after {int(timeout_sec)}s; using acoustic downbeat pacing."
+                    mins_str = f" ({int(timeout_sec // 60)} mins)" if timeout_sec >= 60 else ""
+                    fallback_reason = f"Local LLM loading/inference timed out after {int(timeout_sec)}s{mins_str}; using acoustic downbeat pacing."
 
                 # Fast local recovery attempt if primary timed out or returned empty on oMLX
                 if (not response_text or not response_text.strip()) and (provider == "omlx" or provider == "timeout_fallback") and timeout_sec >= 5.0:
@@ -523,11 +524,11 @@ class VideoDirector:
                         fast_future = executor.submit(
                             LLMService.generate_text_via_active,
                             user_content,
-                            options={"temperature": 0.5, "max_tokens": 1500, "timeout": 25.0},
+                            options={"temperature": 0.5, "max_tokens": 1500, "timeout": 60.0},
                             system_prompt=system_instruction,
                             model_override="Llama-3.2-3B-Instruct-bf16"
                         )
-                        fast_text, fast_prov, fast_mod = fast_future.result(timeout=25.0)
+                        fast_text, fast_prov, fast_mod = fast_future.result(timeout=60.0)
                         if fast_text and fast_text.strip():
                             fast_parsed = self._extract_json_treatment(fast_text)
                             if fast_parsed and fast_parsed.get("scenes") and len(fast_parsed["scenes"]) > 0:

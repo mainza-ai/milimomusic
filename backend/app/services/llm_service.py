@@ -240,7 +240,7 @@ class OpenAIProvider(LLMProvider):
         self,
         api_key: str,
         base_url: Optional[str] = None,
-        timeout: float = 30.0,
+        timeout: float = 300.0,
         default_headers: Optional[Dict[str, str]] = None,
     ):
         if OpenAI is None:
@@ -836,31 +836,34 @@ class LLMService:
             return OpenAIProvider(
                 api_key=api_key,
                 base_url=base_url,
-                timeout=45.0
+                timeout=300.0
             )
         elif provider_name == "ollama":
             base_url = _normalize_llm_url(config.get("ollama", {}).get("base_url", "http://localhost:11434"))
             return OllamaProvider(base_url=base_url)
         elif provider_name == "openai":
             api_key = config.get("openai", {}).get("api_key", "")
-            return OpenAIProvider(api_key=api_key)
+            return OpenAIProvider(api_key=api_key, timeout=300.0)
         elif provider_name == "deepseek":
             api_key = config.get("deepseek", {}).get("api_key", "")
             return OpenAIProvider(
                 api_key=api_key, 
-                base_url="https://api.deepseek.com"
+                base_url="https://api.deepseek.com",
+                timeout=300.0
             )
         elif provider_name == "openrouter":
             api_key = config.get("openrouter", {}).get("api_key", "")
             return OpenAIProvider(
                 api_key=api_key, 
-                base_url="https://openrouter.ai/api/v1"
+                base_url="https://openrouter.ai/api/v1",
+                timeout=300.0
             )
         elif provider_name == "lmstudio":
             base_url = _normalize_llm_url(config.get("lmstudio", {}).get("base_url", "http://localhost:1234/v1"))
             return OpenAIProvider(
                 api_key="lm-studio", 
-                base_url=base_url
+                base_url=base_url,
+                timeout=300.0
             )
         elif provider_name == "gemini":
             api_key = config.get("gemini", {}).get("api_key", "")
@@ -875,6 +878,7 @@ class LLMService:
             return OpenAIProvider(
                 api_key=api_key,
                 base_url=base_url,
+                timeout=300.0,
                 default_headers={
                     _OPCODE_SESSION_HEADER: _resolve_opencode_session_id(),
                     "User-Agent": _USER_AGENT,
@@ -885,7 +889,8 @@ class LLMService:
             api_key = config.get("omlx", {}).get("api_key", "omlx")
             return OpenAIProvider(
                 api_key=api_key or "omlx",
-                base_url=base_url
+                base_url=base_url,
+                timeout=300.0
             )
         else:
             return OllamaProvider(base_url=_normalize_llm_url("http://localhost:11434"))
@@ -1694,7 +1699,7 @@ class LLMService:
     #: Single-attempt ceiling for active-provider text calls. The provider is
     #: chosen by the user in LLM Settings; a stall must not eat the endpoint's
     #: whole budget — but we never wander to other providers behind their back.
-    ACTIVE_ATTEMPT_TIMEOUT = 30.0
+    ACTIVE_ATTEMPT_TIMEOUT = 300.0
 
     @staticmethod
     def generate_text_via_active(

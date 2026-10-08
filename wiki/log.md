@@ -2691,5 +2691,19 @@ Resolved the 45s Visual Director timeout stall ("Local LLM loading/inference tim
    - 100% API parity maintained (159 routes, 164 calls).
    - Frontend built cleanly in 1.95s.
 
-
-
+## [2026-10-08] fix | 5-Minute Visual Director Timeout Budget for Local LLM Weight Loading & Inference
+Extended the Visual Director execution budget to 5 minutes (`300s`) to accommodate heavy local LLMs (e.g. 27B-35B parameter checkpoints on unified memory) during cold load and generation:
+1. **Visual Director Timeout Extension**:
+   - Updated `MILIMO_DIRECTOR_TIMEOUT` default in `video_director.py` from 60.0s to 300.0s (5 minutes).
+   - Formatted fallback reason diagnostics with minute context (`Local LLM loading/inference timed out after 300s (5 mins); using acoustic downbeat pacing.`) while maintaining exact backwards-compatible string format for sub-minute test assertions.
+   - Increased fast local recovery attempt timeout to 60.0s.
+2. **Backend Provider and Client Timeouts**:
+   - Increased `OpenAIProvider` default client timeout and provider instances (`nvidia`, `openai`, `deepseek`, `openrouter`, `lmstudio`, `opencode`, `omlx`) in `llm_service.py` to 300.0s.
+   - Increased `LLMService.ACTIVE_ATTEMPT_TIMEOUT` to 300.0s to allow full 5-minute execution window for active provider text queries.
+3. **Frontend HTTP Client Timeout Bounds**:
+   - Configured explicit 6-minute (360,000ms) HTTP request timeouts in `frontend/src/api.ts` for `planVideo`, `generateDirectorTreatment`, and `reimagineScene`, preventing browser/proxy connection drops while local models compute.
+4. **Verification**:
+   - Full test suite passed: 45 passed in `test_video_service.py`, `test_lyric_video.py`, and `test_phase2_director_mode.py`.
+   - 100% API parity maintained (159 routes, 164 calls).
+   - Frontend production build (`npm run build`) succeeded with 0 errors.
+   - Backend Uvicorn server restarted and verified healthy on port 8000.

@@ -1515,7 +1515,7 @@ export const videoApi = {
         return res.data.scenes;
     },
     planVideo: async (jobId: string, params: VideoPlanParams = {}): Promise<VideoPlanResult> => {
-        const res = await axios.post(`${API_BASE_URL}/videos/plan/${jobId}`, params);
+        const res = await axios.post(`${API_BASE_URL}/videos/plan/${jobId}`, params, { timeout: 360000 });
         return res.data;
     },
     renderAdvancedVideo: async (jobId: string, params: VideoRenderParams = {}): Promise<{ status: string; task_id: string; job_id: string }> => {
@@ -1609,7 +1609,7 @@ export const videoApi = {
             auto_continue?: boolean;
         } = {}
     ): Promise<{ status: string; treatment: DirectorTreatment; clips: VideoClipSegment[] }> => {
-        const res = await axios.post(`${API_BASE_URL}/videos/director-treatment/${jobId}`, params);
+        const res = await axios.post(`${API_BASE_URL}/videos/director-treatment/${jobId}`, params, { timeout: 360000 });
         return res.data;
     },
     getDirectorTreatment: async (jobId: string): Promise<{ status: string; treatment: DirectorTreatment | null }> => {
@@ -1626,7 +1626,7 @@ export const videoApi = {
             current_scene?: any;
         } = {}
     ): Promise<{ status: string; clip_index: number; scene: VideoClipSegment }> => {
-        const res = await axios.post(`${API_BASE_URL}/videos/director-treatment/${jobId}/re-imagine-scene/${clipIndex}`, params);
+        const res = await axios.post(`${API_BASE_URL}/videos/director-treatment/${jobId}/re-imagine-scene/${clipIndex}`, params, { timeout: 360000 });
         return res.data;
     }
 };

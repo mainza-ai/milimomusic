@@ -273,11 +273,26 @@ class OpenAIProvider(LLMProvider):
 
     def generate_text(self, prompt: str, model: str, **kwargs) -> str:
         try:
-            response = self.client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                temperature=kwargs.get("options", {}).get("temperature", 0.7),
-            )
+            options = kwargs.get("options") or {}
+            messages = []
+            system_prompt = kwargs.get("system_prompt") or options.get("system_prompt")
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
+
+            create_kwargs: Dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "temperature": options.get("temperature", 0.7),
+            }
+            max_tokens = kwargs.get("max_tokens") or options.get("max_tokens")
+            create_kwargs["max_tokens"] = int(max_tokens) if max_tokens is not None else 4096
+
+            timeout = kwargs.get("timeout") or options.get("timeout")
+            if timeout is not None:
+                create_kwargs["timeout"] = float(timeout)
+
+            response = self.client.chat.completions.create(**create_kwargs)
             content = getattr(response.choices[0].message, "content", "") or ""
             # Only `content` is used (never reasoning_content); strip any inline thinking.
             return _strip_thinking(content)
@@ -287,12 +302,27 @@ class OpenAIProvider(LLMProvider):
 
     def generate_json(self, prompt: str, model: str, **kwargs) -> Dict:
         try:
-            response = self.client.chat.completions.create(
-                model=model,
-                messages=[{"role": "user", "content": prompt}],
-                response_format={"type": "json_object"},
-                temperature=kwargs.get("options", {}).get("temperature", 0.7),
-            )
+            options = kwargs.get("options") or {}
+            messages = []
+            system_prompt = kwargs.get("system_prompt") or options.get("system_prompt")
+            if system_prompt:
+                messages.append({"role": "system", "content": system_prompt})
+            messages.append({"role": "user", "content": prompt})
+
+            create_kwargs: Dict[str, Any] = {
+                "model": model,
+                "messages": messages,
+                "response_format": {"type": "json_object"},
+                "temperature": options.get("temperature", 0.7),
+            }
+            max_tokens = kwargs.get("max_tokens") or options.get("max_tokens")
+            create_kwargs["max_tokens"] = int(max_tokens) if max_tokens is not None else 4096
+
+            timeout = kwargs.get("timeout") or options.get("timeout")
+            if timeout is not None:
+                create_kwargs["timeout"] = float(timeout)
+
+            response = self.client.chat.completions.create(**create_kwargs)
             content = getattr(response.choices[0].message, "content", "") or ""
             content = _strip_thinking(content)
             # Extract the outermost JSON object so prose/thinking never breaks parsing.
@@ -360,6 +390,8 @@ class OpenAIProvider(LLMProvider):
                 messages=messages,
                 temperature=kwargs.get("options", {}).get("temperature", 0.7),
             )
+            max_tokens = kwargs.get("max_tokens") or kwargs.get("options", {}).get("max_tokens")
+            create_kwargs["max_tokens"] = int(max_tokens) if max_tokens is not None else 4096
             if kwargs.get("force_json"):
                 # Constrained decoding where supported; providers lacking
                 # json_object mode may 400 — classified as BadModel/Upstream
@@ -1668,11 +1700,13 @@ class LLMService:
     def generate_text_via_active(
         prompt: str,
         options: Optional[Dict[str, Any]] = None,
+        system_prompt: Optional[str] = None,
+        model_override: Optional[str] = None,
     ) -> tuple[Optional[str], Optional[str], Optional[str]]:
         """One attempt through the active LLM Settings provider, nothing else.
 
         Provider AND model resolve from the Settings selection at call time —
-        no hardcoded fallbacks anywhere on this path. Returns (text,
+        or model_override if explicitly passed. Returns (text,
         provider_name, model). All-None when unselected or failed — the caller
         owns the fallback and says so honestly.
         """
@@ -1680,7 +1714,7 @@ class LLMService:
 
         config = ConfigManager().get_config()
         provider_name = (config.get("provider") or "").strip() or "unknown"
-        settings_model = ((config.get(provider_name, {}) or {}).get("model") or "").strip()
+        settings_model = (model_override or ((config.get(provider_name, {}) or {}).get("model") or "")).strip()
         if not settings_model:
             logger.warning("LLM text skipped: no model selected in Settings.")
             return None, None, None
@@ -1688,15 +1722,27 @@ class LLMService:
         try:
             provider = LLMService._get_provider()
             model = settings_model
+            opt = dict(options or {})
+            timeout_val = float(opt.get("timeout") or LLMService.ACTIVE_ATTEMPT_TIMEOUT)
+            max_tokens_val = opt.get("max_tokens") or 2048
+
             # Bound the attempt: fresh client copy, no SDK retry loops.
             if hasattr(provider, "client") and hasattr(provider.client, "with_options"):
                 provider.client = provider.client.with_options(
-                    timeout=LLMService.ACTIVE_ATTEMPT_TIMEOUT,
+                    timeout=timeout_val,
                     max_retries=0,
                 )
-            kwargs: Dict[str, Any] = dict(options=options or {})
+            kwargs: Dict[str, Any] = dict(
+                options=opt,
+                timeout=timeout_val,
+                max_tokens=max_tokens_val,
+            )
+            eff_sys_prompt = system_prompt or opt.get("system_prompt")
+            if eff_sys_prompt:
+                kwargs["system_prompt"] = eff_sys_prompt
+
             if provider.__class__.__name__ == "OllamaProvider":
-                kwargs["timeout"] = (3.0, LLMService.ACTIVE_ATTEMPT_TIMEOUT)
+                kwargs["timeout"] = (3.0, timeout_val)
             text = provider.generate_text(prompt, model, **kwargs)
             latency_ms = int((_time.monotonic() - started) * 1000)
             if text and text.strip():

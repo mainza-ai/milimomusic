@@ -2,7 +2,7 @@
 title: Wiki Log
 type: log
 created: 2026-08-19
-updated: 2026-10-07
+updated: 2026-10-08
 ---
 
 # Wiki Log
@@ -2671,5 +2671,25 @@ Resolved runaway FLUX.2 keyframe image diffusion when clicking "Stop Stills" and
    - Full test suite passed: 31 tests in `test_video_service.py` and 8 tests in `test_lyric_video.py`.
    - 100% API parity verified: 159 routes, all called; 164 client calls, all resolve.
    - Frontend production build (`npm run build`) succeeded with 0 errors.
+
+## [2026-10-08] fix | Visual Director LLM Prompt Streamlining, Token Bounds & Fast Local Fallback
+Resolved the 45s Visual Director timeout stall ("Local LLM loading/inference timed out after 45s; using acoustic downbeat pacing") and eliminated unconstrained reasoning loops:
+1. **Bounded Tokens & System Prompt Roles in `LLMService`**:
+   - Updated `OpenAIProvider.generate_text()`, `generate_json()`, and `generate_chat()` in `llm_service.py` to enforce strict `max_tokens` ceilings (default 4096 / 2048) and pass authoritative per-call `timeout` values directly to `chat.completions.create()`.
+   - Added support for explicit `system_prompt` messages across OpenAI providers. For reasoning models (such as Qwen 27B OrcaRouter), system prompts explicitly forbid inner reasoning/thinking tokens and demand valid JSON only, preventing unconstrained 38-minute reasoning loops.
+   - Enhanced `LLMService.generate_text_via_active()` to respect caller-supplied timeouts and token ceilings, as well as optional `model_override`.
+2. **Streamlined Visual Director Prompt Schema in `video_director.py`**:
+   - Reduced the per-scene schema footprint by >60%: removed redundant 80-word `diffusion_prompt` and `directors_note` generation from the LLM prompt, leaving prompt enhancement and continuity styling to `_normalize_director_scenes` and `VideoPromptEnhancer`.
+   - Constrained LLM generation to core treatment metadata and concise 1-sentence visual actions, camera movements, and lighting designs (~25 tokens per scene instead of ~130 tokens).
+   - Added defensive string coercion (`_coerce_str`) across all treatment and scene fields, eliminating crashes when local LLMs return structured dicts for character profiles or atmospheres.
+3. **Multi-Tier Fast Local Fallback & Default oMLX Model**:
+   - Configured `Llama-3.2-3B-Instruct-bf16` as default for `omlx` across `config_manager.py` and `llm_config.json`, running at 50+ tokens/sec with sub-second time-to-first-token and minimal RAM footprint.
+   - Added an automatic fast local model recovery tier in `_call_llm_visual_director`: if a heavy local model times out or stalls, the director automatically attempts recovery via `Llama-3.2-3B` in under 20s before falling back to deterministic acoustic downbeats.
+4. **Verification**:
+   - All 46 tests passed (`test_video_service.py`, `test_lyric_video.py`, `test_phase2_director_mode.py`).
+   - Verified live director treatment generation with active local LLM generating all scenes with `llm_used=True` and `fallback_reason=None`.
+   - 100% API parity maintained (159 routes, 164 calls).
+   - Frontend built cleanly in 1.95s.
+
 
 

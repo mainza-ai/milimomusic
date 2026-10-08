@@ -194,6 +194,18 @@ LIGHTING_DESIGNS = [
 ]
 
 
+def _coerce_str(val: Any, default: str = "") -> str:
+    if val is None:
+        return default
+    if isinstance(val, str):
+        return val.strip()
+    if isinstance(val, dict):
+        return ", ".join(f"{k}: {v}" for k, v in val.items() if v is not None)
+    if isinstance(val, list):
+        return ", ".join(str(v) for v in val if v is not None)
+    return str(val).strip()
+
+
 class VideoDirector:
     """
     Directs music video scene breakdown, beat synchronization, and visual scene prompts.
@@ -438,7 +450,8 @@ class VideoDirector:
             "4. TWO-TIER VOCAL BYPASS:\n"
             "   - VOCAL_PERFORMANCE shots: Character lip-syncs with emotive facial delivery.\n"
             "   - All other shots (NARRATIVE, METAPHOR, B-ROLL, SOLOS): Explicitly specify mouth_movement: closed.\n"
-            "5. OUTPUT FORMAT: Respond ONLY with a valid JSON object matching the requested schema."
+            "5. KEEP SCENE ACTIONS CONCISE: 1 vivid descriptive sentence per scene.\n"
+            "6. OUTPUT FORMAT: Respond ONLY with a valid JSON object matching the requested schema. Do NOT include thinking, reasoning tokens, or markdown code blocks."
         )
 
         clips_overview = []
@@ -461,7 +474,7 @@ class VideoDirector:
             f"Full Lyrics:\n{job.lyrics or 'Instrumental track'}\n\n"
             f"SCENE BREAKDOWN WINDOWS ({len(clips_meta)} scenes):\n"
             + "\n".join(clips_overview) + "\n\n"
-            "Provide the Director's Treatment in the following JSON schema:\n"
+            "Provide the Director's Treatment in the following concise JSON schema:\n"
             "{\n"
             '  "concept_title": "Short creative title",\n'
             '  "logline": "1-2 sentence dramatic visual summary",\n'
@@ -471,13 +484,11 @@ class VideoDirector:
             '  "scenes": [\n'
             "    {\n"
             '      "clip_index": 1,\n'
-            '      "scene_type": "VOCAL_PERFORMANCE" | "NARRATIVE_STORY" | "METAPHORICAL_VISUAL" | "INSTRUMENTAL_FOCUS" | "ENVIRONMENTAL_BROLL",\n'
+            '      "scene_type": "VOCAL_PERFORMANCE" | "NARRATIVE_STORY" | "METAPHORICAL_VISUAL" | "INSTRUMENTAL_FOCUS" | "CINEMATIC_BROLL",\n'
             '      "musical_energy": 1-5,\n'
-            '      "visual_action": "Concrete physical action in scene",\n'
-            '      "diffusion_prompt": "Highly detailed video diffusion prompt without lyric words",\n'
+            '      "visual_action": "1 concrete descriptive sentence of action in this scene",\n'
             '      "camera_motion": "Cinematic camera movement and focal lens",\n'
-            '      "lighting_and_atmosphere": "Lighting design and environmental mood",\n'
-            '      "directors_note": "Creative rationale for this shot"\n'
+            '      "lighting_and_atmosphere": "Lighting design and environmental mood"\n'
             "    }\n"
             "  ]\n"
             "}"
@@ -489,20 +500,45 @@ class VideoDirector:
             raise asyncio.CancelledError("Planning cancelled by user before LLM invocation.")
 
         fallback_reason = None
-        timeout_sec = float(os.environ.get("MILIMO_DIRECTOR_TIMEOUT", "45.0"))
+        timeout_sec = float(os.environ.get("MILIMO_DIRECTOR_TIMEOUT", "60.0"))
         try:
             with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
                 future = executor.submit(
                     LLMService.generate_text_via_active,
-                    full_prompt,
-                    options={"temperature": 0.7}
+                    user_content,
+                    options={"temperature": 0.5, "max_tokens": 2048, "timeout": timeout_sec},
+                    system_prompt=system_instruction
                 )
                 try:
                     response_text, provider, model = future.result(timeout=timeout_sec)
                 except concurrent.futures.TimeoutError:
-                    logger.warning(f"AI Visual Director LLM call timed out after {timeout_sec:.1f}s — using intelligent heuristic fallback.")
+                    logger.warning(f"AI Visual Director LLM call timed out after {timeout_sec:.1f}s.")
                     response_text, provider, model = None, "timeout_fallback", "heuristic"
                     fallback_reason = f"Local LLM loading/inference timed out after {int(timeout_sec)}s; using acoustic downbeat pacing."
+
+                # Fast local recovery attempt if primary timed out or returned empty on oMLX
+                if (not response_text or not response_text.strip()) and (provider == "omlx" or provider == "timeout_fallback") and timeout_sec >= 5.0:
+                    try:
+                        logger.info("Attempting fast local LLM fallback (Llama-3.2-3B) for Visual Director...")
+                        fast_future = executor.submit(
+                            LLMService.generate_text_via_active,
+                            user_content,
+                            options={"temperature": 0.5, "max_tokens": 1500, "timeout": 25.0},
+                            system_prompt=system_instruction,
+                            model_override="Llama-3.2-3B-Instruct-bf16"
+                        )
+                        fast_text, fast_prov, fast_mod = fast_future.result(timeout=25.0)
+                        if fast_text and fast_text.strip():
+                            fast_parsed = self._extract_json_treatment(fast_text)
+                            if fast_parsed and fast_parsed.get("scenes") and len(fast_parsed["scenes"]) > 0:
+                                response_text = fast_text
+                                provider = fast_prov or "omlx"
+                                model = fast_mod or "Llama-3.2-3B-Instruct-bf16"
+                                fallback_reason = None
+                                logger.info(f"AI Visual Director recovered with fast local model {model}!")
+                    except Exception as fast_ex:
+                        logger.debug(f"Fast local fallback attempt skipped: {fast_ex}")
+
             if cancel_check and cancel_check():
                 raise asyncio.CancelledError("Planning cancelled by user after LLM invocation.")
 
@@ -513,10 +549,11 @@ class VideoDirector:
                     if progress_callback:
                         progress_callback("Snapping Scene Cuts to Acoustic Lattice & Enhancing Prompts", 85)
 
+                    char_profile_str = _coerce_str(parsed.get("character_profile"), character_desc or "Lead performer")
                     scenes = self._normalize_director_scenes(
                         parsed_scenes=parsed["scenes"],
                         clips_meta=clips_meta,
-                        character_profile=parsed.get("character_profile", character_desc or "Lead performer"),
+                        character_profile=char_profile_str,
                         visible_cast=visible_cast,
                         palette=palette,
                         prompt_enhancer=prompt_enhancer
@@ -529,18 +566,19 @@ class VideoDirector:
 
                     return VideoDirectorTreatment(
                         job_id=str(job.id),
-                        concept_title=parsed.get("concept_title", f"{job.title or 'Track'} Visuals"),
-                        logline=parsed.get("logline", "Cinematic music video narrative"),
-                        visual_metaphor=parsed.get("visual_metaphor", "Expressive visual journey"),
-                        color_palette_arc=parsed.get("color_palette_arc", atmosphere_desc),
-                        character_profile=parsed.get("character_profile", character_desc or "Lead performer"),
+                        concept_title=_coerce_str(parsed.get("concept_title"), f"{job.title or 'Track'} Visuals"),
+                        logline=_coerce_str(parsed.get("logline"), "Cinematic music video narrative"),
+                        visual_metaphor=_coerce_str(parsed.get("visual_metaphor"), "Expressive visual journey"),
+                        color_palette_arc=_coerce_str(parsed.get("color_palette_arc"), atmosphere_desc),
+                        character_profile=char_profile_str,
                         scenes=scenes,
                         llm_used=True,
                         provider=provider,
                         model=model
                     )
                 else:
-                    fallback_reason = f"LLM ({provider}/{model}) output did not match scene storyboard schema; using acoustic downbeat pacing."
+                    if not fallback_reason:
+                        fallback_reason = f"LLM ({provider}/{model}) output did not match scene storyboard schema; using acoustic downbeat pacing."
             elif not fallback_reason:
                 fallback_reason = f"LLM ({provider}/{model}) returned empty output; using acoustic downbeat pacing."
         except (asyncio.CancelledError, KeyboardInterrupt):
@@ -573,27 +611,41 @@ class VideoDirector:
 
     def _extract_json_treatment(self, text: str) -> Optional[Dict[str, Any]]:
         """Extract and parse JSON object from LLM response text, handling fences and formatting."""
+        if not text or not text.strip():
+            return None
+
+        clean_text = text.strip()
         # 1. Try direct parse
         try:
-            return json.loads(text.strip())
+            return json.loads(clean_text)
         except Exception:
             pass
 
         # 2. Look for ```json ... ``` code fence
-        match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", text)
+        match = re.search(r"```(?:json)?\s*([\s\S]*?)\s*```", clean_text)
         if match:
+            candidate = match.group(1).strip()
             try:
-                return json.loads(match.group(1).strip())
+                return json.loads(candidate)
             except Exception:
-                pass
+                cleaned = re.sub(r",\s*([}\]])", r"\1", candidate)
+                try:
+                    return json.loads(cleaned)
+                except Exception:
+                    pass
 
         # 3. Look for outermost { ... }
-        match = re.search(r"\{[\s\S]*\}", text)
+        match = re.search(r"\{[\s\S]*\}", clean_text)
         if match:
+            candidate = match.group(0).strip()
             try:
-                return json.loads(match.group(0).strip())
+                return json.loads(candidate)
             except Exception:
-                pass
+                cleaned = re.sub(r",\s*([}\]])", r"\1", candidate)
+                try:
+                    return json.loads(cleaned)
+                except Exception:
+                    pass
 
         return None
 
@@ -609,6 +661,7 @@ class VideoDirector:
         """Align parsed scenes with physical clip intervals and apply performance & bypass rules."""
         results: List[Dict[str, Any]] = []
         parsed_by_idx = {s.get("clip_index"): s for s in parsed_scenes if s.get("clip_index")}
+        char_profile_str = _coerce_str(character_profile, "Lead performer")
 
         for meta in clips_meta:
             idx = meta["clip_index"]
@@ -616,14 +669,14 @@ class VideoDirector:
 
             is_vocal = bool(meta["is_vocal"])
             default_type = SceneType.VOCAL_PERFORMANCE.value if is_vocal else SceneType.CINEMATIC_BROLL.value
-            scene_type = raw_s.get("scene_type", default_type)
+            scene_type = _coerce_str(raw_s.get("scene_type"), default_type)
 
-            visual_action = raw_s.get("visual_action") or (
+            visual_action = _coerce_str(raw_s.get("visual_action")) or (
                 f"Performer singing with emotional resonance" if is_vocal else "Atmospheric cinematic scenery"
             )
-            camera = raw_s.get("camera_motion") or CAMERA_MOTIONS[(idx - 1) % len(CAMERA_MOTIONS)]
-            lighting = raw_s.get("lighting_and_atmosphere") or LIGHTING_DESIGNS[(idx - 1) % len(LIGHTING_DESIGNS)]
-            directors_note = raw_s.get("directors_note") or f"Section: {meta['section']}"
+            camera = _coerce_str(raw_s.get("camera_motion")) or CAMERA_MOTIONS[(idx - 1) % len(CAMERA_MOTIONS)]
+            lighting = _coerce_str(raw_s.get("lighting_and_atmosphere")) or LIGHTING_DESIGNS[(idx - 1) % len(LIGHTING_DESIGNS)]
+            directors_note = _coerce_str(raw_s.get("directors_note")) or f"Section: {meta['section']}"
 
             # Format performer instruction
             shot_intent = "performance" if scene_type == SceneType.VOCAL_PERFORMANCE.value else "narrative"
@@ -636,7 +689,7 @@ class VideoDirector:
             )
 
             # Assemble clean diffusion prompt
-            base_prompt = raw_s.get("diffusion_prompt", "")
+            base_prompt = _coerce_str(raw_s.get("diffusion_prompt"))
             if not base_prompt or len(base_prompt.strip()) < 15:
                 base_prompt = f"{visual_action}. {camera}. {lighting}. {palette['atmosphere']}."
             elif palette.get("atmosphere") and palette["atmosphere"].lower() not in base_prompt.lower():
@@ -647,9 +700,9 @@ class VideoDirector:
 
             cleaned_prompt = prompt_enhancer.strip_accidental_dialogue(base_prompt)
             # Prepend character profile for shots involving performance or narrative
-            if character_profile and scene_type in (SceneType.VOCAL_PERFORMANCE.value, SceneType.NARRATIVE_STORY.value):
-                if character_profile[:30].lower() not in cleaned_prompt.lower():
-                    cleaned_prompt = f"Featuring {character_profile}. {cleaned_prompt}"
+            if char_profile_str and scene_type in (SceneType.VOCAL_PERFORMANCE.value, SceneType.NARRATIVE_STORY.value):
+                if char_profile_str[:30].lower() not in cleaned_prompt.lower():
+                    cleaned_prompt = f"Featuring {char_profile_str}. {cleaned_prompt}"
 
             s_m, s_s = int(meta["start_time"] // 60), int(meta["start_time"] % 60)
             e_m, e_s = int(meta["end_time"] // 60), int(meta["end_time"] % 60)

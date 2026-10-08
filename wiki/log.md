@@ -2705,5 +2705,23 @@ Extended the Visual Director execution budget to 5 minutes (`300s`) to accommoda
 4. **Verification**:
    - Full test suite passed: 45 passed in `test_video_service.py`, `test_lyric_video.py`, and `test_phase2_director_mode.py`.
    - 100% API parity maintained (159 routes, 164 calls).
-   - Frontend production build (`npm run build`) succeeded with 0 errors.
    - Backend Uvicorn server restarted and verified healthy on port 8000.
+
+## [2026-10-08] fix | Dynamic Model Max Token Capacity, Strict JSON Directive & Resilient Treatment Extraction
+Resolved Visual Director schema fallback caused by local LLM plain-text deliberation and token truncation:
+1. **Dynamic Model Max Token Resolution (`LLMService.resolve_model_max_tokens`)**:
+   - Replaced hardcoded token ceilings (2048/4096) with dynamic token sizing resolved from the active model family and provider.
+   - Allocates 16,384 tokens for local models (OMLX, LMStudio, Ollama, Qwen, Llama, Gemma), 16,384 for GPT-4o/Claude-3.7, 65,536 for o1/o3 reasoning models, and 8,192 for Claude/DeepSeek/Gemini.
+   - Wired across `OpenAIProvider` (`generate_text`, `generate_json`, `generate_chat`), `AnthropicProvider`, and `LLMService.generate_text_via_active()`.
+2. **Strict Opening Directive & Prompt Refinement**:
+   - Updated `video_director.py` prompts to explicitly require that responses begin immediately with the opening curly brace `{` with zero preamble, preventing OrcaRouter/reasoning models from emitting plain-text thinking before the JSON.
+   - Removed `max_tokens: 2048` clamp in `_call_llm_visual_director`, allowing the full resolved model token window.
+3. **Resilient JSON Recovery & Scene Salvage**:
+   - Upgraded `VideoDirector._extract_json_treatment` with automatic truncated array recovery: if an LLM is interrupted mid-scene on long tracks (e.g. scene 24 of 28), it automatically truncates back to the last complete scene object and closes the JSON array, preserving all completed scenes instead of falling back to 0 scenes.
+   - Added support for direct scene array returns (`[{...}]`), nested wrapper unwrapping (`{"treatment": {"scenes": [...]}}`), and regex scene extraction fallbacks.
+4. **Verification**:
+   - Created unit tests in `backend/tests/test_director_max_tokens.py` verifying model token resolution, truncated JSON recovery, and format normalization.
+   - Full test suite passed (49/49 tests passed in `test_director_max_tokens.py`, `test_video_service.py`, `test_lyric_video.py`, `test_phase2_director_mode.py`).
+   - 100% API parity maintained (159 routes, 164 client calls).
+   - Frontend built cleanly in 1.87s.
+   - Backend server restarted on port 8000.

@@ -271,6 +271,16 @@ class OpenAIProvider(LLMProvider):
                 return ["deepseek-chat", "deepseek-reasoner"]
             return []
 
+    def _resolve_max_tokens(self, model: str, requested: Optional[Any] = None) -> int:
+        if requested is not None:
+            try:
+                val = int(requested)
+                if val > 0:
+                    return val
+            except (ValueError, TypeError):
+                pass
+        return LLMService.resolve_model_max_tokens(model)
+
     def generate_text(self, prompt: str, model: str, **kwargs) -> str:
         try:
             options = kwargs.get("options") or {}
@@ -286,7 +296,7 @@ class OpenAIProvider(LLMProvider):
                 "temperature": options.get("temperature", 0.7),
             }
             max_tokens = kwargs.get("max_tokens") or options.get("max_tokens")
-            create_kwargs["max_tokens"] = int(max_tokens) if max_tokens is not None else 4096
+            create_kwargs["max_tokens"] = self._resolve_max_tokens(model, max_tokens)
 
             timeout = kwargs.get("timeout") or options.get("timeout")
             if timeout is not None:
@@ -316,7 +326,7 @@ class OpenAIProvider(LLMProvider):
                 "temperature": options.get("temperature", 0.7),
             }
             max_tokens = kwargs.get("max_tokens") or options.get("max_tokens")
-            create_kwargs["max_tokens"] = int(max_tokens) if max_tokens is not None else 4096
+            create_kwargs["max_tokens"] = self._resolve_max_tokens(model, max_tokens)
 
             timeout = kwargs.get("timeout") or options.get("timeout")
             if timeout is not None:
@@ -391,7 +401,7 @@ class OpenAIProvider(LLMProvider):
                 temperature=kwargs.get("options", {}).get("temperature", 0.7),
             )
             max_tokens = kwargs.get("max_tokens") or kwargs.get("options", {}).get("max_tokens")
-            create_kwargs["max_tokens"] = int(max_tokens) if max_tokens is not None else 4096
+            create_kwargs["max_tokens"] = self._resolve_max_tokens(model, max_tokens)
             if kwargs.get("force_json"):
                 # Constrained decoding where supported; providers lacking
                 # json_object mode may 400 — classified as BadModel/Upstream
@@ -556,15 +566,24 @@ class AnthropicProvider(LLMProvider):
         return "".join(parts)
 
     @staticmethod
-    def _max_tokens(kwargs: Dict[str, Any]) -> int:
+    def _max_tokens(kwargs: Dict[str, Any], model: str = "") -> int:
         opts = kwargs.get("options") or {}
-        return int(opts.get("max_tokens") or 4096)
+        req = kwargs.get("max_tokens") or opts.get("max_tokens")
+        if req is not None:
+            try:
+                val = int(req)
+                if val > 0:
+                    return val
+            except (ValueError, TypeError):
+                pass
+        return LLMService.resolve_model_max_tokens(model, "anthropic")
 
     def generate_text(self, prompt: str, model: str, **kwargs) -> str:
         try:
+            target_model = model or self._DEFAULT_MODEL
             msg = self.client.messages.create(
-                model=model or self._DEFAULT_MODEL,
-                max_tokens=self._max_tokens(kwargs),
+                model=target_model,
+                max_tokens=self._max_tokens(kwargs, target_model),
                 messages=[{"role": "user", "content": prompt}],
                 temperature=kwargs.get("options", {}).get("temperature", 0.7),
             )
@@ -574,9 +593,10 @@ class AnthropicProvider(LLMProvider):
 
     def generate_json(self, prompt: str, model: str, **kwargs) -> Dict:
         try:
+            target_model = model or self._DEFAULT_MODEL
             msg = self.client.messages.create(
-                model=model or self._DEFAULT_MODEL,
-                max_tokens=self._max_tokens(kwargs),
+                model=target_model,
+                max_tokens=self._max_tokens(kwargs, target_model),
                 messages=[{"role": "user", "content": prompt}],
                 temperature=kwargs.get("options", {}).get("temperature", 0.7),
             )
@@ -610,9 +630,10 @@ class AnthropicProvider(LLMProvider):
             if not contents:
                 raise ValueError("Anthropic requires at least one non-system message.")
 
+            target_model = model or self._DEFAULT_MODEL
             create_kwargs: Dict[str, Any] = dict(
-                model=model or self._DEFAULT_MODEL,
-                max_tokens=self._max_tokens(kwargs),
+                model=target_model,
+                max_tokens=self._max_tokens(kwargs, target_model),
                 messages=contents,
                 temperature=kwargs.get("options", {}).get("temperature", 0.7),
             )
@@ -1696,6 +1717,48 @@ class LLMService:
         except Exception:
             return OFFICIAL_STYLES[:12]
 
+    @staticmethod
+    def resolve_model_max_tokens(model: Optional[str] = None, provider_name: Optional[str] = None) -> int:
+        """Resolve the maximum supported output/completion token size for the selected model.
+
+        Respects model family architecture limits and provider constraints, maximizing
+        the generation budget so complex multi-scene storyboard reasoning and structured
+        outputs are never prematurely cut off.
+        """
+        m = (model or "").lower().strip()
+        p = (provider_name or "").lower().strip()
+
+        # 1. Very large output reasoning models (e.g. OpenAI o1/o3)
+        if "o1" in m or "o3" in m:
+            return 65536
+
+        # 2. GPT-4o / GPT-4o-mini
+        if "gpt-4o" in m:
+            return 16384
+
+        # 3. Claude 3.5 / 3.7
+        if "claude-3-7" in m or "claude-3.7" in m:
+            return 16384
+        if "claude" in m or "sonnet" in m or "opus" in m or "haiku" in m:
+            return 8192
+
+        # 4. Gemini 1.5 / 2.0
+        if "gemini" in m:
+            return 8192
+
+        # 5. DeepSeek (deepseek-chat / deepseek-reasoner / deepseek-v4)
+        if "deepseek" in m:
+            return 8192
+
+        # 6. Local / Apple Silicon models (omlx, lmstudio, ollama, MLX checkpoints)
+        # Modern Qwen 2.5 / 3.x, Llama 3.x, Gemma, Granite models have 32k-262k context length.
+        # Allow up to 16,384 tokens for output generation.
+        if p in ("omlx", "lmstudio", "ollama") or any(k in m for k in ("qwen", "llama", "gemma", "granite", "mistral", "phi")):
+            return 16384
+
+        # 7. Default generous max output token size across all providers
+        return 8192
+
     #: Single-attempt ceiling for active-provider text calls. The provider is
     #: chosen by the user in LLM Settings; a stall must not eat the endpoint's
     #: whole budget — but we never wander to other providers behind their back.
@@ -1729,7 +1792,7 @@ class LLMService:
             model = settings_model
             opt = dict(options or {})
             timeout_val = float(opt.get("timeout") or LLMService.ACTIVE_ATTEMPT_TIMEOUT)
-            max_tokens_val = opt.get("max_tokens") or 2048
+            max_tokens_val = opt.get("max_tokens") or LLMService.resolve_model_max_tokens(model, provider_name)
 
             # Bound the attempt: fresh client copy, no SDK retry loops.
             if hasattr(provider, "client") and hasattr(provider.client, "with_options"):

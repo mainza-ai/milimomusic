@@ -451,7 +451,7 @@ class VideoDirector:
             "   - VOCAL_PERFORMANCE shots: Character lip-syncs with emotive facial delivery.\n"
             "   - All other shots (NARRATIVE, METAPHOR, B-ROLL, SOLOS): Explicitly specify mouth_movement: closed.\n"
             "5. KEEP SCENE ACTIONS CONCISE: 1 vivid descriptive sentence per scene.\n"
-            "6. OUTPUT FORMAT: Respond ONLY with a valid JSON object matching the requested schema. Do NOT include thinking, reasoning tokens, or markdown code blocks."
+            "6. OUTPUT FORMAT: Your response MUST begin immediately with the opening curly brace '{' with no preceding conversational text, preamble, or plain-text deliberations. Output ONLY valid JSON matching the schema."
         )
 
         clips_overview = []
@@ -491,7 +491,8 @@ class VideoDirector:
             '      "lighting_and_atmosphere": "Lighting design and environmental mood"\n'
             "    }\n"
             "  ]\n"
-            "}"
+            "}\n\n"
+            "CRITICAL: Output MUST start with '{' as the very first character."
         )
 
         full_prompt = f"{system_instruction}\n\n{user_content}"
@@ -506,7 +507,7 @@ class VideoDirector:
                 future = executor.submit(
                     LLMService.generate_text_via_active,
                     user_content,
-                    options={"temperature": 0.5, "max_tokens": 2048, "timeout": timeout_sec},
+                    options={"temperature": 0.5, "timeout": timeout_sec},
                     system_prompt=system_instruction
                 )
                 try:
@@ -524,7 +525,7 @@ class VideoDirector:
                         fast_future = executor.submit(
                             LLMService.generate_text_via_active,
                             user_content,
-                            options={"temperature": 0.5, "max_tokens": 1500, "timeout": 60.0},
+                            options={"temperature": 0.5, "max_tokens": 8192, "timeout": 60.0},
                             system_prompt=system_instruction,
                             model_override="Llama-3.2-3B-Instruct-bf16"
                         )
@@ -611,14 +612,36 @@ class VideoDirector:
         )
 
     def _extract_json_treatment(self, text: str) -> Optional[Dict[str, Any]]:
-        """Extract and parse JSON object from LLM response text, handling fences and formatting."""
+        """Extract and parse JSON object from LLM response text, handling fences, formatting, and truncation."""
         if not text or not text.strip():
             return None
 
         clean_text = text.strip()
+
+        def _normalize_obj(res: Any) -> Optional[Dict[str, Any]]:
+            if isinstance(res, list):
+                return {"scenes": res}
+            if isinstance(res, dict):
+                # If wrapped under treatment, storyboard, data, etc.
+                for key in ("treatment", "storyboard", "director_treatment", "data", "result"):
+                    if isinstance(res.get(key), dict) and res[key].get("scenes"):
+                        return res[key]
+                    if isinstance(res.get(key), list):
+                        res["scenes"] = res.pop(key)
+                        return res
+                if "scenes" in res or "concept_title" in res or "visual_action" in res:
+                    return res
+                if isinstance(res.get("scenes"), dict):
+                    res["scenes"] = list(res["scenes"].values())
+                    return res
+            return None
+
         # 1. Try direct parse
         try:
-            return json.loads(clean_text)
+            res = json.loads(clean_text)
+            norm = _normalize_obj(res)
+            if norm:
+                return norm
         except Exception:
             pass
 
@@ -627,26 +650,75 @@ class VideoDirector:
         if match:
             candidate = match.group(1).strip()
             try:
-                return json.loads(candidate)
+                res = json.loads(candidate)
+                norm = _normalize_obj(res)
+                if norm:
+                    return norm
             except Exception:
                 cleaned = re.sub(r",\s*([}\]])", r"\1", candidate)
                 try:
-                    return json.loads(cleaned)
+                    res = json.loads(cleaned)
+                    norm = _normalize_obj(res)
+                    if norm:
+                        return norm
                 except Exception:
                     pass
 
         # 3. Look for outermost { ... }
-        match = re.search(r"\{[\s\S]*\}", clean_text)
-        if match:
-            candidate = match.group(0).strip()
-            try:
-                return json.loads(candidate)
-            except Exception:
-                cleaned = re.sub(r",\s*([}\]])", r"\1", candidate)
+        start = clean_text.find("{")
+        if start != -1:
+            candidate = clean_text[start:]
+            end = candidate.rfind("}")
+            if end != -1:
+                chunk = candidate[:end + 1]
                 try:
-                    return json.loads(cleaned)
+                    res = json.loads(chunk)
+                    norm = _normalize_obj(res)
+                    if norm:
+                        return norm
                 except Exception:
-                    pass
+                    cleaned = re.sub(r",\s*([}\]])", r"\1", chunk)
+                    try:
+                        res = json.loads(cleaned)
+                        norm = _normalize_obj(res)
+                        if norm:
+                            return norm
+                    except Exception:
+                        pass
+
+            # 4. Partial/truncated JSON recovery:
+            # If the response ended mid-array or mid-scene, salvage all completed scenes
+            scenes_pos = candidate.find('"scenes"')
+            if scenes_pos != -1:
+                array_start = candidate.find("[", scenes_pos)
+                if array_start != -1:
+                    last_brace = candidate.rfind("}")
+                    while last_brace > array_start:
+                        test_chunk = candidate[:last_brace + 1].rstrip().rstrip(",") + "\n  ]\n}"
+                        cleaned = re.sub(r",\s*([}\]])", r"\1", test_chunk)
+                        try:
+                            res = json.loads(cleaned)
+                            norm = _normalize_obj(res)
+                            if norm and norm.get("scenes"):
+                                logger.info(f"AI Visual Director salvaged {len(norm['scenes'])} completed scenes from truncated response.")
+                                return norm
+                        except Exception:
+                            pass
+                        last_brace = candidate.rfind("}", 0, last_brace)
+
+        # 5. Regex individual scene objects fallback
+        scenes = []
+        pattern = r"\{\s*\"clip_index\"\s*:\s*(\d+)[\s\S]*?\}"
+        for m in re.finditer(pattern, clean_text):
+            try:
+                s_obj = json.loads(m.group(0))
+                if isinstance(s_obj, dict):
+                    scenes.append(s_obj)
+            except Exception:
+                pass
+        if scenes:
+            logger.info(f"AI Visual Director extracted {len(scenes)} individual scenes via pattern fallback.")
+            return {"concept_title": "Recovered Treatment", "scenes": scenes}
 
         return None
 

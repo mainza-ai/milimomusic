@@ -695,8 +695,19 @@ def concatenate_and_crossfade_audio(
     extend_from_sec: Optional[float] = None,
     beat_grid: Optional[Dict[str, Any]] = None,
     target_duration_sec: Optional[float] = None,
+    extension_is_full_timeline: bool = True,
 ) -> float:
-    """Concatenate parent audio with extension audio using beat-grid alignment and equal-power sine/cosine crossfade."""
+    """Concatenate parent audio with extension audio using beat-grid alignment and equal-power sine/cosine crossfade.
+
+    extension_is_full_timeline MUST be set explicitly by the caller:
+      True  -> extension audio covers the whole song timeline (KV roll-forward):
+               always slice the tail starting at the cut point.
+      False -> extension audio is a delta snippet starting at t=0: append it.
+    Never infer this from lengths: a short tail on a full-timeline render
+    (e.g. cut 1:49, target 1:58) is shorter than any length threshold and was
+    misclassified as a delta — appending the regen from 0:00 so the tail
+    literally restarted the song.
+    """
     import numpy as np
     from app.core.paths import get_generated_audio_dir, get_repo_root
 
@@ -751,18 +762,17 @@ def concatenate_and_crossfade_audio(
 
     crossfade_samples = int(min(len(data_p), len(data_e), crossfade_sec * sr_p))
 
-    # Determine continuation alignment:
-    # If data_e covers the full timeline (length > cut_samples + 10s), slice data_e
-    # starting around the cut point (cut_samples - crossfade_samples).
-    # If data_e is a delta snippet starting at t=0 (length <= cut_samples),
-    # slice from index 0.
-    if effective_cut_sec is not None and effective_cut_sec > 0 and len(data_e) > cut_samples + int(10.0 * sr_p):
+    # Determine continuation alignment from the caller's explicit flag.
+    # Full-timeline renders (KV roll-forward) contain the whole song: slice the
+    # tail starting at the cut point (minus crossfade overlap). Delta snippets
+    # (fresh-segment fallback) start at t=0: append from index 0.
+    if extension_is_full_timeline and effective_cut_sec is not None and effective_cut_sec > 0 and len(data_e) > cut_samples:
         ext_start_sample = max(0, cut_samples - crossfade_samples)
     else:
         ext_start_sample = 0
 
     if crossfade_samples <= 0:
-        if extend_from_sec is not None and extend_from_sec > 0 and len(data_e) > cut_samples:
+        if extension_is_full_timeline and extend_from_sec is not None and extend_from_sec > 0 and len(data_e) > cut_samples:
             combined = np.vstack([data_p, data_e[cut_samples:]])
         else:
             combined = np.vstack([data_p, data_e])
@@ -1324,6 +1334,7 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     parent_dur,
                     beat_grid,
                     target_dur,
+                    True,  # KV roll-forward renders the full timeline: slice at cut
                 )
                 try:
                     if os.path.exists(raw_extended_wav):
@@ -1414,6 +1425,7 @@ class MiniMaxMusic3Provider(GenerationProvider):
             extend_from_sec,
             beat_grid,
             target_dur,
+            False,  # fresh-segment fallback renders only the delta: append from 0
         )
 
         try:

@@ -1758,6 +1758,11 @@ function App() {
               onClose={() => setCurrentNav(previousNav || 'explore')}
               isComposerOpen={isComposerOpen}
               onToggleComposer={() => setIsComposerOpen(!isComposerOpen)}
+              onTrackUpdated={(updated) => {
+                setActiveWorkspaceJob(updated);
+                if (selectedTrack?.id === updated.id) setSelectedTrack(updated);
+                setHistory(prev => prev.map(j => j.id === updated.id ? updated : j));
+              }}
             />
           </div>
         ) : currentNav === 'track-detail' && selectedTrack ? (

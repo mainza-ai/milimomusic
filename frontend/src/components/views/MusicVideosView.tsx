@@ -771,9 +771,14 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
 
             if (taskId) {
                 setActiveTask({
+                    id: taskId,
                     task_id: taskId,
+                    job_id: activeSong?.id || '',
                     status: 'processing',
+                    step: 'Pre-building scene keyframe plates...',
                     progress: 5,
+                    total_clips: planResult?.clips?.length || 8,
+                    current_clip: 0,
                     message: 'Pre-building scene keyframe plates...'
                 } as any);
 
@@ -842,11 +847,11 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     }, [activeSong]);
 
     const handleCancelVideoRender = useCallback(async () => {
-        const taskId = activeTaskIdRef.current || activeTask?.id;
+        const taskId = activeTaskIdRef.current || activeTask?.id || (activeTask as any)?.task_id;
         try {
             if (taskId) {
                 await videoApi.cancelVideoTask(taskId);
-                const isPlan = taskId.startsWith('plan_');
+                const isPlan = typeof taskId === 'string' && taskId.startsWith('plan_');
                 toast(isPlan ? 'Scene planning cancelled.' : 'Video rendering cancelled.', 'info');
             } else {
                 toast('Video rendering cancelled.', 'info');

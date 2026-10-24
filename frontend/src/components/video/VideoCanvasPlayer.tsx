@@ -515,92 +515,102 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
             </div>
 
             {/* Multi-Stage Live Pipeline Rendering / Director Planning HUD */}
-            {activeTask && (
-                <div
-                    className={`p-4 rounded-2xl border space-y-3 transition-all ${
-                        activeTask.status === 'error'
-                            ? 'bg-rose-500/10 border-rose-500/30'
-                            : activeTask.status === 'cancelled'
-                            ? 'bg-amber-500/10 border-amber-500/30'
-                            : activeTask.status === 'completed'
-                            ? 'bg-teal-500/10 border-teal-500/30'
-                            : 'bg-black/[0.03] dark:bg-white/5 border-black/[0.06] dark:border-white/10'
-                    }`}
-                >
-                    <div className="flex items-center justify-between text-xs">
-                        <span className="font-bold flex items-center gap-2 text-slate-800 dark:text-slate-200">
-                            {activeTask.status === 'error' && <AlertCircle size={14} className="text-rose-500" />}
-                            {activeTask.status === 'cancelled' && <Square size={12} className="text-amber-500 fill-current" />}
-                            {activeTask.status === 'completed' && <CheckCircle2 size={14} className="text-teal-500" />}
-                            {activeTask.status === 'processing' && <Loader2 size={14} className="animate-spin text-teal-500" />}
-                            <span>
-                                {activeTask.id.startsWith('plan_') ? 'AI Visual Director: ' : 'Pipeline Stage: '}
-                                <strong className="uppercase font-mono text-teal-600 dark:text-teal-400">
-                                    {activeTask.step.replace(/_/g, ' ')}
-                                </strong>
+            {activeTask && (() => {
+                const taskId = activeTask.id || (activeTask as any).task_id || '';
+                const isPlanTask = typeof taskId === 'string' && taskId.startsWith('plan_');
+                const rawStep = activeTask.step || (activeTask as any).message || 'processing';
+                const stepText = typeof rawStep === 'string' ? rawStep.replace(/_/g, ' ') : 'processing';
+                const progressVal = typeof activeTask.progress === 'number' ? activeTask.progress : 0;
+                const totalClips = activeTask.total_clips ?? 0;
+                const currentClip = activeTask.current_clip ?? 0;
+
+                return (
+                    <div
+                        className={`p-4 rounded-2xl border space-y-3 transition-all ${
+                            activeTask.status === 'error'
+                                ? 'bg-rose-500/10 border-rose-500/30'
+                                : activeTask.status === 'cancelled'
+                                ? 'bg-amber-500/10 border-amber-500/30'
+                                : activeTask.status === 'completed'
+                                ? 'bg-teal-500/10 border-teal-500/30'
+                                : 'bg-black/[0.03] dark:bg-white/5 border-black/[0.06] dark:border-white/10'
+                        }`}
+                    >
+                        <div className="flex items-center justify-between text-xs">
+                            <span className="font-bold flex items-center gap-2 text-slate-800 dark:text-slate-200">
+                                {activeTask.status === 'error' && <AlertCircle size={14} className="text-rose-500" />}
+                                {activeTask.status === 'cancelled' && <Square size={12} className="text-amber-500 fill-current" />}
+                                {activeTask.status === 'completed' && <CheckCircle2 size={14} className="text-teal-500" />}
+                                {activeTask.status === 'processing' && <Loader2 size={14} className="animate-spin text-teal-500" />}
+                                <span>
+                                    {isPlanTask ? 'AI Visual Director: ' : 'Pipeline Stage: '}
+                                    <strong className="uppercase font-mono text-teal-600 dark:text-teal-400">
+                                        {stepText}
+                                    </strong>
+                                </span>
                             </span>
-                        </span>
-                        <div className="flex items-center gap-2">
-                            {activeTask.status === 'processing' && onCancelRender && (
-                                <button
-                                    type="button"
-                                    onClick={onCancelRender}
-                                    className="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 flex items-center gap-1 transition-colors"
-                                    title={activeTask.id.startsWith('plan_') ? "Cancel scene planning" : "Cancel video generation"}
-                                >
-                                    <Square size={9} className="fill-current" />
-                                    <span>{activeTask.id.startsWith('plan_') ? "Stop Planning" : "Stop"}</span>
-                                </button>
-                            )}
-                            <span className="font-mono text-xs font-bold text-slate-700 dark:text-slate-300">
-                                {activeTask.progress}%
-                            </span>
-                            {onDismissTask && (activeTask.status === 'error' || activeTask.status === 'completed' || activeTask.status === 'cancelled') && (
-                                <button
-                                    onClick={onDismissTask}
-                                    title="Dismiss status"
-                                    className="p-0.5 rounded-md hover:bg-black/10 dark:hover:bg-white/10 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
-                                >
-                                    <X size={13} />
-                                </button>
-                            )}
+                            <div className="flex items-center gap-2">
+                                {activeTask.status === 'processing' && onCancelRender && (
+                                    <button
+                                        type="button"
+                                        onClick={onCancelRender}
+                                        className="px-2 py-0.5 rounded text-[10px] font-semibold bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 flex items-center gap-1 transition-colors"
+                                        title={isPlanTask ? "Cancel scene planning" : "Cancel video generation"}
+                                    >
+                                        <Square size={9} className="fill-current" />
+                                        <span>{isPlanTask ? "Stop Planning" : "Stop"}</span>
+                                    </button>
+                                )}
+                                <span className="font-mono text-xs font-bold text-slate-700 dark:text-slate-300">
+                                    {progressVal}%
+                                </span>
+                                {onDismissTask && (activeTask.status === 'error' || activeTask.status === 'completed' || activeTask.status === 'cancelled') && (
+                                    <button
+                                        onClick={onDismissTask}
+                                        title="Dismiss status"
+                                        className="p-0.5 rounded-md hover:bg-black/10 dark:hover:bg-white/10 text-slate-400 hover:text-slate-600 dark:hover:text-slate-200 transition-colors"
+                                    >
+                                        <X size={13} />
+                                    </button>
+                                )}
+                            </div>
                         </div>
-                    </div>
 
-                    {/* Progress Bar */}
-                    <div className="w-full h-1.5 bg-black/[0.06] dark:bg-white/10 rounded-full overflow-hidden">
-                        <div
-                            className={`h-full rounded-full transition-all duration-500 ${
-                                activeTask.status === 'cancelled'
-                                    ? 'bg-amber-500'
-                                    : activeTask.id.startsWith('plan_')
-                                    ? 'bg-gradient-to-r from-purple-500 via-pink-500 to-teal-400 animate-pulse'
-                                    : 'bg-gradient-to-r from-teal-500 to-cyan-400'
-                            }`}
-                            style={{ width: `${Math.max(3, activeTask.progress)}%` }}
-                        />
-                    </div>
-
-                    <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
-                        <span>
-                            {activeTask.id.startsWith('plan_')
-                                ? (activeTask.total_clips > 0 ? `${activeTask.total_clips} scenes planned` : 'Synchronizing downbeats, lyrics & cinematic prompts')
-                                : `Clip ${activeTask.current_clip} of ${activeTask.total_clips}`}
-                        </span>
-                        {activeTask.error && <span className="text-rose-500 font-semibold">{activeTask.error}</span>}
-                    </div>
-
-                    {/* Fallback metadata banner */}
-                    {activeTask.fallback_used && (
-                        <div className="flex items-center gap-2 p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px]">
-                            <AlertCircle size={14} className="shrink-0 text-amber-400" />
-                            <span>
-                                <strong>{activeTask.id.startsWith('plan_') ? 'Deterministic Fallback Director:' : 'Cinematic Animatic Mode:'}</strong> {activeTask.fallback_reason || (activeTask.id.startsWith('plan_') ? 'LLM service was unreachable; used acoustic downbeat pacing.' : 'Selected neural diffusion engine offline; used synchronized keyframe animatic.')}
-                            </span>
+                        {/* Progress Bar */}
+                        <div className="w-full h-1.5 bg-black/[0.06] dark:bg-white/10 rounded-full overflow-hidden">
+                            <div
+                                className={`h-full rounded-full transition-all duration-500 ${
+                                    activeTask.status === 'cancelled'
+                                        ? 'bg-amber-500'
+                                        : isPlanTask
+                                        ? 'bg-gradient-to-r from-purple-500 via-pink-500 to-teal-400 animate-pulse'
+                                        : 'bg-gradient-to-r from-teal-500 to-cyan-400'
+                                }`}
+                                style={{ width: `${Math.max(3, progressVal)}%` }}
+                            />
                         </div>
-                    )}
-                </div>
-            )}
+
+                        <div className="flex items-center justify-between text-[11px] text-slate-500 font-mono">
+                            <span>
+                                {isPlanTask
+                                    ? (totalClips > 0 ? `${totalClips} scenes planned` : 'Synchronizing downbeats, lyrics & cinematic prompts')
+                                    : `Clip ${currentClip} of ${totalClips}`}
+                            </span>
+                            {activeTask.error && <span className="text-rose-500 font-semibold">{activeTask.error}</span>}
+                        </div>
+
+                        {/* Fallback metadata banner */}
+                        {activeTask.fallback_used && (
+                            <div className="flex items-center gap-2 p-2 rounded-xl bg-amber-500/10 border border-amber-500/20 text-amber-300 text-[11px]">
+                                <AlertCircle size={14} className="shrink-0 text-amber-400" />
+                                <span>
+                                    <strong>{isPlanTask ? 'Deterministic Fallback Director:' : 'Cinematic Animatic Mode:'}</strong> {activeTask.fallback_reason || (isPlanTask ? 'LLM service was unreachable; used acoustic downbeat pacing.' : 'Selected neural diffusion engine offline; used synchronized keyframe animatic.')}
+                                </span>
+                            </div>
+                        )}
+                    </div>
+                );
+            })()}
         </div>
     );
 };

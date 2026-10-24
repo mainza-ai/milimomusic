@@ -85,6 +85,14 @@ class VideoOrchestrator:
         pt = task_queue.get_task(task_id)
         if pt:
             d = pt.to_dict()
+            if "id" not in d:
+                d["id"] = d.get("task_id", task_id)
+            if "step" not in d:
+                d["step"] = d.get("message", "processing")
+            if "total_clips" not in d:
+                d["total_clips"] = 0
+            if "current_clip" not in d:
+                d["current_clip"] = 0
             if pt.result and isinstance(pt.result, dict):
                 if "clips" in pt.result and not d.get("clips"):
                     d["clips"] = pt.result["clips"]

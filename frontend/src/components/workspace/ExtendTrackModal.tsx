@@ -15,6 +15,60 @@ import { useModalStore } from '../../stores/useModalStore';
 import { trackApi, api } from '../../api';
 import { toast } from '../../utils/toast';
 
+/**
+ * Parse a user-entered time string into total seconds.
+ * Supports:
+ * - "m:ss" or "mm:ss" (e.g. "2:09" -> 129, "3:00" -> 180)
+ * - "h:mm:ss" (e.g. "1:02:30" -> 3750)
+ * - "2.5m", "2m 30s", "3min"
+ * - "90s", "45sec"
+ * - pure numbers (e.g. "150" -> 150)
+ */
+export function parseTimeToSeconds(input: string): number | null {
+    const trimmed = input.trim().toLowerCase();
+    if (!trimmed) return null;
+
+    if (trimmed.includes(':')) {
+        const parts = trimmed.split(':').map(p => parseFloat(p.trim()));
+        if (parts.some(isNaN)) return null;
+        if (parts.length === 2) {
+            const [mins, secs] = parts;
+            return Math.round(mins * 60 + secs);
+        }
+        if (parts.length === 3) {
+            const [hours, mins, secs] = parts;
+            return Math.round(hours * 3600 + mins * 60 + secs);
+        }
+    }
+
+    const mMatch = trimmed.match(/^(\d+(?:\.\d+)?)\s*m(?:in)?(?:\s*(\d+(?:\.\d+)?)\s*s(?:ec)?)?$/);
+    if (mMatch) {
+        const mins = parseFloat(mMatch[1]);
+        const secs = mMatch[2] ? parseFloat(mMatch[2]) : 0;
+        return Math.round(mins * 60 + secs);
+    }
+
+    const sMatch = trimmed.match(/^(\d+(?:\.\d+)?)\s*s(?:ec)?$/);
+    if (sMatch) {
+        return Math.round(parseFloat(sMatch[1]));
+    }
+
+    const num = parseFloat(trimmed);
+    if (!isNaN(num) && num > 0) {
+        return Math.round(num);
+    }
+
+    return null;
+}
+
+/**
+ * Parse an extension delta time string (e.g. "+30s", "45", "+1:00").
+ */
+export function parseDeltaToSeconds(input: string): number | null {
+    const trimmed = input.trim().replace(/^\+/, '').trim();
+    return parseTimeToSeconds(trimmed);
+}
+
 export const ExtendTrackModal: React.FC = () => {
     const { isExtendTrackOpen, extendTrackJob, closeExtendTrack } = useModalStore();
     const modalRef = useRef<HTMLDivElement>(null);
@@ -28,7 +82,10 @@ export const ExtendTrackModal: React.FC = () => {
 
     // Extension configuration state
     const [extendFromSec, setExtendFromSec] = useState<number>(parentDurationSec);
-    const [targetDurationSec, setTargetDurationSec] = useState<number>(Math.min(300, parentDurationSec + 60));
+    const [extendFromInput, setExtendFromInput] = useState<string>('');
+    const [targetDurationSec, setTargetDurationSec] = useState<number>(Math.min(600, parentDurationSec + 60));
+    const [targetDurationInput, setTargetDurationInput] = useState<string>('');
+    const [extensionDeltaInput, setExtensionDeltaInput] = useState<string>('');
     const [additionalLyrics, setAdditionalLyrics] = useState<string>('');
     const [autoGenerateLyrics, setAutoGenerateLyrics] = useState<boolean>(false);
     const [isDraftingLyrics, setIsDraftingLyrics] = useState<boolean>(false);
@@ -37,12 +94,22 @@ export const ExtendTrackModal: React.FC = () => {
     const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
+    const formatTime = (secs: number) => {
+        const m = Math.floor(secs / 60);
+        const s = Math.floor(secs % 60);
+        return `${m}:${s < 10 ? '0' : ''}${s}`;
+    };
+
     // Sync initial state whenever opened on a job
     useEffect(() => {
         if (extendTrackJob) {
             const dur = extendTrackJob.duration_ms ? extendTrackJob.duration_ms / 1000 : 60;
+            const initialTarget = Math.min(600, dur + 60);
             setExtendFromSec(dur);
-            setTargetDurationSec(Math.min(300, dur + 60));
+            setExtendFromInput(formatTime(dur));
+            setTargetDurationSec(initialTarget);
+            setTargetDurationInput(formatTime(initialTarget));
+            setExtensionDeltaInput(`+${formatTime(initialTarget - dur)}`);
             setAdditionalLyrics('');
             setAutoGenerateLyrics(false);
             setCustomPrompt('');
@@ -68,18 +135,86 @@ export const ExtendTrackModal: React.FC = () => {
 
     if (!isExtendTrackOpen || !extendTrackJob) return null;
 
-    const extensionDeltaSec = Math.max(0, targetDurationSec - extendFromSec);
-
-    const formatTime = (secs: number) => {
-        const m = Math.floor(secs / 60);
-        const s = Math.floor(secs % 60);
-        return `${m}:${s < 10 ? '0' : ''}${s}`;
-    };
-
     const handleQuickAddDelta = (delta: number) => {
-        const newTarget = Math.min(300, Math.max(extendFromSec + 15, extendFromSec + delta));
+        const newTarget = Math.min(600, Math.max(extendFromSec + 15, extendFromSec + delta));
         setTargetDurationSec(newTarget);
+        setTargetDurationInput(formatTime(newTarget));
+        setExtensionDeltaInput(`+${formatTime(newTarget - extendFromSec)}`);
     };
+
+    const handleTargetDurationInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const text = e.target.value;
+        setTargetDurationInput(text);
+        const parsed = parseTimeToSeconds(text);
+        if (parsed !== null && parsed > extendFromSec && parsed <= 600) {
+            setTargetDurationSec(parsed);
+            setExtensionDeltaInput(`+${formatTime(parsed - extendFromSec)}`);
+        }
+    };
+
+    const handleTargetDurationInputBlur = () => {
+        const parsed = parseTimeToSeconds(targetDurationInput);
+        if (parsed !== null && parsed > extendFromSec && parsed <= 600) {
+            setTargetDurationSec(parsed);
+            setTargetDurationInput(formatTime(parsed));
+            setExtensionDeltaInput(`+${formatTime(parsed - extendFromSec)}`);
+        } else {
+            setTargetDurationInput(formatTime(targetDurationSec));
+            setExtensionDeltaInput(`+${formatTime(targetDurationSec - extendFromSec)}`);
+        }
+    };
+
+    const handleExtensionDeltaInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const text = e.target.value;
+        setExtensionDeltaInput(text);
+        const delta = parseDeltaToSeconds(text);
+        if (delta !== null && delta >= 5 && extendFromSec + delta <= 600) {
+            const newTarget = extendFromSec + delta;
+            setTargetDurationSec(newTarget);
+            setTargetDurationInput(formatTime(newTarget));
+        }
+    };
+
+    const handleExtensionDeltaInputBlur = () => {
+        const delta = parseDeltaToSeconds(extensionDeltaInput);
+        if (delta !== null && delta >= 5 && extendFromSec + delta <= 600) {
+            const newTarget = extendFromSec + delta;
+            setTargetDurationSec(newTarget);
+            setTargetDurationInput(formatTime(newTarget));
+            setExtensionDeltaInput(`+${formatTime(newTarget - extendFromSec)}`);
+        } else {
+            setExtensionDeltaInput(`+${formatTime(targetDurationSec - extendFromSec)}`);
+        }
+    };
+
+    const handleExtendFromInputChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const text = e.target.value;
+        setExtendFromInput(text);
+        const parsed = parseTimeToSeconds(text);
+        if (parsed !== null && parsed >= 1 && parsed <= parentDurationSec) {
+            setExtendFromSec(parsed);
+            if (targetDurationSec < parsed + 15) {
+                const newTarget = Math.min(600, parsed + 30);
+                setTargetDurationSec(newTarget);
+                setTargetDurationInput(formatTime(newTarget));
+                setExtensionDeltaInput(`+${formatTime(newTarget - parsed)}`);
+            } else {
+                setExtensionDeltaInput(`+${formatTime(targetDurationSec - parsed)}`);
+            }
+        }
+    };
+
+    const handleExtendFromInputBlur = () => {
+        const parsed = parseTimeToSeconds(extendFromInput);
+        if (parsed !== null && parsed >= 1 && parsed <= parentDurationSec) {
+            setExtendFromSec(parsed);
+            setExtendFromInput(formatTime(parsed));
+        } else {
+            setExtendFromInput(formatTime(extendFromSec));
+        }
+    };
+
+    const maxSliderDuration = Math.min(600, Math.max(300, Math.ceil(Math.max(targetDurationSec, parentDurationSec + 180) / 60) * 60));
 
     const handleInsertTag = (tag: string) => {
         setAdditionalLyrics(prev => {
@@ -90,7 +225,21 @@ export const ExtendTrackModal: React.FC = () => {
 
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
-        if (targetDurationSec <= extendFromSec) {
+
+        // Final sanity sync from input fields in case user pressed enter without blurring
+        const parsedTarget = parseTimeToSeconds(targetDurationInput);
+        let finalTargetSec = targetDurationSec;
+        if (parsedTarget !== null && parsedTarget > extendFromSec && parsedTarget <= 600) {
+            finalTargetSec = parsedTarget;
+        }
+
+        const parsedExtendFrom = parseTimeToSeconds(extendFromInput);
+        let finalExtendFromSec = extendFromSec;
+        if (parsedExtendFrom !== null && parsedExtendFrom >= 1 && parsedExtendFrom <= parentDurationSec) {
+            finalExtendFromSec = parsedExtendFrom;
+        }
+
+        if (finalTargetSec <= finalExtendFromSec) {
             toast('Target duration must be greater than the extension cut point.', 'error');
             return;
         }
@@ -98,15 +247,15 @@ export const ExtendTrackModal: React.FC = () => {
         setIsSubmitting(true);
         try {
             await trackApi.extendTrack(extendTrackJob.id, {
-                target_duration_sec: targetDurationSec,
-                extend_from_sec: extendFromSec,
+                target_duration_sec: finalTargetSec,
+                extend_from_sec: finalExtendFromSec,
                 additional_lyrics: additionalLyrics.trim() || undefined,
                 auto_generate_lyrics: autoGenerateLyrics,
                 prompt: customPrompt.trim() || undefined,
                 crossfade_sec: crossfadeSec,
             });
 
-            toast(`Track extension queued! (${formatTime(targetDurationSec)}) Seamless continuation started.`, 'success');
+            toast(`Track extension queued! (${formatTime(finalTargetSec)}) Seamless continuation started.`, 'success');
             closeExtendTrack();
         } catch (err: any) {
             console.error('Failed to extend track:', err);
@@ -181,14 +330,41 @@ export const ExtendTrackModal: React.FC = () => {
 
                     {/* Timeline & Extension Target */}
                     <div className="space-y-4">
-                        <div className="flex items-center justify-between">
+                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                             <label className="text-xs font-semibold text-zinc-300 uppercase tracking-wider flex items-center gap-2">
                                 <Clock className="w-3.5 h-3.5 text-teal-400" />
                                 Target Duration
                             </label>
-                            <span className="text-sm font-mono font-bold text-teal-400 bg-teal-500/10 px-2.5 py-0.5 rounded-md border border-teal-500/20">
-                                {formatTime(targetDurationSec)} (+{formatTime(extensionDeltaSec)})
-                            </span>
+                            {/* Dual Editable Inputs: Target Duration (mm:ss) + Extension Added Time (+sec) */}
+                            <div className="flex items-center gap-1.5 self-end sm:self-auto">
+                                <div className="flex items-center bg-zinc-900/90 border border-teal-500/30 hover:border-teal-500/50 focus-within:border-teal-400 focus-within:ring-1 focus-within:ring-teal-500/40 rounded-xl px-2.5 py-1 transition-all shadow-inner">
+                                    <span className="text-[10px] uppercase font-mono font-semibold text-zinc-400 mr-1.5 select-none" title="Total target song duration">Target:</span>
+                                    <input
+                                        type="text"
+                                        value={targetDurationInput}
+                                        onChange={handleTargetDurationInputChange}
+                                        onBlur={handleTargetDurationInputBlur}
+                                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
+                                        placeholder="m:ss"
+                                        aria-label="Target song duration (e.g. 2:30 or 150)"
+                                        title="Type exact target duration (e.g. 2:30, 3:00, or seconds like 150)"
+                                        className="w-14 bg-transparent font-mono text-sm font-bold text-teal-300 text-center focus:outline-none placeholder:text-zinc-600 cursor-text"
+                                    />
+                                    <span className="text-zinc-700 font-mono text-xs mx-1 select-none">|</span>
+                                    <span className="text-[10px] uppercase font-mono font-semibold text-zinc-400 mr-1 select-none" title="Additional extension time added">Add:</span>
+                                    <input
+                                        type="text"
+                                        value={extensionDeltaInput}
+                                        onChange={handleExtensionDeltaInputChange}
+                                        onBlur={handleExtensionDeltaInputBlur}
+                                        onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
+                                        placeholder="+s"
+                                        aria-label="Additional time to add (e.g. +30s or 45)"
+                                        title="Type extension duration to add (e.g. +30s, 45, or 1:00)"
+                                        className="w-14 bg-transparent font-mono text-xs font-bold text-teal-400/90 text-center focus:outline-none placeholder:text-zinc-600 cursor-text"
+                                    />
+                                </div>
+                            </div>
                         </div>
 
                         {/* Quick Presets */}
@@ -219,15 +395,20 @@ export const ExtendTrackModal: React.FC = () => {
                             <input
                                 type="range"
                                 min={extendFromSec + 15}
-                                max={300}
-                                step={5}
+                                max={maxSliderDuration}
+                                step={1}
                                 value={targetDurationSec}
-                                onChange={e => setTargetDurationSec(Number(e.target.value))}
+                                onChange={e => {
+                                    const val = Number(e.target.value);
+                                    setTargetDurationSec(val);
+                                    setTargetDurationInput(formatTime(val));
+                                    setExtensionDeltaInput(`+${formatTime(val - extendFromSec)}`);
+                                }}
                                 className="w-full accent-teal-400 bg-zinc-800 h-1.5 rounded-lg appearance-none cursor-pointer"
                             />
                             <div className="flex justify-between text-[10px] font-mono text-zinc-400">
                                 <span>Extend from {formatTime(extendFromSec)}</span>
-                                <span>Max 5:00</span>
+                                <span>Max {formatTime(maxSliderDuration)}</span>
                             </div>
                         </div>
                     </div>
@@ -243,21 +424,38 @@ export const ExtendTrackModal: React.FC = () => {
                                     Where the original audio transitions into the extended section.
                                 </span>
                             </div>
-                            <span className="font-mono text-xs text-indigo-400 bg-indigo-500/10 px-2 py-0.5 rounded border border-indigo-500/20">
-                                {formatTime(extendFromSec)}
-                            </span>
+                            <div className="flex items-center bg-zinc-900/90 border border-indigo-500/30 hover:border-indigo-500/50 focus-within:border-indigo-400 focus-within:ring-1 focus-within:ring-indigo-500/40 rounded-xl px-2.5 py-1 transition-all shadow-inner">
+                                <span className="text-[10px] uppercase font-mono font-semibold text-zinc-400 mr-1.5 select-none" title="Audio transition seam point">Cut:</span>
+                                <input
+                                    type="text"
+                                    value={extendFromInput}
+                                    onChange={handleExtendFromInputChange}
+                                    onBlur={handleExtendFromInputBlur}
+                                    onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); (e.target as HTMLInputElement).blur(); } }}
+                                    placeholder="m:ss"
+                                    aria-label="Continuation seam cut point (e.g. 1:49, 1:30)"
+                                    title="Type continuation seam cut point (e.g. 1:49, 1:30)"
+                                    className="w-14 bg-transparent font-mono text-xs font-bold text-indigo-300 text-center focus:outline-none placeholder:text-zinc-600 cursor-text"
+                                />
+                            </div>
                         </div>
                         <input
                             type="range"
-                            min={Math.max(5, parentDurationSec - 30)}
+                            min={Math.max(1, parentDurationSec - 60)}
                             max={parentDurationSec}
                             step={1}
                             value={extendFromSec}
                             onChange={e => {
                                 const val = Number(e.target.value);
                                 setExtendFromSec(val);
+                                setExtendFromInput(formatTime(val));
                                 if (targetDurationSec < val + 15) {
-                                    setTargetDurationSec(val + 30);
+                                    const newTarget = Math.min(600, val + 30);
+                                    setTargetDurationSec(newTarget);
+                                    setTargetDurationInput(formatTime(newTarget));
+                                    setExtensionDeltaInput(`+${formatTime(newTarget - val)}`);
+                                } else {
+                                    setExtensionDeltaInput(`+${formatTime(targetDurationSec - val)}`);
                                 }
                             }}
                             className="w-full accent-indigo-400 bg-zinc-800 h-1.5 rounded-lg appearance-none cursor-pointer"

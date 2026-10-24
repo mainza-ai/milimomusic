@@ -2725,3 +2725,20 @@ Resolved Visual Director schema fallback caused by local LLM plain-text delibera
    - 100% API parity maintained (159 routes, 164 client calls).
    - Frontend built cleanly in 1.87s.
    - Backend server restarted on port 8000.
+
+## [2026-10-23] fix | Direct Duration Typing in Track Extension & Comprehensive Track Lyrics Editing Suite
+Implemented direct duration typing in the Track Extension modal and added a full lyrics editing, modification, and acoustic realign workflow across the application:
+1. **Direct Duration & Seam Time Input in Track Extension (`ExtendTrackModal.tsx`)**:
+   - Implemented flexible time parsers `parseTimeToSeconds` and `parseDeltaToSeconds` supporting `m:ss`, `mm:ss`, `h:mm:ss`, seconds (`150`, `90s`), and delta notation (`+30s`, `+1:00`).
+   - Replaced static target duration and seam display pills with two-way synchronized interactive input fields (`Target: [ 2:09 ] | Add: [ +0:20 ]` and `Cut: [ 1:49 ]`).
+   - Dynamic maximum range slider expansion supporting up to 600s (10 minutes) with 1-second fine-grained adjustment.
+2. **Comprehensive Track Lyrics Editing & Modification Suite**:
+   - **TrackDetailView (`TrackDetailView.tsx`)**: Added interactive "Edit Lyrics" toggle with structured quick section tags (`[Intro]`, `[Verse]`, `[Chorus]`, `[Bridge]`, etc.), monospace textarea, live word/line metrics, direct "Save" (via `PATCH /jobs/{job_id}`), and "Save & Re-Align" (via `POST /tracks/{job_id}/realign_lyrics` to immediately recalculate neural acoustic forced alignment for synchronized karaoke). Added "+ Add / Write Lyrics" action for instrumental/empty tracks.
+   - **SongsView Library Modal (`SongsView.tsx`)**: Upgraded lyrics preview modal into a full editor with edit toggle, section tag helpers, live word counters, and direct metadata persistence. Enabled lyrics modal opening across both populated and empty tracks.
+   - **SessionWorkspace DAW Mode (`SessionWorkspace.tsx`)**: Added full lyrics editing and re-alignment controls in the DAW workspace lyrics view with two-way session state synchronization and `onTrackUpdated` notifications.
+   - **Real-Time Event Propagation (`backend/app/main.py`)**: Added `event_manager.publish("job_update", ...)` in `update_job` and `realign_track_lyrics` so all connected SSE clients and subscribers instantly reflect lyrics modifications.
+3. **Verification**:
+   - Added automated tests in `backend/tests/test_track_lyrics_update.py` verifying both `PATCH /jobs/{id}` and `POST /tracks/{id}/realign_lyrics` workflows (passed in 2.07s).
+   - Verified 11/11 tests passing in `test_lyrics_cleaning.py` and `test_lyrics_sync.py`.
+   - Maintained 100% API parity (159 routes, 164 client calls).
+   - Clean production build with Vite in 2.16s.

@@ -2539,9 +2539,18 @@ def realign_track_lyrics(job_id: str, lyrics: Optional[str] = Body(None, embed=T
             vocal_stem_path=vocal_path
         )
         job.timed_lyrics_json = json.dumps(timed)
+        job.updated_at = datetime.now(timezone.utc)
         session.add(job)
         session.commit()
         session.refresh(job)
+
+        event_manager.publish("job_update", {
+            "job_id": str(job.id),
+            "status": job.status,
+            "title": job.title or job.prompt,
+            "lyrics": job.lyrics,
+            "timed_lyrics_json": job.timed_lyrics_json,
+        })
         return {"status": "realigned", "timed_lyrics": timed, "job": job}
 
 
@@ -3931,6 +3940,13 @@ def update_job(job_id: str, data: JobUpdate):
         session.add(job)
         session.commit()
         session.refresh(job)
+
+        event_manager.publish("job_update", {
+            "job_id": str(job.id),
+            "status": job.status,
+            "title": job.title or job.prompt,
+            "lyrics": job.lyrics,
+        })
         return job
 
 
@@ -4229,6 +4245,13 @@ def commit_vocal_to_track(job_id: str, body: dict = Body(...)):
         session.add(job)
         session.commit()
         session.refresh(job)
+
+        event_manager.publish("job_update", {
+            "job_id": str(job.id),
+            "status": job.status,
+            "title": job.title or job.prompt,
+            "lyrics": job.lyrics,
+        })
         return job
 
 

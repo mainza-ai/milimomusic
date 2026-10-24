@@ -360,6 +360,47 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
 
     const [isRealigningLyrics, setIsRealigningLyrics] = useState(false);
     const [lyricsDisplayMode, setLyricsDisplayMode] = useState<'karaoke' | 'raw'>('karaoke');
+    const [isEditingLyrics, setIsEditingLyrics] = useState(false);
+    const [editedLyrics, setEditedLyrics] = useState(track.lyrics || '');
+    const [isSavingLyrics, setIsSavingLyrics] = useState(false);
+
+    useEffect(() => {
+        if (!isEditingLyrics) {
+            setEditedLyrics(track.lyrics || '');
+        }
+    }, [track.lyrics, isEditingLyrics]);
+
+    const handleSaveLyrics = async (realignAfterSave: boolean = false) => {
+        setIsSavingLyrics(true);
+        try {
+            if (realignAfterSave) {
+                const res = await trackApi.realignLyrics(track.id, editedLyrics);
+                setTrack(res.job);
+                onTrackUpdated?.(res.job);
+                setIsEditingLyrics(false);
+                toast('Lyrics updated & acoustic alignment recalculated!', 'success');
+            } else {
+                const updated = await trackApi.updateTrackMetadata(track.id, { lyrics: editedLyrics });
+                setTrack(updated);
+                onTrackUpdated?.(updated);
+                setIsEditingLyrics(false);
+                toast('Track lyrics updated', 'success');
+            }
+        } catch (e: any) {
+            console.error('Failed to update lyrics', e);
+            toast('Failed to update lyrics', 'error');
+        } finally {
+            setIsSavingLyrics(false);
+        }
+    };
+
+    const handleInsertLyricsSection = (sectionTag: string) => {
+        setEditedLyrics(prev => {
+            const trimmed = prev.trim();
+            if (!trimmed) return `${sectionTag}\n`;
+            return `${trimmed}\n\n${sectionTag}\n`;
+        });
+    };
 
     const isSectionLine = (l: any) => {
         if (!l) return false;
@@ -1578,75 +1619,160 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                     <div className="flex items-center gap-2">
                                         <Mic size={16} className="text-teal-500" />
                                         <h4 className="text-xs font-bold text-slate-900 dark:text-white uppercase tracking-wider">
-                                            Synchronized Karaoke & Lyrics
+                                            {isEditingLyrics ? 'Edit Track Lyrics' : 'Synchronized Karaoke & Lyrics'}
                                         </h4>
-                                        {timedLyrics.length > 0 && (
+                                        {isEditingLyrics ? (
+                                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold border border-amber-500/20">
+                                                Editing
+                                            </span>
+                                        ) : timedLyrics.length > 0 ? (
                                             <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 font-semibold border border-teal-500/20">
                                                 Acoustic Timed
                                             </span>
-                                        )}
+                                        ) : null}
                                     </div>
 
                                     <div className="flex items-center gap-2">
-                                        {/* View Mode Toggle */}
-                                        {timedLyrics.length > 0 && (
-                                            <div className="flex items-center bg-black/[0.04] dark:bg-white/5 p-0.5 rounded-lg text-[10px] font-bold">
+                                        {isEditingLyrics ? (
+                                            <>
                                                 <button
-                                                    onClick={() => setLyricsDisplayMode('karaoke')}
-                                                    className={`px-2 py-1 rounded-md transition-all ${
-                                                        lyricsDisplayMode === 'karaoke'
-                                                            ? 'bg-white dark:bg-white/20 text-teal-700 dark:text-teal-300 shadow-sm'
-                                                            : 'text-slate-400'
-                                                    }`}
-                                                 title="Karaoke">
-                                                    Karaoke
+                                                    onClick={() => {
+                                                        setEditedLyrics(track.lyrics || '');
+                                                        setIsEditingLyrics(false);
+                                                    }}
+                                                    disabled={isSavingLyrics}
+                                                    className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-xl flex items-center gap-1 transition-all disabled:opacity-40"
+                                                >
+                                                    <X size={12} />
+                                                    <span>Cancel</span>
                                                 </button>
                                                 <button
-                                                    onClick={() => setLyricsDisplayMode('raw')}
-                                                    className={`px-2 py-1 rounded-md transition-all ${
-                                                        lyricsDisplayMode === 'raw'
-                                                            ? 'bg-white dark:bg-white/20 text-teal-700 dark:text-teal-300 shadow-sm'
-                                                            : 'text-slate-400'
-                                                    }`}
-                                                 title="Text">
-                                                    Text
+                                                    onClick={() => handleSaveLyrics(false)}
+                                                    disabled={isSavingLyrics}
+                                                    className="px-3 py-1 bg-black/5 dark:bg-white/10 hover:bg-black/10 dark:hover:bg-white/20 text-slate-800 dark:text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-all shadow-sm disabled:opacity-40"
+                                                    title="Save edited lyrics without realigning timestamps"
+                                                >
+                                                    {isSavingLyrics ? <Loader2 size={12} className="animate-spin text-teal-500" /> : <Check size={12} className="text-teal-500" />}
+                                                    <span>Save</span>
                                                 </button>
-                                            </div>
+                                                <button
+                                                    onClick={() => handleSaveLyrics(true)}
+                                                    disabled={isSavingLyrics}
+                                                    className="px-3 py-1 bg-gradient-to-r from-teal-500 to-emerald-500 hover:from-teal-600 hover:to-emerald-600 text-white text-xs font-semibold rounded-xl flex items-center gap-1.5 transition-all shadow-apple-sm disabled:opacity-40"
+                                                    title="Save edited lyrics and realign neural acoustic timestamps"
+                                                >
+                                                    {isSavingLyrics ? <Loader2 size={12} className="animate-spin" /> : <Sparkles size={12} />}
+                                                    <span>Save & Re-Align</span>
+                                                </button>
+                                            </>
+                                        ) : (
+                                            <>
+                                                {/* View Mode Toggle */}
+                                                {timedLyrics.length > 0 && (
+                                                    <div className="flex items-center bg-black/[0.04] dark:bg-white/5 p-0.5 rounded-lg text-[10px] font-bold">
+                                                        <button
+                                                            onClick={() => setLyricsDisplayMode('karaoke')}
+                                                            className={`px-2 py-1 rounded-md transition-all ${
+                                                                lyricsDisplayMode === 'karaoke'
+                                                                    ? 'bg-white dark:bg-white/20 text-teal-700 dark:text-teal-300 shadow-sm'
+                                                                    : 'text-slate-400'
+                                                            }`}
+                                                            title="Karaoke">
+                                                            Karaoke
+                                                        </button>
+                                                        <button
+                                                            onClick={() => setLyricsDisplayMode('raw')}
+                                                            className={`px-2 py-1 rounded-md transition-all ${
+                                                                lyricsDisplayMode === 'raw'
+                                                                    ? 'bg-white dark:bg-white/20 text-teal-700 dark:text-teal-300 shadow-sm'
+                                                                    : 'text-slate-400'
+                                                            }`}
+                                                            title="Text">
+                                                            Text
+                                                        </button>
+                                                    </div>
+                                                )}
+
+                                                {/* Edit Lyrics Button */}
+                                                <button
+                                                    onClick={() => {
+                                                        setEditedLyrics(track.lyrics || '');
+                                                        setIsEditingLyrics(true);
+                                                    }}
+                                                    className="px-2.5 py-1 bg-teal-500/10 hover:bg-teal-500/20 text-teal-700 dark:text-teal-300 border border-teal-500/20 text-xs font-semibold rounded-xl flex items-center gap-1 transition-all"
+                                                    title="Edit lyrics of this track"
+                                                >
+                                                    <Edit3 size={12} />
+                                                    <span>Edit</span>
+                                                </button>
+
+                                                {/* Realign Acoustics Button */}
+                                                <button
+                                                    onClick={handleRealignLyrics}
+                                                    disabled={isRealigningLyrics || !track.lyrics}
+                                                    className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-teal-500/10 text-slate-600 dark:text-slate-300 hover:text-teal-600 dark:hover:text-teal-400 text-xs font-semibold rounded-xl flex items-center gap-1 transition-all disabled:opacity-40"
+                                                    title="Recompute acoustic forced alignment on vocal stem"
+                                                >
+                                                    <RefreshCw size={12} className={isRealigningLyrics ? 'animate-spin text-teal-500' : ''} />
+                                                    <span>{isRealigningLyrics ? 'Aligning...' : 'Re-Align'}</span>
+                                                </button>
+
+                                                {/* Download LRC */}
+                                                <button
+                                                    onClick={() => api.downloadUrlAsFile(`${API_BASE_URL}/tracks/${track.id}/lrc`, `${track.title || 'lyrics'}.lrc`)}
+                                                    className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-xl flex items-center gap-1 transition-all cursor-pointer"
+                                                    title="Download Synchronized LRC File"
+                                                >
+                                                    <FileText size={12} className="text-teal-500" />
+                                                    <span>.LRC</span>
+                                                </button>
+
+                                                {/* Copy Text */}
+                                                <button
+                                                    onClick={handleCopyLyrics}
+                                                    className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-xl flex items-center gap-1 transition-all"
+                                                    title="Copy to clipboard">
+                                                    {copiedLyrics ? <Check size={12} className="text-teal-500" /> : <Copy size={12} />}
+                                                    <span>{copiedLyrics ? 'Copied' : 'Copy'}</span>
+                                                </button>
+                                            </>
                                         )}
-
-                                        {/* Realign Acoustics Button */}
-                                        <button
-                                            onClick={handleRealignLyrics}
-                                            disabled={isRealigningLyrics || !track.lyrics}
-                                            className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-teal-500/10 text-slate-600 dark:text-slate-300 hover:text-teal-600 dark:hover:text-teal-400 text-xs font-semibold rounded-xl flex items-center gap-1 transition-all disabled:opacity-40"
-                                            title="Recompute acoustic forced alignment on vocal stem"
-                                        >
-                                            <RefreshCw size={12} className={isRealigningLyrics ? 'animate-spin text-teal-500' : ''} />
-                                            <span>{isRealigningLyrics ? 'Aligning...' : 'Re-Align'}</span>
-                                        </button>
-
-                                        {/* Download LRC */}
-                                        <button
-                                            onClick={() => api.downloadUrlAsFile(`${API_BASE_URL}/tracks/${track.id}/lrc`, `${track.title || 'lyrics'}.lrc`)}
-                                            className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-xl flex items-center gap-1 transition-all cursor-pointer"
-                                            title="Download Synchronized LRC File"
-                                        >
-                                            <FileText size={12} className="text-teal-500" />
-                                            <span>.LRC</span>
-                                        </button>
-
-                                        {/* Copy Text */}
-                                        <button
-                                            onClick={handleCopyLyrics}
-                                            className="px-2.5 py-1 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 text-xs font-semibold rounded-xl flex items-center gap-1 transition-all"
-                                         title="Copy to clipboard">
-                                            {copiedLyrics ? <Check size={12} className="text-teal-500" /> : <Copy size={12} />}
-                                            <span>{copiedLyrics ? 'Copied' : 'Copy'}</span>
-                                        </button>
                                     </div>
                                 </div>
 
-                                {timedLyrics.length > 0 && lyricsDisplayMode === 'karaoke' ? (
+                                {isEditingLyrics ? (
+                                    <div className="space-y-3">
+                                        {/* Structure Quick Tags */}
+                                        <div className="flex flex-wrap items-center gap-1.5">
+                                            <span className="text-[10px] uppercase font-mono font-bold text-slate-400 mr-1 select-none">Quick Tags:</span>
+                                            {['[Intro]', '[Verse]', '[Pre-Chorus]', '[Chorus]', '[Bridge]', '[Outro]', '[Instrumental]'].map(tag => (
+                                                <button
+                                                    key={tag}
+                                                    type="button"
+                                                    onClick={() => handleInsertLyricsSection(tag)}
+                                                    className="px-2 py-0.5 rounded-lg text-[10px] font-mono font-semibold bg-black/[0.04] dark:bg-white/5 hover:bg-teal-500/10 text-slate-600 dark:text-slate-300 hover:text-teal-600 dark:hover:text-teal-300 border border-black/[0.06] dark:border-white/10 transition-colors"
+                                                >
+                                                    +{tag}
+                                                </button>
+                                            ))}
+                                        </div>
+
+                                        <textarea
+                                            value={editedLyrics}
+                                            onChange={e => setEditedLyrics(e.target.value)}
+                                            placeholder="Write or edit song lyrics... Use tags like [Verse 1], [Chorus], etc."
+                                            rows={12}
+                                            className="w-full font-mono text-xs leading-relaxed p-4 rounded-2xl bg-black/[0.03] dark:bg-black/30 border border-teal-500/30 focus:border-teal-500 focus:ring-1 focus:ring-teal-500/40 focus:outline-none custom-scrollbar text-slate-800 dark:text-slate-100 placeholder:text-slate-400 resize-y"
+                                        />
+
+                                        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-1 text-[11px] font-mono text-slate-400">
+                                            <span>
+                                                {editedLyrics.trim() ? editedLyrics.trim().split(/\s+/).length : 0} words • {editedLyrics.split('\n').length} lines
+                                            </span>
+                                            <span>Tip: Use [Section] brackets for automatic karaoke grouping</span>
+                                        </div>
+                                    </div>
+                                ) : timedLyrics.length > 0 && lyricsDisplayMode === 'karaoke' ? (
                                     <div className="relative">
                                         <div
                                             ref={lyricsContainerRef}
@@ -1732,8 +1858,19 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                         {track.lyrics}
                                     </div>
                                 ) : (
-                                    <div className="text-center py-12 text-slate-400 text-xs">
-                                        Instrumental Track (No vocal lyrics generated)
+                                    <div className="text-center py-12 text-slate-400 text-xs space-y-3">
+                                        <p>No vocal lyrics recorded for this track.</p>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setEditedLyrics('');
+                                                setIsEditingLyrics(true);
+                                            }}
+                                            className="px-3 py-1.5 bg-teal-500/10 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400 border border-teal-500/20 rounded-xl text-xs font-semibold inline-flex items-center gap-1.5 transition-all"
+                                        >
+                                            <Edit3 size={13} />
+                                            <span>Add / Write Lyrics</span>
+                                        </button>
                                     </div>
                                 )}
                             </div>

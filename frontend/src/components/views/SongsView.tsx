@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { type Job, type Project, projectApi, coverApi } from '../../api';
-import { Play, Pause, Heart, Sliders, Search, Music, Disc, Sparkles, Trash2, Mic2, Copy, Check, X, Layers, Info, Video, FolderKanban, Upload, Loader2 } from 'lucide-react';
+import { type Job, type Project, projectApi, coverApi, trackApi } from '../../api';
+import { Play, Pause, Heart, Sliders, Search, Music, Disc, Sparkles, Trash2, Mic2, Copy, Check, X, Layers, Info, Video, FolderKanban, Upload, Loader2, Edit3 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
 import { AppFooter } from '../ui/AppFooter';
 import { useModalStore } from '../../stores/useModalStore';
@@ -40,9 +40,35 @@ export const SongsView: React.FC<SongsViewProps> = ({
     const [viewMode, setViewMode] = useState<'table' | 'grid'>('table');
     const [selectedTag, setSelectedTag] = useState<string>('all');
     const [selectedLyricsSong, setSelectedLyricsSong] = useState<Job | null>(null);
+    const [isEditingModalLyrics, setIsEditingModalLyrics] = useState(false);
+    const [modalLyricsText, setModalLyricsText] = useState('');
+    const [isSavingModalLyrics, setIsSavingModalLyrics] = useState(false);
     const { openCoverStudio } = useModalStore();
     const [copiedId, setCopiedId] = useState<string | null>(null);
     const [projects, setProjects] = useState<Project[]>(cachedSongsProjects);
+
+    const handleOpenLyricsModal = (song: Job, startEditing: boolean = false) => {
+        setSelectedLyricsSong(song);
+        setModalLyricsText(song.lyrics || '');
+        setIsEditingModalLyrics(startEditing);
+    };
+
+    const handleSaveModalLyrics = async () => {
+        if (!selectedLyricsSong) return;
+        setIsSavingModalLyrics(true);
+        try {
+            const updated = await trackApi.updateTrackMetadata(selectedLyricsSong.id, { lyrics: modalLyricsText });
+            setSelectedLyricsSong(updated);
+            onTrackUpdated?.(updated);
+            setIsEditingModalLyrics(false);
+            toast('Lyrics updated successfully', 'success');
+        } catch (e) {
+            console.error('Failed to update lyrics', e);
+            toast('Failed to update lyrics', 'error');
+        } finally {
+            setIsSavingModalLyrics(false);
+        }
+    };
 
     // Custom Cover Photo Upload
     const fileInputRef = useRef<HTMLInputElement>(null);
@@ -438,15 +464,15 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                                             <Disc size={11} className="text-teal-400" />
                                                             <span>Remix</span>
                                                         </button>
-                                                        {song.lyrics && (
-                                                            <button
-                                                                onClick={() => setSelectedLyricsSong(song)}
-                                                                className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
-                                                                title="View Lyrics"
-                                                            >
-                                                                <Mic2 size={14} />
-                                                            </button>
-                                                        )}
+                                                        <button
+                                                            onClick={() => handleOpenLyricsModal(song)}
+                                                            className={`p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 transition-colors ${
+                                                                song.lyrics ? 'text-slate-400 hover:text-teal-600 dark:hover:text-teal-400' : 'text-slate-300 dark:text-slate-600 hover:text-slate-400'
+                                                            }`}
+                                                            title={song.lyrics ? "View & Edit Lyrics" : "Add Lyrics"}
+                                                        >
+                                                            <Mic2 size={14} />
+                                                        </button>
                                                         <button
                                                             onClick={() => onToggleFavorite(song.id)}
                                                             className="p-1.5 rounded-xl hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-rose-500 transition-colors"
@@ -626,15 +652,15 @@ export const SongsView: React.FC<SongsViewProps> = ({
                                             <span>Remix</span>
                                         </button>
                                         <div className="flex items-center gap-1">
-                                            {song.lyrics && (
-                                                <button
-                                                    onClick={() => setSelectedLyricsSong(song)}
-                                                    className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
-                                                    title="View Lyrics"
-                                                >
-                                                    <Mic2 size={13} />
-                                                </button>
-                                            )}
+                                            <button
+                                                onClick={() => handleOpenLyricsModal(song)}
+                                                className={`p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 transition-colors ${
+                                                    song.lyrics ? 'text-slate-400 hover:text-teal-600 dark:hover:text-teal-400' : 'text-slate-300 dark:text-slate-600 hover:text-slate-400'
+                                                }`}
+                                                title={song.lyrics ? "View & Edit Lyrics" : "Add Lyrics"}
+                                            >
+                                                <Mic2 size={13} />
+                                            </button>
                                             <button
                                                 onClick={() => onOpenWorkspace(song)}
                                                 className="px-2.5 py-1 rounded-xl bg-teal-500 hover:bg-teal-400 text-slate-950 font-bold text-[10px] flex items-center gap-1 shadow-sm transition-all"
@@ -685,7 +711,7 @@ export const SongsView: React.FC<SongsViewProps> = ({
             {/* Global Creator Footer */}
             <AppFooter />
 
-            {/* Lyrics Modal View */}
+            {/* Lyrics Modal View & Editor */}
             {selectedLyricsSong && (
                 <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-sm animate-fade-in">
                     <div
@@ -696,40 +722,125 @@ export const SongsView: React.FC<SongsViewProps> = ({
                             <div className="flex items-center space-x-2">
                                 <Mic2 size={16} className="text-teal-500" />
                                 <h3 className="text-sm font-bold text-slate-900 dark:text-slate-100">
-                                    {selectedLyricsSong.title || 'Lyrics View'}
+                                    {isEditingModalLyrics ? 'Edit Lyrics' : (selectedLyricsSong.title || 'Lyrics View')}
                                 </h3>
-                            </div>
-                            <div className="flex items-center space-x-1">
-                                {selectedLyricsSong.lyrics && (
-                                    <button
-                                        onClick={() => {
-                                            navigator.clipboard.writeText(selectedLyricsSong.lyrics || '');
-                                            setCopiedId(selectedLyricsSong.id);
-                                            setTimeout(() => setCopiedId(null), 2000);
-                                        }}
-                                        className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
-                                        title="Copy Lyrics"
-                                    >
-                                        {copiedId === selectedLyricsSong.id ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
-                                    </button>
+                                {isEditingModalLyrics && (
+                                    <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-amber-500/10 text-amber-700 dark:text-amber-300 font-semibold border border-amber-500/20">
+                                        Editing
+                                    </span>
                                 )}
-                                <button
-                                    onClick={() => setSelectedLyricsSong(null)}
-                                    className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
-                                 title="Close">
-                                    <X size={14} />
-                                </button>
+                            </div>
+                            <div className="flex items-center space-x-1.5">
+                                {isEditingModalLyrics ? (
+                                    <>
+                                        <button
+                                            onClick={() => {
+                                                setIsEditingModalLyrics(false);
+                                                setModalLyricsText(selectedLyricsSong.lyrics || '');
+                                            }}
+                                            disabled={isSavingModalLyrics}
+                                            className="px-2.5 py-1 text-xs font-semibold text-slate-500 hover:text-slate-800 dark:hover:text-slate-200 transition-colors"
+                                        >
+                                            Cancel
+                                        </button>
+                                        <button
+                                            onClick={handleSaveModalLyrics}
+                                            disabled={isSavingModalLyrics}
+                                            className="px-3 py-1 rounded-xl bg-teal-500 hover:bg-teal-600 text-white text-xs font-semibold flex items-center gap-1 shadow-sm disabled:opacity-50"
+                                        >
+                                            {isSavingModalLyrics ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
+                                            <span>Save</span>
+                                        </button>
+                                    </>
+                                ) : (
+                                    <>
+                                        <button
+                                            onClick={() => {
+                                                setModalLyricsText(selectedLyricsSong.lyrics || '');
+                                                setIsEditingModalLyrics(true);
+                                            }}
+                                            className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-teal-600 dark:hover:text-teal-400 transition-colors"
+                                            title="Edit Lyrics"
+                                        >
+                                            <Edit3 size={14} />
+                                        </button>
+                                        {selectedLyricsSong.lyrics && (
+                                            <button
+                                                onClick={() => {
+                                                    navigator.clipboard.writeText(selectedLyricsSong.lyrics || '');
+                                                    setCopiedId(selectedLyricsSong.id);
+                                                    setTimeout(() => setCopiedId(null), 2000);
+                                                }}
+                                                className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                                                title="Copy Lyrics"
+                                            >
+                                                {copiedId === selectedLyricsSong.id ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+                                            </button>
+                                        )}
+                                        <button
+                                            onClick={() => {
+                                                setSelectedLyricsSong(null);
+                                                setIsEditingModalLyrics(false);
+                                            }}
+                                            className="p-1.5 rounded-lg hover:bg-black/5 dark:hover:bg-white/10 text-slate-400 hover:text-slate-700 dark:hover:text-slate-200 transition-colors"
+                                            title="Close"
+                                        >
+                                            <X size={14} />
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         </div>
-                        <div className="p-5 overflow-y-auto flex-1 font-mono text-xs text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap selection:bg-teal-500/20">
-                            {selectedLyricsSong.lyrics ? (
-                                <pre className="font-sans text-xs whitespace-pre-wrap">
-                                    {selectedLyricsSong.lyrics}
-                                </pre>
-                            ) : (
-                                <p className="text-xs text-slate-400 text-center py-12">No lyrics recorded for this track.</p>
-                            )}
-                        </div>
+
+                        {isEditingModalLyrics ? (
+                            <div className="p-4 space-y-3 flex-1 flex flex-col overflow-hidden">
+                                <div className="flex flex-wrap items-center gap-1">
+                                    {['[Intro]', '[Verse]', '[Pre-Chorus]', '[Chorus]', '[Bridge]', '[Outro]'].map(tag => (
+                                        <button
+                                            key={tag}
+                                            type="button"
+                                            onClick={() => setModalLyricsText(prev => prev.trim() ? `${prev.trim()}\n\n${tag}\n` : `${tag}\n`)}
+                                            className="px-2 py-0.5 rounded-lg text-[10px] font-mono font-semibold bg-black/[0.04] dark:bg-white/5 hover:bg-teal-500/10 text-slate-600 dark:text-slate-300 hover:text-teal-600 dark:hover:text-teal-300 border border-black/[0.06] dark:border-white/10 transition-colors"
+                                        >
+                                            +{tag}
+                                        </button>
+                                    ))}
+                                </div>
+                                <textarea
+                                    value={modalLyricsText}
+                                    onChange={e => setModalLyricsText(e.target.value)}
+                                    placeholder="Type or paste lyrics here..."
+                                    rows={12}
+                                    className="flex-1 w-full font-mono text-xs leading-relaxed p-3.5 rounded-xl bg-black/[0.03] dark:bg-black/40 border border-teal-500/30 focus:border-teal-500 focus:ring-1 focus:ring-teal-500/40 focus:outline-none custom-scrollbar text-slate-800 dark:text-slate-100 placeholder:text-slate-400 resize-none"
+                                />
+                                <div className="flex items-center justify-between text-[11px] font-mono text-slate-400 pt-1">
+                                    <span>{modalLyricsText.trim() ? modalLyricsText.trim().split(/\s+/).length : 0} words • {modalLyricsText.split('\n').length} lines</span>
+                                </div>
+                            </div>
+                        ) : (
+                            <div className="p-5 overflow-y-auto flex-1 font-mono text-xs text-slate-700 dark:text-slate-300 leading-relaxed whitespace-pre-wrap selection:bg-teal-500/20">
+                                {selectedLyricsSong.lyrics ? (
+                                    <pre className="font-sans text-xs whitespace-pre-wrap">
+                                        {selectedLyricsSong.lyrics}
+                                    </pre>
+                                ) : (
+                                    <div className="text-center py-12 text-slate-400 text-xs space-y-2">
+                                        <p>No lyrics recorded for this track.</p>
+                                        <button
+                                            type="button"
+                                            onClick={() => {
+                                                setModalLyricsText('');
+                                                setIsEditingModalLyrics(true);
+                                            }}
+                                            className="px-3 py-1 bg-teal-500/10 hover:bg-teal-500/20 text-teal-600 dark:text-teal-400 border border-teal-500/20 rounded-lg text-xs font-semibold inline-flex items-center gap-1 transition-all"
+                                        >
+                                            <Edit3 size={12} />
+                                            <span>Add / Write Lyrics</span>
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
                     </div>
                 </div>
             )}

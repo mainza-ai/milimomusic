@@ -210,6 +210,7 @@ def create_db_and_tables():
             "is_extension": "BOOLEAN DEFAULT 0",
             "is_repair": "BOOLEAN DEFAULT 0",
             "extend_from_sec": "FLOAT",
+            "extension_mode": "VARCHAR",
             "video_path": "VARCHAR",
             "video_config_json": "TEXT"
         }
@@ -3615,6 +3616,46 @@ async def get_job_symbolic(job_id: UUID):
     }
 
 
+def split_remaining_lyrics(full_text: str, timed_json: Optional[str], cut_sec: float) -> str:
+    """Return the lyric lines at/after the cut point for extension conditioning.
+
+    Keeps the line active at the cut (<=1.5s overlap for rhyme/flow context)
+    plus everything after it, preserving the preceding section header.
+    Returns "" when no timed data exists or nothing remains past the cut.
+    """
+    if not timed_json:
+        return ""
+    try:
+        lines = json.loads(timed_json)
+    except Exception:
+        return ""
+    if not isinstance(lines, list) or not lines:
+        return ""
+    kept: List[str] = []
+    pending_header: Optional[str] = None
+    header_emitted_for: Optional[str] = None
+    for ln in lines:
+        if not isinstance(ln, dict):
+            continue
+        text = str(ln.get("text", "")).strip()
+        if not text:
+            continue
+        if ln.get("is_section"):
+            pending_header = text
+            continue
+        try:
+            start = float(ln.get("start", 0.0))
+            end = float(ln.get("end", start))
+        except (TypeError, ValueError):
+            continue
+        if end > cut_sec - 1.5:
+            if pending_header and header_emitted_for != pending_header:
+                kept.append(pending_header)
+                header_emitted_for = pending_header
+            kept.append(text)
+    return "\n".join(kept).strip()
+
+
 @app.post("/tracks/{job_id}/extend")
 async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: BackgroundTasks):
     """Extend an existing track past its duration while preserving musical and acoustic continuity."""
@@ -3712,10 +3753,16 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
         )
 
         # Continuation lyrics logic:
-        # Lyrics must NEVER be automatically added by default.
-        # Only explicit user input or explicit opt-in (auto_generate_lyrics=True) can add lyrics.
+        # Default = the UNSUNG remainder (timed lines at/after the cut point),
+        # so the tail sings what the parent never reached instead of re-placing
+        # the whole song. Only explicit user input or explicit opt-in
+        # (auto_generate_lyrics=True) overrides this.
         has_additional_lyrics = bool(req.additional_lyrics and req.additional_lyrics.strip())
         auto_gen_opt_in = getattr(req, "auto_generate_lyrics", False)
+
+        remaining_lyrics = split_remaining_lyrics(
+            parent_lyrics, parent_job.timed_lyrics_json, extend_from
+        )
 
         continuation_lyrics = ""
         full_lyrics = parent_lyrics or ""
@@ -3737,9 +3784,16 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
             except Exception as e:
                 logger.warning("Failed to auto-generate continuation lyrics: %s", e)
         else:
-            # Default: NEVER automatically add lyrics. Keep parent lyrics untouched.
-            continuation_lyrics = ""
+            # Default: sing the unsung remainder so the extension completes the
+            # song (e.g. the Outro) instead of rehashing earlier sections.
+            # The library record keeps the full parent lyrics regardless.
+            continuation_lyrics = remaining_lyrics
             full_lyrics = parent_lyrics or ""
+            if remaining_lyrics:
+                logger.info(
+                    f"Extend {job_id}: conditioning tail on {len(remaining_lyrics)} chars of "
+                    f"remaining lyrics from {extend_from:.1f}s"
+                )
 
         child_job = Job(
             title=f"{parent_title} (Extended)",

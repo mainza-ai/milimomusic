@@ -21,6 +21,7 @@ import { VoiceStudioModal } from './voice/VoiceStudioModal';
 import { useModalStore } from '../stores/useModalStore';
 import { ModelsManagerModal } from './models/ModelsManagerModal';
 import { toast } from '../utils/toast';
+import { estimateLyricFit, formatFitTime } from '../utils/lyricFit';
 
 const PROVIDER_BADGES: Record<string, { icon: string; label: string }> = {
     opencode: { icon: '🚀', label: 'OpenCode' },
@@ -770,6 +771,25 @@ export const ComposerSidebar: React.FC<ComposerSidebarProps> = ({
                                                 aria-label="Track duration in seconds"
                                                 className="w-full accent-teal-500"
                                             />
+                                            {(() => {
+                                                const fit = estimateLyricFit(lyrics, style, duration);
+                                                if (!fit.words || fit.fits) return null;
+                                                return (
+                                                    <div className="p-2 rounded-lg bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2">
+                                                        <span className="text-[10px] text-amber-600 dark:text-amber-400">
+                                                            {fit.words} words need ~{formatFitTime(fit.neededSec)} at ~{fit.paceWpm} wpm — {duration}s may cut the ending.
+                                                        </span>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => setDuration(Math.min(240, fit.neededSec))}
+                                                            title={`Set duration to fit the lyrics (${formatFitTime(Math.min(240, fit.neededSec))})`}
+                                                            className="shrink-0 px-2 py-0.5 text-[10px] font-semibold rounded-md bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-700 dark:text-amber-300 transition-colors cursor-pointer"
+                                                        >
+                                                            Fit
+                                                        </button>
+                                                    </div>
+                                                );
+                                            })()}
                                         </div>
 
                                         {/* Generation hyperparameters — real controls for

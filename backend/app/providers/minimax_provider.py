@@ -8,6 +8,7 @@ import os
 import re
 import json
 import asyncio
+import hashlib
 
 from app.providers.minimax_local_hooks import GenerationCancelled
 import logging
@@ -381,19 +382,27 @@ def build_locked_continuation_caption(
     instruments = ", ".join(tag_list[2:]) if len(tag_list) > 2 else "Piano, Bass, Drums, Strings, Vocals"
 
     p_meta = parent_structured_caption or {}
-    p_vocal = p_meta.get("vocal_details") or ""
-    p_arr = p_meta.get("arrangement") or ""
+    p_global = (p_meta.get("global_metadata") or "").strip()
+    p_vocal = (p_meta.get("vocal_details") or "").strip()
+    p_arr = (p_meta.get("arrangement") or "").strip()
 
-    if "Instrumentation:" in p_arr:
-        inst_match = re.search(r'Instrumentation:\s*([^\n]+)', p_arr)
-        if inst_match:
-            instruments = inst_match.group(1).strip()
-    elif "anchored by" in p_arr:
-        inst_match = re.search(r'anchored by\s*([^\n\.]+)', p_arr)
-        if inst_match:
-            instruments = inst_match.group(1).strip()
+    # Caption parity: the extension regenerates the full timeline and the splice
+    # only masks 0..cut with parent disk audio, so the parent's stored caption
+    # is reused VERBATIM to keep the latent trajectory close. Only minimal lock
+    # directives are appended (small diff >> full rewrite for replay fidelity).
+    lock_line = f"Continuation Lock: bpm is {bpm}, key is {key} ({scale}); same arrangement, energy, and mix as the parent recording."
+    if p_global:
+        global_metadata = f"{p_global}\n{lock_line}"
+    else:
+        global_metadata = (
+            f"Basic Attributes: bpm is {bpm}. key is {key}, and scale is {scale}. Genre: {genre}.\n"
+            f"Global Emotional Progression: Seamless continuation sustaining the {genre} theme and dynamic energy into the extended arrangement.\n"
+            f"Application Scenarios & Imagery: {parent_prompt.strip() or 'Direct musical continuation'}\n"
+            f"Sonics & Production Profile: Balanced stereo mix matched to parent recording, consistent acoustic space and instrument levels.\n"
+            f"{lock_line}"
+        )
 
-    if p_vocal and "Vocal Gender & Timbre:" in p_vocal:
+    if p_vocal:
         vocal_details = p_vocal
     else:
         vocal_details = (
@@ -403,18 +412,18 @@ def build_locked_continuation_caption(
             "Vocal FX: Matching natural reverb and spatial positioning."
         )
 
-    global_metadata = (
-        f"Basic Attributes: bpm is {bpm}. key is {key}, and scale is {scale}. Genre: {genre}.\n"
-        f"Global Emotional Progression: Seamless continuation sustaining the {genre} theme and dynamic energy into the extended arrangement.\n"
-        f"Application Scenarios & Imagery: {parent_prompt.strip() or 'Direct musical continuation'}\n"
-        f"Sonics & Production Profile: Balanced stereo mix matched to parent recording, consistent acoustic space and instrument levels."
-    )
-
-    arrangement = (
-        f"Instrument Lifecycle (Primary/Secondary): Primary {genre} foundation anchored by {instruments}, maintaining identical rhythm, harmonic voicing, and groove.\n"
-        f"Groove & Foundation Progression: Rhythmic drive locked at {bpm} BPM tempo.\n"
-        f"Embellishments, Textures & Spatial FX: Matching reverb tails and spatial presence."
-    )
+    if p_arr:
+        arrangement = (
+            f"{p_arr}\n"
+            f"Continuation: sustain the identical instruments, groove, and energy past the cut point; "
+            f"no new sections, style changes, or tempo shifts."
+        )
+    else:
+        arrangement = (
+            f"Instrument Lifecycle (Primary/Secondary): Primary {genre} foundation anchored by {instruments}, maintaining identical rhythm, harmonic voicing, and groove.\n"
+            f"Groove & Foundation Progression: Rhythmic drive locked at {bpm} BPM tempo.\n"
+            f"Embellishments, Textures & Spatial FX: Matching reverb tails and spatial presence."
+        )
 
     return {
         "global_metadata": global_metadata,
@@ -793,6 +802,16 @@ def concatenate_and_crossfade_audio(
             if fade_len > 0:
                 t_fade = np.linspace(1.0, 0.0, fade_len)[:, np.newaxis]
                 combined[-fade_len:] *= t_fade
+        elif len(combined) < target_samples:
+            # Pad shortfalls with silence after a short fade so the rendered
+            # track lands EXACTLY on the requested end time (user-picked, e.g. 1:58).
+            pad_len = target_samples - len(combined)
+            fade_len = int(min(0.5 * sr_p, len(combined)))
+            if fade_len > 0:
+                t_fade = np.linspace(1.0, 0.0, fade_len)[:, np.newaxis]
+                combined[-fade_len:] *= t_fade
+            combined = np.vstack([combined, np.zeros((pad_len, channels), dtype=combined.dtype)])
+            logger.info(f"Padded extension output with {pad_len / sr_p:.2f}s silence to hit exact target {target_duration_sec:.1f}s")
 
     _write_wav_float(output_wav_path, sr_p, combined)
 
@@ -1207,10 +1226,16 @@ class MiniMaxMusic3Provider(GenerationProvider):
         if _MLX_AUDIO_AVAILABLE and self.snapshot_path and seed is not None:
             parent_prompt = kwargs.get("parent_prompt") or prompt or ""
             base_parent_lyrics = kwargs.get("parent_lyrics") or ""
-            if lyrics and lyrics.strip() and lyrics.strip() not in base_parent_lyrics:
-                effective_extension_lyrics = f"{base_parent_lyrics}\n\n{lyrics.strip()}".strip() if base_parent_lyrics else lyrics.strip()
+            # The caller passes ONLY the unsung remainder (split at the cut point)
+            # as `lyrics`. Condition the tail on that slice directly: re-merging
+            # the full parent lyrics would re-place the whole song across the
+            # timeline and the kept tail would sing mid-song material.
+            if lyrics and lyrics.strip():
+                effective_extension_lyrics = lyrics.strip()
+                lyrics_source = "continuation_slice"
             else:
                 effective_extension_lyrics = base_parent_lyrics
+                lyrics_source = "full_parent_fallback"
 
             # Check for parent structured caption to maintain 100% token parity with parent run
             parent_sc = kwargs.get("parent_structured_caption")
@@ -1333,6 +1358,11 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     "target_duration_sec": target_dur,
                     "total_duration_sec": total_duration,
                     "roll_forward_extension": True,
+                    "extension_mode": "kv_rollforward",
+                    "lyrics_source": lyrics_source,
+                    "conditioning_sha": hashlib.sha256(
+                        (formatted_caption + "\n" + effective_extension_lyrics).encode("utf-8", "ignore")
+                    ).hexdigest()[:16],
                     "seed": seed,
                 }
             )
@@ -1413,6 +1443,7 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 "crossfade_sec": crossfade_sec,
                 "extended_duration_sec": extend_ms / 1000.0,
                 "total_duration_sec": total_duration,
+                "extension_mode": "fresh_segment_fallback",
             }
         )
 

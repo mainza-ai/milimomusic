@@ -54,6 +54,7 @@ class Job(SQLModel, table=True):
     is_extension: bool = Field(default=False)
     is_repair: bool = Field(default=False)
     extend_from_sec: Optional[float] = Field(default=None)
+    extension_mode: Optional[str] = Field(default=None) # kv_rollforward | fresh_segment_fallback
     temperature: Optional[float] = Field(default=None)
     cfg_scale: Optional[float] = Field(default=None)
     topk: Optional[int] = Field(default=None)

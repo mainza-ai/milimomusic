@@ -2742,3 +2742,13 @@ Implemented direct duration typing in the Track Extension modal and added a full
    - Verified 11/11 tests passing in `test_lyrics_cleaning.py` and `test_lyrics_sync.py`.
    - Maintained 100% API parity (159 routes, 164 client calls).
    - Clean production build with Vite in 2.16s.
+
+## [2026-10-24] fix | Track extension continuity + exact end time
+Investigated "extended part sounds completely different + lyrics cut off" (track SWITCH, 109s, 460 singable words needing ~253 wpm — infeasible, so the Outro was cut).
+1. Extension tail is now conditioned on the UNSUNG remainder (`split_remaining_lyrics`, timed split at the snapped cut with 1-line overlap) instead of the full parent lyrics; provider no longer re-merges full lyrics for the tail.
+2. Locked continuation caption now reuses the parent's stored caption VERBATIM plus minimal lock directives (was a full rewrite that broke deterministic KV replay); conditioning sha + lyrics_source logged in result metadata.
+3. `extension_mode` persisted on child jobs (`kv_rollforward` vs `fresh_segment_fallback`, new column + auto-migration) and surfaced as a badge in TrackDetailView provenance; never silent again.
+4. Exact length: `concatenate_and_crossfade_audio` pads shortfalls with silence after a fade (previously trimmed overshoot only); extend modal slider floor +15s → +5s (backend minimum); typed m:ss entry unchanged (exact to the second).
+5. Lyric-fit estimator (`frontend/src/utils/lyricFit.ts`, genre-aware pace): warn + one-click "Fit" in ExtendTrackModal and ComposerSidebar duration control.
+6. Per-track duration only — no global cap (existing longer tracks unaffected).
+7. Tests: `split_remaining_lyrics` unit tests in `test_extension_inpaint.py`; backend `py_compile` + frontend `tsc --noEmit` clean.

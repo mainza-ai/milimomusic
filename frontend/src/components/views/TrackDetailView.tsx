@@ -2005,8 +2005,20 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                 </div>
                             </div>
 
+                            {track.is_extension && (
+                                <div className="p-3 rounded-xl bg-teal-500/10 border border-teal-500/30">
+                                    <span className="text-[10px] font-bold text-teal-700 dark:text-teal-300 uppercase tracking-wider block">
+                                        Extended track{track.extend_from_sec != null ? ` — continues from ${Math.floor(track.extend_from_sec / 60)}:${String(Math.floor(track.extend_from_sec % 60)).padStart(2, '0')}` : ''}
+                                    </span>
+                                    <span className="text-xs text-teal-700/90 dark:text-teal-300/90 block mt-1 leading-relaxed">
+                                        {track.extension_mode === 'fresh_segment_fallback'
+                                            ? 'Built as a fresh segment spliced onto the parent (model continuation unavailable) — expect a seam.'
+                                            : 'Built by model continuation from the parent take.'}
+                                    </span>
+                                </div>
+                            )}
+
                             {track.used_fallback_synth && (
-                                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30">
                                     <span className="text-[10px] font-bold text-rose-700 dark:text-rose-300 uppercase tracking-wider block">
                                         ⚠️ Fallback Synthesis Used
                                     </span>

@@ -127,6 +127,9 @@ export interface Job {
     model_provider?: string;
     llm_model?: string;
     parent_job_id?: string;
+    is_extension?: boolean;
+    extend_from_sec?: number;
+    extension_mode?: string | null; // kv_rollforward | fresh_segment_fallback
     temperature?: number;
     cfg_scale?: number;
     topk?: number;

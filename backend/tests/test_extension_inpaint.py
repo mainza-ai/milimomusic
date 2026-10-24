@@ -6,7 +6,7 @@ import soundfile as sf
 import numpy as np
 from sqlmodel import Session, select
 
-from app.main import app, engine
+from app.main import app, engine, split_remaining_lyrics
 from app.models import Job, JobStatus, TrackExtendRequest, TrackInpaintRequest
 from app.core.paths import get_generated_audio_dir
 
@@ -35,6 +35,31 @@ class SyncTestClient:
             async with httpx.AsyncClient(transport=self.transport, base_url="http://testserver") as c:
                 return await c.post(url, **kwargs)
         return self._run(_call())
+
+
+def test_split_remaining_lyrics_keeps_tail():
+    """The extension tail must be conditioned on unsung lines, not the whole song."""
+    import json as _json
+    timed = _json.dumps([
+        {"text": "[Verse 1]", "is_section": True, "start": 0.0, "end": 0.0, "words": []},
+        {"text": "First line sung early", "start": 5.0, "end": 10.0, "words": []},
+        {"text": "[Bridge]", "is_section": True, "start": 0.0, "end": 0.0, "words": []},
+        {"text": "Bridge line one", "start": 100.0, "end": 105.0, "words": []},
+        {"text": "[Outro]", "is_section": True, "start": 0.0, "end": 0.0, "words": []},
+        {"text": "Final outro line", "start": 106.0, "end": 110.0, "words": []},
+    ])
+    remaining = split_remaining_lyrics("full", timed, 99.0)
+    assert "First line sung early" not in remaining
+    assert "[Bridge]" in remaining
+    assert "Bridge line one" in remaining
+    assert "[Outro]" in remaining
+    assert "Final outro line" in remaining
+
+
+def test_split_remaining_lyrics_no_timed_data():
+    assert split_remaining_lyrics("full lyrics", None, 50.0) == ""
+    assert split_remaining_lyrics("full lyrics", "not-json", 50.0) == ""
+    assert split_remaining_lyrics("full lyrics", "[]", 50.0) == ""
 
 
 def test_track_extend_request_schema():

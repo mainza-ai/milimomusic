@@ -14,6 +14,7 @@ import { useModalA11y } from '../ui/primitives';
 import { useModalStore } from '../../stores/useModalStore';
 import { trackApi, api } from '../../api';
 import { toast } from '../../utils/toast';
+import { estimateLyricFit, formatFitTime } from '../../utils/lyricFit';
 
 /**
  * Parse a user-entered time string into total seconds.
@@ -133,10 +134,26 @@ export const ExtendTrackModal: React.FC = () => {
         }
     };
 
-    if (!isExtendTrackOpen || !extendTrackJob) return null;
+        if (!isExtendTrackOpen || !extendTrackJob) return null;
+
+    // Lyric-fit estimate: do the parent lyrics fit the target duration?
+    // (Placed after the guard so extendTrackJob is non-null.)
+    const lyricFit = estimateLyricFit(
+        extendTrackJob.lyrics || '',
+        extendTrackJob.tags,
+        targetDurationSec
+    );
+    const handleFitDuration = () => {
+        const fitted = Math.min(600, Math.max(extendFromSec + 5, lyricFit.neededSec));
+        if (fitted > extendFromSec) {
+            setTargetDurationSec(fitted);
+            setTargetDurationInput(formatTime(fitted));
+            setExtensionDeltaInput(`+${formatTime(fitted - extendFromSec)}`);
+        }
+    };
 
     const handleQuickAddDelta = (delta: number) => {
-        const newTarget = Math.min(600, Math.max(extendFromSec + 15, extendFromSec + delta));
+        const newTarget = Math.min(600, Math.max(extendFromSec + 5, extendFromSec + delta));
         setTargetDurationSec(newTarget);
         setTargetDurationInput(formatTime(newTarget));
         setExtensionDeltaInput(`+${formatTime(newTarget - extendFromSec)}`);
@@ -193,7 +210,7 @@ export const ExtendTrackModal: React.FC = () => {
         const parsed = parseTimeToSeconds(text);
         if (parsed !== null && parsed >= 1 && parsed <= parentDurationSec) {
             setExtendFromSec(parsed);
-            if (targetDurationSec < parsed + 15) {
+            if (targetDurationSec < parsed + 5) {
                 const newTarget = Math.min(600, parsed + 30);
                 setTargetDurationSec(newTarget);
                 setTargetDurationInput(formatTime(newTarget));
@@ -394,7 +411,7 @@ export const ExtendTrackModal: React.FC = () => {
                         <div className="space-y-1.5 pt-1">
                             <input
                                 type="range"
-                                min={extendFromSec + 15}
+                                min={extendFromSec + 5}
                                 max={maxSliderDuration}
                                 step={1}
                                 value={targetDurationSec}
@@ -411,6 +428,22 @@ export const ExtendTrackModal: React.FC = () => {
                                 <span>Max {formatTime(maxSliderDuration)}</span>
                             </div>
                         </div>
+                        {/* Lyric-fit hint: warn when the words can't fit the target */}
+                        {lyricFit.words > 0 && !lyricFit.fits && (
+                            <div className="p-2.5 rounded-xl bg-amber-500/10 border border-amber-500/30 flex items-center justify-between gap-2">
+                                <span className="text-[11px] text-amber-300">
+                                    {lyricFit.words} words need ~{formatFitTime(lyricFit.neededSec)} at ~{lyricFit.paceWpm} wpm pace — target {formatTime(targetDurationSec)} may cut the ending.
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={handleFitDuration}
+                                    title={`Set target duration to fit the lyrics (${formatFitTime(Math.min(600, Math.max(extendFromSec + 5, lyricFit.neededSec)))})`}
+                                    className="shrink-0 px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-amber-500/20 hover:bg-amber-500/30 border border-amber-500/40 text-amber-200 transition-colors cursor-pointer"
+                                >
+                                    Fit to {formatFitTime(Math.min(600, Math.max(extendFromSec + 5, lyricFit.neededSec)))}
+                                </button>
+                            </div>
+                        )}
                     </div>
 
                     {/* Continuation Cut Point */}
@@ -449,7 +482,7 @@ export const ExtendTrackModal: React.FC = () => {
                                 const val = Number(e.target.value);
                                 setExtendFromSec(val);
                                 setExtendFromInput(formatTime(val));
-                                if (targetDurationSec < val + 15) {
+                                if (targetDurationSec < val + 5) {
                                     const newTarget = Math.min(600, val + 30);
                                     setTargetDurationSec(newTarget);
                                     setTargetDurationInput(formatTime(newTarget));

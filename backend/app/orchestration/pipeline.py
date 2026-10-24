@@ -198,6 +198,8 @@ class GenerateAndTranscribePipeline:
                     job.used_fallback_synth = gen_result.used_fallback_synth
                     job.fallback_reason = gen_result.fallback_reason
                     meta = gen_result.metadata or {}
+                    if getattr(req, "is_extension", False) and meta.get("extension_mode"):
+                        job.extension_mode = meta["extension_mode"]
                     if meta.get("symbolic_midi"):
                         sym = meta["symbolic_midi"]
                         if isinstance(sym, dict):

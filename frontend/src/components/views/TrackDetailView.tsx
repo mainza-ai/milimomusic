@@ -2019,6 +2019,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                             )}
 
                             {track.used_fallback_synth && (
+                                <div className="p-3 rounded-xl bg-rose-500/10 border border-rose-500/30">
                                     <span className="text-[10px] font-bold text-rose-700 dark:text-rose-300 uppercase tracking-wider block">
                                         ⚠️ Fallback Synthesis Used
                                     </span>

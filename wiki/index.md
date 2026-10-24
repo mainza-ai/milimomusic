@@ -2,7 +2,7 @@
 title: Milimo Music Wiki — Index
 type: index
 created: 2026-08-19
-updated: 2026-10-07
+updated: 2026-10-24
 ---
 
 # Milimo Music Wiki — Index
@@ -77,7 +77,8 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 - [Structured Captions](concepts/structured-caption.md) — the MiniMax Global Metadata / Vocal Details / Arrangement format.
 - [Caption Rewriter](concepts/caption-rewriter.md) — official music-caption-rewriter port: brief → professional three-heading caption via the real LLM.
 - [Lyrics conditioning](concepts/lyrics-conditioning.md) — how audio is aligned to lyrics & prosody.
-- [Track extension](concepts/track-extension.md) — continuing generation from prior track; model-native MLX KV-cache roll-forward, strict lyrics control (never auto-added by default), beat-grid snapping, and verified zero tempo drift ($\Delta = 0.0$ BPM).
+- [Track extension](concepts/track-extension.md) — continuing generation from prior track; verbatim model conditioning, preflight replay check, restore validation, beat-grid repair, quantized crossfade, extension modes.
+- [Extension troubleshooting](concepts/extension-troubleshooting.md) — symptom map, forensic recipes, root-cause catalog (remainder steering, lossy persist, dead beat grid), CROSS case study, research context.
 - [Singing Voice Conversion](concepts/singing-voice-conversion.md) — Phase 5 locked design: vendored RVC v2 inference (RMVPE + ContentVec), honest DSP fallback, voice-convert bug fixes.
 - [Playlists & Studio Profile](concepts/playlists-profiles.md) — Phase 6 locked design: Playlist/PlaylistTrack/StudioUserProfile tables, Alembic baseline, localStorage one-time import.
 - [LM-guided inpainting](concepts/lm-guided-inpainting.md) — from legacy token masking to v2 audio-domain infill with beat-grid snapping and equal-power crossfading.

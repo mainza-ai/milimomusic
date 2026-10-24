@@ -466,14 +466,24 @@ def save_song_state(
     snapshot_path: str,
     frame_rate: float,
 ) -> Optional[str]:
-    """Persist per-frame AR codes for a finished generation. Best-effort: never raises."""
+    """Persist per-frame AR codes for a finished generation. Best-effort: never raises.
+
+    Contract: `codes` MUST be plain numpy arrays already materialized on the
+    compute thread. MLX arrays are bound to their creating thread's GPU
+    stream — touching them here (event loop) aborts the whole process with
+    "no Stream(gpu, 0) in current thread". Callers convert in-executor.
+    """
     try:
         import numpy as _np
 
         arrs = []
         for c in codes:
-            a = _np.asarray(c)
-            arrs.append(a)
+            if isinstance(c, _np.ndarray):
+                arrs.append(c)
+            else:
+                raise TypeError(
+                    "song-state codes must be numpy (materialize in worker thread)"
+                )
         stacked = _np.stack(arrs, axis=0)
         path = song_state_path(str(job_id))
         _np.savez_compressed(

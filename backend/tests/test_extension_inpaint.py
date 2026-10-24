@@ -248,3 +248,43 @@ def test_conditioning_fingerprint_stable():
     b = conditioning_fingerprint("cap", "lyrics here")
     c = conditioning_fingerprint("cap!", "lyrics here")
     assert a == b and a != c and len(a) == 16
+
+
+def test_song_state_roundtrip_numpy_only(tmp_path, monkeypatch):
+    """State bundles round-trip numpy codes; non-numpy input is refused safely (never touches MLX)."""
+    import numpy as _np
+    from app.providers import minimax_local_hooks as hooks
+    from app.core import paths as paths_mod
+
+    monkeypatch.setattr(paths_mod, "get_data_dir", lambda: tmp_path)
+    codes = [_np.arange(6, dtype=_np.int32).reshape(2, 3) + i for i in range(5)]
+    out = hooks.save_song_state(
+        "test-job-1", codes, seed=7,
+        caption="cap", lyrics="lyr",
+        snapshot_path="/snap", frame_rate=25.0,
+    )
+    assert out is not None and out.endswith(".mm3state.npz")
+    loaded = hooks.load_song_state("test-job-1", snapshot_path="/snap")
+    assert loaded is not None
+    assert loaded["frames"] == 5
+    assert loaded["seed"] == 7
+    assert int(loaded["conditioning"] == hooks.conditioning_fingerprint("cap", "lyr"))
+    for a, b in zip(loaded["codes"], codes):
+        assert (_np.asarray(a) == _np.asarray(b)).all()
+
+
+def test_song_state_rejects_foreign_objects(tmp_path, monkeypatch):
+    """A non-numpy code entry must cause a graceful skip (None), never an MLX touch."""
+    from app.providers import minimax_local_hooks as hooks
+    from app.core import paths as paths_mod
+
+    monkeypatch.setattr(paths_mod, "get_data_dir", lambda: tmp_path)
+
+    class Foreign:
+        pass
+
+    assert hooks.save_song_state(
+        "test-job-2", [Foreign()], seed=1,
+        caption="c", lyrics="l", snapshot_path="/s", frame_rate=25.0,
+    ) is None
+    assert not (tmp_path / "test-job-2.mm3state.npz").exists()

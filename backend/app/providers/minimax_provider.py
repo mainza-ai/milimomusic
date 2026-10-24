@@ -168,6 +168,21 @@ def run_real_minimax_inference(
         progress_cb=progress_cb,
         collect_codes=collect_codes,
     )
+    if collect_codes is not None:
+        # Materialize + convert INSIDE the worker thread. MLX arrays built here
+        # are bound to this thread's GPU stream; touching them (even np.asarray)
+        # on another thread aborts the process ("no Stream(gpu, 0) in current
+        # thread"). Only numpy may cross back to the event loop.
+        try:
+            import mlx.core as _mx
+            import numpy as _np
+
+            _mx.eval(*collect_codes)
+            for _i, _c in enumerate(collect_codes):
+                collect_codes[_i] = _np.asarray(_c)
+        except Exception as e:
+            logger.warning(f"Song state codes not materialized, skipping save: {e}")
+            collect_codes.clear()
     return output_path
 
 
@@ -220,6 +235,19 @@ def run_real_minimax_extension(
         collect_codes=collect_codes,
         restore_codes=restore_codes if use_restore else None,
     )
+    if collect_codes is not None:
+        # Materialize + convert INSIDE the worker thread (see above): only
+        # numpy may cross back to the event loop thread.
+        try:
+            import mlx.core as _mx
+            import numpy as _np
+
+            _mx.eval(*collect_codes)
+            for _i, _c in enumerate(collect_codes):
+                collect_codes[_i] = _np.asarray(_c)
+        except Exception as e:
+            logger.warning(f"Song state codes not materialized, skipping save: {e}")
+            collect_codes.clear()
     return output_path, use_restore
 
 
@@ -1146,7 +1174,15 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 # exact KV state instead of replaying (fast + exact).
                 try:
                     from app.providers.minimax_local_hooks import save_song_state
-                    _fr = _load_minimax_model(self.snapshot_path).config.frame_rate
+                    _fr = None
+                    try:
+                        import json as _json
+                        with open(os.path.join(self.snapshot_path, "config.json")) as _cf:
+                            _fr = float(_json.load(_cf).get("frame_rate", 0) or 0)
+                    except Exception:
+                        _fr = None
+                    if not _fr:
+                        _fr = float(_load_minimax_model(self.snapshot_path).config.frame_rate)
                     save_song_state(
                         job_id,
                         gen_codes,

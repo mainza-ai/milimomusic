@@ -2752,3 +2752,10 @@ Investigated "extended part sounds completely different + lyrics cut off" (track
 5. Lyric-fit estimator (`frontend/src/utils/lyricFit.ts`, genre-aware pace): warn + one-click "Fit" in ExtendTrackModal and ComposerSidebar duration control.
 6. Per-track duration only — no global cap (existing longer tracks unaffected).
 7. Tests: `split_remaining_lyrics` unit tests in `test_extension_inpaint.py`; backend `py_compile` + frontend `tsc --noEmit` clean.
+
+## [2026-10-24] fix | Extension determinism root causes (research-backed)
+User retried and tail still diverged — the retry ran STALE backend code (no `extension_mode` column existed; restart + migration fixed). Deeper work (ComfyUI/diffusers Music 3 continuation reference: restore codes into KV cache, same seed, inherit/superset lyrics; released weights ship NO audio→codes encoder, so replay determinism is the only lever) plus sampling-level forensics proved three replay-identity breaks in our port, now fixed:
+1. `suppress_end_token=True` on ALL frames vs the parent's unsuppressed run — guaranteed sampling divergence from frame 0 (verified in `ar_one_frame_tuned` masking). Now suppressed ONLY for new frames past the cut.
+2. Caption lock lines appended to the stored caption — reverted to pure VERBATIM reuse when a stored caption exists (proven byte-identical for SWITCH); lock construction kept only as no-caption fallback.
+3. Parent sanitizes lyrics pre-model, extension didn't — now mirrored in the KV path. Merge restored to substring-aware (full-parent replay by default; explicit new lyrics still steer); fresh-segment fallback keeps the timed remainder slice.
+Also verified: same seed/temp/cfg/topk inherited, same RNG stream structure, deterministic `format_full_caption`. `split_remaining_lyrics` extracted to module level + unit tested. Stray verification job cancelled cleanly.

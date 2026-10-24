@@ -14,6 +14,8 @@ from app.providers.minimax_provider import (
     decide_extension_lyrics,
     validate_song_state,
     verify_extension_replay,
+    quantize_crossfade_to_beats,
+    repair_beat_grid,
     _dominant_tempo_bpm,
 )
 from app.providers.minimax_local_hooks import conditioning_fingerprint
@@ -207,3 +209,38 @@ def test_verify_different_tempo_fails(tmp_path):
 def test_verify_missing_file_returns_none(tmp_path):
     out = verify_extension_replay(str(tmp_path / "nope.wav"), str(tmp_path / "alsono.wav"), 10.0)
     assert out["replay_verified"] is None
+
+
+def test_quantize_crossfade_to_whole_beats():
+    grid = {"bpm": 120.0, "beats_per_bar": 4, "first_downbeat": 0.0}
+    assert quantize_crossfade_to_beats(1.5, grid) == pytest.approx(1.5)  # 3 beats
+    assert quantize_crossfade_to_beats(1.6, grid) == pytest.approx(1.5)  # snaps down
+    assert quantize_crossfade_to_beats(1.4, grid) == pytest.approx(1.5)  # snaps up
+    assert quantize_crossfade_to_beats(0.1, grid) == pytest.approx(0.5)  # min 1 beat
+
+
+def test_quantize_crossfade_clamps_to_bar_and_bad_grid():
+    grid = {"bpm": 120.0, "beats_per_bar": 4, "first_downbeat": 0.0}
+    assert quantize_crossfade_to_beats(10.0, grid) == pytest.approx(2.0)  # max 1 bar
+    assert quantize_crossfade_to_beats(1.5, {}) == 1.5
+    assert quantize_crossfade_to_beats(1.5, None) == 1.5
+
+
+def test_repair_beat_grid_leaves_good_grid_alone(tmp_path):
+    y, sr = _click_track(112.0)
+    p = str(tmp_path / "c.wav")
+    sf.write(p, y, sr)
+    grid = {"bpm": 112.3, "beats_per_bar": 4, "first_downbeat": 0.5}
+    out, repaired = repair_beat_grid(p, grid)
+    assert repaired is False
+    assert out == grid
+
+
+def test_repair_beat_grid_fixes_fallback_grid(tmp_path):
+    y, sr = _click_track(100.0, seconds=20.0)
+    p = str(tmp_path / "c100.wav")
+    sf.write(p, y, sr)
+    out, repaired = repair_beat_grid(p, {"bpm": 120.0, "beats_per_bar": 4, "first_downbeat": 0.0})
+    assert repaired is True
+    assert abs(out["bpm"] - 100.0) / 100.0 < 0.03
+    assert out["first_downbeat"] >= 0.0

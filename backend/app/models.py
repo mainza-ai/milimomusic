@@ -57,6 +57,8 @@ class Job(SQLModel, table=True):
     extension_mode: Optional[str] = Field(default=None) # kv_rollforward | state_restored | fresh_segment_fallback | no_parent_audio
     tail_lyrics_ok: Optional[bool] = Field(default=None) # post-hoc: tail sings the expected remainder (None = not checked)
     replay_verified: Optional[bool] = Field(default=None) # post-hoc: full-timeline render replayed the parent groove (None = not checked)
+    model_prompt: Optional[str] = Field(default=None) # EXACT caption string fed to the model (verbatim replay conditioning)
+    model_lyrics: Optional[str] = Field(default=None) # EXACT lyrics string fed to the model (verbatim replay conditioning)
     temperature: Optional[float] = Field(default=None)
     cfg_scale: Optional[float] = Field(default=None)
     topk: Optional[int] = Field(default=None)

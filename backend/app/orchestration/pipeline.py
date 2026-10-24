@@ -210,6 +210,15 @@ class GenerateAndTranscribePipeline:
                             job.drum_midi_path = sym.get("drums")
                     if meta.get("bpm"):
                         job.bpm = meta["bpm"]
+                    # EXACT model conditioning, stored verbatim and NEVER
+                    # lossy-transformed: a later extension replays from these
+                    # strings byte-identically instead of reconstructing (and
+                    # silently diverging from) the parent run's inputs.
+                    # (job.lyrics/prompt below stay human-readable for UI/sync.)
+                    if meta.get("model_caption"):
+                        job.model_prompt = meta["model_caption"]
+                    if meta.get("model_lyrics") is not None:
+                        job.model_lyrics = meta["model_lyrics"]
                     if getattr(req, "is_cover", False):
                         job.is_cover = True
                         job.cover_mode = "audio_reference" if req.ref_audio_path else "symbolic_midi"

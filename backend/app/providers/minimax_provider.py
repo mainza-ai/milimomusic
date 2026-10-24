@@ -649,6 +649,121 @@ def verify_extension_replay(render_path: str, parent_path: str,
         return {"replay_verified": None, "detail": f"check error: {e}"}
 
 
+def quantize_crossfade_to_beats(crossfade_sec: float,
+                               beat_grid: Optional[Dict[str, Any]]) -> float:
+    """Quantize the crossfade overlap to whole beats of the real grid.
+
+    A fractional-beat overlap smears phase even when the tail groove is exact.
+    Clamps to [1 beat, 1 bar]. Never raises; returns input on bad grid.
+    """
+    try:
+        bpm = float((beat_grid or {}).get("bpm") or 0.0)
+        if bpm <= 40.0:
+            return crossfade_sec
+        beat = 60.0 / bpm
+        bar = 4.0 * beat
+        q = round(crossfade_sec / beat) * beat
+        return max(beat, min(q if q > 0 else crossfade_sec, bar))
+    except Exception:
+        return crossfade_sec
+
+
+def preflight_replay_check(snapshot_path: str, caption: str, lyrics: str,
+                           seed: int, temperature: float = 1.0,
+                           cfg_scale: float = 1.5, topk: int = 50,
+                           parent_audio_path: Optional[str] = None,
+                           probe_sec: float = 30.0) -> Optional[bool]:
+    """Cheap pre-hoc replay fidelity probe: render ~probe_sec of the replayed
+    head and compare it against parent disk audio BEFORE committing to a full
+    multi-minute render of a doomed trajectory.
+
+    Returns True (replay matches — proceed), False (diverged — do not render
+    the full timeline), or None (could not check — proceed with post-hoc check).
+    Never raises.
+    """
+    try:
+        import tempfile
+        from app.providers.minimax_local_hooks import (
+            generate_frame_hiddens_extended_hooked,
+            run_flow_hooked,
+        )
+        from mlx_audio.audio_io import write as audio_write
+        model = _load_minimax_model(snapshot_path)
+        frame_rate = float(model.config.frame_rate)
+        text_ids = model._text_ids(caption, lyrics)
+        n = max(60, int(probe_sec * frame_rate))
+        codes: list = []
+        frame_hiddens = generate_frame_hiddens_extended_hooked(
+            model.language_model, model.rvq_depth_decoder, model.config,
+            text_ids, parent_frames=10 ** 9, target_frames=n, seed=int(seed),
+            temperature=temperature, cfg_scale=cfg_scale, top_k=topk,
+            collect_codes=codes, restore_codes=None,
+        )
+        import mlx.core as _mx
+        _mx.eval(frame_hiddens)
+        audio = run_flow_hooked(model, frame_hiddens, 30, int(seed),
+                                cfg_scale=cfg_scale)
+        _mx.eval(audio)
+        waveform = _mx.clip(audio[0].transpose(1, 0).astype(_mx.float32), -1.0, 1.0)
+        probe_wav = os.path.join(tempfile.gettempdir(), f"mm3_preflight_{os.getpid()}.wav")
+        audio_write(probe_wav, waveform, model.sample_rate)
+        try:
+            out = verify_extension_replay(probe_wav, parent_audio_path or "",
+                                          cut_sec=min(probe_sec, 30.0))
+        finally:
+            try:
+                os.remove(probe_wav)
+            except Exception:
+                pass
+        v = out.get("replay_verified")
+        if v is False:
+            logger.warning(f"Preflight replay check FAILED ({out.get('detail')}): "
+                           "skipping full replay render.")
+        elif v is True:
+            logger.info(f"Preflight replay check passed ({out.get('detail')}).")
+        return v
+    except Exception as e:
+        logger.warning(f"Preflight replay check unavailable ({e}); proceeding.")
+        return None
+
+
+def repair_beat_grid(parent_audio_path: str,
+                     beat_grid: Optional[Dict[str, Any]]) -> Tuple[Dict[str, Any], bool]:
+    """Replace a fallback beat grid (120 BPM / downbeat 0.0 placeholder) with a
+    measured one when librosa clearly disagrees. The transcription grid
+    silently falls back on swung/syncopated material, and every downstream
+    consumer (cut snap, crossfade clamp, DAW bars) inherits the wrong tempo
+    and an arbitrary bar phase. Returns (grid, repaired). Never raises.
+    """
+    try:
+        bg = dict(beat_grid or {})
+        bpm = float(bg.get("bpm") or 0.0)
+        looks_fallback = (bpm <= 0.0 or abs(bpm - 120.0) < 1e-9) and not bg.get("first_downbeat")
+        if not looks_fallback:
+            return bg or dict(beat_grid or {}), False
+        import soundfile as _sf
+        import librosa as _librosa
+        data, sr = _sf.read(parent_audio_path, dtype="float32", always_2d=True)
+        mono = data.mean(axis=1) if data.ndim > 1 else data
+        tempo, beats = _librosa.beat.beat_track(y=np.asarray(mono), sr=sr, units="time")
+        lb = float(np.atleast_1d(tempo)[0])
+        beats = np.atleast_1d(beats)
+        if not (lb > 40.0 and len(beats) >= 4):
+            return dict(beat_grid or {}), False
+        if bpm > 0 and abs(lb - bpm) / max(bpm, 1.0) <= 0.02:
+            return dict(beat_grid or {}), False
+        bpb = int(bg.get("beats_per_bar") or 4)
+        repaired = {"bpm": round(lb, 1), "beats_per_bar": bpb,
+                    "first_downbeat": round(float(beats[0]), 3)}
+        logger.info(f"Beat grid repaired: {bpm} -> {repaired['bpm']} BPM "
+                    f"(downbeat {repaired['first_downbeat']}s).")
+        return repaired, True
+    except Exception as e:
+        logger.debug(f"Beat grid repair skipped: {e}")
+        return dict(beat_grid or {}), False
+
+
+
 def synthesize_dynamic_audio_waveform(
     duration_sec: float,
     seed: Optional[int],
@@ -1436,7 +1551,135 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 "producer_enhanced": eff_prompt != (prompt or "").strip()
                                      or bool(eff_lyrics and not (lyrics or "").strip()),
                 "formatted_caption": formatted_caption,
-                "section_tags": re.findall(r'\[(.*?)\]', sanitized_lyrics or "")
+                "section_tags": re.findall(r'\[(.*?)\]', sanitized_lyrics or ""),
+                # EXACT model-input strings (what _text_ids saw). The pipeline
+                # persists these verbatim so a later extension can condition on
+                # byte-identical text instead of reconstructing (and silently
+                # diverging from) the parent run's inputs.
+                "model_caption": formatted_caption,
+                "model_lyrics": sanitized_lyrics or eff_lyrics,
+            }
+        )
+
+    async def _extend_fallback(
+        self,
+        job_id: str,
+        parent_audio_path: Optional[str],
+        resolved_parent: Optional[str],
+        extend_ms: int,
+        lyrics: Optional[str],
+        tail_lyrics: Optional[str],
+        prompt: Optional[str],
+        seed: Optional[int],
+        tags: Optional[str],
+        structured_caption: Optional[Dict[str, Any]],
+        crossfade_sec: float,
+        extend_from_sec: Optional[float],
+        target_dur: float,
+        beat_grid: Optional[Dict[str, Any]],
+        gen_dir,
+        out_wav_path: str,
+        alt_wav: str,
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+        cancel_event: Optional[Any] = None,
+        forced_reason: Optional[str] = None,
+        **kwargs
+    ) -> GeneratedAudioResult:
+        """Fresh-segment fallback: render only the tail delta and splice it on.
+
+        Used when KV replay is unavailable (no MLX/seed) or unsafe (preflight
+        replay check failed on reconstructed conditioning). The tail sings the
+        remainder slice (or explicit new lyrics); it never sees full lyrics.
+        """
+        import shutil
+        from app.transcription.karaoke import _resolve_audio_file
+        from app.core.paths import get_generated_audio_dir
+
+        gen_dir.mkdir(parents=True, exist_ok=True)
+        # The tail-only segment sings the remainder slice (or explicit new
+        # lyrics); it never sees the full parent lyrics.
+        fallback_lyrics = (lyrics or "").strip() or ((tail_lyrics or kwargs.get("tail_lyrics") or "").strip() or None)
+        temp_ext_job_id = f"{job_id}_ext_segment"
+        ext_result = await self.generate(
+            job_id=temp_ext_job_id,
+            prompt=prompt or "",
+            lyrics=fallback_lyrics,
+            duration_ms=extend_ms,
+            seed=seed,
+            tags=tags,
+            structured_caption=structured_caption,
+            progress_callback=progress_callback,
+            cancel_event=cancel_event,
+            **kwargs
+        )
+
+        if not resolved_parent:
+            logger.warning(f"Parent audio {parent_audio_path} not found on disk; returning continuation directly.")
+            return ext_result
+
+        ext_local_path = _resolve_audio_file(ext_result.audio_path)
+        if not ext_local_path or not os.path.exists(ext_local_path):
+            candidate = str(gen_dir / f"{temp_ext_job_id}.wav")
+            if os.path.exists(candidate):
+                ext_local_path = candidate
+            else:
+                ext_local_path = ext_result.audio_path.replace("/audio/", "generated_audio/")
+
+        loop = asyncio.get_event_loop()
+        total_duration = await loop.run_in_executor(
+            None,
+            concatenate_and_crossfade_audio,
+            resolved_parent,
+            ext_local_path,
+            out_wav_path,
+            crossfade_sec,
+            extend_from_sec,
+            beat_grid,
+            target_dur,
+            False,  # fresh-segment fallback renders only the delta: append from 0
+        )
+
+        try:
+            if os.path.abspath(out_wav_path) != os.path.abspath(alt_wav):
+                shutil.copy2(out_wav_path, alt_wav)
+        except Exception:
+            pass
+
+        try:
+            from app.core.paths import get_repo_root
+            backend_dir = get_repo_root() / "backend" / "generated_audio"
+            backend_dir.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(out_wav_path, str(backend_dir / f"{job_id}.wav"))
+            shutil.copy2(out_wav_path, str(backend_dir / f"song_{job_id}.wav"))
+        except Exception:
+            pass
+
+        if ext_local_path and os.path.exists(ext_local_path) and "_ext_segment" in ext_local_path:
+            try:
+                os.remove(ext_local_path)
+            except Exception:
+                pass
+
+        _forced = f" | {forced_reason}" if forced_reason else ""
+        _fb_reason = (ext_result.fallback_reason or "") + _forced
+        if forced_reason:
+            logger.warning(f"Extension {job_id} forced to fresh-segment fallback: {forced_reason}")
+        return GeneratedAudioResult(
+            audio_path=f"/audio/{job_id}.wav",
+            duration_sec=total_duration,
+            sample_rate=44100,
+            structured_caption=ext_result.structured_caption,
+            used_fallback_synth=ext_result.used_fallback_synth,
+            fallback_reason=_fb_reason or None,
+            metadata={
+                **ext_result.metadata,
+                "extended_from": parent_audio_path,
+                "extend_from_sec": extend_from_sec,
+                "crossfade_sec": crossfade_sec,
+                "extended_duration_sec": extend_ms / 1000.0,
+                "total_duration_sec": total_duration,
+                "extension_mode": "fresh_segment_fallback",
+                "fallback_forced_reason": forced_reason,
             }
         )
 
@@ -1508,37 +1751,63 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 self.sanitize_section_tags(effective_extension_lyrics) or effective_extension_lyrics
             )
 
-            # Check for parent structured caption to maintain 100% token parity with parent run
+            # Check for parent structured caption to maintain 100% token parity with parent run.
+            # Prefer the parent's EXACT model-input strings when the generating
+            # run stored them verbatim (model_prompt/model_lyrics columns):
+            # reconstruction from display-oriented fields is lossy (lyric
+            # cleaning rewrites text) and any byte difference diverges the
+            # whole replay trajectory from frame 0.
             parent_sc = kwargs.get("parent_structured_caption")
-            if not parent_sc:
-                parent_job_id = kwargs.get("parent_job_id")
-                if parent_job_id:
-                    try:
-                        from sqlmodel import Session
-                        from app.core.database import engine
-                        from app.models import Job
-                        with Session(engine) as session:
-                            pj = session.get(Job, parent_job_id)
-                            if pj and pj.structured_caption_json:
-                                parent_sc = json.loads(pj.structured_caption_json)
-                    except Exception as _e:
-                        logger.debug("Failed to lookup parent_structured_caption: %s", _e)
-
-            if parent_sc and isinstance(parent_sc, dict):
-                structured_meta = {
-                    "global_metadata": (parent_sc.get("global_metadata") or "").strip(),
-                    "vocal_details": (parent_sc.get("vocal_details") or "").strip(),
-                    "arrangement": (parent_sc.get("arrangement") or "").strip(),
-                }
+            parent_job_id = kwargs.get("parent_job_id")
+            verbatim_caption: Optional[str] = None
+            verbatim_lyrics: Optional[str] = None
+            if parent_job_id:
+                try:
+                    from sqlmodel import Session
+                    from app.core.database import engine
+                    from app.models import Job
+                    with Session(engine) as session:
+                        pj = session.get(Job, parent_job_id)
+                        if pj:
+                            if not parent_sc and pj.structured_caption_json:
+                                try:
+                                    parent_sc = json.loads(pj.structured_caption_json)
+                                except Exception:
+                                    pass
+                            if getattr(pj, "model_prompt", None) and getattr(pj, "model_lyrics", None) is not None:
+                                verbatim_caption = pj.model_prompt
+                                verbatim_lyrics = pj.model_lyrics
+                except Exception as _e:
+                    logger.debug("Failed to lookup parent verbatim conditioning: %s", _e)
+            conditioning_source = "reconstructed"
+            if verbatim_caption and verbatim_lyrics is not None and not lyrics_steered:
+                # Exact replay: byte-identical inputs, no rebuild, no re-sanitize.
+                formatted_caption = verbatim_caption
+                effective_extension_lyrics = verbatim_lyrics
+                conditioning_source = "stored_verbatim"
+                logger.info(f"Extension {job_id}: using parent's stored verbatim model conditioning.")
             else:
-                provided = structured_caption or {}
-                auto_meta = self.parse_structured_caption(parent_prompt, tags or "")
-                structured_meta = {
-                    "global_metadata": (provided.get("global_metadata") or "").strip() or auto_meta.get("global_metadata", ""),
-                    "vocal_details": (provided.get("vocal_details") or "").strip() or auto_meta.get("vocal_details", ""),
-                    "arrangement": (provided.get("arrangement") or "").strip() or auto_meta.get("arrangement", ""),
-                }
-            formatted_caption = self.format_full_caption(structured_meta, parent_prompt)
+                if parent_sc and isinstance(parent_sc, dict):
+                    structured_meta = {
+                        "global_metadata": (parent_sc.get("global_metadata") or "").strip(),
+                        "vocal_details": (parent_sc.get("vocal_details") or "").strip(),
+                        "arrangement": (parent_sc.get("arrangement") or "").strip(),
+                    }
+                else:
+                    provided = structured_caption or {}
+                    auto_meta = self.parse_structured_caption(parent_prompt, tags or "")
+                    structured_meta = {
+                        "global_metadata": (provided.get("global_metadata") or "").strip() or auto_meta.get("global_metadata", ""),
+                        "vocal_details": (provided.get("vocal_details") or "").strip() or auto_meta.get("vocal_details", ""),
+                        "arrangement": (provided.get("arrangement") or "").strip() or auto_meta.get("arrangement", ""),
+                    }
+                formatted_caption = self.format_full_caption(structured_meta, parent_prompt)
+                if lyrics_steered:
+                    logger.warning(
+                        "Extension lyrics steer the replay (appended text not contained "
+                        "in parent lyrics): the tail will reinterpret, not seamlessly "
+                        "continue. This is expected only with custom continuation lyrics."
+                    )
 
             steps = min(30, max(10, int(target_dur / 4)))
             temperature = float(kwargs.get("temperature", 1.0))
@@ -1581,6 +1850,56 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 except Exception as e:
                     logger.warning(f"Song state restore unavailable, falling back to replay: {e}")
                     restore_codes = None
+
+            # Pre-hoc replay fidelity probe (reconstructed conditioning only):
+            # render ~30s of the replayed head and compare it against parent
+            # disk audio BEFORE committing to a full multi-minute render of a
+            # doomed trajectory. Verbatim-stored conditioning and user-steered
+            # runs skip this (exact by construction, or divergent by intent).
+            if (not restore_codes and not lyrics_steered
+                    and conditioning_source == "reconstructed"
+                    and resolved_parent and os.path.exists(resolved_parent)):
+                try:
+                    _loop0 = asyncio.get_running_loop()
+                    _preflight = await _loop0.run_in_executor(
+                        None, preflight_replay_check,
+                        self.snapshot_path, formatted_caption,
+                        effective_extension_lyrics, int(seed),
+                        float(kwargs.get("temperature", 1.0)),
+                        float(kwargs.get("cfg_scale", 1.5)),
+                        int(kwargs.get("topk", 50)),
+                        resolved_parent,
+                    )
+                    if _preflight is False:
+                        _detail = ("preflight replay check failed on reconstructed "
+                                   "conditioning: parent inputs not recoverable")
+                        logger.warning(f"Extension {job_id}: {_detail}; "
+                                       "routing to fresh-segment fallback.")
+                        return await self._extend_fallback(
+                            job_id=job_id,
+                            parent_audio_path=parent_audio_path,
+                            resolved_parent=resolved_parent,
+                            extend_ms=extend_ms,
+                            lyrics=lyrics,
+                            tail_lyrics=tail_lyrics,
+                            prompt=prompt,
+                            seed=seed,
+                            tags=tags,
+                            structured_caption=structured_caption,
+                            crossfade_sec=crossfade_sec,
+                            extend_from_sec=extend_from_sec,
+                            target_dur=target_dur,
+                            beat_grid=kwargs.get("beat_grid"),
+                            gen_dir=gen_dir,
+                            out_wav_path=out_wav_path,
+                            alt_wav=alt_wav,
+                            progress_callback=progress_callback,
+                            cancel_event=cancel_event,
+                            forced_reason=_detail,
+                            **kwargs
+                        )
+                except Exception as _pfe:
+                    logger.warning(f"Extension {job_id} preflight error ({_pfe}); proceeding with replay.")
 
             new_codes: list = []
             loop = asyncio.get_running_loop()
@@ -1632,6 +1951,9 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     replay_check = {"replay_verified": None, "detail": f"check error: {e}"}
             if resolved_parent and os.path.exists(resolved_parent):
                 beat_grid = kwargs.get("beat_grid")
+                # Quantize the crossfade overlap to whole beats of the real
+                # grid (fractional beats smear phase even on exact tails).
+                crossfade_sec = quantize_crossfade_to_beats(crossfade_sec, beat_grid)
                 total_duration = await loop.run_in_executor(
                     None,
                     concatenate_and_crossfade_audio,
@@ -1644,6 +1966,15 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     target_dur,
                     is_full_timeline,
                 )
+                # Keep the raw render when fidelity failed — deleting the only
+                # evidence makes post-mortems impossible.
+                if replay_check.get("replay_verified") is False:
+                    try:
+                        shutil.copy2(raw_extended_wav,
+                                    str(gen_dir / f"{job_id}_raw_failed.wav"))
+                        logger.warning(f"Extension {job_id}: kept diverged raw render for forensics.")
+                    except Exception:
+                        pass
                 try:
                     if os.path.exists(raw_extended_wav):
                         os.remove(raw_extended_wav)
@@ -1715,6 +2046,7 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     "restored_from_state": bool(used_restore),
                     "lyrics_source": lyrics_source,
                     "conditioning_steered": bool(lyrics_steered),
+                    "conditioning_source": conditioning_source,
                     "replay_verified": replay_check.get("replay_verified"),
                     "replay_check_detail": replay_check.get("detail"),
                     "conditioning_sha": hashlib.sha256(
@@ -1724,88 +2056,29 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 }
             )
 
-        # Fallback path if MLX or seed unavailable:
-        # The tail-only segment sings the remainder slice (or explicit new
-        # lyrics); it never sees the full parent lyrics.
-        fallback_lyrics = (lyrics or "").strip() or ((tail_lyrics or kwargs.get("tail_lyrics") or "").strip() or None)
-        temp_ext_job_id = f"{job_id}_ext_segment"
-        ext_result = await self.generate(
-            job_id=temp_ext_job_id,
-            prompt=prompt or "",
-            lyrics=fallback_lyrics,
-            duration_ms=extend_ms,
+        # Fallback path if MLX or seed unavailable (or preflight replay
+        # check failed): render only the tail delta and splice it on.
+        return await self._extend_fallback(
+            job_id=job_id,
+            parent_audio_path=parent_audio_path,
+            resolved_parent=resolved_parent,
+            extend_ms=extend_ms,
+            lyrics=lyrics,
+            tail_lyrics=tail_lyrics,
+            prompt=prompt,
             seed=seed,
             tags=tags,
             structured_caption=structured_caption,
+            crossfade_sec=crossfade_sec,
+            extend_from_sec=extend_from_sec,
+            target_dur=target_dur,
+            beat_grid=kwargs.get("beat_grid"),
+            gen_dir=gen_dir,
+            out_wav_path=out_wav_path,
+            alt_wav=alt_wav,
             progress_callback=progress_callback,
             cancel_event=cancel_event,
             **kwargs
-        )
-
-        if not resolved_parent:
-            logger.warning(f"Parent audio {parent_audio_path} not found on disk; returning continuation directly.")
-            return ext_result
-
-        ext_local_path = _resolve_audio_file(ext_result.audio_path)
-        if not ext_local_path or not os.path.exists(ext_local_path):
-            candidate = str(gen_dir / f"{temp_ext_job_id}.wav")
-            if os.path.exists(candidate):
-                ext_local_path = candidate
-            else:
-                ext_local_path = ext_result.audio_path.replace("/audio/", "generated_audio/")
-
-        beat_grid = kwargs.get("beat_grid")
-        loop = asyncio.get_event_loop()
-        total_duration = await loop.run_in_executor(
-            None,
-            concatenate_and_crossfade_audio,
-            resolved_parent,
-            ext_local_path,
-            out_wav_path,
-            crossfade_sec,
-            extend_from_sec,
-            beat_grid,
-            target_dur,
-            False,  # fresh-segment fallback renders only the delta: append from 0
-        )
-
-        try:
-            if os.path.abspath(out_wav_path) != os.path.abspath(alt_wav):
-                shutil.copy2(out_wav_path, alt_wav)
-        except Exception:
-            pass
-
-        try:
-            from app.core.paths import get_repo_root
-            backend_dir = get_repo_root() / "backend" / "generated_audio"
-            backend_dir.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(out_wav_path, str(backend_dir / f"{job_id}.wav"))
-            shutil.copy2(out_wav_path, str(backend_dir / f"song_{job_id}.wav"))
-        except Exception:
-            pass
-
-        if ext_local_path and os.path.exists(ext_local_path) and "_ext_segment" in ext_local_path:
-            try:
-                os.remove(ext_local_path)
-            except Exception:
-                pass
-
-        return GeneratedAudioResult(
-            audio_path=f"/audio/{job_id}.wav",
-            duration_sec=total_duration,
-            sample_rate=44100,
-            structured_caption=ext_result.structured_caption,
-            used_fallback_synth=ext_result.used_fallback_synth,
-            fallback_reason=ext_result.fallback_reason,
-            metadata={
-                **ext_result.metadata,
-                "extended_from": parent_audio_path,
-                "extend_from_sec": extend_from_sec,
-                "crossfade_sec": crossfade_sec,
-                "extended_duration_sec": extend_ms / 1000.0,
-                "total_duration_sec": total_duration,
-                "extension_mode": "fresh_segment_fallback",
-            }
         )
 
     async def repair_segment(

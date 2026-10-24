@@ -213,6 +213,8 @@ def create_db_and_tables():
             "extension_mode": "VARCHAR",
             "tail_lyrics_ok": "BOOLEAN",
             "replay_verified": "BOOLEAN",
+            "model_prompt": "TEXT",
+            "model_lyrics": "TEXT",
             "video_path": "VARCHAR",
             "video_config_json": "TEXT"
         }
@@ -3696,6 +3698,22 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
             parent_bg = {"bpm": parent_bpm, "beats_per_bar": 4, "first_downbeat": 0.0}
         elif parent_bpm:
             parent_bg["bpm"] = parent_bpm
+
+        # Repair a fallback beat grid (120 BPM / downbeat 0.0 placeholder from
+        # failed transcription beat detection): the cut snap, crossfade clamp,
+        # and DAW bars built on it get an arbitrary bar phase. Measure the real
+        # grid from the audio and persist the repair on the parent row.
+        try:
+            from app.providers.minimax_provider import repair_beat_grid
+            _repaired_bg, _was_repaired = repair_beat_grid(resolved_parent_path, parent_bg)
+            if _was_repaired:
+                parent_bg = _repaired_bg
+                parent_job.beat_grid_json = json.dumps(parent_bg)
+                session.add(parent_job)
+                session.commit()
+                logger.info(f"Extend {job_id}: repaired parent beat grid to {parent_bg}")
+        except Exception as _rbe:
+            logger.debug(f"Beat grid repair skipped: {_rbe}")
 
         # Resolve parent cut point
         parent_dur_sec = float(parent_job.duration_ms) / 1000.0 if parent_job.duration_ms else 60.0

@@ -2015,7 +2015,9 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                     ? 'Built as a fresh segment spliced onto the parent (model continuation unavailable) — expect a seam.'
                                     : track.extension_mode === 'state_restored'
                                         ? 'Continued from the parent take via exact restored state — seamless by construction.'
-                                        : 'Built by model continuation from the parent take.'}
+                                        : track.extension_mode === 'stem_outro'
+                                            ? 'Stem-woven outro: the tail loops the parent\u2019s own bars (same audio, groove locked by construction) — no new material is sung.'
+                                            : 'Built by model continuation from the parent take.'}
                             </span>
                             {track.tail_lyrics_ok === false && (
                                 <span className="text-xs text-amber-700 dark:text-amber-300 font-semibold block mt-1">

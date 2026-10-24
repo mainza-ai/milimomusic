@@ -356,8 +356,14 @@ def generate_frame_hiddens_extended_hooked(
                 _report(progress_cb, frame_index / target_frames, stage)
 
         key, subkey = mx.random.split(key)
-        # Suppress early termination token before reaching the target frame count
-        suppress_end = (frame_index < target_frames)
+        # Deterministic replay contract with the parent run: the parent was
+        # generated with the end token ALLOWED (no suppression), so the replay
+        # range must sample the exact same way — suppress ONLY the new frames
+        # past parent_frames. Any masking difference here diverges the whole
+        # trajectory from frame 0 (same seed/RNG no longer reproduces the
+        # parent), and the splice can only mask the head, not fix the tail.
+        # This requires byte-identical conditioning text vs the parent run.
+        suppress_end = (frame_index >= parent_frames) and (frame_index < target_frames)
         result = ar_one_frame_tuned(
             language_model, depth_decoder, config,
             last_hidden, cache, subkey,

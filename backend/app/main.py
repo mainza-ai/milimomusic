@@ -3784,15 +3784,18 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
             except Exception as e:
                 logger.warning("Failed to auto-generate continuation lyrics: %s", e)
         else:
-            # Default: sing the unsung remainder so the extension completes the
-            # song (e.g. the Outro) instead of rehashing earlier sections.
-            # The library record keeps the full parent lyrics regardless.
+            # Default: pass the unsung remainder as the continuation lyrics.
+            # The KV roll-forward path conditions on the full parent lyrics
+            # verbatim (byte-identical replay), while the fresh-segment fallback
+            # path generates only the tail — for which the remainder slice is
+            # the correct conditioning. The library record keeps the full
+            # parent lyrics regardless.
             continuation_lyrics = remaining_lyrics
             full_lyrics = parent_lyrics or ""
             if remaining_lyrics:
                 logger.info(
-                    f"Extend {job_id}: conditioning tail on {len(remaining_lyrics)} chars of "
-                    f"remaining lyrics from {extend_from:.1f}s"
+                    f"Extend {job_id}: {len(remaining_lyrics)} chars of remaining lyrics "
+                    f"from {extend_from:.1f}s available for the tail"
                 )
 
         child_job = Job(

@@ -387,19 +387,21 @@ def build_locked_continuation_caption(
     p_arr = (p_meta.get("arrangement") or "").strip()
 
     # Caption parity: the extension regenerates the full timeline and the splice
-    # only masks 0..cut with parent disk audio, so the parent's stored caption
-    # is reused VERBATIM to keep the latent trajectory close. Only minimal lock
-    # directives are appended (small diff >> full rewrite for replay fidelity).
-    lock_line = f"Continuation Lock: bpm is {bpm}, key is {key} ({scale}); same arrangement, energy, and mix as the parent recording."
+    # only masks 0..cut with parent disk audio. For the tail to continue the
+    # parent's exact trajectory (same seed + same RNG stream reproduces the
+    # parent's frames), the conditioning text must be BYTE-IDENTICAL to the
+    # parent run's. So: reuse the stored parent caption VERBATIM — no appended
+    # lock lines, no rewrites. Tempo/key lock is emergent from determinism.
+    # (Lock directives are only built when no stored caption exists, where
+    # there is no trajectory to preserve.)
     if p_global:
-        global_metadata = f"{p_global}\n{lock_line}"
+        global_metadata = p_global
     else:
         global_metadata = (
             f"Basic Attributes: bpm is {bpm}. key is {key}, and scale is {scale}. Genre: {genre}.\n"
             f"Global Emotional Progression: Seamless continuation sustaining the {genre} theme and dynamic energy into the extended arrangement.\n"
             f"Application Scenarios & Imagery: {parent_prompt.strip() or 'Direct musical continuation'}\n"
-            f"Sonics & Production Profile: Balanced stereo mix matched to parent recording, consistent acoustic space and instrument levels.\n"
-            f"{lock_line}"
+            f"Sonics & Production Profile: Balanced stereo mix matched to parent recording, consistent acoustic space and instrument levels."
         )
 
     if p_vocal:
@@ -413,11 +415,7 @@ def build_locked_continuation_caption(
         )
 
     if p_arr:
-        arrangement = (
-            f"{p_arr}\n"
-            f"Continuation: sustain the identical instruments, groove, and energy past the cut point; "
-            f"no new sections, style changes, or tempo shifts."
-        )
+        arrangement = p_arr
     else:
         arrangement = (
             f"Instrument Lifecycle (Primary/Secondary): Primary {genre} foundation anchored by {instruments}, maintaining identical rhythm, harmonic voicing, and groove.\n"
@@ -1226,16 +1224,26 @@ class MiniMaxMusic3Provider(GenerationProvider):
         if _MLX_AUDIO_AVAILABLE and self.snapshot_path and seed is not None:
             parent_prompt = kwargs.get("parent_prompt") or prompt or ""
             base_parent_lyrics = kwargs.get("parent_lyrics") or ""
-            # The caller passes ONLY the unsung remainder (split at the cut point)
-            # as `lyrics`. Condition the tail on that slice directly: re-merging
-            # the full parent lyrics would re-place the whole song across the
-            # timeline and the kept tail would sing mid-song material.
-            if lyrics and lyrics.strip():
-                effective_extension_lyrics = lyrics.strip()
-                lyrics_source = "continuation_slice"
+            # Conditioning rule for the KV replay: the tail can only continue the
+            # parent's exact trajectory if the conditioning text is byte-identical
+            # to the parent run's. So by default (empty lyrics, or the timed
+            # remainder slice which is already contained in the parent lyrics)
+            # condition on the FULL parent lyrics verbatim. Only genuinely new
+            # lyrics (user-supplied additional or auto-generated continuation)
+            # steer by appending. The timed remainder slice is consumed by the
+            # fresh-segment fallback path, which generates only the tail.
+            if lyrics and lyrics.strip() and lyrics.strip() not in base_parent_lyrics:
+                effective_extension_lyrics = f"{base_parent_lyrics}\n\n{lyrics.strip()}".strip() if base_parent_lyrics else lyrics.strip()
+                lyrics_source = "explicit_steering"
             else:
                 effective_extension_lyrics = base_parent_lyrics
-                lyrics_source = "full_parent_fallback"
+                lyrics_source = "full_parent_replay"
+            # Mirror the parent run's model-input pipeline exactly: generate()
+            # conditions on sanitize_section_tags(eff_lyrics), so the replay must
+            # sanitize the same way or text_ids diverge from the parent run.
+            effective_extension_lyrics = (
+                self.sanitize_section_tags(effective_extension_lyrics) or effective_extension_lyrics
+            )
 
             # Check for parent structured caption to maintain 100% token parity with parent run
             parent_sc = kwargs.get("parent_structured_caption")

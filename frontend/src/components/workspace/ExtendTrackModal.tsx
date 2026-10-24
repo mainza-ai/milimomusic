@@ -14,7 +14,7 @@ import { useModalA11y } from '../ui/primitives';
 import { useModalStore } from '../../stores/useModalStore';
 import { trackApi, api } from '../../api';
 import { toast } from '../../utils/toast';
-import { estimateLyricFit, formatFitTime } from '../../utils/lyricFit';
+import { estimateLyricFit, formatFitTime, splitRemainingLyrics, previewRemainder } from '../../utils/lyricFit';
 
 /**
  * Parse a user-entered time string into total seconds.
@@ -92,6 +92,7 @@ export const ExtendTrackModal: React.FC = () => {
     const [isDraftingLyrics, setIsDraftingLyrics] = useState<boolean>(false);
     const [customPrompt, setCustomPrompt] = useState<string>('');
     const [crossfadeSec, setCrossfadeSec] = useState<number>(1.5);
+    const [variationSeed, setVariationSeed] = useState<string>('');
     const [showAdvanced, setShowAdvanced] = useState<boolean>(false);
     const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
@@ -114,6 +115,7 @@ export const ExtendTrackModal: React.FC = () => {
             setAdditionalLyrics('');
             setAutoGenerateLyrics(false);
             setCustomPrompt('');
+            setVariationSeed('');
         }
     }, [extendTrackJob]);
 
@@ -240,6 +242,16 @@ export const ExtendTrackModal: React.FC = () => {
         });
     };
 
+    const handleRedoLastSection = () => {
+        const cut = Math.max(5, Math.floor(parentDurationSec - 15));
+        const newTarget = Math.min(600, cut + 30);
+        setExtendFromSec(cut);
+        setExtendFromInput(formatTime(cut));
+        setTargetDurationSec(newTarget);
+        setTargetDurationInput(formatTime(newTarget));
+        setExtensionDeltaInput(`+${formatTime(newTarget - cut)}`);
+    };
+
     const handleSubmit = async (e: React.FormEvent) => {
         e.preventDefault();
 
@@ -263,16 +275,22 @@ export const ExtendTrackModal: React.FC = () => {
 
         setIsSubmitting(true);
         try {
-            await trackApi.extendTrack(extendTrackJob.id, {
+            const seedNum = variationSeed.trim() === '' ? undefined : Math.floor(Number(variationSeed));
+            const res = await trackApi.extendTrack(extendTrackJob.id, {
                 target_duration_sec: finalTargetSec,
                 extend_from_sec: finalExtendFromSec,
                 additional_lyrics: additionalLyrics.trim() || undefined,
                 auto_generate_lyrics: autoGenerateLyrics,
                 prompt: customPrompt.trim() || undefined,
                 crossfade_sec: crossfadeSec,
+                seed: (seedNum !== undefined && !isNaN(seedNum)) ? seedNum : undefined,
             });
 
-            toast(`Track extension queued! (${formatTime(finalTargetSec)}) Seamless continuation started.`, 'success');
+            const modeLabel = res.expected_mode === 'state_restored' ? 'exact continuation (restored)'
+                : res.expected_mode === 'kv_rollforward' ? 'deterministic continuation'
+                : res.expected_mode === 'no_parent_audio' ? 'fresh audio (no parent found!)'
+                : 'fresh segment';
+            toast(`Extension queued! Cut at ${formatTime(res.extend_from_sec)} → ${formatTime(res.target_duration_sec)} · ${modeLabel}.`, 'success');
             closeExtendTrack();
         } catch (err: any) {
             console.error('Failed to extend track:', err);
@@ -495,11 +513,43 @@ export const ExtendTrackModal: React.FC = () => {
                         />
                         <div className="flex items-center justify-between text-[10px] text-zinc-400">
                             <span>Earlier Section Break</span>
-                            <span className="text-emerald-400 font-medium">Song End ({formatTime(parentDurationSec)})</span>
+                            <div className="flex items-center gap-2">
+                                <button
+                                    type="button"
+                                    onClick={handleRedoLastSection}
+                                    title="Rewind: cut 15s before the end and extend 30s (redo the tail)"
+                                    className="px-2 py-0.5 rounded-md bg-indigo-500/10 hover:bg-indigo-500/20 border border-indigo-500/30 text-indigo-300 text-[10px] font-semibold transition-colors cursor-pointer"
+                                >
+                                    ↩ Redo last 15s
+                                </button>
+                                <span className="text-emerald-400 font-medium">Song End ({formatTime(parentDurationSec)})</span>
+                            </div>
                         </div>
                     </div>
 
-                    {/* Continuation Lyrics Editor */}
+                        {/* Tail preview: what the extension will sing from the cut point */}
+                        {(() => {
+                            let lines: any[] = [];
+                            try {
+                                const parsed = extendTrackJob.timed_lyrics_json ? JSON.parse(extendTrackJob.timed_lyrics_json) : [];
+                                if (Array.isArray(parsed)) lines = parsed;
+                            } catch { /* unaligned lyrics — no preview */ }
+                            const remainder = splitRemainingLyrics(lines, extendFromSec);
+                            const preview = previewRemainder(remainder, 2);
+                            if (!remainder) return null;
+                            return (
+                                <div className="p-2.5 rounded-xl bg-indigo-500/10 border border-indigo-500/30">
+                                    <div className="text-[10px] font-bold text-indigo-300 uppercase tracking-wider mb-1">
+                                        Tail will continue with ({remainder.split('\n').filter(Boolean).length} lines from {formatTime(extendFromSec)})
+                                    </div>
+                                    {preview.map((line, i) => (
+                                        <div key={i} className="text-[11px] font-mono text-indigo-200/90 truncate">…{line}</div>
+                                    ))}
+                                </div>
+                            );
+                        })()}
+
+                        {/* Continuation Lyrics Editor */}
                     <div className="space-y-2.5">
                         <div className="flex items-center justify-between">
                             <label className="text-xs font-semibold text-zinc-300 uppercase tracking-wider">
@@ -609,10 +659,27 @@ export const ExtendTrackModal: React.FC = () => {
                                     </span>
                                 </div>
 
-                                <div>
-                                    <label className="text-xs text-zinc-300 font-medium block mb-1">
-                                        Continuation Direction Prompt (Optional)
-                                    </label>
+                        <div>
+                            <label className="text-xs text-zinc-300 font-medium block mb-1">
+                                Variation Seed (optional)
+                            </label>
+                            <input
+                                type="number"
+                                value={variationSeed}
+                                onChange={e => setVariationSeed(e.target.value)}
+                                placeholder={`Parent seed ${parentSeed}`}
+                                title="Leave empty to inherit the parent seed (maximum continuity). Enter a number to reroll just the new section."
+                                className="w-full px-3 py-1.5 text-xs rounded-lg bg-zinc-800/80 border border-zinc-700 text-white font-mono placeholder:text-zinc-400"
+                            />
+                            <span className="text-[10px] text-zinc-400 block mt-0.5">
+                                Empty = inherit parent seed (seamless). Set a number to reroll only the new section.
+                            </span>
+                        </div>
+
+                        <div>
+                            <label className="text-xs text-zinc-300 font-medium block mb-1">
+                                Continuation Direction Prompt (Optional)
+                            </label>
                                     <input
                                         type="text"
                                         value={customPrompt}

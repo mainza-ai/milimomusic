@@ -145,6 +145,7 @@ def run_real_minimax_inference(
     topk: int = 50,
     cancel_event=None,
     progress_cb=None,
+    collect_codes: Optional[list] = None,
 ) -> str:
     """Genuine MiniMax Music 3 inference with cancellation + progress hooks and real sampling parameters."""
     import random
@@ -165,6 +166,7 @@ def run_real_minimax_inference(
         top_k=topk,
         cancel_event=cancel_event,
         progress_cb=progress_cb,
+        collect_codes=collect_codes,
     )
     return output_path
 
@@ -183,16 +185,24 @@ def run_real_minimax_extension(
     topk: int = 50,
     cancel_event=None,
     progress_cb=None,
-) -> str:
+    collect_codes: Optional[list] = None,
+    restore_codes: Optional[list] = None,
+) -> tuple:
     """
     MiniMax Music 3 extension via KV-cache roll-forward and suppression of early termination.
     Replays the parent deterministic state, continues generating frames without empty-cache
     divergence, and synthesizes continuous audio for the full requested duration.
+    With validated restore_codes: prefills the KV cache directly (no resampling)
+    and decodes only the new tail. Returns (output_path, used_restore).
     """
     from app.providers.minimax_local_hooks import generate_extended_music_hooked
     model = _load_minimax_model(snapshot_path)
     clean_seed = int(seed)
     flow_steps = int(os.environ.get("MILIMO_FLOW_STEPS", str(steps)))
+    parent_frames = max(1, int(parent_duration_sec * model.config.frame_rate))
+    use_restore = bool(
+        restore_codes is not None and len(restore_codes) >= parent_frames
+    )
     generate_extended_music_hooked(
         model=model,
         caption=prompt,
@@ -207,8 +217,10 @@ def run_real_minimax_extension(
         top_k=topk,
         cancel_event=cancel_event,
         progress_cb=progress_cb,
+        collect_codes=collect_codes,
+        restore_codes=restore_codes if use_restore else None,
     )
-    return output_path
+    return output_path, use_restore
 
 
 
@@ -1101,6 +1113,7 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     if progress_callback:
                         progress_callback(1, 3, f"MiniMax Music 3: {msg} [{int(frac * 100)}%]")
 
+                gen_codes: list = []
                 await loop.run_in_executor(
                     None,
                     run_real_minimax_inference,
@@ -1116,6 +1129,7 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     topk,
                     cancel_event,
                     _hooked_progress,
+                    gen_codes,
                 )
                 # The blocking inference thread cannot be interrupted mid-call.
                 # If cancellation arrived during those minutes, DISCARD the
@@ -1128,6 +1142,22 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     raise asyncio.CancelledError("Cancelled during inference; audio discarded")
                 used_real_inference = True
                 logger.info("Real MiniMax Music 3 inference produced audio at %s", wav_path)
+                # Persist per-frame codes so later extensions can restore the
+                # exact KV state instead of replaying (fast + exact).
+                try:
+                    from app.providers.minimax_local_hooks import save_song_state
+                    _fr = _load_minimax_model(self.snapshot_path).config.frame_rate
+                    save_song_state(
+                        job_id,
+                        gen_codes,
+                        seed=int(seed) if seed is not None else 0,
+                        caption=formatted_caption,
+                        lyrics=sanitized_lyrics or eff_lyrics,
+                        snapshot_path=self.snapshot_path,
+                        frame_rate=float(_fr),
+                    )
+                except Exception as e:
+                    logger.warning(f"Song state save skipped for {job_id}: {e}")
             except GenerationCancelled:
                 # Cancellation is NOT an inference failure — never fall back.
                 raise asyncio.CancelledError("Cancelled during local inference")
@@ -1299,10 +1329,34 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 if progress_callback:
                     progress_callback(1, 3, f"MiniMax Music 3: {msg} [{int(frac * 100)}%]")
 
+            # Exact-restore fast path: if the parent run saved its per-frame AR
+            # codes (.mm3state), prefill the KV cache directly instead of
+            # replaying (no resampling, no RNG consumed for the prefix).
+            # Falls back to deterministic replay when absent/stale.
+            restore_codes = None
+            restore_source = None
+            parent_job_id = kwargs.get("parent_job_id")
+            if parent_job_id:
+                try:
+                    from app.providers.minimax_local_hooks import load_song_state
+                    _state = load_song_state(str(parent_job_id), snapshot_path=self.snapshot_path)
+                    if _state and int(_state.get("frames", 0)) > 0:
+                        restore_codes = _state["codes"]
+                        restore_source = _state
+                        logger.info(
+                            f"Song state found for parent {parent_job_id} "
+                            f"({len(restore_codes)} frames, fp={_state.get('conditioning')}); "
+                            "will restore instead of replaying."
+                        )
+                except Exception as e:
+                    logger.warning(f"Song state restore unavailable, falling back to replay: {e}")
+                    restore_codes = None
+
+            new_codes: list = []
             loop = asyncio.get_running_loop()
             raw_extended_wav = str(gen_dir / f"{job_id}_raw_extended.wav")
 
-            await loop.run_in_executor(
+            _, used_restore = await loop.run_in_executor(
                 None,
                 run_real_minimax_extension,
                 self.snapshot_path,
@@ -1318,10 +1372,17 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 topk,
                 cancel_event,
                 _hooked_progress,
+                new_codes,      # collect_codes: new frames (replay: all frames)
+                restore_codes,  # restore: prefix comes from the saved state
             )
+            extension_mode = "state_restored" if used_restore else "kv_rollforward"
+            logger.info(f"Extension {job_id}: path={extension_mode} (restore={'yes' if used_restore else 'no'})")
 
             # Reconcile with resolved parent audio if on disk:
-            # Splicing with crossfade over crossfade_sec guarantees exact parent disk audio up to cut point
+            # Splicing with crossfade over crossfade_sec guarantees exact parent disk audio up to cut point.
+            # Restore mode emits TAIL-ONLY audio (full-timeline replay covers the whole song):
+            # the splice flag must match what was actually rendered.
+            is_full_timeline = not used_restore
             if resolved_parent and os.path.exists(resolved_parent):
                 beat_grid = kwargs.get("beat_grid")
                 total_duration = await loop.run_in_executor(
@@ -1334,7 +1395,7 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     parent_dur,
                     beat_grid,
                     target_dur,
-                    True,  # KV roll-forward renders the full timeline: slice at cut
+                    is_full_timeline,
                 )
                 try:
                     if os.path.exists(raw_extended_wav):
@@ -1342,10 +1403,36 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 except Exception:
                     pass
             else:
+                logger.warning(
+                    f"Extension {job_id}: parent audio {parent_audio_path} not on disk — "
+                    "no splice anchor; publishing the generated audio as-is. "
+                    "Continuity with the parent is NOT guaranteed."
+                )
+                extension_mode = "no_parent_audio"
                 shutil.move(raw_extended_wav, out_wav_path)
                 import soundfile as sf
                 info = sf.info(out_wav_path)
                 total_duration = info.duration
+
+            # Persist this run's full-timeline codes so future extensions can
+            # restore instead of replaying. Replay path collected every frame;
+            # restore path collected only the new frames (prefix = saved state).
+            try:
+                from app.providers.minimax_local_hooks import save_song_state
+                _all_codes = list(restore_codes or []) + list(new_codes) if used_restore else list(new_codes)
+                if _all_codes:
+                    _fr = _load_minimax_model(self.snapshot_path).config.frame_rate
+                    save_song_state(
+                        job_id,
+                        _all_codes,
+                        seed=int(seed),
+                        caption=formatted_caption,
+                        lyrics=effective_extension_lyrics,
+                        snapshot_path=self.snapshot_path,
+                        frame_rate=float(_fr),
+                    )
+            except Exception as e:
+                logger.warning(f"Child song-state save skipped for {job_id}: {e}")
 
             # Mirror to song_{job_id}.wav for route versatility
             try:
@@ -1377,7 +1464,8 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     "target_duration_sec": target_dur,
                     "total_duration_sec": total_duration,
                     "roll_forward_extension": True,
-                    "extension_mode": "kv_rollforward",
+                    "extension_mode": extension_mode,
+                    "restored_from_state": bool(used_restore),
                     "lyrics_source": lyrics_source,
                     "conditioning_sha": hashlib.sha256(
                         (formatted_caption + "\n" + effective_extension_lyrics).encode("utf-8", "ignore")

@@ -211,6 +211,7 @@ def create_db_and_tables():
             "is_repair": "BOOLEAN DEFAULT 0",
             "extend_from_sec": "FLOAT",
             "extension_mode": "VARCHAR",
+            "tail_lyrics_ok": "BOOLEAN",
             "video_path": "VARCHAR",
             "video_config_json": "TEXT"
         }
@@ -3700,6 +3701,19 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
         extend_from = req.extend_from_sec if req.extend_from_sec is not None else parent_dur_sec
         extend_from = max(5.0, min(extend_from, parent_dur_sec))
 
+        # Crossfade sanity: never longer than one bar at the detected tempo,
+        # never shorter than 0.5s (avoids clicks without smearing phrasing).
+        crossfade_sec = req.crossfade_sec or 1.5
+        try:
+            _bar = 4.0 * (60.0 / float(parent_bg.get("bpm", 0.0) or 0.0))
+            if _bar > 0:
+                _clamped = max(0.5, min(crossfade_sec, _bar))
+                if abs(_clamped - crossfade_sec) > 1e-9:
+                    logger.info(f"Extend {job_id}: crossfade clamped {crossfade_sec:.2f}s -> {_clamped:.2f}s (one bar)")
+                    crossfade_sec = _clamped
+        except Exception:
+            pass
+
         # Beat-grid snap: align cut point to nearest musical downbeat (measure start)
         if parent_bg and parent_bg.get("bpm", 0.0) > 40.0:
             bg_bpm = float(parent_bg["bpm"])
@@ -3718,7 +3732,6 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
                 detail=f"Target duration ({req.target_duration_sec}s) must be greater than extension start ({extend_from:.2f}s)"
             )
 
-        crossfade_sec = req.crossfade_sec or 1.5
         delta_sec = max(5.0, req.target_duration_sec - extend_from + crossfade_sec)
         delta_ms = int(delta_sec * 1000)
 
@@ -3798,13 +3811,53 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
                     f"from {extend_from:.1f}s available for the tail"
                 )
 
+        # Guard: extending past the last sung line with no new lyrics only
+        # makes sense for instrumentals. For vocal tracks it would generate
+        # an unlyric'd tail or silence. (No timed alignment at all = allow it:
+        # fall back to full-parent conditioning as before.)
+        _has_timed = bool((parent_job.timed_lyrics_json or "").strip())
+        if not has_additional_lyrics and not auto_gen_opt_in and not remaining_lyrics and (parent_lyrics or "").strip() and _has_timed:
+            raise HTTPException(
+                status_code=400,
+                detail=(
+                    "No unsung lyrics remain after the cut point "
+                    f"({extend_from:.1f}s). Move the cut earlier, provide "
+                    "continuation lyrics, or enable auto-generate lyrics."
+                ),
+            )
+
+        # Seed: explicit override (tail re-roll with variation) or inherit the
+        # parent seed for maximum continuity.
+        effective_seed = req.seed if req.seed is not None else parent_seed
+
+        # Predict which extension path will run so the UI can show it pre-queue.
+        # state_restored = exact KV restore from saved song state (fastest);
+        # kv_rollforward = deterministic replay + continuation;
+        # fresh_segment_fallback = standalone tail (no MLX weights/seed).
+        expected_mode = "fresh_segment_fallback"
+        try:
+            from app.providers.minimax_provider import _MLX_AUDIO_AVAILABLE
+            from app.providers.minimax_local_hooks import load_song_state
+            _active = model_manager.get_active_model("audio")
+            _snap = os.environ.get("MINIMAX_MODEL_PATH") or (_active.get("local_path") if _active else None)
+            if _MLX_AUDIO_AVAILABLE and _snap and os.path.isdir(_snap) and effective_seed is not None:
+                expected_mode = "kv_rollforward"
+                try:
+                    _st = load_song_state(str(job_id), snapshot_path=_snap)
+                    if _st and int(_st.get("frames", 0)) > 0:
+                        expected_mode = "state_restored"
+                except Exception:
+                    pass
+        except Exception:
+            pass
+
         child_job = Job(
             title=f"{parent_title} (Extended)",
             prompt=req.prompt or parent_prompt,
             lyrics=full_lyrics,
             duration_ms=int(req.target_duration_sec * 1000),
             tags=parent_tags,
-            seed=parent_seed,
+            seed=effective_seed,
             model_provider=parent_provider,
             parent_job_id=str(job_id),
             is_extension=True,
@@ -3859,7 +3912,7 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
         lyrics=continuation_lyrics,
         duration_ms=delta_ms,
         tags=parent_tags,
-        seed=parent_seed,
+        seed=effective_seed,
         model_provider=child_provider,
         parent_job_id=str(job_id),
         is_extension=True,
@@ -3890,6 +3943,11 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
         "extend_from_sec": extend_from,
         "target_duration_sec": req.target_duration_sec,
         "model_provider": child_provider,
+        "seed": effective_seed,
+        "crossfade_sec": crossfade_sec,
+        "expected_mode": expected_mode,
+        "remaining_lyrics": remaining_lyrics,
+        "remaining_chars": len(remaining_lyrics),
     }
 
 

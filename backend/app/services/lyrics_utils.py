@@ -214,3 +214,74 @@ class LyricsDOM:
         # Re-Index logic could go here if we wanted to auto-renumber "Verse 1, Verse 2" etc.
         # For now, let's keep it simple.
 
+
+
+def _normalize_lyric_text(text: str) -> List[str]:
+    """Normalize a lyric line to word tokens for fuzzy comparison."""
+    if not text:
+        return []
+    cleaned = re.sub(r"\[.*?\]", " ", text)       # section tags
+    cleaned = re.sub(r"\(.*?\)", " ", cleaned)    # ad-libs / stage directions
+    cleaned = re.sub(r"[^a-zA-Z'\s]", " ", cleaned)
+    return [w.strip("'").lower() for w in cleaned.split() if len(w.strip("'")) > 1]
+
+
+def _timed_tail_words(timed_json: Optional[str], cut_sec: float, overlap: float = 1.5) -> List[str]:
+    """Flatten word tokens of timed lines at/after the cut point."""
+    if not timed_json:
+        return []
+    try:
+        import json as _json
+        lines = _json.loads(timed_json)
+    except Exception:
+        return []
+    if not isinstance(lines, list):
+        return []
+    words: List[str] = []
+    for ln in lines:
+        if not isinstance(ln, dict):
+            continue
+        if ln.get("is_section"):
+            continue
+        try:
+            start = float(ln.get("start", 0.0))
+        except (TypeError, ValueError):
+            continue
+        if start < cut_sec - overlap:
+            continue
+        text = str(ln.get("text", "") or "")
+        if not text.strip():
+            # fall back to per-word entries when line text is empty
+            for w in ln.get("words", []) or []:
+                if isinstance(w, dict) and str(w.get("word", "") or "").strip():
+                    text += " " + str(w["word"])
+        words.extend(_normalize_lyric_text(text))
+    return words
+
+
+def verify_extension_tail(
+    parent_timed_json: Optional[str],
+    child_timed_json: Optional[str],
+    cut_sec: float,
+    min_ratio: float = 0.35,
+) -> Tuple[Optional[bool], str]:
+    """Check the extended tail actually sings the expected remainder.
+
+    Returns (ok, detail): ok is None when there is nothing to check
+    (no timed lyrics on either side, or no unsung remainder).
+    Comparison is ordered word-sequence similarity, tolerant of alignment
+    noise and ad-libs.
+    """
+    try:
+        expected = _timed_tail_words(parent_timed_json, cut_sec)
+        if not expected:
+            return None, "no unsung remainder to verify"
+        actual = _timed_tail_words(child_timed_json, cut_sec)
+        if not actual:
+            return False, "tail has no aligned lyrics"
+        ratio = difflib.SequenceMatcher(None, expected, actual, autojunk=False).ratio()
+        if ratio >= min_ratio:
+            return True, f"tail matches remainder ({ratio:.2f} similarity, {len(expected)} words expected)"
+        return False, f"tail diverges from remainder ({ratio:.2f} similarity, {len(expected)} words expected)"
+    except Exception as e:
+        return None, f"verification skipped: {e}"

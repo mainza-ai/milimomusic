@@ -54,7 +54,8 @@ class Job(SQLModel, table=True):
     is_extension: bool = Field(default=False)
     is_repair: bool = Field(default=False)
     extend_from_sec: Optional[float] = Field(default=None)
-    extension_mode: Optional[str] = Field(default=None) # kv_rollforward | fresh_segment_fallback
+    extension_mode: Optional[str] = Field(default=None) # kv_rollforward | state_restored | fresh_segment_fallback | no_parent_audio
+    tail_lyrics_ok: Optional[bool] = Field(default=None) # post-hoc: tail sings the expected remainder (None = not checked)
     temperature: Optional[float] = Field(default=None)
     cfg_scale: Optional[float] = Field(default=None)
     topk: Optional[int] = Field(default=None)
@@ -368,6 +369,7 @@ class TrackExtendRequest(SQLModel):
     auto_generate_lyrics: bool = Field(default=False, description="Whether to automatically generate continuation lyrics with AI. Default: False.")
     prompt: Optional[str] = None
     crossfade_sec: float = Field(default=1.5, ge=0.1, le=5.0)
+    seed: Optional[int] = Field(default=None, description="Override seed for the new section (default: inherit parent seed for max continuity).")
 
 
 class TrackInpaintRequest(SQLModel):

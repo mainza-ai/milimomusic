@@ -129,7 +129,8 @@ export interface Job {
     parent_job_id?: string;
     is_extension?: boolean;
     extend_from_sec?: number;
-    extension_mode?: string | null; // kv_rollforward | fresh_segment_fallback
+    extension_mode?: string | null; // kv_rollforward | state_restored | fresh_segment_fallback | no_parent_audio
+    tail_lyrics_ok?: boolean | null; // post-hoc tail sung-remainder check (None = not checked)
     temperature?: number;
     cfg_scale?: number;
     topk?: number;
@@ -976,6 +977,22 @@ export interface TrackExtendParams {
     auto_generate_lyrics?: boolean;
     prompt?: string;
     crossfade_sec?: number;
+    seed?: number;
+}
+
+export interface ExtendTrackResult {
+    job_id: string;
+    status: string;
+    title: string;
+    parent_job_id: string;
+    extend_from_sec: number;
+    target_duration_sec: number;
+    model_provider: string;
+    seed?: number | null;
+    crossfade_sec?: number;
+    expected_mode?: string;
+    remaining_lyrics?: string;
+    remaining_chars?: number;
 }
 
 export const trackApi = {
@@ -986,7 +1003,7 @@ export const trackApi = {
     extendTrack: async (
         jobId: string,
         params: TrackExtendParams
-    ): Promise<{ job_id: string; status: string; title: string; parent_job_id: string }> => {
+    ): Promise<ExtendTrackResult> => {
         const res = await axios.post(`${API_BASE_URL}/tracks/${jobId}/extend`, params);
         return res.data;
     },

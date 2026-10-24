@@ -13,11 +13,14 @@ this, not hope.
 """
 from __future__ import annotations
 
+import hashlib
+import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
-from typing import Callable, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 try:
     import mlx.core as mx
@@ -105,6 +108,7 @@ def ar_one_frame_tuned(
     temperature: float = 1.0,
     top_k: int = 50,
     suppress_end_token: bool = False,
+    collect_full_codes: Optional[list] = None,
 ):
     """Autoregressive step respecting user-specified temperature, CFG scale, top_k, and end_token suppression."""
     if lm_logits is None:
@@ -165,6 +169,10 @@ def ar_one_frame_tuned(
         semantic_code,
         key,
     )
+    if collect_full_codes is not None and emit_frame:
+        # Full per-frame codes (what _embed_audio_frame consumes) for song-state
+        # persistence. Mirrors the emitted-frames list 1:1.
+        collect_full_codes.append(frame_codes)
     frame_hidden = (
         fuse_frame_hiddens(last_hidden[:1], depth_hidden)
         if emit_frame
@@ -194,8 +202,13 @@ def generate_frame_hiddens_hooked(
     top_k: int = 50,
     cancel_event: Optional[threading.Event] = None,
     progress_cb: Optional[ProgressCB] = None,
+    collect_codes: Optional[list] = None,
 ):
-    """Mirror of library ar.generate_frame_hiddens with hooks and sampling controls injected."""
+    """Mirror of library ar.generate_frame_hiddens with hooks and sampling controls injected.
+
+    When collect_codes is provided, the full per-frame codes are appended
+    (one entry per emitted frame) for song-state persistence.
+    """
     if not HAS_MLX_AUDIO:
         raise RuntimeError("mlx_audio is not available on this platform.")
     mx.random.seed(seed)
@@ -221,6 +234,7 @@ def generate_frame_hiddens_hooked(
             cfg_scale=cfg_scale,
             temperature=temperature,
             top_k=top_k,
+            collect_full_codes=collect_codes,
         )
         last_hidden, cache = result.last_hidden, result.cache
         if result.ended:
@@ -278,7 +292,8 @@ def generate_music_hooked(
     temperature: float = 1.0,
     cfg_scale: float = 1.5,
     top_k: int = 50,
-    cancel_event=None, progress_cb=None
+    cancel_event=None, progress_cb=None,
+    collect_codes: Optional[list] = None,
 ) -> str:
     """Full hooked pipeline with genuine temperature, CFG, and top_k sampling controls."""
     max_frames = max(1, int(duration_sec * model.config.frame_rate))
@@ -296,6 +311,7 @@ def generate_music_hooked(
         top_k=top_k,
         cancel_event=cancel_event,
         progress_cb=ar_progress,
+        collect_codes=collect_codes,
     )
     mx.eval(frame_hiddens)
     _check(cancel_event)
@@ -327,11 +343,20 @@ def generate_frame_hiddens_extended_hooked(
     top_k: int = 50,
     cancel_event: Optional[threading.Event] = None,
     progress_cb: Optional[ProgressCB] = None,
+    collect_codes: Optional[list] = None,
+    restore_codes: Optional[list] = None,
 ):
     """
     Rolls forward parent KV cache up to parent_frames (~11s on M3 Max for 60s of music),
     then seamlessly continues generating frames up to target_frames while suppressing
     audio_end_token_id to guarantee exact duration, zero tempo drift, and identical timbre.
+
+    Two prefix modes:
+      - restore_codes given (and long enough): rebuild the KV cache by prefilling
+        the saved per-frame codes (no sampling — fast and exact), align the RNG
+        stream past the prefix, then sample only the new frames.
+      - otherwise: deterministic replay from frame 0. Requires byte-identical
+        conditioning vs the parent run; the splice masks the head either way.
     """
     if not HAS_MLX_AUDIO:
         raise RuntimeError("mlx_audio is not available on this platform.")
@@ -343,7 +368,26 @@ def generate_frame_hiddens_extended_hooked(
     frames = []
     started = time.monotonic()
 
-    for frame_index in range(target_frames + 1):
+    if restore_codes is not None and len(restore_codes) >= parent_frames:
+        # Exact restore: rebuild the KV cache from saved codes (no sampling),
+        # then align the RNG stream past the prefix so continued frames match
+        # what a deterministic replay would have sampled.
+        _report(progress_cb, 0.0, "Restoring song state (prefill, no resampling)…")
+        last_hidden, cache = prefill_kv_cache_from_codes(
+            language_model, depth_decoder, config,
+            list(restore_codes)[:parent_frames],
+            last_hidden, cache,
+            cancel_event=cancel_event,
+        )
+        for _ in range(parent_frames + 1):
+            key, _ = mx.random.split(key)
+        start_frame = parent_frames + 1
+        restored_prefix = True
+    else:
+        start_frame = 0
+        restored_prefix = False
+
+    for frame_index in range(start_frame, target_frames + 1):
         if frame_index % CHECK_EVERY == 0:
             _check(cancel_event)
             if progress_cb and frame_index:
@@ -363,6 +407,7 @@ def generate_frame_hiddens_extended_hooked(
         # trajectory from frame 0 (same seed/RNG no longer reproduces the
         # parent), and the splice can only mask the head, not fix the tail.
         # This requires byte-identical conditioning text vs the parent run.
+        # (Restored prefixes skip this loop entirely — see prefill above.)
         suppress_end = (frame_index >= parent_frames) and (frame_index < target_frames)
         result = ar_one_frame_tuned(
             language_model, depth_decoder, config,
@@ -372,6 +417,7 @@ def generate_frame_hiddens_extended_hooked(
             temperature=temperature,
             top_k=top_k,
             suppress_end_token=suppress_end,
+            collect_full_codes=collect_codes,
         )
         last_hidden, cache = result.last_hidden, result.cache
         if result.ended and frame_index >= target_frames:
@@ -384,6 +430,136 @@ def generate_frame_hiddens_extended_hooked(
     if not frames:
         raise ValueError("MiniMax Music 3 generated zero audio frames")
     return mx.stack(frames, axis=1)
+
+
+# ---------------------------------------------------------------------------
+# Song-state bundles (.mm3state.npz): persisted per-frame AR codes so a later
+# extension can RESTORE the parent KV cache by prefilling saved codes instead
+# of replaying (fast, exact, no sampling involved). Mirrors the reference
+# "resumable song state" workflow.
+# ---------------------------------------------------------------------------
+SONG_STATE_VERSION = 1
+
+
+def conditioning_fingerprint(caption: str, lyrics: str) -> str:
+    """Stable hash of the exact conditioning text (caption + lyrics)."""
+    import hashlib as _hashlib
+
+    return _hashlib.sha256(
+        f"{caption or ''}\n{lyrics or ''}".encode("utf-8", "ignore")
+    ).hexdigest()[:16]
+
+
+def song_state_path(job_id: str) -> "Path":
+    from app.core.paths import get_generated_audio_dir
+
+    return get_generated_audio_dir() / f"{job_id}.mm3state.npz"
+
+
+def save_song_state(
+    job_id: str,
+    codes: list,
+    *,
+    seed: int,
+    caption: str,
+    lyrics: str,
+    snapshot_path: str,
+    frame_rate: float,
+) -> Optional[str]:
+    """Persist per-frame AR codes for a finished generation. Best-effort: never raises."""
+    try:
+        import numpy as _np
+
+        arrs = []
+        for c in codes:
+            a = _np.asarray(c)
+            arrs.append(a)
+        stacked = _np.stack(arrs, axis=0)
+        path = song_state_path(str(job_id))
+        _np.savez_compressed(
+            str(path),
+            version=_np.asarray([SONG_STATE_VERSION]),
+            codes=stacked,
+            seed=_np.asarray([int(seed)]),
+            conditioning=conditioning_fingerprint(caption, lyrics),
+            snapshot_path=_np.asarray([str(snapshot_path or "")]),
+            frame_rate=_np.asarray([float(frame_rate)]),
+        )
+        logger.info(f"Saved song state ({len(arrs)} frames) to {path}")
+        return str(path)
+    except Exception as e:
+        logger.warning(f"Song state save skipped for {job_id}: {e}")
+        return None
+
+
+def load_song_state(job_id: str, snapshot_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
+    """Load and validate a song-state bundle. Returns None when unusable (caller falls back to replay)."""
+    try:
+        import numpy as _np
+
+        path = song_state_path(str(job_id))
+        if not path.is_file():
+            return None
+        data = _np.load(str(path), allow_pickle=False)
+        version = int(data["version"][0])
+        if version != SONG_STATE_VERSION:
+            logger.warning(f"Song state version mismatch ({version}); ignoring {path}")
+            return None
+        saved_snapshot = str(data["snapshot_path"][0])
+        if snapshot_path and saved_snapshot and saved_snapshot != str(snapshot_path):
+            logger.warning(f"Song state snapshot mismatch; ignoring {path}")
+            return None
+        codes = [data["codes"][i] for i in range(data["codes"].shape[0])]
+        if not codes:
+            return None
+        return {
+            "codes": codes,
+            "seed": int(data["seed"][0]),
+            "conditioning": str(data["conditioning"]),
+            "snapshot_path": saved_snapshot,
+            "frame_rate": float(data["frame_rate"][0]),
+            "frames": len(codes),
+        }
+    except Exception as e:
+        logger.warning(f"Song state load skipped for {job_id}: {e}")
+        return None
+
+
+def prefill_kv_cache_from_codes(
+    language_model,
+    depth_decoder,
+    config,
+    codes: list,
+    cancel_event=None,
+    progress_cb: Optional[ProgressCB] = None,
+) -> Tuple[Any, Any]:
+    """Rebuild the AR KV cache by feeding saved frame codes (no sampling).
+
+    Returns (last_hidden, cache) ready for continued sampling. Deterministic:
+    embedding + transformer forwards only, zero RNG consumption.
+    """
+    if not HAS_MLX_AUDIO:
+        raise RuntimeError("mlx_audio is not available on this platform.")
+    last_hidden = None
+    cache = None
+    total = len(codes)
+    for i, fc in enumerate(codes):
+        if i % CHECK_EVERY == 0:
+            _check(cancel_event)
+        if isinstance(fc, mx.array):
+            arr = fc
+        else:
+            import numpy as _np
+
+            arr = mx.array(_np.asarray(fc))
+        feedback = _embed_audio_frame(language_model, depth_decoder, config, arr)
+        hidden, cache = qwen3_hidden(language_model, feedback, cache)
+        last_hidden = hidden[:, -1]
+        if progress_cb and i % PROGRESS_EVERY == 0:
+            _report(progress_cb, i / max(1, total), f"Restoring song state ({i}/{total} frames)")
+    if last_hidden is None or cache is None:
+        raise ValueError("Song state prefill produced no hidden state")
+    return last_hidden, cache
 
 
 def generate_extended_music_hooked(
@@ -399,11 +575,17 @@ def generate_extended_music_hooked(
     cfg_scale: float = 1.5,
     top_k: int = 50,
     cancel_event=None,
-    progress_cb=None
+    progress_cb=None,
+    collect_codes: Optional[list] = None,
+    restore_codes: Optional[list] = None,
 ) -> str:
     """
     Roll-forward extension pipeline: reconstructs parent state via deterministic KV-cache replay,
     continues generating without boundary discontinuity, and decodes the full continuous waveform.
+
+    With restore_codes (validated saved state): prefill the KV cache directly
+    (no resampling) then sample only new frames. Otherwise: deterministic replay.
+    Either way the tail is rendered, spliced onto parent disk audio by the caller.
     """
     parent_frames = max(1, int(parent_duration_sec * model.config.frame_rate))
     target_frames = max(parent_frames + 1, int(target_duration_sec * model.config.frame_rate))
@@ -420,6 +602,8 @@ def generate_extended_music_hooked(
         top_k=top_k,
         cancel_event=cancel_event,
         progress_cb=ar_progress,
+        collect_codes=collect_codes,
+        restore_codes=restore_codes,
     )
     mx.eval(frame_hiddens)
     _check(cancel_event)

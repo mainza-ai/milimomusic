@@ -159,6 +159,7 @@ class GenerateAndTranscribePipeline:
                     parent_prompt=getattr(req, "parent_prompt", None),
                     parent_lyrics=getattr(req, "parent_lyrics", None),
                     parent_structured_caption=getattr(req, "parent_structured_caption", None),
+                    parent_job_id=getattr(req, "parent_job_id", None),
                     **extra_gen_kwargs
                 )
             else:
@@ -427,6 +428,7 @@ class GenerateAndTranscribePipeline:
 
 
             # Finalize DB Record
+            _tail_ok_out = None
             with Session(engine) as session:
                 job = session.get(Job, job_id)
                 if job:
@@ -456,8 +458,33 @@ class GenerateAndTranscribePipeline:
 
                     job.stems_json = json.dumps(dynamic_stems_payload)
                     job.timed_lyrics_json = json.dumps(timed_lyrics)
+                    # Extensions: verify the tail actually sings the unsung
+                    # remainder (post-hoc, never blocks completion).
+                    try:
+                        if getattr(req, "is_extension", False) and getattr(req, "parent_job_id", None):
+                            from app.services.lyrics_utils import verify_extension_tail
+                            _parent = session.get(Job, UUID(str(req.parent_job_id)))
+                            _parent_timed = _parent.timed_lyrics_json if _parent else None
+                            _ok, _detail = verify_extension_tail(
+                                _parent_timed,
+                                job.timed_lyrics_json,
+                                float(getattr(req, "extend_from_sec", 0.0) or 0.0),
+                            )
+                            job.tail_lyrics_ok = _ok
+                            if _ok is False:
+                                job.fallback_reason = (
+                                    (job.fallback_reason + " | " if job.fallback_reason else "")
+                                    + f"Tail lyric mismatch: {_detail}"
+                                )
+                                logger.warning(f"Extension {job_id_str} tail check FAILED: {_detail}")
+                            elif _ok is True:
+                                logger.info(f"Extension {job_id_str} tail check passed: {_detail}")
+                    except Exception as e:
+                        logger.warning(f"Extension tail verification skipped for {job_id_str}: {e}")
                     session.add(job)
                     session.commit()
+                    # Capture for the SSE payload below (object detaches after commit).
+                    _tail_ok_out = job.tail_lyrics_ok if getattr(req, "is_extension", False) else None
 
             # Emit final completion event (DB-persisted master path, not the
             # pre-voice-remix generator path, so consumers never get a stale URL)
@@ -466,7 +493,9 @@ class GenerateAndTranscribePipeline:
                 "status": "completed",
                 "audio_path": final_master_path,
                 "title": getattr(gen_result, 'title', None) or req.prompt,
-                "cover_image_path": final_cover_path or getattr(req, "cover_image_path", None)
+                "cover_image_path": final_cover_path or getattr(req, "cover_image_path", None),
+                "extension_mode": (gen_result.metadata or {}).get("extension_mode") if getattr(req, "is_extension", False) else None,
+                "tail_lyrics_ok": _tail_ok_out,
             })
             event_manager.publish("job_progress", {
                 "job_id": job_id_str,

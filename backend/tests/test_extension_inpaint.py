@@ -195,3 +195,56 @@ def test_inpaint_track_endpoint():
         json={"start_time": 30.0, "end_time": 40.0}
     )
     assert bad_res2.status_code == 400
+
+
+def _timed(lines):
+    import json
+    return json.dumps(lines)
+
+
+def test_verify_tail_matches_when_continuation_sings_remainder():
+    from app.services.lyrics_utils import verify_extension_tail
+    parent = _timed([
+        {"text": "[Verse]", "is_section": True, "start": 0.0, "end": 0.0},
+        {"text": "early line here", "start": 5.0, "end": 9.0},
+        {"text": "[Outro]", "is_section": True, "start": 0.0, "end": 0.0},
+        {"text": "final outro line sung late", "start": 100.0, "end": 105.0},
+    ])
+    child = _timed([
+        {"text": "[Verse]", "is_section": True, "start": 0.0, "end": 0.0},
+        {"text": "early line here", "start": 5.0, "end": 9.0},
+        {"text": "[Outro]", "is_section": True, "start": 0.0, "end": 0.0},
+        {"text": "final outro line sung late", "start": 100.0, "end": 105.0},
+    ])
+    ok, detail = verify_extension_tail(parent, child, 95.0)
+    assert ok is True, detail
+
+
+def test_verify_tail_flags_wrong_tail():
+    from app.services.lyrics_utils import verify_extension_tail
+    parent = _timed([
+        {"text": "early line here", "start": 5.0, "end": 9.0},
+        {"text": "alpha beta gamma delta epsilon", "start": 100.0, "end": 105.0},
+    ])
+    child = _timed([
+        {"text": "early line here", "start": 5.0, "end": 9.0},
+        {"text": "completely different words total mismatch zeta", "start": 100.0, "end": 105.0},
+    ])
+    ok, detail = verify_extension_tail(parent, child, 95.0)
+    assert ok is False, detail
+
+
+def test_verify_tail_none_when_nothing_to_check():
+    from app.services.lyrics_utils import verify_extension_tail
+    ok, _ = verify_extension_tail(None, None, 50.0)
+    assert ok is None
+    ok, _ = verify_extension_tail("[]", "[]", 50.0)
+    assert ok is None
+
+
+def test_conditioning_fingerprint_stable():
+    from app.providers.minimax_local_hooks import conditioning_fingerprint
+    a = conditioning_fingerprint("cap", "lyrics here")
+    b = conditioning_fingerprint("cap", "lyrics here")
+    c = conditioning_fingerprint("cap!", "lyrics here")
+    assert a == b and a != c and len(a) == 16

@@ -2764,6 +2764,18 @@ Also verified: same seed/temp/cfg/topk inherited, same RNG stream structure, det
 Deep-dive after the retry STILL sounded like a fresh start. Reproduced numerically with synthetic probes: `concatenate_and_crossfade_audio` guessed the extension layout from `len(data_e) > cut_samples + 10s`. Any KV extension whose tail was shorter than ~10s (CROSS: cut 1:49, target 1:58) failed the check, so the FULL-timeline regen was appended from 0:00 and trimmed to target — the "extension" was literally the song's first 9 seconds again (verified: tail samples == regen start). Long tails (60s validation case) passed the check, which is why prior validation looked fine.
 Fix: explicit `extension_is_full_timeline` flag on the splice (KV=True slice-at-cut; fresh-segment fallback=False append-from-0). Proven both ways with unclipped probes (old code: tail==regen start; fixed: tail==regen tail) and locked in with `backend/tests/test_splice_alignment.py` (user-scenario short tail + long tail + delta + exact-trim cases, 8 passed with split tests). Backend restarted with the fix; pushed to develop+main.
 
+## [2026-10-24] fix | Extension hardening: state restore, no-splice warning, tail verification
+Full-scope implementation from the extension audit:
+1. **State restore (fast, exact continuation):** per-frame AR codes persisted to `.mm3state.npz` on every MLX generation; extensions prefill the KV cache from saved codes (no resampling) instead of replaying. Falls back to deterministic replay when state is absent/stale. Child bundles saved for chaining.
+2. **No-splice guard:** when the parent file can't be resolved, warn loudly + `extension_mode=no_parent_audio` instead of silently publishing a fresh render.
+3. **Pre-queue `expected_mode`** (`state_restored` / `kv_rollforward` / `fresh_segment_fallback`) returned by `/extend`; modal shows it in the confirmation toast with the snapped cut point.
+4. **Empty-remainder guard:** 400 with guidance when no unsung lyrics remain and no new lyrics supplied (instrumentals exempt).
+5. **Crossfade clamp** to one bar (min 0.5s); **seed override** for tail re-roll; **remaining-lyrics preview** + **redo-last-15s** shortcut in the modal.
+6. **Post-hoc tail verification:** pipeline compares aligned tail words vs expected remainder (`tail_lyrics_ok`, surfaced in SSE + TrackDetailView provenance badge; mismatch appended to fallback_reason).
+7. Fixed a self-inflicted indentation bug that swallowed the endpoint body into an except clause (caught by live validation; endpoint verified 400-clean since).
+8. Tests: new `test_splice_alignment.py` + `verify_extension_tail`/`conditioning_fingerprint` unit tests; `py_compile` + `tsc` + frontend build green.
+Verified live: migration columns present, `/extend` validation path returns proper 400s, backend healthy.
+
 ## [2026-10-24] fix | Extension replay determinism PROVEN on real model + weights
 Follow-up deep-dive (multiple CROSS retries still off): found the 05:20–08:01 attempts ran STALE backend code (pre-fix build), so they proved nothing about the current code. Then proved the mechanism end-to-end on the live bf16 model with CROSS's real conditioning:
 1. Audio forensics on the latest artifact: splice head is BIT-IDENTICAL to parent disk (replay determinism holds through the splice); tail energy healthy (not silence/garbage).

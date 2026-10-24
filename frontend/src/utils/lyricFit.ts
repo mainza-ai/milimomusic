@@ -42,3 +42,40 @@ export function formatFitTime(secs: number): string {
     const s = secs % 60;
     return `${m}:${s < 10 ? '0' : ''}${s}`;
 }
+
+export interface TimedLyricLine {
+    text?: string;
+    is_section?: boolean;
+    start?: number;
+    end?: number;
+}
+
+/** Mirror of the backend split: lines at/after the cut (1.5s overlap), with headers. */
+export function splitRemainingLyrics(lines: TimedLyricLine[] | null, cutSec: number): string {
+    if (!lines || !Array.isArray(lines)) return '';
+    const kept: string[] = [];
+    let pendingHeader: string | null = null;
+    let headerEmittedFor: string | null = null;
+    for (const ln of lines) {
+        const text = (ln.text || '').trim();
+        if (!text) continue;
+        if (ln.is_section) {
+            pendingHeader = text;
+            continue;
+        }
+        const start = Number(ln.start || 0);
+        const end = Number(ln.end ?? start);
+        if (!(end > cutSec - 1.5)) continue;
+        if (pendingHeader && headerEmittedFor !== pendingHeader) {
+            kept.push(pendingHeader);
+            headerEmittedFor = pendingHeader;
+        }
+        kept.push(text);
+    }
+    return kept.join('\n').trim();
+}
+
+/** First N non-header lines of a remainder, for preview display. */
+export function previewRemainder(remainder: string, maxLines = 3): string[] {
+    return remainder.split('\n').filter(l => l.trim() && !/^\[.*\]$/.test(l.trim())).slice(0, maxLines);
+}

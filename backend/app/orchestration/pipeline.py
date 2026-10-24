@@ -160,6 +160,7 @@ class GenerateAndTranscribePipeline:
                     parent_lyrics=getattr(req, "parent_lyrics", None),
                     parent_structured_caption=getattr(req, "parent_structured_caption", None),
                     parent_job_id=getattr(req, "parent_job_id", None),
+                    tail_lyrics=getattr(req, "tail_lyrics", None),
                     **extra_gen_kwargs
                 )
             else:
@@ -429,6 +430,7 @@ class GenerateAndTranscribePipeline:
 
             # Finalize DB Record
             _tail_ok_out = None
+            _rv_out = None
             with Session(engine) as session:
                 job = session.get(Job, job_id)
                 if job:
@@ -481,10 +483,26 @@ class GenerateAndTranscribePipeline:
                                 logger.info(f"Extension {job_id_str} tail check passed: {_detail}")
                     except Exception as e:
                         logger.warning(f"Extension tail verification skipped for {job_id_str}: {e}")
+                    # Persist replay fidelity (full-timeline renders only): a
+                    # diverged replay used to sail through silently because the
+                    # splice masks the head. None = not a full render / unchecked.
+                    try:
+                        _rv = (gen_result.metadata or {}).get("replay_verified")
+                        if getattr(req, "is_extension", False) and _rv is not None:
+                            job.replay_verified = bool(_rv)
+                            if _rv is False:
+                                job.fallback_reason = (
+                                    (job.fallback_reason + " | " if job.fallback_reason else "")
+                                    + f"Replay fidelity check failed: {(gen_result.metadata or {}).get('replay_check_detail', 'groove mismatch')}"
+                                )
+                                logger.warning(f"Extension {job_id_str} replay check FAILED")
+                    except Exception as e:
+                        logger.warning(f"Extension replay flag persist skipped for {job_id_str}: {e}")
                     session.add(job)
                     session.commit()
                     # Capture for the SSE payload below (object detaches after commit).
                     _tail_ok_out = job.tail_lyrics_ok if getattr(req, "is_extension", False) else None
+                    _rv_out = job.replay_verified if getattr(req, "is_extension", False) else None
 
             # Emit final completion event (DB-persisted master path, not the
             # pre-voice-remix generator path, so consumers never get a stale URL)
@@ -496,6 +514,7 @@ class GenerateAndTranscribePipeline:
                 "cover_image_path": final_cover_path or getattr(req, "cover_image_path", None),
                 "extension_mode": (gen_result.metadata or {}).get("extension_mode") if getattr(req, "is_extension", False) else None,
                 "tail_lyrics_ok": _tail_ok_out,
+                "replay_verified": _rv_out,
             })
             event_manager.publish("job_progress", {
                 "job_id": job_id_str,

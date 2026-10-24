@@ -56,6 +56,7 @@ class Job(SQLModel, table=True):
     extend_from_sec: Optional[float] = Field(default=None)
     extension_mode: Optional[str] = Field(default=None) # kv_rollforward | state_restored | fresh_segment_fallback | no_parent_audio
     tail_lyrics_ok: Optional[bool] = Field(default=None) # post-hoc: tail sings the expected remainder (None = not checked)
+    replay_verified: Optional[bool] = Field(default=None) # post-hoc: full-timeline render replayed the parent groove (None = not checked)
     temperature: Optional[float] = Field(default=None)
     cfg_scale: Optional[float] = Field(default=None)
     topk: Optional[int] = Field(default=None)
@@ -350,6 +351,7 @@ class GenerationRequest(SQLModel):
     parent_lyrics: Optional[str] = None
     parent_structured_caption: Optional[Dict[str, str]] = None
     beat_grid: Optional[Dict[str, Any]] = None
+    tail_lyrics: Optional[str] = None # unsung remainder slice: fallback-only conditioning + UI preview (never steers the replay)
 
     @field_validator('tags', mode='before')
     @classmethod

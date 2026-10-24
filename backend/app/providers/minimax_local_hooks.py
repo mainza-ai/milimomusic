@@ -376,8 +376,8 @@ def generate_frame_hiddens_extended_hooked(
         last_hidden, cache = prefill_kv_cache_from_codes(
             language_model, depth_decoder, config,
             list(restore_codes)[:parent_frames],
-            last_hidden, cache,
             cancel_event=cancel_event,
+            progress_cb=progress_cb,
         )
         for _ in range(parent_frames + 1):
             key, _ = mx.random.split(key)

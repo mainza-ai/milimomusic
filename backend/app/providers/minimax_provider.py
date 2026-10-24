@@ -470,6 +470,185 @@ def build_locked_continuation_caption(
     }
 
 
+def resolve_extension_lyrics(base_parent_lyrics: Optional[str],
+                             explicit_lyrics: Optional[str]) -> Tuple[str, bool]:
+    """Decide the replay conditioning lyrics for a track extension.
+
+    The KV replay can only continue the parent's exact trajectory when the
+    conditioning text is byte-identical to the parent run's. The timed
+    remainder slice is transcription-normalized text (headers/line-breaks
+    differ from the stored lyrics), so it must NEVER be appended here —
+    appending it silently steers the replay into a fresh trajectory at the
+    prompt tempo instead of the parent's groove (the CROSS 107.7-vs-112 BPM
+    divergence). It is consumed only by the fresh-segment fallback path.
+
+    Returns (effective_lyrics, steered): steered=True only when genuinely new
+    (user-supplied or auto-generated) lyrics were appended.
+    """
+    base = base_parent_lyrics or ""
+    explicit = (explicit_lyrics or "").strip()
+    if explicit and explicit not in base:
+        effective = f"{base}\n\n{explicit}".strip() if base else explicit
+        return effective, True
+    return base, False
+
+
+def decide_extension_lyrics(base_parent_lyrics: Optional[str],
+                            additional_lyrics: Optional[str],
+                            auto_lyrics: Optional[str]) -> Tuple[str, str]:
+    """Split extension lyrics into (steer_lyrics, full_lyrics).
+
+    The timed remainder slice is deliberately NOT an input: it is
+    transcription-normalized text that is generally not a byte-substring of
+    the stored parent lyrics, so routing it here would silently steer the
+    replay (the CROSS divergence). It travels separately as tail_lyrics for
+    the fresh-segment fallback path only.
+    """
+    base = base_parent_lyrics or ""
+    full = base
+    steer = ""
+    additional = (additional_lyrics or "").strip()
+    auto = (auto_lyrics or "").strip()
+    if additional:
+        if not re.search(r'\[(.*?)\]', additional):
+            additional = f"[Verse]\n{additional}"
+        steer = additional
+    elif auto:
+        steer = auto
+    if steer:
+        full = f"{base}\n\n{steer}".strip() if base else steer
+    return steer, full
+
+
+def validate_song_state(state: Optional[Dict[str, Any]], seed: int,
+                        caption: str, lyrics: str,
+                        snapshot_path: Optional[str]) -> Optional[Dict[str, Any]]:
+    """Accept a loaded song-state bundle only if it matches this run exactly.
+
+    A bundle from a different seed, conditioning text, or snapshot would
+    restore a foreign trajectory while the splice still masks the head —
+    the tail would diverge silently. Returns the state when usable, else None.
+    """
+    if not state or not isinstance(state, dict):
+        return None
+    try:
+        from app.providers.minimax_local_hooks import conditioning_fingerprint
+        if int(state.get("seed", -1)) != int(seed):
+            logger.warning(
+                f"Song state seed mismatch (bundle={state.get('seed')} run={seed}); "
+                "ignoring bundle, falling back to deterministic replay."
+            )
+            return None
+        want_fp = conditioning_fingerprint(caption or "", lyrics or "")
+        if str(state.get("conditioning") or "") != want_fp:
+            logger.warning(
+                "Song state conditioning mismatch; ignoring bundle, "
+                "falling back to deterministic replay."
+            )
+            return None
+        if snapshot_path and state.get("snapshot_path") and \
+                str(state.get("snapshot_path")) != str(snapshot_path):
+            logger.warning("Song state snapshot mismatch; ignoring bundle.")
+            return None
+        if int(state.get("frames", 0)) <= 0 or not state.get("codes"):
+            return None
+        return state
+    except Exception as e:
+        logger.warning(f"Song state validation failed ({e}); falling back to replay.")
+        return None
+
+
+def _dominant_tempo_bpm(mono: "np.ndarray", sr: int) -> Optional[float]:
+    """Tracker-free tempo estimate via onset-envelope autocorrelation.
+
+    Beat trackers lock onto different metrical levels on swung/syncopated
+    material (e.g. reporting 161.5 for a 107.7 groove's triplet pulse), so
+    groove comparison uses the raw autocorrelation peak instead.
+    """
+    try:
+        import librosa
+        if mono.size < sr * 4:
+            return None
+        hop = 512
+        onset = librosa.onset.onset_strength(y=np.asarray(mono, dtype=np.float32),
+                                             sr=sr, hop_length=hop)
+        if onset.size < 16:
+            return None
+        ac = librosa.autocorrelate(onset)
+        freqs = librosa.tempo_frequencies(len(ac), hop_length=hop, sr=sr)
+        mask = (freqs >= 50.0) & (freqs <= 220.0)
+        idx = np.nonzero(mask)[0]
+        if idx.size == 0:
+            return None
+        best = idx[int(np.argmax(ac[idx]))]
+        return float(freqs[best])
+    except Exception:
+        return None
+
+
+def verify_extension_replay(render_path: str, parent_path: str,
+                             cut_sec: float) -> Dict[str, Any]:
+    """Post-hoc check that a full-timeline render replayed the parent groove.
+
+    Compares the render's head against parent disk audio: sample correlation
+    over the first ≤30s plus a tracker-free tempo comparison. Flow-step
+    differences between the parent run and the render change the decode
+    slightly (correlation ~0.99, not bit-exact), while a diverged AR replay
+    lands far lower (~0.3-0.7) and usually at a different tempo.
+
+    Never raises: returns {"replay_verified": True|False|None, ...} where
+    None means the check could not run.
+    """
+    try:
+        import soundfile as sf
+        r, sr_r = sf.read(render_path, dtype="float32", always_2d=True)
+        p, sr_p = sf.read(parent_path, dtype="float32", always_2d=True)
+        sr = int(sr_r)
+        rm = r.mean(axis=1) if r.ndim > 1 else r
+        pm = p.mean(axis=1) if p.ndim > 1 else p
+        if int(sr_p) != sr:
+            try:
+                import librosa
+                pm = librosa.resample(pm, orig_sr=int(sr_p), target_sr=sr)
+            except Exception:
+                return {"replay_verified": None, "detail": "sample-rate mismatch"}
+        win_sec = min(30.0, max(5.0, float(cut_sec) * 0.5))
+        n = min(int(win_sec * sr), rm.shape[0], pm.shape[0])
+        if n < sr * 2:
+            return {"replay_verified": None, "detail": "audio too short"}
+        rh, ph = rm[:n], pm[:n]
+        denom = float(np.sqrt((rh ** 2).sum()) * np.sqrt((ph ** 2).sum()))
+        corr = float((rh * ph).sum() / denom) if denom > 0 else 0.0
+        tempo_r = _dominant_tempo_bpm(rh, sr)
+        tempo_p = _dominant_tempo_bpm(ph, sr)
+        tempo_ok: Optional[bool] = None
+        tempo_ratio: Optional[float] = None
+        if tempo_r and tempo_p:
+            # Accept same-grid harmonics (half/double/triplet locks) but not
+            # genuinely different tempi: nearest ratio to 1, 0.5, 2, 1.5, 2/3.
+            ratio = tempo_r / tempo_p
+            nearest = min([1.0, 0.5, 2.0, 1.5, 2.0 / 3.0], key=lambda g: abs(ratio - g))
+            tempo_ratio = ratio / nearest
+            tempo_ok = abs(tempo_ratio - 1.0) <= 0.03
+        corr_ok = corr >= 0.90
+        if tempo_ok is None:
+            verified: Optional[bool] = corr_ok
+            detail = f"corr={corr:.3f} (tempo unavailable)"
+        else:
+            verified = bool(corr_ok and tempo_ok)
+            detail = (f"corr={corr:.3f} tempo_render={tempo_r:.1f} "
+                      f"tempo_parent={tempo_p:.1f} ratio={tempo_ratio:.3f}")
+        if verified is False:
+            logger.warning(f"Extension replay fidelity check FAILED: {detail}")
+        else:
+            logger.info(f"Extension replay fidelity check: {detail}")
+        return {"replay_verified": verified, "detail": detail, "corr": corr,
+                "tempo_render": tempo_r, "tempo_parent": tempo_p}
+    except Exception as e:
+        logger.warning(f"Extension replay verification skipped: {e}")
+        return {"replay_verified": None, "detail": f"check error: {e}"}
+
+
 def synthesize_dynamic_audio_waveform(
     duration_sec: float,
     seed: Optional[int],
@@ -1273,6 +1452,7 @@ class MiniMaxMusic3Provider(GenerationProvider):
         seed: Optional[int] = None,
         tags: Optional[str] = None,
         structured_caption: Optional[Dict[str, Any]] = None,
+        tail_lyrics: Optional[str] = None,
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         cancel_event: Optional[Any] = None,
         **kwargs
@@ -1302,18 +1482,25 @@ class MiniMaxMusic3Provider(GenerationProvider):
             base_parent_lyrics = kwargs.get("parent_lyrics") or ""
             # Conditioning rule for the KV replay: the tail can only continue the
             # parent's exact trajectory if the conditioning text is byte-identical
-            # to the parent run's. So by default (empty lyrics, or the timed
-            # remainder slice which is already contained in the parent lyrics)
-            # condition on the FULL parent lyrics verbatim. Only genuinely new
-            # lyrics (user-supplied additional or auto-generated continuation)
-            # steer by appending. The timed remainder slice is consumed by the
-            # fresh-segment fallback path, which generates only the tail.
-            if lyrics and lyrics.strip() and lyrics.strip() not in base_parent_lyrics:
-                effective_extension_lyrics = f"{base_parent_lyrics}\n\n{lyrics.strip()}".strip() if base_parent_lyrics else lyrics.strip()
-                lyrics_source = "explicit_steering"
-            else:
-                effective_extension_lyrics = base_parent_lyrics
-                lyrics_source = "full_parent_replay"
+            # to the parent run's. The timed remainder slice is
+            # transcription-normalized text (headers/line-breaks differ from the
+            # stored lyrics), so it must NEVER steer the replay: appending it
+            # diverges the whole trajectory into a fresh song at the prompt
+            # tempo instead of the parent's groove. Only genuinely new lyrics
+            # (user-supplied additional or auto-generated continuation) steer,
+            # and then the divergence is flagged honestly. The remainder slice
+            # is consumed only by the fresh-segment fallback path.
+            tail_lyrics = tail_lyrics if tail_lyrics is not None else kwargs.get("tail_lyrics")
+            effective_extension_lyrics, lyrics_steered = resolve_extension_lyrics(
+                base_parent_lyrics, lyrics
+            )
+            lyrics_source = "explicit_steering" if lyrics_steered else "full_parent_replay"
+            if lyrics_steered:
+                logger.warning(
+                    "Extension lyrics steer the replay (appended text not contained "
+                    "in parent lyrics): the tail will reinterpret, not seamlessly "
+                    "continue. This is expected only with custom continuation lyrics."
+                )
             # Mirror the parent run's model-input pipeline exactly: generate()
             # conditions on sanitize_section_tags(eff_lyrics), so the replay must
             # sanitize the same way or text_ids diverge from the parent run.
@@ -1376,6 +1563,13 @@ class MiniMaxMusic3Provider(GenerationProvider):
                 try:
                     from app.providers.minimax_local_hooks import load_song_state
                     _state = load_song_state(str(parent_job_id), snapshot_path=self.snapshot_path)
+                    # A bundle from a different seed/conditioning/snapshot would
+                    # restore a foreign trajectory while the splice masks the
+                    # head — the tail would diverge silently. Validate first.
+                    _state = validate_song_state(
+                        _state, int(seed), formatted_caption,
+                        effective_extension_lyrics, self.snapshot_path,
+                    )
                     if _state and int(_state.get("frames", 0)) > 0:
                         restore_codes = _state["codes"]
                         restore_source = _state
@@ -1414,11 +1608,28 @@ class MiniMaxMusic3Provider(GenerationProvider):
             extension_mode = "state_restored" if used_restore else "kv_rollforward"
             logger.info(f"Extension {job_id}: path={extension_mode} (restore={'yes' if used_restore else 'no'})")
 
+            # Post-hoc replay fidelity check (full-timeline renders only):
+            # compare the render's head against parent disk audio. A diverged
+            # replay (wrong conditioning/seed/snapshot) used to sail through
+            # silently because the splice masks the head — now it is flagged.
+            replay_check: Dict[str, Any] = {"replay_verified": None, "detail": "not a full-timeline render"}
             # Reconcile with resolved parent audio if on disk:
             # Splicing with crossfade over crossfade_sec guarantees exact parent disk audio up to cut point.
             # Restore mode emits TAIL-ONLY audio (full-timeline replay covers the whole song):
             # the splice flag must match what was actually rendered.
             is_full_timeline = not used_restore
+            if is_full_timeline and resolved_parent and os.path.exists(resolved_parent):
+                try:
+                    replay_check = await loop.run_in_executor(
+                        None,
+                        verify_extension_replay,
+                        raw_extended_wav,
+                        resolved_parent,
+                        parent_dur,
+                    )
+                except Exception as e:
+                    logger.warning(f"Extension replay verification error: {e}")
+                    replay_check = {"replay_verified": None, "detail": f"check error: {e}"}
             if resolved_parent and os.path.exists(resolved_parent):
                 beat_grid = kwargs.get("beat_grid")
                 total_duration = await loop.run_in_executor(
@@ -1503,6 +1714,9 @@ class MiniMaxMusic3Provider(GenerationProvider):
                     "extension_mode": extension_mode,
                     "restored_from_state": bool(used_restore),
                     "lyrics_source": lyrics_source,
+                    "conditioning_steered": bool(lyrics_steered),
+                    "replay_verified": replay_check.get("replay_verified"),
+                    "replay_check_detail": replay_check.get("detail"),
                     "conditioning_sha": hashlib.sha256(
                         (formatted_caption + "\n" + effective_extension_lyrics).encode("utf-8", "ignore")
                     ).hexdigest()[:16],
@@ -1511,11 +1725,14 @@ class MiniMaxMusic3Provider(GenerationProvider):
             )
 
         # Fallback path if MLX or seed unavailable:
+        # The tail-only segment sings the remainder slice (or explicit new
+        # lyrics); it never sees the full parent lyrics.
+        fallback_lyrics = (lyrics or "").strip() or ((tail_lyrics or kwargs.get("tail_lyrics") or "").strip() or None)
         temp_ext_job_id = f"{job_id}_ext_segment"
         ext_result = await self.generate(
             job_id=temp_ext_job_id,
             prompt=prompt or "",
-            lyrics=lyrics,
+            lyrics=fallback_lyrics,
             duration_ms=extend_ms,
             seed=seed,
             tags=tags,

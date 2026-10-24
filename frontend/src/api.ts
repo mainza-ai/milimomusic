@@ -131,6 +131,7 @@ export interface Job {
     extend_from_sec?: number;
     extension_mode?: string | null; // kv_rollforward | state_restored | fresh_segment_fallback | no_parent_audio
     tail_lyrics_ok?: boolean | null; // post-hoc tail sung-remainder check (None = not checked)
+    replay_verified?: boolean | null; // post-hoc replay fidelity: render replayed the parent groove (None = not checked)
     temperature?: number;
     cfg_scale?: number;
     topk?: number;
@@ -991,6 +992,7 @@ export interface ExtendTrackResult {
     seed?: number | null;
     crossfade_sec?: number;
     expected_mode?: string;
+    conditioning_steered?: boolean; // true when custom lyrics steer the tail (reinterpretation, not seamless continue)
     remaining_lyrics?: string;
     remaining_chars?: number;
 }

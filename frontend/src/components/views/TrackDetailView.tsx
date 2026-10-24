@@ -2027,6 +2027,16 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                     ✓ Tail lyrics verified against the unsung remainder.
                                 </span>
                             )}
+                            {track.replay_verified === false && (
+                                <span className="text-xs text-amber-700 dark:text-amber-300 font-semibold block mt-1">
+                                    ⚠️ The continuation diverged from the parent take (groove/tempo mismatch) — the tail reinterprets rather than continues.
+                                </span>
+                            )}
+                            {track.replay_verified === true && (
+                                <span className="text-xs text-teal-700/70 dark:text-teal-300/70 block mt-1">
+                                    ✓ Replay verified — the tail continues the parent groove.
+                                </span>
+                            )}
                         </div>
                     )}
 

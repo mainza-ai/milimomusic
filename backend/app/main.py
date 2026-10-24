@@ -212,6 +212,7 @@ def create_db_and_tables():
             "extend_from_sec": "FLOAT",
             "extension_mode": "VARCHAR",
             "tail_lyrics_ok": "BOOLEAN",
+            "replay_verified": "BOOLEAN",
             "video_path": "VARCHAR",
             "video_config_json": "TEXT"
         }
@@ -3770,6 +3771,12 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
         # so the tail sings what the parent never reached instead of re-placing
         # the whole song. Only explicit user input or explicit opt-in
         # (auto_generate_lyrics=True) overrides this.
+        #
+        # Replay-conditioning rule (see resolve_extension_lyrics): the KV replay
+        # must condition on the FULL parent lyrics verbatim. The remainder
+        # slice is transcription-normalized text and must NEVER steer the
+        # replay — it travels separately as tail_lyrics for the fallback path
+        # and the UI preview. Only genuinely new lyrics may steer, flagged.
         has_additional_lyrics = bool(req.additional_lyrics and req.additional_lyrics.strip())
         auto_gen_opt_in = getattr(req, "auto_generate_lyrics", False)
 
@@ -3777,39 +3784,41 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
             parent_lyrics, parent_job.timed_lyrics_json, extend_from
         )
 
-        continuation_lyrics = ""
+        from app.providers.minimax_provider import decide_extension_lyrics
+        steer_lyrics = ""
         full_lyrics = parent_lyrics or ""
 
         if has_additional_lyrics:
-            c_lyrics = req.additional_lyrics.strip()
-            if not re.search(r'\[(.*?)\]', c_lyrics):
-                c_lyrics = f"[Verse]\n{c_lyrics}"
-            continuation_lyrics = c_lyrics
-            full_lyrics = f"{full_lyrics}\n\n{c_lyrics}".strip() if full_lyrics else c_lyrics
+            steer_lyrics, full_lyrics = decide_extension_lyrics(
+                parent_lyrics, req.additional_lyrics, None
+            )
         elif auto_gen_opt_in:
             try:
                 from app.services.llm_service import LLMService
                 topic = f"Continuation of song: {parent_lyrics[-250:] if parent_lyrics else parent_prompt}"
                 ai_lyrics = await LLMService.generate_lyrics_async(topic=topic, tags=parent_tags or "pop")
                 if ai_lyrics and ai_lyrics.strip():
-                    continuation_lyrics = ai_lyrics.strip()
-                    full_lyrics = f"{full_lyrics}\n\n{continuation_lyrics}".strip() if full_lyrics else continuation_lyrics
+                    steer_lyrics, full_lyrics = decide_extension_lyrics(
+                        parent_lyrics, None, ai_lyrics
+                    )
             except Exception as e:
                 logger.warning("Failed to auto-generate continuation lyrics: %s", e)
         else:
-            # Default: pass the unsung remainder as the continuation lyrics.
-            # The KV roll-forward path conditions on the full parent lyrics
-            # verbatim (byte-identical replay), while the fresh-segment fallback
-            # path generates only the tail — for which the remainder slice is
-            # the correct conditioning. The library record keeps the full
-            # parent lyrics regardless.
-            continuation_lyrics = remaining_lyrics
+            # Default: the replay conditions on the full parent lyrics verbatim
+            # (byte-identical replay); the unsung remainder travels separately
+            # as tail_lyrics for the fresh-segment fallback path and the UI
+            # preview. The library record keeps the full parent lyrics.
             full_lyrics = parent_lyrics or ""
             if remaining_lyrics:
                 logger.info(
                     f"Extend {job_id}: {len(remaining_lyrics)} chars of remaining lyrics "
                     f"from {extend_from:.1f}s available for the tail"
                 )
+
+        # Will the replay conditioning be steered? Only genuinely new lyrics
+        # steer; the default (no new lyrics) always replays verbatim.
+        from app.providers.minimax_provider import resolve_extension_lyrics
+        _, conditioning_steered = resolve_extension_lyrics(parent_lyrics, steer_lyrics)
 
         # Guard: extending past the last sung line with no new lyrics only
         # makes sense for instrumentals. For vocal tracks it would generate
@@ -3909,7 +3918,8 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
     gen_req = GenerationRequest(
         title=child_title,
         prompt=gen_prompt,
-        lyrics=continuation_lyrics,
+        lyrics=steer_lyrics,
+        tail_lyrics=remaining_lyrics,
         duration_ms=delta_ms,
         tags=parent_tags,
         seed=effective_seed,
@@ -3946,6 +3956,7 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
         "seed": effective_seed,
         "crossfade_sec": crossfade_sec,
         "expected_mode": expected_mode,
+        "conditioning_steered": bool(conditioning_steered),
         "remaining_lyrics": remaining_lyrics,
         "remaining_chars": len(remaining_lyrics),
     }

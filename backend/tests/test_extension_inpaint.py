@@ -1,4 +1,5 @@
 import pytest
+import os
 import uuid
 import asyncio
 import httpx
@@ -9,6 +10,30 @@ from sqlmodel import Session, select
 from app.main import app, engine, split_remaining_lyrics
 from app.models import Job, JobStatus, TrackExtendRequest, TrackInpaintRequest
 from app.core.paths import get_generated_audio_dir
+
+
+def _live_inference_available() -> bool:
+    """True when a real MLX snapshot is on disk: live endpoint tests would
+    run genuine multi-minute GPU inference (and fight the dev backend for
+    ~30GB RAM) instead of the fast fallback path used in snapshot-less CI."""
+    try:
+        from app.providers.minimax_provider import (
+            DEFAULT_MINIMAX_SNAPSHOT,
+            _MLX_AUDIO_AVAILABLE,
+        )
+        return bool(
+            _MLX_AUDIO_AVAILABLE
+            and DEFAULT_MINIMAX_SNAPSHOT
+            and os.path.isdir(DEFAULT_MINIMAX_SNAPSHOT)
+        )
+    except Exception:
+        return False
+
+
+needs_snapshotless_env = pytest.mark.skipif(
+    _live_inference_available(),
+    reason="live MLX snapshot present: endpoint test would run real inference",
+)
 
 
 class SyncTestClient:
@@ -76,6 +101,7 @@ def test_track_inpaint_request_schema():
     assert req.crossfade_sec == 1.0
 
 
+@needs_snapshotless_env
 def test_extension_lyrics_never_auto_added_by_default():
     client = SyncTestClient(app)
     gen_dir = get_generated_audio_dir()
@@ -138,6 +164,7 @@ def test_extension_lyrics_never_auto_added_by_default():
         assert "[Verse 1]" in child2_job.lyrics
 
 
+@needs_snapshotless_env
 def test_inpaint_track_endpoint():
     client = SyncTestClient(app)
     gen_dir = get_generated_audio_dir()

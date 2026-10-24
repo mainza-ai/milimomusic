@@ -290,7 +290,10 @@ export const ExtendTrackModal: React.FC = () => {
                 : res.expected_mode === 'kv_rollforward' ? 'deterministic continuation'
                 : res.expected_mode === 'no_parent_audio' ? 'fresh audio (no parent found!)'
                 : 'fresh segment';
-            toast(`Extension queued! Cut at ${formatTime(res.extend_from_sec)} → ${formatTime(res.target_duration_sec)} · ${modeLabel}.`, 'success');
+            const steerNote = res.conditioning_steered
+                ? ' Custom lyrics steer the tail — expect reinterpretation, not a seamless continue.'
+                : '';
+            toast(`Extension queued! Cut at ${formatTime(res.extend_from_sec)} → ${formatTime(res.target_duration_sec)} · ${modeLabel}.${steerNote}`, 'success');
             closeExtendTrack();
         } catch (err: any) {
             console.error('Failed to extend track:', err);

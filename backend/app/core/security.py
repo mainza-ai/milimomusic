@@ -26,8 +26,9 @@ from typing import Iterable, Tuple
 from fastapi import HTTPException
 from starlette.requests import Request
 
-# Paths that never require a token.
-EXEMPT_PREFIXES = ("/health", "/docs", "/redoc", "/openapi.json")
+# Paths that never require the API token.
+#   /share  — a signed, expiring link IS the credential for that one track.
+EXEMPT_PREFIXES = ("/health", "/docs", "/redoc", "/openapi.json", "/share")
 
 # Static media served by app.mount(); readable from loopback without a header.
 MEDIA_PREFIXES = ("/audio", "/covers", "/stems", "/generated_audio")

@@ -198,3 +198,33 @@ def test_duplicate_playlist_membership_is_rejected():
         )).all()}
     assert "ux_playlist_track" in idx
     assert "ux_agent_assignment_role" in idx
+
+
+def test_owner_id_is_present_and_stamped():
+    """D2: every job row is owned, so a hosted mode is a migration not a rewrite."""
+    from app.main import engine
+    from app.models import Job
+    import uuid as _uuid
+
+    job_id = _uuid.uuid4()
+    with Session(engine) as session:
+        session.add(Job(id=job_id, prompt="owner probe", status=JobStatus.QUEUED))
+        session.commit()
+        job = session.get(Job, job_id)
+        assert job.owner_id == "local"
+        session.delete(job)
+        session.commit()
+
+
+def test_scoped_helper_is_a_noop_for_the_local_owner():
+    from sqlmodel import select
+
+    from app.core.sharing import owner_id, scoped
+    from app.main import engine
+    from app.models import Job
+
+    assert owner_id() == "local"
+    with Session(engine) as session:
+        statement = scoped(select(Job), Job)
+        # The statement must still execute (no schema assumptions).
+        session.exec(statement).all()

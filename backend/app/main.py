@@ -243,7 +243,8 @@ def _legacy_create_db_and_tables():
             "last_heartbeat_at": "DATETIME",
             "attempts": "INTEGER DEFAULT 0",
             "max_attempts": "INTEGER DEFAULT 2",
-            "session_state_json": "TEXT"
+            "session_state_json": "TEXT",
+            "owner_id": "VARCHAR DEFAULT 'local'"
         }
         for col, col_type in new_columns.items():
             if col not in existing_cols:
@@ -4477,6 +4478,73 @@ async def upload_job_cover(job_id: str, file: UploadFile = File(...)):
             "title": job.title or job.prompt,
         })
         return job
+
+
+@app.post("/tracks/{job_id}/share")
+def create_track_share(job_id: str, payload: dict = Body(default={})):
+    """Mint a signed, expiring, read-only link for one track (decision D2)."""
+    from app.core.sharing import mint_share_token
+
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+        if not job.audio_path:
+            raise HTTPException(status_code=400, detail="Track has no audio to share yet")
+
+    ttl = payload.get("ttl_hours")
+    share = mint_share_token(str(job_id), ttl_hours=ttl)
+    return {**share, "status": "ok"}
+
+
+@app.get("/share/{token}")
+def open_shared_track(token: str, download: int = 0):
+    """Read-only access to a shared track — no API token required.
+
+    Serves the metadata (and optionally the audio) for a minted share link. The
+    signature is verified before the database is touched.
+    """
+    from app.core.sharing import verify_share_token
+
+    payload = verify_share_token(token)
+    if not payload:
+        raise HTTPException(status_code=403, detail={"error": {
+            "code": "invalid_share_token",
+            "message": "This share link is invalid or has expired.",
+        }})
+
+    with Session(engine) as session:
+        job = get_job_by_id(session, payload["j"])
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+
+        if download:
+            resolved = resolve_audio_file(job.audio_path) if job.audio_path else None
+            if not resolved or not os.path.isfile(resolved):
+                raise HTTPException(status_code=404, detail="Audio file not found on disk")
+            if not is_allowed_media_path(resolved, allow_exts=ALL_MEDIA_EXTS):
+                raise HTTPException(status_code=404, detail="Audio file not found on disk")
+            safe_title = re.sub(r"[^a-zA-Z0-9_\- ]", "", job.title or "track").strip().replace(" ", "_")
+            return FileResponse(resolved, media_type="audio/wav",
+                                filename=f"{safe_title or 'track'}{os.path.splitext(resolved)[1]}")
+
+        try:
+            timed = json.loads(job.timed_lyrics_json) if job.timed_lyrics_json else []
+        except (TypeError, ValueError):
+            timed = []
+        return {
+            "job_id": str(job.id),
+            "title": job.title,
+            "prompt": job.prompt,
+            "lyrics": job.lyrics,
+            "tags": job.tags,
+            "duration_ms": job.duration_ms,
+            "audio_url": f"/share/{token}?download=1" if job.audio_path else None,
+            "cover_image_path": job.cover_image_path,
+            "timed_lyrics": timed,
+            "quality": job.quality,
+            "expires_at": payload.get("e"),
+        }
 
 
 @app.get("/jobs/{job_id}/studio-pack")

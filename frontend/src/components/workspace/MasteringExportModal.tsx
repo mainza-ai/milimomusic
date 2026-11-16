@@ -11,10 +11,12 @@ import {
     Sliders,
     Disc,
     Sparkles,
+    Link2,
     Loader2
 } from 'lucide-react';
-import { api, API_BASE_URL, workspaceApi, type Job } from '../../api';
+import { api, API_BASE_URL, trackApi, workspaceApi, type Job } from '../../api';
 import { toast } from '../../utils/toast';
+import { showError } from '../../utils/confirm';
 
 interface MasteringExportModalProps {
     isOpen: boolean;
@@ -246,6 +248,37 @@ export const MasteringExportModal: React.FC<MasteringExportModalProps> = ({
                                     ) : (
                                         <Download size={15} />
                                     )}
+                                </button>
+                            </div>
+
+                            {/* Share link: an expiring, read-only URL (decision D2) */}
+                            <div className="p-3.5 rounded-2xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/5 dark:border-white/5 flex items-center justify-between">
+                                <div className="flex items-center gap-3 min-w-0">
+                                    <div className="p-2 rounded-xl bg-violet-500/10 text-violet-500 shrink-0">
+                                        <Link2 size={18} />
+                                    </div>
+                                    <div className="min-w-0">
+                                        <div className="text-xs font-bold truncate">Share this track</div>
+                                        <div className="text-[10px] text-slate-400 font-mono">
+                                            Read-only link · expires in 72h
+                                        </div>
+                                    </div>
+                                </div>
+                                <button
+                                    onClick={async () => {
+                                        try {
+                                            const share = await trackApi.createShareLink(job.id, 72);
+                                            const absolute = `${window.location.origin}${share.url.replace('/share/', '/share/')}`;
+                                            await navigator.clipboard?.writeText(absolute).catch(() => {});
+                                            toast('Share link copied — anyone with it can listen, nobody can edit.', 'success');
+                                        } catch (err) {
+                                            showError(err, 'Could not create a share link');
+                                        }
+                                    }}
+                                    className="px-3 py-2 rounded-xl bg-black/5 dark:bg-white/10 hover:bg-violet-500 hover:text-slate-950 transition-colors shrink-0 text-[11px] font-bold"
+                                    title="Create an expiring read-only link"
+                                >
+                                    Copy link
                                 </button>
                             </div>
 

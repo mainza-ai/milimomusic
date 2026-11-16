@@ -1136,6 +1136,11 @@ export const trackApi = {
         });
         return res.data;
     },
+    /** Mint an expiring read-only share link (decision D2). */
+    createShareLink: async (jobId: string, ttlHours?: number): Promise<{ token: string; url: string; expires_at: number }> => {
+        const res = await axios.post(`${API_BASE_URL}/tracks/${jobId}/share`, { ttl_hours: ttlHours });
+        return res.data;
+    },
     getLrcUrl: (jobId: string): string => {
         return `${API_BASE_URL}/tracks/${jobId}/lrc`;
     },

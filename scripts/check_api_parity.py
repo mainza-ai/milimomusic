@@ -25,6 +25,7 @@ FRONTEND_SRC = REPO_ROOT / "frontend" / "src"
 # (method, normalized path) -> reason. Ops-only or intentionally UI-less routes.
 EXEMPT_ROUTES: dict[tuple[str, str], str] = {
     ("DELETE", "/agents/runs"): "ops retention prune (MILIMO_RUN_RETENTION_DAYS); intentionally UI-less",
+    ("GET", "/share/{id}"): "public read-only share page opened by an external browser, not the SPA",
 }
 
 _AXIOS_RE = re.compile(r"axios\.(get|post|put|patch|delete)(?:<[^>]*>)?\(\s*[`'\"]([^`'\"]+)[`'\"]")

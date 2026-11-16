@@ -111,6 +111,9 @@ class Job(SQLModel, table=True):
     artist_profile_id: Optional[str] = Field(default=None, index=True)  # album provenance (declared: migration adds the column; bridge writes it)
     voice_profile_id: Optional[str] = Field(default=None)  # persisted per track
 
+    # Ownership (decision D2): always "local" today, but present on every
+    # user-owned row so a hosted mode is a migration rather than a rewrite.
+    owner_id: str = Field(default="local", index=True)
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     # Liveness: bumped by every pipeline progress tick. `updated_at` cannot serve

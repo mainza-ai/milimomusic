@@ -8,7 +8,9 @@ so it cannot come back.
 
 from __future__ import annotations
 
+import base64
 import os
+import time
 import uuid
 from pathlib import Path
 
@@ -244,3 +246,66 @@ def test_auth_gate_query_token_only_on_events(monkeypatch):
     monkeypatch.setenv("MILIMO_AUTH_TOKEN", "s3cret")
     assert evaluate_request("GET", "/events", {}, "s3cret", "203.0.113.9")[0] is True
     assert evaluate_request("GET", "/history", {}, "s3cret", "203.0.113.9")[0] is False
+
+
+# ── share links (decision D2) ──────────────────────────────────────────────
+
+def test_share_token_roundtrip():
+    from app.core.sharing import mint_share_token, verify_share_token
+
+    share = mint_share_token("job-123", ttl_hours=1)
+    payload = verify_share_token(share["token"])
+    assert payload is not None
+    assert payload["j"] == "job-123"
+    assert payload["k"] == "track"
+
+
+def test_share_token_rejects_tampering():
+    from app.core.sharing import mint_share_token, verify_share_token
+
+    token = mint_share_token("job-123", ttl_hours=1)["token"]
+    body, _, sig = token.partition(".")
+    # Swap the payload but keep the signature: must be rejected.
+    forged = base64.urlsafe_b64encode(b'{"j":"job-999","k":"track","e":9999999999}').decode().rstrip("=")
+    assert verify_share_token(f"{forged}.{sig}") is None
+    # …and a truncated signature.
+    assert verify_share_token(f"{body}.{sig[:-4]}") is None
+
+
+def test_share_token_expires(monkeypatch):
+    from app.core import sharing
+
+    token = sharing.mint_share_token("job-123", ttl_hours=0.001)["token"]
+    assert sharing.verify_share_token(token) is not None
+    real_time = time.time()
+    monkeypatch.setattr(sharing.time, "time", lambda: real_time + 3600)
+    assert sharing.verify_share_token(token) is None
+
+
+def test_share_routes_are_public_and_validated(client):
+    """`/share/...` needs no API token (the link is the credential) but a bad one 403s."""
+    res = client.get("/share/not-a-real-token")
+    assert res.status_code == 403
+    assert res.json()["error"]["code"] == "invalid_share_token"
+
+
+def test_share_link_serves_a_track_without_auth(client):
+    import uuid as _uuid
+    from sqlmodel import Session
+
+    from app.core.sharing import mint_share_token
+    from app.main import engine
+    from app.models import Job
+
+    job_id = _uuid.uuid4()
+    with Session(engine) as session:
+        session.add(Job(id=job_id, prompt="share probe", title="Shareable",
+                        status="completed", lyrics="hello"))
+        session.commit()
+
+    token = mint_share_token(str(job_id), ttl_hours=1)["token"]
+    res = client.get(f"/share/{token}")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["title"] == "Shareable"
+    assert body["lyrics"] == "hello"

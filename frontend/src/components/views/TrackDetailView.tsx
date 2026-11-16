@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useMemo } from 'react';
 import {
     type Job,
     type VoiceProfile,
@@ -15,6 +15,7 @@ import {
 } from '../../api';
 import { useAudioEngine } from '../../context/AudioEngineContext';
 import { toast } from '../../utils/toast';
+import { safeJsonParse } from '../../utils/safeJsonParse';
 import {
     ArrowLeft,
     Play,
@@ -337,26 +338,28 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
         voiceApi.listProfiles().then(setVoiceProfiles).catch(console.error);
     }, []);
 
-    // Parse metadata safely
-    const stemsData = track.stems_json ? (() => {
-        try { return JSON.parse(track.stems_json); } catch { return {}; }
-    })() : {};
+    // Parse metadata safely — and only when the source string changes.
+    // `notes_json` for a full transcription is hundreds of KB; parsing five blobs
+    // on every render meant re-parsing 30x/second while the player was running.
+    const stemsData = useMemo(
+        () => safeJsonParse<Record<string, any>>(track.stems_json, {}, 'stems_json'),
+        [track.stems_json]);
 
-    const notesData = track.notes_json ? (() => {
-        try { return JSON.parse(track.notes_json); } catch { return []; }
-    })() : [];
+    const notesData = useMemo(
+        () => safeJsonParse<any[]>(track.notes_json, [], 'notes_json'),
+        [track.notes_json]);
 
-    const beatGrid = track.beat_grid_json ? (() => {
-        try { return JSON.parse(track.beat_grid_json); } catch { return {}; }
-    })() : {};
+    const beatGrid = useMemo(
+        () => safeJsonParse<Record<string, any>>(track.beat_grid_json, {}, 'beat_grid_json'),
+        [track.beat_grid_json]);
 
-    const timedLyrics = track.timed_lyrics_json ? (() => {
-        try { return JSON.parse(track.timed_lyrics_json); } catch { return []; }
-    })() : [];
+    const timedLyrics = useMemo(
+        () => safeJsonParse<any[]>(track.timed_lyrics_json, [], 'timed_lyrics_json'),
+        [track.timed_lyrics_json]);
 
-    const structuredCaption = track.structured_caption_json ? (() => {
-        try { return JSON.parse(track.structured_caption_json); } catch { return {}; }
-    })() : {};
+    const structuredCaption = useMemo(
+        () => safeJsonParse<Record<string, any>>(track.structured_caption_json, {}, 'structured_caption_json'),
+        [track.structured_caption_json]);
 
     const [isRealigningLyrics, setIsRealigningLyrics] = useState(false);
     const [lyricsDisplayMode, setLyricsDisplayMode] = useState<'karaoke' | 'raw'>('karaoke');

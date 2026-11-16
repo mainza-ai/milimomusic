@@ -18,6 +18,37 @@ dependency spine so each phase leaves the app shippable.
 Every task names the files to touch and an observable acceptance criterion. Effort is in
 focused engineer-days.
 
+## Implementation status (2026-11-16)
+
+| Phase | Status | Evidence |
+|---|---|---|
+| **0 — Stop the bleeding** | ✅ **Complete** (16/16) | `415 → 449` tests green; exploit chain closed; YuE2 + Training Studio gone |
+| **1 — Provenance contract** | ✅ **Complete** (18/18) | `provenance.py`, `quality` on Job + SSE, honest transcription/voice/separation/image/video |
+| **2 — Spine** | 🟡 **Part 1 done** (9/15) | queue integrity, one recovery policy, stall sweeper, **Alembic + backups**, indexes/unique constraints, disk guard, lock ownership |
+| **3 — DAW core** | 🟡 **Bug-fix subset done** (5/17) | code splitting (**1.25 MB → 568 kB entry**), per-view ErrorBoundary, guarded+memoized parses, A/B audition fix, honest progress |
+| **4 — Media truth** | ⬜ **Not started** in code (1.15/1.16 landed in Phase 1) | engine honesty + refusal is in; lattice trim, storyboard persistence, real compile remain |
+| **5 — Platform & API** | ⬜ **Not started** | decision-dependent auth landed in 0.3; typed bodies/envelope/SSE replay remain |
+| **6 — Hardening** | 🟡 **Part done** | CI lint/audit/migration-smoke/E2E jobs, `ruff` bug-class gate clean, pytest-timeout + offline env |
+
+**Verification at time of writing:** backend `449 passed, 2 skipped, 3 deselected`
+(0 failures, 104 s — the suite previously hung indefinitely); frontend `tsc -b` + `vite
+build` green; live server on `:8010` migrated to Alembic `0003` and serving
+`/health` with db/disk/queue.
+
+### Deferred — with reasons, not silently dropped
+
+| Task | Why deferred |
+|---|---|
+| 2.1 music jobs onto the durable queue | Needs a worker loop + claim semantics; the recovery policy and CANCELLED state it depends on are now in place, so this is the natural next step |
+| 2.2 bounded retries | Columns (`attempts`, `max_attempts`) ship; the retry classifier needs per-provider error taxonomy work |
+| 2.8 one UUID encoding | Requires a data-repair pass over existing rows; must follow a verified backup |
+| 2.9 real foreign keys | SQLite needs table rebuilds + orphan repair; do it behind Alembic batch mode with the backup path now available |
+| 2.11 `job_artifact` table + soft delete | Touches every delete path; better after 2.9 |
+| 3.1–3.5 clip editing, workspace undo, tempo map, loop accuracy, piano-roll tools | ~14 days of DAW work; the highest-value remaining item, untouched because it needs a sustained build |
+| 4.1–4.16 media truth | Lattice trim + assembly normalisation are the two that matter most; the engine-honesty half already shipped |
+| 5.1–5.12 API/platform | Router split deliberately last (merge-conflict cost); one error envelope and typed bodies are the next-best slice |
+| 6.3 exact dependency pinning | `uv.lock` generation needs a full resolution run; `npm ci` is already used in CI |
+
 > [!IMPORTANT] **Scope is closed (D1–D6).** YuE2 and the Training Studio are deleted, not
 > fixed; the product is **single-user with multi-tenant-ready columns**; HeartMuLa is kept
 > but demoted and MuLaCover is kept and de-stubbed; cloud video is **fal only**; automation

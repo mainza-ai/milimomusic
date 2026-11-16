@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback, lazy, Suspense } from 'react';
 import axios from 'axios';
 import {
   api,
@@ -21,7 +21,7 @@ import { HardwareTelemetryBar } from './components/common/HardwareTelemetryBar';
 import { EngineSwitcherModal } from './components/modals/EngineSwitcherModal';
 import { ExtendTrackModal } from './components/workspace/ExtendTrackModal';
 import { useModalStore } from './stores/useModalStore';
-import { SessionWorkspace } from './components/workspace/SessionWorkspace';
+const SessionWorkspace = lazy(() => import('./components/workspace/SessionWorkspace').then(m => ({ default: m.SessionWorkspace })));
 import { FloatingStatusWidget } from './components/ui/FloatingStatusWidget';
 import { MilimoLogo } from './components/ui/MilimoLogo';
 import { useTheme } from './context/ThemeContext';
@@ -32,16 +32,16 @@ import { isTerminalJobStatus, isCancelledJobStatus } from './utils/jobStatus';
 import { CommandPalette, type CommandItem } from './components/ui/CommandPalette';
 
 // Dedicated Reference IA Views
-import { SongsView } from './components/views/SongsView';
-import { ArtistsView } from './components/views/ArtistsView';
+const SongsView = lazy(() => import('./components/views/SongsView').then(m => ({ default: m.SongsView })));
+const ArtistsView = lazy(() => import('./components/views/ArtistsView').then(m => ({ default: m.ArtistsView })));
 import { ErrorBoundary } from './components/ErrorBoundary';
-import { PlaylistsView } from './components/views/PlaylistsView';
-import { ProjectsView } from './components/views/ProjectsView';
-import { MusicVideosView } from './components/views/MusicVideosView';
-import { ImageStudioView } from './components/views/ImageStudioView';
-import { VocalStudioView } from './components/views/VocalStudioView';
-import { ProfileView } from './components/views/ProfileView';
-import { TrackDetailView } from './components/views/TrackDetailView';
+const PlaylistsView = lazy(() => import('./components/views/PlaylistsView').then(m => ({ default: m.PlaylistsView })));
+const ProjectsView = lazy(() => import('./components/views/ProjectsView').then(m => ({ default: m.ProjectsView })));
+const MusicVideosView = lazy(() => import('./components/views/MusicVideosView').then(m => ({ default: m.MusicVideosView })));
+const ImageStudioView = lazy(() => import('./components/views/ImageStudioView').then(m => ({ default: m.ImageStudioView })));
+const VocalStudioView = lazy(() => import('./components/views/VocalStudioView').then(m => ({ default: m.VocalStudioView })));
+const ProfileView = lazy(() => import('./components/views/ProfileView').then(m => ({ default: m.ProfileView })));
+const TrackDetailView = lazy(() => import('./components/views/TrackDetailView').then(m => ({ default: m.TrackDetailView })));
 import { GlobalAudioPlayer } from './components/ui/GlobalAudioPlayer';
 import { AppFooter } from './components/ui/AppFooter';
 
@@ -99,6 +99,15 @@ export type NavView =
   | 'workspace'
   | 'sessions'
   | 'track-detail';
+
+const ViewLoading: React.FC = () => (
+  <div className="flex-1 flex items-center justify-center" role="status" aria-label="Loading view">
+    <div className="flex items-center gap-2 text-xs font-medium text-slate-400">
+      <Loader2 size={14} className="animate-spin" />
+      <span>Loading…</span>
+    </div>
+  </div>
+);
 
 function App() {
   const { theme, setTheme } = useTheme();
@@ -1768,7 +1777,12 @@ function App() {
           </div>
         )}
 
-        {/* View Switching Logic */}
+        {/* View Switching Logic.
+            One boundary keyed by the active view: a crash inside a session/DAW or
+            a studio replaces THAT view with a recovery card, and switching views
+            remounts a fresh boundary instead of requiring a page reload. */}
+        <ErrorBoundary key={currentNav} sectionName={currentNav}>
+        <Suspense fallback={<ViewLoading />}>
         {currentNav === 'workspace' && activeWorkspaceJob ? (
           <div className="flex-1 overflow-hidden flex flex-col min-w-0">
             <SessionWorkspace
@@ -1832,9 +1846,7 @@ function App() {
             }}
           />
         ) : currentNav === 'artists' ? (
-          <ErrorBoundary sectionName="Artists">
             <ArtistsView initialProfileId={artistLinkId} />
-          </ErrorBoundary>
         ) : currentNav === 'projects' ? (
           <ProjectsView
             allJobs={history}
@@ -2259,6 +2271,8 @@ function App() {
             </div>
           </div>
         )}
+        </Suspense>
+        </ErrorBoundary>
       </main>
 
       {/* 3. Right Slide-Over Composer Panel (Adaptive & Collapsible) */}

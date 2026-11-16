@@ -5,6 +5,7 @@ and inference execution supporting up to 5-minute song generation.
 """
 
 import os
+import shutil
 import re
 import json
 import asyncio

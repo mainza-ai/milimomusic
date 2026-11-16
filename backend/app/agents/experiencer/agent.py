@@ -10,7 +10,7 @@ usage capture). No provider code lives here — this file is persona + contract.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import List
+from typing import Optional, List
 
 from app.agents.experiencer.persona import EXPERIENCER_SYSTEM
 from app.agents.experiencer.schemas import AlbumBrief, ExperiencerVision

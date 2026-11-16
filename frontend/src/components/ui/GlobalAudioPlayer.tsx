@@ -1,5 +1,6 @@
-import React, { useState } from 'react';
+import React, { useMemo, useState } from 'react';
 import { type Job, type TimedLine, API_BASE_URL, api } from '../../api';
+import { safeJsonParse } from '../../utils/safeJsonParse';
 import { useAudioEngine } from '../../context/AudioEngineContext';
 import { DEFAULT_COVER_ART } from '../../constants/assets';
 import {
@@ -78,11 +79,13 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
   const [isLyricsOpen, setIsLyricsOpen] = useState(false);
   const [isCopied, setIsCopied] = useState(false);
 
-  const timedLyrics: TimedLine[] = currentSong?.timed_lyrics_json
-    ? typeof currentSong.timed_lyrics_json === 'string'
-      ? JSON.parse(currentSong.timed_lyrics_json)
-      : currentSong.timed_lyrics_json
-    : [];
+  // Guarded + memoized: an unguarded JSON.parse here threw during render and
+  // replaced the entire app with the crash card (taking unsaved piano-roll edits
+  // with it), and re-parsed a multi-KB blob 30x/second during playback.
+  const timedLyrics: TimedLine[] = useMemo(
+    () => safeJsonParse<TimedLine[]>(currentSong?.timed_lyrics_json, [], 'timed_lyrics_json'),
+    [currentSong?.timed_lyrics_json]
+  );
 
   const rawLyrics = currentSong?.lyrics || '';
 

@@ -43,7 +43,7 @@ logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Body, Query, Request, Response
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Body, Query, Request
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -486,8 +486,6 @@ app.add_middleware(
 
 # Every route requires the bearer token when MILIMO_AUTH_TOKEN is set;
 # exemptions (/health, docs, static media) live inside the dependency itself.
-from fastapi import Depends  # noqa: E402  (kept beside usage for clarity)
-from starlette.requests import Request  # noqa: E402
 from starlette.responses import JSONResponse  # noqa: E402
 
 # Rate limiting on expensive routes (agents/generation/uploads/mastering).
@@ -2952,7 +2950,6 @@ def get_visual_gallery(
     offset: int = 0
 ):
     """Retrieve visual assets stored in the local studio gallery."""
-    from app.models import VisualAsset
     from sqlmodel import select
     with Session(engine) as session:
         statement = select(VisualAsset)
@@ -4519,7 +4516,7 @@ def commit_vocal_to_track(job_id: str, body: dict = Body(...)):
 
 
 @app.get("/jobs/{job_id}/export")
-def export_track_asset(
+def export_job_audio(
     job_id: str,
     format: str = "wav",
     sample_rate: int = 48000,

@@ -660,6 +660,13 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
 
     useEffect(() => {
         applyMixParams();
+        // Switching A/B mid-playback used to silence the session: the mastered bus
+        // is only wired when `scheduleAll()` runs in the "mastered" branch, so
+        // muting the stems left nothing connected. Reschedule on a live switch.
+        if (isPlayingRef.current) {
+            void scheduleAll();
+        }
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [masterAuditionMode]);
 
     // ── Decoding ────────────────────────────────────────────────────────────

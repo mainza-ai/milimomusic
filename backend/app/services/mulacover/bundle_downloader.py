@@ -8,6 +8,8 @@ Handles sequential, resumable acquisition of the 4 required checkpoints:
 """
 
 import os
+import shutil
+import time
 import glob
 import logging
 import threading

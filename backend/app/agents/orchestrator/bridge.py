@@ -181,7 +181,7 @@ async def create_track_from_seed(
             critic_result = await CRITIC_AGENT.run(
                 CriticBrief(seed=seed, draft=draft.model_dump()), ctx, critic_policy,
             )
-            critique: Critique = critic_result.output
+            critique = critic_result.output
             review = {
                 "verdict": critique.verdict,
                 "score": critique.score,

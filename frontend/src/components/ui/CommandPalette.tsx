@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
+import { useModalA11y } from './primitives';
 import {
     Search,
     X,
@@ -29,6 +30,8 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
     const [query, setQuery] = useState('');
     const [selectedIndex, setSelectedIndex] = useState(0);
     const inputRef = useRef<HTMLInputElement>(null);
+    const panelRef = useRef<HTMLDivElement | null>(null);
+    useModalA11y(isOpen, onClose, panelRef);
     const listRef = useRef<HTMLDivElement>(null);
 
     // Filter items based on query
@@ -96,8 +99,13 @@ export const CommandPalette: React.FC<CommandPaletteProps> = ({
         <div
             className="fixed inset-0 z-[100] flex items-start justify-center pt-20 px-4 bg-black/60 backdrop-blur-md animate-fade-in"
             onClick={onClose}
+            role="presentation"
         >
             <div
+                ref={panelRef}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Command palette"
                 className="relative w-full max-w-2xl bg-white/95 dark:bg-[#12141c]/95 backdrop-blur-2xl rounded-2xl shadow-2xl border border-black/10 dark:border-white/10 overflow-hidden text-slate-900 dark:text-slate-100 animate-scale-up"
                 onClick={(e) => e.stopPropagation()}
                 onKeyDown={handleKeyDown}

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useRef, useState } from 'react';
 import {
     X,
     Download,
@@ -17,6 +17,7 @@ import {
 import { api, API_BASE_URL, trackApi, workspaceApi, type Job } from '../../api';
 import { toast } from '../../utils/toast';
 import { showError } from '../../utils/confirm';
+import { useModalA11y } from '../ui/primitives';
 
 interface MasteringExportModalProps {
     isOpen: boolean;
@@ -33,6 +34,9 @@ export const MasteringExportModal: React.FC<MasteringExportModalProps> = ({
     hasMasteredTrack = false,
     onMasteringComplete,
 }) => {
+    // Focus trap + Escape on the panel — this modal had no keyboard dismissal.
+    const panelRef = useRef<HTMLDivElement | null>(null);
+    useModalA11y(isOpen, onClose, panelRef);
     const [audioFormat, setAudioFormat] = useState<'wav' | 'flac' | 'mp3'>('wav');
     const [sampleRate, setSampleRate] = useState<'44100' | '48000' | '96000'>('48000');
     const [targetLufs, setTargetLufs] = useState<number>(-14);
@@ -81,8 +85,13 @@ export const MasteringExportModal: React.FC<MasteringExportModalProps> = ({
         <div
             className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-md animate-fade-in"
             onClick={onClose}
+            role="presentation"
         >
             <div
+                ref={panelRef}
+                role="dialog"
+                aria-modal="true"
+                aria-label="Mastering and export"
                 className="relative w-full max-w-2xl bg-white/95 dark:bg-[#12141c]/95 backdrop-blur-2xl rounded-3xl shadow-2xl border border-black/10 dark:border-white/10 overflow-hidden text-slate-900 dark:text-slate-100 animate-scale-up flex flex-col max-h-[90vh]"
                 onClick={(e) => e.stopPropagation()}
             >

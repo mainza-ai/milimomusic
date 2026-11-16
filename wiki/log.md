@@ -2955,3 +2955,7 @@ Verification: **527 passed, 0 failed** (+3 worker tests: enqueue, single claim, 
 ## [2026-11-16] execute | Phase 4.15 — preview proxy + first-frame poster
 The video player streamed the full 1080p master with `preload="auto"` and used the album cover as a poster: scrubbing a 3-minute video meant pulling the whole file, and the "thumbnail" was artwork, not the first frame. The render pipeline now writes a 480p proxy (`previews/<name>_480p.mp4`, faststart, crf 28) and a first-frame JPEG poster, and the player uses `preload="metadata"`.
 Verification: **529 passed, 0 failed** (+2 proxy/poster tests incl. a real encode + JPEG magic check); frontend build green.
+
+## [2026-11-16] execute | Phase 5.11 (subset) — dialog semantics + assertive errors
+The three surfaces that had no keyboard dismissal (`MasteringExportModal`, `CommandPalette`, and the notation sheets) now use the codebase's own `useModalA11y` (focus trap + Escape + focus restore) and carry `role="dialog"`/`aria-modal`. Error toasts are `role="alert"` with `aria-live="assertive"` (they were polite `status`, so a screen reader could finish the previous sentence first), every toast is `aria-atomic`, and the stack is capped at three instead of growing off-screen.
+Verification: 529 backend tests, 15 frontend tests, build green.

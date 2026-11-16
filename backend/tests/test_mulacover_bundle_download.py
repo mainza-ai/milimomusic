@@ -262,3 +262,199 @@ def test_model_download_skips_complete_shards_on_retry(tmp_path, monkeypatch):
         assert calls["n"] == 0
     finally:
         app_main._model_downloads.pop("resume-probe", None)
+
+
+# ── cross-platform: symlinks are refused on Windows (and some filesystems) ──
+
+class _Sibling:
+    def __init__(self, name, size):
+        self.rfilename, self.size = name, size
+
+
+class _Info:
+    def __init__(self, siblings):
+        self.siblings = siblings
+
+
+def _make_installed_tree(root):
+    """Pre-create everything `is_mulacover_installed` checks, except the codec."""
+    gen = root / "MuLaCover"
+    gen.mkdir(parents=True, exist_ok=True)
+    (gen / "config.json").write_bytes(b"{}")
+    for i in range(5):
+        (gen / f"model-0000{i}-of-00005.safetensors").write_bytes(b"S" * 16)
+    qwen = root / "Qwen3-Embedding-0.6B"
+    qwen.mkdir(parents=True, exist_ok=True)
+    (qwen / "config.json").write_bytes(b"{}")
+    st = root / "SymbolicTranscriptor"
+    (st / "yourmt3").mkdir(parents=True, exist_ok=True)
+    (st / "yourmt3" / "last.ckpt").write_bytes(b"C" * 16)
+    (st / "chord").mkdir(parents=True, exist_ok=True)
+    for c_file in bd.CHORD_FILES:
+        (st / "chord" / c_file).write_bytes(b"D" * 16)
+
+
+def test_bundle_downloads_codec_when_symlink_is_refused(tmp_path, monkeypatch):
+    """Windows without Developer Mode/admin rejects symlinks with OSError.
+
+    `get_bundle_manifest` omits HeartCodec when a *local* copy exists, so a
+    swallowed symlink error used to end with status "completed", no codec on
+    disk, and `is_mulacover_installed()` False — a download that cannot run.
+    The bundle must fall back to downloading the codec instead.
+    """
+    import threading
+
+    _make_installed_tree(tmp_path)
+    local_codec = tmp_path / "heartlib" / "ckpt" / "HeartCodec-oss"
+    local_codec.mkdir(parents=True, exist_ok=True)
+    (local_codec / "config.json").write_bytes(b"{}")
+
+    manifest = [{
+        "kind": "hf_model", "repo_id": "HeartMuLa/MuLaCover", "repo_type": "model",
+        "rfilename": "extra/metadata.json",
+        "target_dir": str(tmp_path / "MuLaCover"),
+        "target_file": str(tmp_path / "MuLaCover" / "extra" / "metadata.json"),
+        "size": 8, "label": "MuLaCover: metadata.json",
+    }]
+    monkeypatch.setattr(bd, "get_bundle_manifest", lambda base_dir=None: {
+        "manifest": manifest, "total_files": len(manifest), "total_bytes": 8,
+        "found_local_codec": str(local_codec),
+    })
+
+    codec_payloads = {"config.json": b"codec-cfg", "model.safetensors": b"K" * 2048}
+    monkeypatch.setattr(
+        bd, "HfApi",
+        lambda *a, **kw: type("Api", (), {
+            "model_info": lambda self, repo_id, files_metadata=False: _Info(
+                [_Sibling(n, len(p)) for n, p in codec_payloads.items()]
+            )
+        })(),
+    )
+
+    def download(repo_id, filename, repo_type=None, local_dir=None):
+        payload = codec_payloads.get(filename, b"x" * 8)
+        dest = tmp_path / "HeartCodec-oss" / filename
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(payload)
+        return str(dest)
+
+    monkeypatch.setattr(bd, "hf_hub_download", download)
+    monkeypatch.setattr(
+        "app.services.model_manager.model_manager.register_custom_model",
+        lambda *a, **kw: {"id": "fake"}, raising=False,
+    )
+
+    def refuse(*a, **kw):
+        raise OSError(1314, "A required privilege is not held by the client")
+
+    monkeypatch.setattr("pathlib.Path.symlink_to", refuse)
+
+    rec = {
+        "id": "win-probe", "status": "queued", "files_done": 0,
+        "received_bytes": 0, "total_bytes": 0, "speed_mbps": 0.0,
+        "current_file": "", "total_files": 0,
+    }
+    bd.download_mulacover_bundle("win-probe", rec, threading.Event(), base_dir=tmp_path)
+
+    assert rec["status"] == "completed", rec.get("error")
+    # The codec was added to the manifest and fetched, not silently skipped.
+    assert (tmp_path / "HeartCodec-oss" / "model.safetensors").read_bytes() == b"K" * 2048
+    assert rec["total_files"] == 3, "codec files must join the manifest"
+    assert rec["files_done"] == 3
+    assert rec["total_bytes"] == 8 + len(b"codec-cfg") + 2048
+    assert bd.is_mulacover_installed(tmp_path) is True
+
+
+def test_installed_check_rejects_a_dangling_codec_symlink(tmp_path):
+    """A symlink whose target vanished must not count as an installed bundle."""
+    _make_installed_tree(tmp_path)
+    target = tmp_path / "moved-away-codec"
+    target.mkdir()
+    (target / "config.json").write_bytes(b"{}")
+    (tmp_path / "HeartCodec-oss").symlink_to(target, target_is_directory=True)
+    assert bd.is_mulacover_installed(tmp_path) is True
+
+    for f in target.iterdir():
+        f.unlink()
+    target.rmdir()
+    assert bd.is_mulacover_installed(tmp_path) is False
+
+
+def test_bundle_download_failure_is_reported_as_error_not_failed(tmp_path, monkeypatch):
+    """The UI polls for completed/cancelled/error; any other status polls forever."""
+    import threading
+
+    _make_installed_tree(tmp_path)
+    monkeypatch.setattr(bd, "get_bundle_manifest", lambda base_dir=None: {
+        "manifest": [], "total_files": 0, "total_bytes": 8,
+        "found_local_codec": None,
+    })
+    monkeypatch.setattr(
+        "app.services.mulacover.bundle_downloader.shutil.disk_usage",
+        lambda p: type("U", (), {"free": 1024, "total": 4096, "used": 3072})(),
+    )
+
+    rec = {
+        "id": "disk-probe", "status": "queued", "files_done": 0,
+        "received_bytes": 0, "total_bytes": 0, "speed_mbps": 0.0,
+        "current_file": "", "total_files": 0,
+    }
+    bd.download_mulacover_bundle("disk-probe", rec, threading.Event(), base_dir=tmp_path)
+
+    assert rec["status"] == "error"
+    assert "disk space" in rec["error"].lower()
+
+
+def test_bundle_links_existing_codec_instead_of_downloading_it(tmp_path, monkeypatch):
+    """The happy path on Linux/macOS: a local codec is linked, not re-fetched."""
+    import threading
+
+    _make_installed_tree(tmp_path)
+    local_codec = tmp_path / "heartlib" / "ckpt" / "HeartCodec-oss"
+    local_codec.mkdir(parents=True, exist_ok=True)
+    (local_codec / "config.json").write_bytes(b"{}")
+
+    manifest = [{
+        "kind": "hf_model", "repo_id": "HeartMuLa/MuLaCover", "repo_type": "model",
+        "rfilename": "metadata.json", "target_dir": str(tmp_path / "MuLaCover"),
+        "target_file": str(tmp_path / "MuLaCover" / "metadata.json"),
+        "size": 8, "label": "MuLaCover: metadata.json",
+    }]
+    monkeypatch.setattr(bd, "get_bundle_manifest", lambda base_dir=None: {
+        "manifest": list(manifest), "total_files": 1, "total_bytes": 8,
+        "found_local_codec": str(local_codec),
+    })
+
+    fetched = []
+
+    def download(repo_id, filename, repo_type=None, local_dir=None):
+        fetched.append(filename)
+        dest = tmp_path / "MuLaCover" / filename
+        dest.parent.mkdir(parents=True, exist_ok=True)
+        dest.write_bytes(b"m" * 8)
+        return str(dest)
+
+    # HfApi is only used to list the codec; if it is consulted, la link was missed.
+    monkeypatch.setattr(bd, "HfApi", lambda *a, **kw: type("Api", (), {
+        "model_info": lambda self, repo_id, files_metadata=False: _Info(
+            [_Sibling("model.safetensors", 2048)]
+        )
+    })())
+    monkeypatch.setattr(bd, "hf_hub_download", download)
+    monkeypatch.setattr(
+        "app.services.model_manager.model_manager.register_custom_model",
+        lambda *a, **kw: {"id": "fake"}, raising=False,
+    )
+
+    rec = {
+        "id": "link-probe", "status": "queued", "files_done": 0,
+        "received_bytes": 0, "total_bytes": 0, "speed_mbps": 0.0,
+        "current_file": "", "total_files": 0,
+    }
+    bd.download_mulacover_bundle("link-probe", rec, threading.Event(), base_dir=tmp_path)
+
+    assert rec["status"] == "completed", rec.get("error")
+    assert rec["total_files"] == 1, "a reachable local codec must not join the manifest"
+    assert fetched == ["metadata.json"], "only the missing file may be downloaded"
+    assert (tmp_path / "HeartCodec-oss" / "config.json").read_bytes() == b"{}"
+    assert bd.is_mulacover_installed(tmp_path) is True

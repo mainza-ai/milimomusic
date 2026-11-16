@@ -3009,3 +3009,26 @@ Hardened beyond the immediate fix:
 - **Second half of the symptom:** the plain worker's progress only moved *between* files, so a single large shard looked frozen and a failure looked like a hang. `_model_download_worker` now samples the partial file/`.incomplete` blob every 0.5 s (same pattern as the bundle downloader), reports MB/s, and the UI shows it. That change surfaced a real double-count in my own patch (`received_bytes` was both absolute and incremented) — caught by the new test, fixed by tracking `completed_bytes`.
 - **UI:** a failed download card now offers **Retry**, which resumes because complete shards are skipped.
 Verification: **539 passed, 0 failed** (+7); frontend build and 29 unit tests green.
+
+## [2026-11-16] fix | cross-platform gap in the MuLaCover bundle download (codec symlink)
+Follow-up to issue #5, prompted by the question "does the fix cover every platform?".
+The `time` import fix is stdlib and platform-independent, but auditing the same download
+path for platform-sensitive calls found a **real Windows failure mode** that the NameError
+had been masking:
+- `download_mulacover_bundle` created the HeartCodec link with `target_codec.symlink_to(...)`
+  — no `target_is_directory=True`, which on Windows requests a *file* symlink to a directory
+  (not traversable), and symlink creation itself needs Developer Mode or elevation (WinError 1314).
+- The error was swallowed with a `logger.warning`, but `get_bundle_manifest` had already
+  **excluded** HeartCodec because a local copy existed. Result: the download reported
+  `completed` with no codec on disk and `is_mulacover_installed()` False — a bundle that
+  cannot run, with no error shown.
+Fixes: `_codec_entries(root)` is now shared by the manifest and the downloader; on symlink
+failure the codec is **added to the manifest and downloaded**; dangling links are removed
+before retry (`_drop_dangling_link`); `_codec_present()` replaces the `is_dir() or is_symlink()`
+check so a link whose target vanished no longer counts as installed. Also the disk-space
+pre-flight set status `failed`, which is not a terminal status for the UI poller (it polls
+forever and never renders the error card) — now `error`.
+Tests: **11** in `test_mulacover_bundle_download.py` (+4): symlink refused → codec downloaded
+and bundle installed, dangling link not "installed", disk-space failure reported as `error`,
+and the POSIX happy path (local codec linked, never re-fetched).
+Verification: **543 passed, 0 failed**; ruff `E9,F63,F7,F82,F811` clean.

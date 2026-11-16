@@ -39,6 +39,54 @@ def resolve_mulacover_dir() -> Path:
     return get_models_dir("audio") / "HeartMuLa__MuLaCover"
 
 
+def _codec_present(codec_dir: Path) -> bool:
+    """True only if HeartCodec is actually readable at `codec_dir`.
+
+    Not the same as `is_dir() or is_symlink()`: a symlink can be dangling (the
+    target was moved or deleted) and a Windows file-symlink pointing at a
+    directory is not traversable. Both used to pass and made the bundle look
+    installed while loading failed later.
+    """
+    try:
+        if not codec_dir.is_dir():
+            return False
+        return any(p.is_file() for p in codec_dir.iterdir())
+    except OSError:
+        return False
+
+
+def _drop_dangling_link(path: Path) -> None:
+    """Remove a symlink that does not resolve to usable content."""
+    try:
+        if path.is_symlink() and not _codec_present(path):
+            path.unlink()
+    except OSError:
+        pass
+
+
+def _codec_entries(root: Path) -> List[Dict[str, Any]]:
+    """HeartCodec-oss files, as manifest entries targeting `root/HeartCodec-oss`."""
+    entries: List[Dict[str, Any]] = []
+    try:
+        codec_info = HfApi().model_info(CODEC_REPO, files_metadata=True)
+    except Exception as e:
+        logger.warning(f"Failed to fetch {CODEC_REPO} manifest: {e}")
+        return entries
+    for s in (codec_info.siblings or []):
+        if s.size:
+            entries.append({
+                "kind": "hf_model",
+                "repo_id": CODEC_REPO,
+                "repo_type": "model",
+                "rfilename": s.rfilename,
+                "target_dir": str(root / "HeartCodec-oss"),
+                "target_file": str(root / "HeartCodec-oss" / s.rfilename),
+                "size": int(s.size),
+                "label": f"HeartCodec: {s.rfilename}",
+            })
+    return entries
+
+
 def is_mulacover_installed(base_dir: Optional[Union[str, Path]] = None) -> bool:
     """Verify that all core components of the MuLaCover bundle are present on disk."""
     root = Path(base_dir) if base_dir else resolve_mulacover_dir()
@@ -59,8 +107,7 @@ def is_mulacover_installed(base_dir: Optional[Union[str, Path]] = None) -> bool:
         return False
 
     # Check HeartCodec
-    codec_dir = root / "HeartCodec-oss"
-    if not (codec_dir.is_dir() or codec_dir.is_symlink()):
+    if not _codec_present(root / "HeartCodec-oss"):
         return False
 
     # Check SymbolicTranscriptor
@@ -153,22 +200,7 @@ def get_bundle_manifest(base_dir: Optional[Union[str, Path]] = None) -> Dict[str
             break
 
     if not found_local_codec:
-        try:
-            codec_info = api.model_info(CODEC_REPO, files_metadata=True)
-            for s in (codec_info.siblings or []):
-                if s.size:
-                    manifest.append({
-                        "kind": "hf_model",
-                        "repo_id": CODEC_REPO,
-                        "repo_type": "model",
-                        "rfilename": s.rfilename,
-                        "target_dir": str(root / "HeartCodec-oss"),
-                        "target_file": str(root / "HeartCodec-oss" / s.rfilename),
-                        "size": int(s.size),
-                        "label": f"HeartCodec: {s.rfilename}",
-                    })
-        except Exception as e:
-            logger.warning(f"Failed to fetch {CODEC_REPO} manifest: {e}")
+        manifest.extend(_codec_entries(root))
 
     total_bytes = sum(m["size"] for m in manifest)
     return {
@@ -196,12 +228,34 @@ def download_mulacover_bundle(
 
     # Symlink HeartCodec if available locally
     target_codec = root / "HeartCodec-oss"
-    if found_local_codec and not target_codec.exists():
+    if found_local_codec and not _codec_present(target_codec):
+        _drop_dangling_link(target_codec)
         try:
-            target_codec.symlink_to(Path(found_local_codec).resolve())
+            # target_is_directory matters on Windows: without it Python asks for a
+            # *file* symlink and the result cannot be traversed as a directory.
+            target_codec.symlink_to(Path(found_local_codec).resolve(), target_is_directory=True)
             logger.info(f"Symlinked existing HeartCodec from {found_local_codec}")
-        except Exception as e:
-            logger.warning(f"Symlink creation failed: {e}")
+        except (OSError, NotImplementedError) as e:
+            # Windows without Developer Mode / elevation refuses symlinks, and some
+            # filesystems (FAT/exFAT, network shares) have no symlink support.
+            logger.warning(f"Could not symlink HeartCodec from {found_local_codec} ({e}); downloading it instead")
+
+    # A failed symlink must not leave the bundle "complete" but missing the codec:
+    # get_bundle_manifest() only lists HeartCodec files when no local copy exists,
+    # so add them here when the local copy could not be linked.
+    if not _codec_present(target_codec):
+        _drop_dangling_link(target_codec)
+        if not any(item.get("repo_id") == CODEC_REPO for item in manifest):
+            codec_entries = _codec_entries(root)
+            if codec_entries:
+                manifest = manifest + codec_entries
+                total_bytes = sum(int(item["size"]) for item in manifest)
+                logger.info(
+                    f"HeartCodec not reachable at {target_codec}; "
+                    f"adding {len(codec_entries)} codec files to the download"
+                )
+            else:
+                logger.warning("HeartCodec is missing and its file list could not be fetched")
 
     rec["total_files"] = len(manifest)
     rec["total_bytes"] = total_bytes
@@ -216,7 +270,7 @@ def download_mulacover_bundle(
             free_gb = usage.free / (1024**3)
             req_gb = required_bytes / (1024**3)
             err_msg = f"Insufficient disk space: {free_gb:.2f} GB available, {req_gb:.2f} GB required."
-            rec["status"] = "failed"
+            rec["status"] = "error"
             rec["error"] = err_msg
             logger.error(err_msg)
             return

@@ -210,7 +210,10 @@ class VideoOrchestrator:
         # 4. Abort in-flight MLX/diffusers diffusion immediately (< 500ms)
         try:
             from app.services.image_service import image_service
-            image_service.cancel_active_diffusion()
+            # Scope the cancel to this job's keyframes: a global cancel aborted
+            # another track's cover generation mid-flight.
+            # The cancel is already scoped by this method's `job_id` argument.
+            image_service.cancel_active_diffusion(job_id=str(job_id))
             from app.core.hardware_lock import GlobalHardwareCoordinator
             GlobalHardwareCoordinator.flush_memory()
         except Exception as e:

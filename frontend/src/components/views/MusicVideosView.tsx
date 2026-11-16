@@ -35,6 +35,12 @@ interface MusicVideosViewProps {
 
 export type VideoModelKey = 'wan_14b' | 'wan_1.3b' | 'ltx_video' | 'cogvideox' | 'hailuo_h3' | 'hunyuan' | 'audioreactive';
 
+/**
+ * Display copy for the video engines. Duration limits are NOT authoritative here:
+ * `MODEL_CONSTRAINTS` is seeded from the server's `model_specs` (via
+ * `/videos/models`) so the sliders can never offer a value the renderer clamps.
+ * The literals below are the offline fallback.
+ */
 export const MODEL_CONSTRAINTS: Record<string, { label: string; minSec: number; maxSec: number; defaultSec: number; desc: string }> = {
     'wan_14b': { label: 'Wan 2.1 14B Flagship', minSec: 2.0, maxSec: 5.0, defaultSec: 5.0, desc: 'Alibaba Wan 2.1 14B DiT with 3D temporal diffusion & keyframe I2V' },
     'wan_1.3b': { label: 'Wan 2.1 1.3B Fast', minSec: 2.0, maxSec: 5.0, defaultSec: 5.0, desc: 'Lightweight text-to-video diffusion for rapid local preview' },
@@ -44,6 +50,27 @@ export const MODEL_CONSTRAINTS: Record<string, { label: string; minSec: number; 
     'hunyuan': { label: 'Tencent HunyuanVideo', minSec: 4.0, maxSec: 15.0, defaultSec: 15.0, desc: 'Tencent HunyuanVideo 13B DiT — up to 15.0s extended visual takes' },
     'audioreactive': { label: 'Audio-Reactive Full', minSec: 5.0, maxSec: 120.0, defaultSec: 120.0, desc: 'Continuous full-timeline audio reactive spectrum & waveform visualizer' },
 };
+
+let _serverSpecsMerged = false;
+
+/** Merge server model specs into the display table (one source of truth: model_specs). */
+export async function mergeServerVideoSpecs(): Promise<void> {
+    if (_serverSpecsMerged) return;
+    try {
+        const specs = await videoApi.getVideoModels();
+        Object.entries(specs || {}).forEach(([key, spec]) => {
+            const existing = MODEL_CONSTRAINTS[key];
+            const maxSec = Number((spec as { max_duration?: number }).max_duration);
+            if (!existing || !isFinite(maxSec) || maxSec <= 0) return;
+            existing.maxSec = maxSec;
+            if (existing.defaultSec > maxSec) existing.defaultSec = maxSec;
+            if (existing.minSec > maxSec) existing.minSec = maxSec;
+        });
+        _serverSpecsMerged = true;
+    } catch {
+        /* offline: the fallback table is close enough and clearly labelled */
+    }
+}
 
 export function normalizeVideoEngine(raw?: string | null): VideoModelKey {
     if (!raw) return 'wan_14b';
@@ -173,7 +200,11 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     useEffect(() => {
         let alive = true;
         const refreshModels = () => {
-            videoApi.getVideoModels().then((reg) => { if (alive) setModelRegistry(reg); }).catch(() => {});
+            videoApi.getVideoModels().then((reg) => {
+                if (alive) setModelRegistry(reg);
+                // Server limits override the display table (one source of truth).
+                void mergeServerVideoSpecs();
+            }).catch(() => {});
         };
         refreshModels();
 

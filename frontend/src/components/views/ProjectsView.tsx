@@ -28,7 +28,7 @@ import { toast } from '../../utils/toast';
 interface ProjectsViewProps {
   allJobs: Job[];
   onOpenWorkspace: (job: Job) => void;
-  onPlay: (job: Job) => void;
+  onPlay: (job: Job, queue?: Job[]) => void;
   playingSongId?: string;
   isPlayingAudio?: boolean;
   onGenerateInProject: (project: Project) => void;
@@ -195,9 +195,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
 
   const handlePlayAll = () => {
     if (!activeProject) return;
-    const projectJobs = allJobs.filter((j) => j.project_id === activeProject.id);
+    // "Play All" used to start a single track and never queue the rest.
+    const projectJobs = allJobs.filter(
+      (j) => j.project_id === activeProject.id && j.audio_path && (j.status || '').toLowerCase() === 'completed'
+    );
     if (projectJobs.length > 0) {
-      onPlay(projectJobs[0]);
+      onPlay(projectJobs[0], projectJobs);
     }
   };
 

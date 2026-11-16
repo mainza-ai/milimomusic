@@ -164,15 +164,12 @@ STYLE_PALETTES = {
     }
 }
 
+# Single source of truth: `model_specs.VIDEO_MODEL_SPECS`. The director used to
+# carry its own copy, so the planner and the renderer could disagree on limits.
+from app.services.video.model_specs import VIDEO_MODEL_SPECS as _SPECS
+
 MODEL_MAX_DURATIONS: Dict[str, float] = {
-    "wan_14b": 5.0,
-    "wan_1.3b": 5.0,
-    "wan2.1": 5.0,
-    "ltx_video": 10.0,
-    "cogvideox": 10.0,
-    "hailuo_h3": 15.0,
-    "hunyuan": 15.0,
-    "audioreactive": 120.0,
+    key: spec.max_duration for key, spec in _SPECS.items()
 }
 
 CAMERA_MOTIONS = [

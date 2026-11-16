@@ -2889,3 +2889,9 @@ Verification: **492 passed, 2 skipped, 3 deselected**; frontend `tsc -b` + `vite
 ## [2026-11-16] execute | Phase 3.5 — piano-roll toolset
 Copy/cut/paste/select-all (⌘C/⌘X/⌘V/⌘A) added to the piano roll — a MIDI editor without them forced redrawing every repeated phrase; paste lands at the playhead and each repeat offsets by one snap unit so successive pastes stay visible. Quantize gained a **strength** selector (100/75/50/25 %) preserving some of the player's feel, and a **velocity lane** renders every note as a bar at its position with vertical drag-to-set (with nothing selected it edits the visible set rather than silently doing nothing).
 Verification: 492 passed; frontend `tsc -b` + `vite build` green.
+
+## [2026-11-16] execute | Phase 3.14 / 4.12 / 4.13 — project queue, scoped canvas cancel, one spec source
+3.14: "Play All" in a project now actually queues the project's completed tracks (it started a single track and never populated the player queue); `handlePlaySong` accepts an explicit queue that wins over the global history.
+4.12: `cancel_active_diffusion` is scoped to the requesting job (it aborted whatever image render was in flight, including another track's cover); `generate_cover` records its owner so a foreign cancel is a no-op.
+4.13: the video duration limits now come from `model_specs` only — the duplicate tables in `video_service` and `video_director` and the hand-rolled substring matcher were replaced by `get_model_spec`/`normalize_model_key` (with an explicit `minimax_h3 → hailuo_h3` engine alias), and the frontend's `MODEL_CONSTRAINTS` merges the server's `/videos/models` limits on mount so a slider can never offer a value the renderer clamps.
+Verification: 492 passed; frontend build green.

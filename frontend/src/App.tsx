@@ -1248,12 +1248,15 @@ function App() {
     }
   };
 
-  const handlePlaySong = (job: Job) => {
+  const handlePlaySong = (job: Job, queue?: Job[]) => {
     if (!job.audio_path) {
       toast(`“${job.title || job.prompt || 'Untitled track'}” has no audio file available yet.`, 'info');
       return;
     }
-    const completed = history.filter(s => (s.status || '').toLowerCase() === 'completed' && s.audio_path);
+    // An explicit queue (e.g. "Play All" in a project) wins over the global list.
+    const completed = queue?.length
+      ? queue
+      : history.filter(s => (s.status || '').toLowerCase() === 'completed' && s.audio_path);
     if (engineTrack?.id === job.id) {
       engineTogglePlay(job);
     } else {

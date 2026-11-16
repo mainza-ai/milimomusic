@@ -528,6 +528,7 @@ class GenerateAndTranscribePipeline:
                         aspect_ratio="1:1",
                         model_id=cover_model_id,
                         title=(getattr(req, "title", None) or "").strip() or None,
+                        job_id_hint=job_id_str,
                     )
                     final_cover_path = cover_res.get("url")
                     logger.info(f"Auto-generated album cover for job {job_id_str}: {final_cover_path}")

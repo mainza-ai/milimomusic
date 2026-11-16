@@ -58,15 +58,12 @@ SCENE_STYLE_DESCRIPTORS: Dict[str, str] = {
     for k, v in STYLE_PALETTES.items()
 }
 
+# Kept as a thin alias for callers that import the name; the values come from
+# `model_specs` so the façade, the director, the renderer and the UI cannot drift.
+from app.services.video.model_specs import VIDEO_MODEL_SPECS as _SPECS  # noqa: E402
+
 MODEL_MAX_DURATIONS: Dict[str, float] = {
-    "wan_14b": 5.0,
-    "wan_1.3b": 5.0,
-    "wan2.1": 5.0,  # backwards compatibility alias
-    "ltx_video": 10.0,
-    "cogvideox": 10.0,
-    "hailuo_h3": 15.0,
-    "hunyuan": 15.0,
-    "audioreactive": 120.0,
+    key: spec.max_duration for key, spec in _SPECS.items()
 }
 
 # Model-manager video model -> Music Videos page engine key.
@@ -95,7 +92,12 @@ def resolve_engine_for_video_model(model_info: Optional[Dict[str, Any]]) -> str:
 
     model_id = str(model_info.get("id") or "").lower()
     if model_id in MODEL_MAX_DURATIONS:
-        return "wan_14b" if model_id == "wan2.1" else model_id
+        # Canonicalise to an *engine* key. `model_specs` holds both `hailuo_h3` and
+        # `minimax_h3` (same engine), and the page expects the former.
+        from app.services.video.model_specs import normalize_model_key
+
+        canonical = normalize_model_key(model_id)
+        return "hailuo_h3" if canonical == "minimax_h3" else canonical
 
     blob = " ".join(
         str(model_info.get(k) or "")
@@ -128,23 +130,16 @@ class VideoService:
 
     @classmethod
     def get_model_max_duration(cls, model_name: Optional[str] = None) -> float:
-        """Resolve maximum architectural clip duration for a video model (e.g. H3 15s, Hunyuan 15s, CogVideoX 10s, Wan 5s)."""
+        """Maximum architectural clip duration, resolved by `model_specs`.
+
+        This used to be a second hand-maintained table plus a substring matcher,
+        which disagreed with the specification the renderer clamps to.
+        """
+        from app.services.video.model_specs import get_model_spec
+
         if not model_name:
             return 5.0
-        m = model_name.lower().strip()
-        if "ltx" in m:
-            return 10.0
-        if "cog" in m:
-            return 10.0
-        if "hailuo" in m or "h3" in m or "minimax" in m:
-            return 15.0
-        if "hunyuan" in m:
-            return 15.0
-        if "audioreactive" in m or "reactive" in m:
-            return 120.0
-        if "wan" in m:
-            return 5.0
-        return MODEL_MAX_DURATIONS.get(m, 5.0)
+        return get_model_spec(model_name).max_duration
 
     @classmethod
     def get_available_video_models(cls) -> Dict[str, Any]:

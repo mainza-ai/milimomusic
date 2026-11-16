@@ -4405,6 +4405,7 @@ def generate_job_cover(job_id: str, req: Optional[JobCoverGenerateRequest] = Non
             model_id=model_id,
             title=overlay_title,
             artist=overlay_artist,
+            job_id_hint=str(job.id),
         )
         cover_url = cover_res.get("url")
         job.cover_image_path = cover_url

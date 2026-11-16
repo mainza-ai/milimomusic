@@ -82,10 +82,23 @@ class ImageService:
             cls._instance = super(ImageService, cls).__new__(cls)
         return cls._instance
 
-    def cancel_active_diffusion(self) -> None:
-        """Immediately abort any running MLX or diffusers image generation process and release hardware."""
+    def cancel_active_diffusion(self, job_id: Optional[str] = None) -> bool:
+        """Abort image generation.
+
+        `job_id` scopes the cancel: it used to be global, so cancelling one track's
+        keyframes also killed another track's cover generation mid-flight. When an
+        owning job is supplied and this instance is rendering a different job, the
+        call is a no-op.
+        """
         global _mlx_executor
-        logger.info("ImageService: cancel_active_diffusion called — terminating executor and purging pipeline.")
+        owner = getattr(self, "_active_diffusion_job", None)
+        if job_id and owner and str(owner) != str(job_id):
+            logger.info(
+                "ImageService: cancel requested for job %s but %s is rendering; ignoring.",
+                job_id, owner,
+            )
+            return False
+        logger.info("ImageService: cancel_active_diffusion called for %s — terminating executor and purging pipeline.", job_id or "any job")
         self._diffusion_cancelled = True
         try:
             _mlx_executor.shutdown(wait=False, cancel_futures=True)
@@ -93,7 +106,9 @@ class ImageService:
             logger.debug(f"Error shutting down _mlx_executor: {e}")
         _mlx_executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="mlx_image_gen")
         self.unload_models()
+        self._active_diffusion_job = None
         self._diffusion_cancelled = False
+        return True
 
     def unload_models(self) -> bool:
         """Completely release loaded MLX and Diffusers image models and purge accelerator caches."""
@@ -593,6 +608,7 @@ class ImageService:
         steps: Optional[int] = None,
         guidance: Optional[float] = None,
         auto_unload: bool = True,
+        job_id_hint: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Generate or synthesize visual artwork for track or project cover.
@@ -619,19 +635,23 @@ class ImageService:
 
         safe_prompt = self.strip_text_instructions(prompt)
         full_prompt = f"{safe_prompt}, {style}, {COVER_PROMPT_SUFFIX}"
-        diffusion_res = self._render_diffusion_image(
-            full_prompt=full_prompt,
-            width=width,
-            height=height,
-            chosen_model_id=chosen_model_id,
-            local_path=local_path,
-            repo_id=repo_id,
-            is_installed=is_installed,
-            dest_path=dest_path,
-            steps=steps,
-            guidance=guidance,
-            log_label="cover",
-        )
+        self._active_diffusion_job = job_id_hint
+        try:
+            diffusion_res = self._render_diffusion_image(
+                full_prompt=full_prompt,
+                width=width,
+                height=height,
+                chosen_model_id=chosen_model_id,
+                local_path=local_path,
+                repo_id=repo_id,
+                is_installed=is_installed,
+                dest_path=dest_path,
+                steps=steps,
+                guidance=guidance,
+                log_label="cover",
+            )
+        finally:
+            self._active_diffusion_job = None
         engine_used = diffusion_res["engine"]
         diffusion_error = diffusion_res["diffusion_error"]
         if engine_used == "none":

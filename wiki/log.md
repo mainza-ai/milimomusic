@@ -2880,3 +2880,8 @@ MIDI import (3.7): `POST /tracks/{job_id}/midi/import` parses a Standard MIDI Fi
 Accessibility (3.15): `select-none` removed from the app shell (prompts, lyrics and error text are copyable again); the `xs` breakpoint (420 px) now exists, so `hidden xs:inline` labels actually appear on narrow screens; a global `prefers-reduced-motion` block disables the continuous pulse/spin/indeterminate animations.
 Keyboard (3.6): the piano-roll hotkey scope is the whole panel, not just the note grid — clicking Quantize used to move focus to a button and silently disable ⌘Z/⌘D.
 Verification: **492 passed, 2 skipped, 3 deselected** (+2 session-state tests, +2 MIDI-import tests). Frontend build green.
+
+## [2026-11-16] execute | Phase 3 — loop accuracy + workspace undo
+Loop (3.4): A-B looping is now handled by the audio thread (`source.loop` with `loopStart`/`loopEnd`, plus the same on the `<audio>` fallback) instead of being detected inside `requestAnimationFrame` and re-scheduling every source — that approach was always at least one frame late and produced an audible gap and seam on every pass. The playhead now only re-anchors its display clock at the wrap.
+Workspace undo/redo (3.2): the workspace snapshots its persisted session document (mixer, loop, stem source, tempo map, metronome; continuous fader gestures coalesce over 350 ms) with ⌘Z / ⇧⌘Z and visible transport buttons. Previously undo existed only for piano-roll note arrays, so a mixer move or a stem-source switch was unrecoverable; the piano roll keeps its own finer-grained scope while focused.
+Verification: **492 passed, 2 skipped, 3 deselected**; frontend `tsc -b` + `vite build` green.

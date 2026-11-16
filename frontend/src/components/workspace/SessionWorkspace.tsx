@@ -1,6 +1,8 @@
 import React, { useState, useRef, useEffect, useCallback, useMemo } from 'react';
 import {
     Headphones,
+    Undo2,
+    Redo2,
     Sliders,
     Music,
     FileText,
@@ -296,6 +298,79 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         }, 600);
         return () => window.clearTimeout(t);
     }, [sessionState, wsKey, job.id]);
+
+    // ── Workspace undo/redo (plan 3.2) ──────────────────────────────────────
+    // The piano roll has its own note-level history; this covers everything else
+    // in the workspace (mixer, loop, stem source, tempo map, metronome) by
+    // snapshotting the persisted session document. Undo was previously limited to
+    // note arrays, so a mixer move or a destructive stem switch was unrecoverable.
+    const undoStackRef = useRef<any[]>([]);
+    const redoStackRef = useRef<any[]>([]);
+    const restoringRef = useRef(false);
+    const lastCommittedRef = useRef<any>(null);
+    const [wsHistFlags, setWsHistFlags] = useState({ undo: false, redo: false });
+
+    const snapshotState = useCallback(() => ({
+        masterVolume, isMasterMuted, stemSource,
+        channels: { [stemSource]: stemChannels },
+        loopStart, loopEnd, tempoMap, metronomeEnabled, countInBars,
+    }), [masterVolume, isMasterMuted, stemSource, stemChannels, loopStart, loopEnd,
+         tempoMap, metronomeEnabled, countInBars]);
+
+    // Coalesce continuous gestures (fader drags) into one history entry.
+    useEffect(() => {
+        if (restoringRef.current) { restoringRef.current = false; return; }
+        const snap = snapshotState();
+        if (lastCommittedRef.current === null) { lastCommittedRef.current = snap; return; }
+        const t = window.setTimeout(() => {
+            undoStackRef.current.push(lastCommittedRef.current);
+            if (undoStackRef.current.length > 100) undoStackRef.current.shift();
+            redoStackRef.current = [];
+            lastCommittedRef.current = snap;
+            setWsHistFlags({ undo: true, redo: false });
+        }, 350);
+        return () => window.clearTimeout(t);
+    }, [snapshotState]);
+
+    const applySnapshot = (snap: any) => {
+        restoringRef.current = true;
+        if (typeof snap.masterVolume === 'number') setMasterVolume(snap.masterVolume);
+        if (typeof snap.isMasterMuted === 'boolean') setIsMasterMuted(snap.isMasterMuted);
+        if (snap.stemSource) setStemSource(snap.stemSource);
+        if (Array.isArray(snap.channels?.[snap.stemSource])) {
+            setStemChannels((snap.channels[snap.stemSource] as StemChannel[]).map(c => ({ ...c })));
+        }
+        setLoopStart(snap.loopStart ?? null);
+        setLoopEnd(snap.loopEnd ?? null);
+        if (Array.isArray(snap.tempoMap)) setTempoMap(snap.tempoMap);
+        if (typeof snap.metronomeEnabled === 'boolean') setMetronomeEnabled(snap.metronomeEnabled);
+        if (typeof snap.countInBars === 'number') setCountInBars(snap.countInBars);
+        lastCommittedRef.current = snap;
+    };
+
+    const wsUndo = useCallback(() => {
+        const prev = undoStackRef.current.pop();
+        if (!prev) return false;
+        redoStackRef.current.push(snapshotState());
+        applySnapshot(prev);
+        setWsHistFlags({ undo: undoStackRef.current.length > 0, redo: true });
+        return true;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [snapshotState]);
+
+    const wsRedo = useCallback(() => {
+        const next = redoStackRef.current.pop();
+        if (!next) return false;
+        undoStackRef.current.push(snapshotState());
+        applySnapshot(next);
+        setWsHistFlags({ undo: true, redo: redoStackRef.current.length > 0 });
+        return true;
+        // eslint-disable-next-line react-hooks/exhaustive-deps
+    }, [snapshotState]);
+
+    const wsUndoRef = useRef(wsUndo);
+    const wsRedoRef = useRef(wsRedo);
+    useEffect(() => { wsUndoRef.current = wsUndo; wsRedoRef.current = wsRedo; });
 
     const hasDualSources = partChannels.length > 0 && (parsedStems.vocals || parsedStems.drums || parsedStems.bass || parsedStems.other);
 
@@ -896,12 +971,47 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
             }
             htmlAudioRef.current.src = mUrl;
             htmlAudioRef.current.currentTime = pos;
+            // Mirror the A-B region on the element (it loops natively too).
+            const _ls = loopRef.current.start;
+            const _le = loopRef.current.end;
+            if (isLoopingRef.current && _ls !== null && _le !== null && _le > _ls) {
+                htmlAudioRef.current.loop = true;
+                // loopStart/loopEnd exist on HTMLMediaElement but are missing from
+                // the DOM lib typings.
+                (htmlAudioRef.current as HTMLAudioElement & { loopStart: number; loopEnd: number }).loopStart = _ls;
+                (htmlAudioRef.current as HTMLAudioElement & { loopStart: number; loopEnd: number }).loopEnd = _le;
+            } else {
+                htmlAudioRef.current.loop = false;
+            }
             htmlAudioRef.current.volume = isMasterMuted ? 0 : Math.max(0, Math.min(1, masterVolume));
             htmlAudioRef.current.play().catch(e => console.warn('HTMLAudio fallback play error:', e));
         }
 
         playStartClockRef.current = startAt;
         playStartPosRef.current = pos;
+
+        // Sample-accurate A-B loop: let the audio thread loop the region instead of
+        // re-scheduling from requestAnimationFrame (which produced a gap and a seam
+        // on every pass).
+        const lStart = loopRef.current.start;
+        const lEnd = loopRef.current.end;
+        if (isLoopingRef.current && lStart !== null && lEnd !== null && lEnd > lStart + 0.05) {
+            activeSourcesRef.current.forEach(src => {
+                try {
+                    const buf = src.buffer;
+                    if (!buf) return;
+                    const dur = buf.duration;
+                    // Offsets are in the same timeline as the buffer (stems share it).
+                    const start = Math.max(0, Math.min(lStart, dur - 0.02));
+                    const end = Math.max(start + 0.02, Math.min(lEnd, dur));
+                    src.loop = true;
+                    src.loopStart = start;
+                    src.loopEnd = end;
+                } catch {
+                    /* a source that already ended cannot be looped; harmless */
+                }
+            });
+        }
 
         // The stems' gain/panner nodes are created lazily by ensureStemNodes above.
         // Re-apply the current mix state so the graph always reflects the UI.
@@ -925,10 +1035,18 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
             const lEnd = loopRef.current.end;
 
             if (isLoopingRef.current && lStart !== null && lEnd !== null && lEnd > lStart && pos >= lEnd) {
-                // A-B wrap
+                // A-B wrap. The audio thread owns the actual loop (source.loop), so
+                // this only moves the playhead and the clock anchor — re-scheduling
+                // here is what used to cause the gap and the seam.
+                // Re-anchor the display clock at the loop start: position is computed
+                // as startPos + (now - startClock), so both reset together.
+                const ctx = audioCtxRef.current;
+                if (ctx && ctx.state !== 'closed') {
+                    playStartClockRef.current = ctx.currentTime;
+                }
+                playStartPosRef.current = lStart;
                 currentTimeRef.current = lStart;
                 setCurrentTime(lStart);
-                void scheduleAll();
             } else if (pos >= dur) {
                 if (isLoopingRef.current) {
                     // Full-track wrap
@@ -1326,6 +1444,14 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
 
     useEffect(() => {
         return pushHotkeyScope((e: KeyboardEvent) => {
+            // Workspace undo/redo (mixer, loop, tempo, stem source). The piano roll
+            // pushes a later scope, so its note-level history wins while focused.
+            const mod = e.metaKey || e.ctrlKey;
+            if (mod && e.code === 'KeyZ' && !isTextEntryTarget(e.target)) {
+                e.preventDefault();
+                if (e.shiftKey) wsRedoRef.current(); else wsUndoRef.current();
+                return true;
+            }
             if (hasModifier(e)) return false;
             if (isTextEntryTarget(e.target)) return false;
             const t = e.target as HTMLElement | null;
@@ -1992,6 +2118,26 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
                         aria-label="Toggle metronome"
                     >
                         <Music size={15} />
+                    </button>
+
+                    {/* Workspace undo/redo (mixer, loop, tempo, stem source) */}
+                    <button
+                        onClick={() => wsUndo()}
+                        disabled={!wsHistFlags.undo}
+                        className="p-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 disabled:opacity-30 transition-colors"
+                        title="Undo workspace change (⌘Z)"
+                        aria-label="Undo workspace change"
+                    >
+                        <Undo2 size={15} />
+                    </button>
+                    <button
+                        onClick={() => wsRedo()}
+                        disabled={!wsHistFlags.redo}
+                        className="p-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 disabled:opacity-30 transition-colors"
+                        title="Redo workspace change (⇧⌘Z)"
+                        aria-label="Redo workspace change"
+                    >
+                        <Redo2 size={15} />
                     </button>
 
                     {/* Count-in: 0 / 1 / 2 bars before recording or playback */}

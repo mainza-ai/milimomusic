@@ -1145,6 +1145,26 @@ class VideoOrchestrator:
             if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
                 raise RuntimeError("Failed to generate master music video output file.")
 
+            # Preview proxy + first-frame poster (plan 4.15): the editor streamed
+            # the full 1080p master and used the album cover as a poster.
+            try:
+                from app.services.video.clip_normalise import (
+                    first_frame_poster,
+                    make_preview_proxy,
+                )
+
+                proxy_name = out_filename.replace(".mp4", "_480p.mp4")
+                poster_name = out_filename.replace(".mp4", "_poster.jpg")
+                preview_dir = os.path.join(VIDEO_DIR, "previews")
+                os.makedirs(preview_dir, exist_ok=True)
+                if await asyncio.to_thread(make_preview_proxy, out_path,
+                                           os.path.join(preview_dir, proxy_name)):
+                    logger.info("Preview proxy ready: %s", proxy_name)
+                await asyncio.to_thread(first_frame_poster, out_path,
+                                        os.path.join(preview_dir, poster_name))
+            except Exception as _proxy_err:
+                logger.debug("Preview proxy/poster skipped: %s", _proxy_err)
+
             video_url = f"/audio/videos/{out_filename}"
             self.update_task(
                 task_id,

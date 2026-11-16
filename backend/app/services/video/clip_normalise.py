@@ -117,3 +117,48 @@ def verify_assembly(total_video_s: Optional[float], song_s: Optional[float]) -> 
         "drift_s": round(drift, 3),
         "ok": abs(drift) <= DURATION_TOLERANCE_S,
     }
+
+
+def make_preview_proxy(src: str, dest: str, *, height: int = 480) -> bool:
+    """Encode a small H.264 proxy for timeline scrubbing (plan 4.15).
+
+    The editor streamed the full 1080p master with `preload="auto"`, so scrubbing
+    a 3-minute video meant pulling the whole file. A 480p proxy makes seeking
+    responsive and cheap.
+    """
+    if not os.path.isfile(src) or os.path.getsize(src) == 0:
+        return False
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", src,
+        "-vf", f"scale=-2:{height}",
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", "28",
+        "-c:a", "aac", "-b:a", "96k",
+        "-movflags", "+faststart",
+        dest,
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=900)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError) as exc:
+        detail = getattr(exc, "stderr", b"") or b""
+        logger.warning(
+            "Proxy encode failed for %s: %s", os.path.basename(src),
+            detail.decode("utf-8", "ignore")[:200] if isinstance(detail, bytes) else detail,
+        )
+        return False
+    return os.path.isfile(dest) and os.path.getsize(dest) > 0
+
+
+def first_frame_poster(src: str, dest: str) -> bool:
+    """Extract the first frame as a JPEG poster (the UI used album art instead)."""
+    if not os.path.isfile(src):
+        return False
+    cmd = [
+        "ffmpeg", "-y", "-loglevel", "error",
+        "-i", src, "-frames:v", "1", "-q:v", "3", dest,
+    ]
+    try:
+        subprocess.run(cmd, check=True, capture_output=True, timeout=120)
+    except (subprocess.CalledProcessError, subprocess.TimeoutExpired, OSError):
+        return False
+    return os.path.isfile(dest) and os.path.getsize(dest) > 0

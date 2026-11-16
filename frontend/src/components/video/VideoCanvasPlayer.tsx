@@ -192,7 +192,10 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                             poster={posterUrl}
                             controls
                             playsInline
-                            preload="auto"
+                            // `auto` pulled the whole 1080p master before the first
+                            // frame; the orchestrator now also writes a 480p proxy
+                            // and a first-frame poster.
+                            preload="metadata"
                             onTimeUpdate={(e) => setVideoCurrentTime(e.currentTarget.currentTime)}
                             onPlay={() => setIsVideoPlaying(true)}
                             onPause={() => setIsVideoPlaying(false)}

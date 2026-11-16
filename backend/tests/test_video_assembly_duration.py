@@ -132,3 +132,27 @@ def test_transition_overlap_matches_stitcher_math():
     assert video_orchestrator._transition_overlap("beat_cut", clips) == 0.0
     # a single clip has no transition
     assert video_orchestrator._transition_overlap("crossfade", [Clip(4.0)]) == 0.0
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg required")
+def test_preview_proxy_and_poster(tmp_path):
+    """Plan 4.15: a 480p proxy and a first-frame poster, not album art."""
+    from app.services.video.clip_normalise import first_frame_poster, make_preview_proxy, probe_duration
+
+    src = _make_clip(str(tmp_path / "master.mp4"), 1.0, size="640x360", fps=25)
+    proxy = tmp_path / "master_480p.mp4"
+    poster = tmp_path / "master_poster.jpg"
+
+    assert make_preview_proxy(src, str(proxy), height=180) is True
+    assert proxy.is_file() and proxy.stat().st_size > 0
+    assert abs((probe_duration(str(proxy)) or 0) - 1.0) < 0.3
+
+    assert first_frame_poster(src, str(poster)) is True
+    assert poster.is_file() and poster.read_bytes()[:2] == b"\xff\xd8"  # JPEG magic
+
+
+def test_proxy_refuses_missing_input(tmp_path):
+    from app.services.video.clip_normalise import first_frame_poster, make_preview_proxy
+
+    assert make_preview_proxy(str(tmp_path / "nope.mp4"), str(tmp_path / "o.mp4")) is False
+    assert first_frame_poster(str(tmp_path / "nope.mp4"), str(tmp_path / "p.jpg")) is False

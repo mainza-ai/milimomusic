@@ -194,7 +194,19 @@ class GlobalHardwareCoordinator:
 
     @classmethod
     def release_device(cls, consumer: str, modality: Optional[str] = None) -> None:
-        """Release accelerator device and perform memory management according to active policy."""
+        """Release the accelerator, but only for the holder.
+
+        `release_device` used to release unconditionally: any code path that called
+        it without holding the lock freed *another* consumer's lock, silently
+        destroying mutual exclusion. Releasing a lock you do not own is now an
+        error instead of a favour.
+        """
+        holder = cls._active_consumer
+        if holder not in (consumer, "idle", None):
+            raise RuntimeError(
+                f"release_device('{consumer}') called while '{holder}' holds the device lock. "
+                "Only the holder may release it."
+            )
         target_modality = modality or consumer
         cls._active_consumer = "idle"
         cls._consumer_acquired_at = 0.0

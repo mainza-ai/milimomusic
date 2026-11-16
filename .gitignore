@@ -96,3 +96,6 @@ scratch/
 
 # Harness / agent runtime state (never project content)
 .opencode/
+
+# SQLite migration backups
+backend/db_backups/

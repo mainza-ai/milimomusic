@@ -12,6 +12,7 @@ import json
 import logging
 import os
 import shutil
+import contextlib
 import sqlite3
 import threading
 from dataclasses import asdict, dataclass, field
@@ -80,8 +81,26 @@ class DurableTaskQueue:
         conn.execute("PRAGMA synchronous=NORMAL;")
         return conn
 
+    @contextlib.contextmanager
+    def _connection(self):
+        """Connection scope that actually closes.
+
+        `with sqlite3.connect(...) as conn:` commits but does NOT close, so every
+        progress tick leaked a file descriptor (the video orchestrator ticks
+        thousands of times per render and eventually hit EMFILE).
+        """
+        conn = self._get_connection()
+        try:
+            yield conn
+            conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+
     def _init_db(self) -> None:
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             conn.execute("""
                 CREATE TABLE IF NOT EXISTS durable_tasks (
                     task_id TEXT PRIMARY KEY,
@@ -122,10 +141,10 @@ class DurableTaskQueue:
             updated_at=now,
         )
 
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             conn.execute(
                 """
-                INSERT OR REPLACE INTO durable_tasks
+                INSERT OR IGNORE INTO durable_tasks
                 (task_id, task_type, status, progress, message, payload, result, error, created_at, updated_at)
                 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 """,
@@ -144,12 +163,17 @@ class DurableTaskQueue:
             )
             conn.commit()
 
+        # Idempotent: a duplicate enqueue must return the existing row rather than
+        # replacing it (INSERT OR REPLACE used to discard prior progress/result).
+        existing = self.get_task(task_id)
+        if existing is not None:
+            return existing
         logger.info(f"Task {task_id} ({task_type}) persisted to SQLite queue")
         return task
 
     def get_task(self, task_id: str) -> Optional[PersistentTask]:
         """Fetch task from SQLite database."""
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.execute(
                 "SELECT * FROM durable_tasks WHERE task_id = ?",
                 (task_id,),
@@ -181,23 +205,47 @@ class DurableTaskQueue:
         error: Optional[str] = None,
         payload_updates: Optional[Dict[str, Any]] = None,
     ) -> Optional[PersistentTask]:
-        """Atomically update task progress, status, or results."""
-        task = self.get_task(task_id)
-        if not task:
-            return None
+        """Atomically update task progress, status, or results.
 
+        The read-modify-write is performed inside a single `BEGIN IMMEDIATE`
+        transaction: a progress ticker and a cancel handler writing concurrently
+        used to lose each other's updates because the merge was computed from a
+        stale read on a different connection.
+        """
         now = datetime.now(timezone.utc).isoformat()
-        new_status = status if status is not None else task.status
-        new_progress = progress if progress is not None else task.progress
-        new_message = message if message is not None else task.message
-        new_result = result if result is not None else task.result
-        new_error = error if error is not None else task.error
+        conn = self._get_connection()
+        try:
+            conn.execute("BEGIN IMMEDIATE")
+            row = conn.execute(
+                "SELECT * FROM durable_tasks WHERE task_id = ?", (task_id,)
+            ).fetchone()
+            if not row:
+                conn.rollback()
+                return None
 
-        new_payload = dict(task.payload)
-        if payload_updates:
-            new_payload.update(payload_updates)
+            task = PersistentTask(
+                task_id=row["task_id"],
+                task_type=row["task_type"],
+                status=row["status"],
+                progress=row["progress"],
+                message=row["message"],
+                payload=json.loads(row["payload"]) if row["payload"] else {},
+                result=json.loads(row["result"]) if row["result"] else None,
+                error=row["error"],
+                created_at=row["created_at"],
+                updated_at=row["updated_at"],
+            )
 
-        with self._get_connection() as conn:
+            new_status = status if status is not None else task.status
+            new_progress = progress if progress is not None else task.progress
+            new_message = message if message is not None else task.message
+            new_result = result if result is not None else task.result
+            new_error = error if error is not None else task.error
+
+            new_payload = dict(task.payload)
+            if payload_updates:
+                new_payload.update(payload_updates)
+
             conn.execute(
                 """
                 UPDATE durable_tasks
@@ -216,6 +264,11 @@ class DurableTaskQueue:
                 ),
             )
             conn.commit()
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
 
         task.status = new_status
         task.progress = new_progress
@@ -249,7 +302,7 @@ class DurableTaskQueue:
         recovered: List[PersistentTask] = []
         now = datetime.now(timezone.utc).isoformat()
 
-        with self._get_connection() as conn:
+        with self._connection() as conn:
             cursor = conn.execute(
                 "SELECT task_id FROM durable_tasks WHERE status IN ('running', 'processing')"
             )

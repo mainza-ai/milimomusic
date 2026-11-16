@@ -129,11 +129,20 @@ class MuScriptorProvider:
         audio_file_path: Optional[str] = None,
         audio_path: Optional[str] = None,
         job_id: str = "",
-        progress_callback: Optional[Callable[[int, int, str], None]] = None
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+        cancel_event: Optional[Any] = None,
     ) -> TranscriptionResult:
         """
         Transcribes audio into multi-instrument MIDI, MusicXML, and Note Events.
+
+        `cancel_event` is checked between passes: a 4-minute track can take
+        minutes on the `small` model and the pipeline's between-step guard never
+        fires while this is running (plan 2.5).
         """
+        def _check_cancel(stage: str) -> None:
+            if cancel_event is not None and cancel_event.is_set():
+                raise asyncio.CancelledError(f"Transcription cancelled during {stage}")
+
         target_path = audio_file_path or audio_path or ""
         from app.core.paths import get_generated_audio_dir, get_repo_root
         from app.transcription.karaoke import _resolve_audio_file
@@ -275,6 +284,7 @@ class MuScriptorProvider:
             except Exception as sheet_err:
                 logger.debug(f"MuseScore engraving note (fallback to XML): {sheet_err}")
 
+            _check_cancel("transcription")
             if progress_callback:
                 progress_callback(4, 4, f"MuScriptor: Complete ({len(notes)} notes transcribed).")
 

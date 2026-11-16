@@ -113,6 +113,12 @@ class Job(SQLModel, table=True):
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    # Liveness: bumped by every pipeline progress tick. `updated_at` cannot serve
+    # as a heartbeat because the pipeline only writes it on status transitions.
+    last_heartbeat_at: Optional[datetime] = Field(default=None)
+    # Bounded retries (plan 2.2): a transient OOM/503 must not permanently fail a job.
+    attempts: int = Field(default=0)
+    max_attempts: int = Field(default=2)
     error_msg: Optional[str] = None
     is_favorite: bool = Field(default=False)
 

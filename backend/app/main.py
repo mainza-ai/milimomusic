@@ -43,7 +43,7 @@ logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
 
-from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Body, Query, Request
+from fastapi import FastAPI, Depends, HTTPException, BackgroundTasks, UploadFile, File, Form, Body, Query, Request, Response
 from fastapi.responses import FileResponse, Response, StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
@@ -163,6 +163,22 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
 
 
 def create_db_and_tables():
+    """Bring the database to the current schema.
+
+    Migrations are now versioned (Alembic). The legacy `create_all` + ad-hoc
+    `ALTER TABLE` path below is retained **only** as a fallback for environments
+    where Alembic cannot run, and it logs loudly when it is used.
+    """
+    from app.core.migrations import ensure_schema
+
+    ensure_schema(engine, fallback_create_all=_legacy_create_db_and_tables)
+
+
+def _legacy_create_db_and_tables():
+    logger.warning(
+        "Using the legacy schema bootstrap (create_all + column patch). "
+        "Run `alembic upgrade head` to bring this database under version control."
+    )
     SQLModel.metadata.create_all(engine)
     with Session(engine) as session:
         session.exec(text("PRAGMA journal_mode=WAL;"))
@@ -218,7 +234,10 @@ def create_db_and_tables():
             "video_path": "VARCHAR",
             "video_config_json": "TEXT",
             "provenance_json": "TEXT",
-            "quality": "VARCHAR"
+            "quality": "VARCHAR",
+            "last_heartbeat_at": "DATETIME",
+            "attempts": "INTEGER DEFAULT 0",
+            "max_attempts": "INTEGER DEFAULT 2"
         }
         for col, col_type in new_columns.items():
             if col not in existing_cols:
@@ -344,48 +363,18 @@ def create_db_and_tables():
 
 
 def reconcile_orphan_agent_runs() -> int:
-    """Boot-time crash recovery for agent runs.
-
-    Covers **every** status that blocks operations — not just `running`. Five album
-    runs stuck at `queued` since 2026-08-25 made artist and release deletion return
-    409 `active_run` forever, and the cancel endpoint (also `running`-only) could not
-    clear them either.
-    """
-    with Session(engine) as session:
-        orphans = session.exec(
-            select(AgentRun).where(AgentRun.status.in_(ACTIVE_RUN_STATUSES))
-        ).all()
-        seen_statuses = sorted({run.status for run in orphans})
-        for run in orphans:
-            run.status = "interrupted"
-            run.error_type = "interrupted"
-            run.error_message = "Interrupted by server restart."
-            run.finished_at = datetime.now(timezone.utc)
-            session.add(run)
-        session.commit()
-        if orphans:
-            logger.warning(
-                f"Reconciled {len(orphans)} orphaned agent run(s) "
-                f"(statuses: {', '.join(seen_statuses)})."
-            )
-        return len(orphans)
+    """Deprecated shim: use `app.core.recovery.recover_agent_runs`."""
+    from app.core import recovery as recovery_mod
+    return recovery_mod.recover_agent_runs(engine)["interrupted"]
 
 
 def reconcile_orphan_jobs() -> int:
-    """Boot-time crash recovery: jobs left queued/processing by a previous
-    process can never finish — mark them failed with an honest reason."""
-    with Session(engine) as session:
-        orphans = session.exec(
-            select(Job).where(Job.status.in_([JobStatus.QUEUED, JobStatus.PROCESSING, "QUEUED", "PROCESSING", "queued", "processing"]))
-        ).all()
-        for job in orphans:
-            job.status = JobStatus.INTERRUPTED
-            job.error_msg = "Interrupted by server restart."
-            session.add(job)
-        session.commit()
-        if orphans:
-            logger.warning(f"Reconciled {len(orphans)} orphaned job(s) after restart.")
-        return len(orphans)
+    """Deprecated shim: use `app.core.recovery.recover_jobs`.
+
+    Kept because tests and tooling import it. The policy lives in one place now.
+    """
+    from app.core import recovery as recovery_mod
+    return recovery_mod.recover_jobs(engine)["interrupted"]
 
 
 @asynccontextmanager
@@ -397,15 +386,24 @@ async def lifespan(app: FastAPI):
         os._exit(3)
 
     create_db_and_tables()
-    reconcile_orphan_jobs()
-    reconcile_orphan_agent_runs()
-    try:
-        from app.core.task_queue import task_queue
-        recovered_tasks = task_queue.recover_interrupted_tasks()
-        if recovered_tasks:
-            logger.info(f"Durable queue: auto-recovered {len(recovered_tasks)} interrupted task(s) to paused state.")
-    except Exception as e:
-        logger.warning(f"Durable queue recovery warning: {e}")
+    # One recovery policy for jobs, durable tasks and agent runs.
+    from app.core import recovery as recovery_mod
+    recovery_mod.recover_on_boot(engine)
+
+    # Stuck-job sweeper: a wedged model call must not hold the GPU lane forever.
+    async def _stall_sweeper():
+        interval = int(os.environ.get("MILIMO_STALL_SWEEP_SECONDS", "120"))
+        max_stall = int(os.environ.get("MILIMO_STALL_AFTER_SECONDS", "900"))
+        while True:
+            try:
+                await asyncio.sleep(max(30, interval))
+                await asyncio.to_thread(recovery_mod.sweep_stalled_jobs, engine, max_stall)
+            except asyncio.CancelledError:
+                raise
+            except Exception as _sweep_err:  # pragma: no cover - defensive
+                logger.warning(f"Stall sweeper error: {_sweep_err}")
+
+    _sweeper_task = asyncio.create_task(_stall_sweeper())
     try:
         _retention_days = int(os.environ.get("MILIMO_RUN_RETENTION_DAYS", "30"))
     except ValueError:
@@ -417,8 +415,15 @@ async def lifespan(app: FastAPI):
     from app.core.storage_gc import start_storage_gc, stop_storage_gc
     start_storage_gc()
     await music_service.initialize()
-    yield
-    stop_storage_gc()
+    try:
+        yield
+    finally:
+        stop_storage_gc()
+        _sweeper_task.cancel()
+        try:
+            await _sweeper_task
+        except (asyncio.CancelledError, Exception):
+            pass
     run_registry.shutdown_all()
     active = music_service.shutdown_all()
     if active:
@@ -602,14 +607,44 @@ app.mount("/covers", RangedStaticFiles(directories=covers_dirs), name="covers")
 # --- Core & Health ---
 
 @app.get("/health")
-def health_check():
+def health_check(response: Response):
+    """Liveness + the three things an operator actually needs: DB, disk, queue."""
+    from app.core.storage_gc import disk_status, ensure_disk_headroom
+
+    db_ok = True
+    try:
+        with Session(engine) as session:
+            session.exec(text("SELECT 1"))
+    except Exception:
+        db_ok = False
+
+    queue_depth = None
+    try:
+        from app.core.task_queue import task_queue
+        with task_queue._connection() as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) AS n FROM durable_tasks WHERE status IN ('queued','running')"
+            ).fetchone()
+            queue_depth = int(row["n"]) if row else 0
+    except Exception:
+        queue_depth = None
+
+    disk = disk_status()
+    degraded = (not db_ok) or bool(ensure_disk_headroom())
+    if degraded:
+        response.status_code = 503
+
     active_caps = provider_registry.get_active_capabilities()
     return {
-        "status": "ok",
+        "status": "degraded" if degraded else "ok",
+        "db": "ok" if db_ok else "unreachable",
+        "disk": disk,
+        "disk_headroom_ok": ensure_disk_headroom() is None,
+        "queue_depth": queue_depth,
         "generation": music_service.active_status(),
         "active_provider": active_caps.provider_id,
         "display_name": active_caps.display_name,
-        "version": active_caps.version
+        "version": active_caps.version,
     }
 
 
@@ -3418,8 +3453,23 @@ async def producer_compose(req: ProducerComposeRequest):
 
 # --- Music Generation & Track Extensions ---
 
+def _refuse_if_disk_full():
+    """Refuse new generation when the media volume is nearly full.
+
+    The first symptom of a full disk used to be SQLITE_FULL mid-transaction
+    (i.e. data loss) rather than a clear error.
+    """
+    from app.core.storage_gc import ensure_disk_headroom
+
+    reason = ensure_disk_headroom()
+    if reason:
+        raise HTTPException(status_code=507, detail={"error": {
+            "code": "insufficient_storage", "message": reason}})
+
+
 @app.post("/generate/music")
 async def generate_music(req: GenerationRequest, background_tasks: BackgroundTasks):
+    _refuse_if_disk_full()
     # Upfront validation for MuLaCover
     is_cover_job = getattr(req, "is_cover", False) or (req.model_provider == "mulacover")
     if is_cover_job:
@@ -3599,7 +3649,8 @@ async def transcribe_lead_sheet(req: LeadSheetExtractRequest):
     output_dir.mkdir(parents=True, exist_ok=True)
 
     try:
-        resolved_bpm = detect_tempo(audio_path, user_bpm=req.bpm)
+        # Tempo detection is a full-file analysis: run it off the event loop.
+        resolved_bpm = await asyncio.to_thread(detect_tempo, audio_path, req.bpm)
         if req.transcription_engine == "upstream":
             condition = symbolic_hub.transcribe_upstream(audio_path, bpm=resolved_bpm)
         else:

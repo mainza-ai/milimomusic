@@ -23,6 +23,7 @@ from app.services.producer_service import extract_final_lyrics
 from app.services.voice_service import voice_service
 from app.core.hardware_lock import GlobalHardwareCoordinator
 from app.core import provenance as provenance_util
+from app.core.recovery import touch_heartbeat as provenance_util_touch
 
 logger = logging.getLogger(__name__)
 
@@ -81,12 +82,12 @@ class GenerateAndTranscribePipeline:
         """
         job_id_str = str(job_id)
         logger.info(f"Starting orchestration pipeline for job {job_id_str}")
-        await GlobalHardwareCoordinator.acquire_device("Audio Pipeline")
+        await GlobalHardwareCoordinator.acquire_device("Audio Pipeline", modality="audio_gen")
         try:
             async with music_service.gpu_lock:
                 return await self._run_locked(job_id, req, engine, event_manager, cancel_event)
         finally:
-            GlobalHardwareCoordinator.release_device("Audio Pipeline")
+            GlobalHardwareCoordinator.release_device("Audio Pipeline", modality="audio_gen")
 
     async def _run_locked(
         self,
@@ -132,7 +133,18 @@ class GenerateAndTranscribePipeline:
             provider = provider_registry.get_provider(req.model_provider)
             _abort_if_terminal(engine, job_id, cancel_event, stage="pre-generation")
 
+            _last_beat = [0.0]
+
+            def _beat():
+                """Liveness for the stall sweeper (throttled to 10s)."""
+                import time as _t
+                now = _t.monotonic()
+                if now - _last_beat[0] >= 10.0:
+                    _last_beat[0] = now
+                    provenance_util_touch(engine, job_id)
+
             def _gen_progress(step: int, total: int, msg: str):
+                _beat()
                 prog_pct = min(40, int(15 + (step / max(1, total)) * 25))
                 event_manager.publish("job_progress", {
                     "job_id": job_id_str,
@@ -441,7 +453,8 @@ class GenerateAndTranscribePipeline:
                 job_id=job_id_str,
                 progress_callback=lambda s, t, m: event_manager.publish("job_progress", {
                     "job_id": job_id_str, "step": 4, "total_steps": 4, "phase": "transcription", "progress": 90, "message": m
-                })
+                }),
+                cancel_event=cancel_event,
             )
             GlobalHardwareCoordinator.flush_memory()
 
@@ -455,10 +468,13 @@ class GenerateAndTranscribePipeline:
                 effective_lyrics = req.lyrics or ""
 
             vocal_stem_candidate = final_vocal_path or real_stems.get("vocals", "") or local_master
-            timed_lyrics = lyric_sync_engine.align_lyrics(
+            # MMS_FA model load + full-file forward pass: blocking, and it used to
+            # stall the event loop (SSE heartbeats, polling, cancel requests).
+            timed_lyrics = await asyncio.to_thread(
+                lyric_sync_engine.align_lyrics,
                 lyrics=effective_lyrics,
                 duration_sec=gen_result.duration_sec,
-                vocal_stem_path=vocal_stem_candidate
+                vocal_stem_path=vocal_stem_candidate,
             )
 
             # Dual-engine stems: real Demucs 4-master stems (neural separation
@@ -469,7 +485,8 @@ class GenerateAndTranscribePipeline:
             instrument_parts: dict[str, str] = {}
             instrument_programs: dict[str, int] = {}
             try:
-                instrument_parts, instrument_programs = render_instrument_parts(
+                instrument_parts, instrument_programs = await asyncio.to_thread(
+                    render_instrument_parts,
                     transcription_result.notes,
                     job_id_str,
                     duration_sec=gen_result.duration_sec,

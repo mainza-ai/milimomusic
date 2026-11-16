@@ -276,7 +276,7 @@ class InpaintingService:
                     cancel_event=abort_event,
                 )
             finally:
-                GlobalHardwareCoordinator.release_device("Inpaint Repair")
+                GlobalHardwareCoordinator.release_device("Inpaint Repair", modality="audio_gen")
 
             if abort_event.is_set():
                 raise asyncio.CancelledError("Repair cancelled by user")

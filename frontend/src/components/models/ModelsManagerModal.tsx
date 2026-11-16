@@ -794,6 +794,11 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                             : ''}
                                     </p>
                                 )}
+                                {(download.status === 'downloading' || download.status === 'queued') && download.warning && (
+                                    <p className="text-[10px] leading-relaxed text-amber-600 dark:text-amber-400">
+                                        {download.warning}
+                                    </p>
+                                )}
                                 {(download.status === 'error' || downloadError) && (
                                     <div className="flex items-start justify-between gap-3">
                                         <p className="text-[11px] text-rose-600 dark:text-rose-400 flex-1">

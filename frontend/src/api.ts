@@ -269,6 +269,8 @@ export interface ModelDownloadStatus {
     category?: 'audio' | 'image' | 'video' | null;
     /** Live transfer rate, MB/s. */
     speed_mbps?: number;
+    /** Non-fatal advisory from the server (e.g. a path near the Windows limit). */
+    warning?: string | null;
 }
 
 export interface ModelVariant {

@@ -581,7 +581,8 @@ install_error_handlers(app)
 # Static Files (Audio & Covers Serving) & Canonical Storage Initialization
 from app.core.paths import (
     get_models_dir, get_data_dir, get_generated_audio_dir,
-    resolve_audio_file, resolve_stem_file, resolve_image_file
+    resolve_audio_file, resolve_stem_file, resolve_image_file,
+    win_long_path, win_path_length_warning, describe_fs_error,
 )
 from app.core.media_paths import (
     AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS, ALL_MEDIA_EXTS,
@@ -1764,12 +1765,22 @@ def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files
 
     rec = _model_downloads[download_id]
     rec["status"] = "downloading"
+    # Windows still enforces MAX_PATH; the extended-length form keeps our own
+    # file operations working on deep model paths. `local_dir` stays plain for
+    # huggingface_hub, which builds and opens its own paths.
+    long_dir = win_long_path(local_dir)
+    path_warning = win_path_length_warning(
+        [os.path.join(local_dir, fname) for fname, _ in files]
+    )
+    if path_warning:
+        logger.warning(path_warning)
+        rec["warning"] = path_warning
     try:
-        os.makedirs(local_dir, exist_ok=True)
+        os.makedirs(long_dir, exist_ok=True)
         # Account for already-present complete shards (resume / retry of same repo).
         completed_bytes = 0
         for fname, size in files:
-            dest = os.path.join(local_dir, fname)
+            dest = os.path.join(long_dir, fname)
             try:
                 if os.path.isfile(dest) and os.path.getsize(dest) == size:
                     rec["files_done"] += 1
@@ -1781,7 +1792,7 @@ def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files
             if cancel_event.is_set():
                 rec["status"] = "cancelled"
                 return
-            dest = os.path.join(local_dir, fname)
+            dest = os.path.join(long_dir, fname)
             try:
                 if os.path.isfile(dest) and os.path.getsize(dest) == size:
                     continue  # already complete; counted above
@@ -1802,12 +1813,12 @@ def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files
                 while not stop_monitor.is_set():
                     time.sleep(0.5)
                     current_bytes = 0
-                    dest = os.path.join(local_dir, fname)
+                    dest = os.path.join(long_dir, fname)
                     try:
                         if os.path.isfile(dest):
                             current_bytes = os.path.getsize(dest)
                         else:
-                            for root_dir, _, walked in os.walk(local_dir):
+                            for root_dir, _, walked in os.walk(long_dir):
                                 for candidate in walked:
                                     if candidate.endswith(".incomplete"):
                                         p_path = os.path.join(root_dir, candidate)
@@ -1848,7 +1859,7 @@ def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files
         try:
             # Remove hf transfer bookkeeping polluting the weights dir (harmless, keeps layout canonical).
             import glob as _glob
-            for stray in _glob.glob(os.path.join(local_dir, ".cache", "huggingface", "download", "*.lock")):
+            for stray in _glob.glob(os.path.join(long_dir, ".cache", "huggingface", "download", "*.lock")):
                 try:
                     os.remove(stray)
                 except OSError:
@@ -1864,7 +1875,7 @@ def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files
             logger.warning(f"Could not auto-register custom model {repo_id}: {reg_err}")
     except Exception as e:
         rec["status"] = "error"
-        rec["error"] = str(e)[:500]
+        rec["error"] = describe_fs_error(e)
         logger.error(f"Model download {download_id} failed: {e}")
     finally:
         _download_cancels.pop(download_id, None)

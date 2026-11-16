@@ -3032,3 +3032,30 @@ Tests: **11** in `test_mulacover_bundle_download.py` (+4): symlink refused → c
 and bundle installed, dangling link not "installed", disk-space failure reported as `error`,
 and the POSIX happy path (local codec linked, never re-fetched).
 Verification: **543 passed, 0 failed**; ruff `E9,F63,F7,F82,F811` clean.
+
+## [2026-11-16] fix | Windows MAX_PATH guard for model downloads
+Closing the residual gap left by the codec-symlink fix. Windows enforces a 260-character
+path limit unless the machine opts into long-path support, and a model download reaches it
+easily: `<MODELS_DIRECTORY>/audio/HeartMuLa__MuLaCover/Qwen3-Embedding-0.6B/<file>`, plus
+Hugging Face's own `.cache/huggingface/download/<file>.incomplete` bookkeeping. The failure
+was not silent-but-benign: `os.makedirs`/`isfile`/`os.replace` raise `WinError 206` mid-download.
+Added to `app/core/paths.py`:
+- `win_long_path()` — returns the `\\?\` extended-length form for paths at/over
+  `WIN_LONG_PATH_LIMIT` (240, leaving headroom for suffixes we do not own), with the `\\?\UNC\`
+  variant for network shares. Off Windows, and for short paths, it returns the input untouched,
+  so it wraps any call site safely. Idempotent.
+- `strip_win_long_prefix()` — for logs and error text; the marker never reaches the UI.
+- `win_path_length_warning()` — pre-flight advisory naming `MODELS_DIRECTORY` as the remedy.
+- `describe_fs_error()` — turns `WinError 206` / "too long" into an actionable message.
+Wiring: the bundle downloader guards its directory once and per file (`_codec_present`,
+`_drop_dangling_link`, symlink creation, `os.replace`, HTTP writes, lock cleanup), and
+`_model_download_worker` guards `local_dir` once, which `os.path.join` propagates. Crucially
+**`huggingface_hub` still receives the plain path** — it builds and opens its own paths and
+cannot take the marker — so the guard is applied only to calls we control.
+The advisory is recorded as `rec["warning"]` and rendered in the Models card (amber line while
+queued/downloading); `ModelDownloadStatus.warning` added to the frontend type.
+Tests: `backend/tests/test_win_long_paths.py` — 22 tests: prefix/UNC/idempotence/boundary,
+off-Windows no-ops, display round-trip, the actionable warning, error translation, and wiring
+assertions (the worker and bundle both resolve through the guard, while the hub keeps the
+plain path; the `MODELS_DIRECTORY` advice actually works).
+Verification: **565 passed, 0 failed**; ruff clean; frontend build + 29 tests green.

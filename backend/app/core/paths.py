@@ -39,6 +39,81 @@ def get_repo_root() -> Path:
 _REPO_ROOT = get_repo_root()
 
 
+# ── Windows long paths ──────────────────────────────────────────────────────
+# Windows still enforces MAX_PATH (260) unless the machine opts into long-path
+# support, and a model file plus Hugging Face's own
+# `.cache/huggingface/download/<name>.incomplete` bookkeeping runs past that
+# easily. Prefixing with the extended-length marker makes the OS accept it on
+# any machine, without requiring a registry change or Developer Mode.
+
+WIN_LONG_PATH_LIMIT = 240  # leave headroom below 260 for suffixes we do not own
+_LONG_PREFIX = "\\\\?\\"
+
+
+def _extended_prefix(absolute: str) -> str:
+    """Add the Windows extended-length marker to an absolute Windows path."""
+    if absolute.startswith(_LONG_PREFIX):
+        return absolute
+    if absolute.startswith("\\\\"):  # UNC: \\server\share -> \\?\UNC\server\share
+        return _LONG_PREFIX + "UNC\\" + absolute[2:]
+    return _LONG_PREFIX + absolute
+
+
+def win_long_path(path: Union[str, "os.PathLike[str]"], *, windows: Optional[bool] = None) -> str:
+    """Return `path` in a form Windows can open even past MAX_PATH.
+
+    Off Windows, and for short paths, the input is returned untouched — so this
+    is safe to wrap around any file system call on every platform.
+    """
+    raw = os.fspath(path)
+    is_windows = (os.name == "nt") if windows is None else windows
+    if not is_windows or raw.startswith(_LONG_PREFIX):
+        return raw
+    absolute = os.path.abspath(raw)
+    if len(absolute) < WIN_LONG_PATH_LIMIT:
+        return raw
+    return _extended_prefix(absolute)
+
+
+def strip_win_long_prefix(path: Union[str, "os.PathLike[str]"]) -> str:
+    """Undo `win_long_path` for display (error messages, logs, UI)."""
+    raw = os.fspath(path)
+    if raw.startswith(_LONG_PREFIX + "UNC\\"):
+        return "\\\\" + raw[len(_LONG_PREFIX) + 4:]
+    if raw.startswith(_LONG_PREFIX):
+        return raw[len(_LONG_PREFIX):]
+    return raw
+
+
+def win_path_length_warning(paths: List[Union[str, "os.PathLike[str]"]]) -> Optional[str]:
+    """Return an actionable warning if any path needs the extended-length form."""
+    if os.name != "nt":
+        return None
+    longest = max((os.path.abspath(os.fspath(p)) for p in paths), key=len, default="")
+    if len(longest) < WIN_LONG_PATH_LIMIT:
+        return None
+    return (
+        f"A model path is {len(longest)} characters long, close to the Windows "
+        f"260-character limit: {strip_win_long_prefix(longest)}. Milimo uses the "
+        f"extended-length form for its own file operations, but the Hugging Face "
+        f"downloader may still fail. If it does, set MODELS_DIRECTORY to a shorter "
+        f"path (e.g. C:\\models) and retry."
+    )
+
+
+def describe_fs_error(err: Exception) -> str:
+    """Make a filesystem error actionable, and keep it within 500 chars."""
+    text = str(err)
+    lowered = text.lower()
+    if getattr(err, "winerror", None) == 206 or "too long" in lowered or "name too long" in lowered:
+        return (
+            f"{text} — the file path is longer than Windows allows. Set the "
+            f"MODELS_DIRECTORY environment variable to a short location (for example "
+            f"C:\\models), restart the backend and retry: files already downloaded are kept."
+        )[:500]
+    return text[:500]
+
+
 def get_models_dir(category: Optional[str] = None) -> Path:
     """Return the root models directory (default: <REPO_ROOT>/models)
     or a modality-specific subfolder (models/audio, models/image, models/video, models/audio_separator).

@@ -18,6 +18,8 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional, Tuple, Union
 from huggingface_hub import HfApi, hf_hub_download
 
+from app.core.paths import win_long_path, win_path_length_warning, describe_fs_error
+
 logger = logging.getLogger(__name__)
 
 MULACOVER_REPO = "HeartMuLa/MuLaCover"
@@ -48,6 +50,7 @@ def _codec_present(codec_dir: Path) -> bool:
     installed while loading failed later.
     """
     try:
+        codec_dir = Path(win_long_path(codec_dir))
         if not codec_dir.is_dir():
             return False
         return any(p.is_file() for p in codec_dir.iterdir())
@@ -58,8 +61,9 @@ def _codec_present(codec_dir: Path) -> bool:
 def _drop_dangling_link(path: Path) -> None:
     """Remove a symlink that does not resolve to usable content."""
     try:
-        if path.is_symlink() and not _codec_present(path):
-            path.unlink()
+        link = Path(win_long_path(path))
+        if link.is_symlink() and not _codec_present(path):
+            link.unlink()
     except OSError:
         pass
 
@@ -89,7 +93,7 @@ def _codec_entries(root: Path) -> List[Dict[str, Any]]:
 
 def is_mulacover_installed(base_dir: Optional[Union[str, Path]] = None) -> bool:
     """Verify that all core components of the MuLaCover bundle are present on disk."""
-    root = Path(base_dir) if base_dir else resolve_mulacover_dir()
+    root = Path(win_long_path(Path(base_dir) if base_dir else resolve_mulacover_dir()))
     if not root.is_dir():
         return False
 
@@ -219,7 +223,7 @@ def download_mulacover_bundle(
 ):
     """Worker function to execute the full composite download sequence."""
     root = base_dir or resolve_mulacover_dir()
-    root.mkdir(parents=True, exist_ok=True)
+    os.makedirs(win_long_path(root), exist_ok=True)
 
     bundle_info = get_bundle_manifest(root)
     manifest: List[Dict[str, Any]] = bundle_info["manifest"]
@@ -233,7 +237,11 @@ def download_mulacover_bundle(
         try:
             # target_is_directory matters on Windows: without it Python asks for a
             # *file* symlink and the result cannot be traversed as a directory.
-            target_codec.symlink_to(Path(found_local_codec).resolve(), target_is_directory=True)
+            # The link path is guarded; the link *target* stays plain so the
+            # stored path is portable.
+            Path(win_long_path(target_codec)).symlink_to(
+                Path(found_local_codec).resolve(), target_is_directory=True
+            )
             logger.info(f"Symlinked existing HeartCodec from {found_local_codec}")
         except (OSError, NotImplementedError) as e:
             # Windows without Developer Mode / elevation refuses symlinks, and some
@@ -256,6 +264,11 @@ def download_mulacover_bundle(
                 )
             else:
                 logger.warning("HeartCodec is missing and its file list could not be fetched")
+
+    path_warning = win_path_length_warning([item["target_file"] for item in manifest])
+    if path_warning:
+        logger.warning(path_warning)
+        rec["warning"] = path_warning
 
     rec["total_files"] = len(manifest)
     rec["total_bytes"] = total_bytes
@@ -280,7 +293,7 @@ def download_mulacover_bundle(
     # Pre-count already completed files for instant resume
     completed_bytes = 0
     for item in manifest:
-        t_file = item["target_file"]
+        t_file = win_long_path(item["target_file"])
         if os.path.isfile(t_file) and os.path.getsize(t_file) > 0:
             rec["files_done"] += 1
             completed_bytes += item["size"]
@@ -292,8 +305,8 @@ def download_mulacover_bundle(
                 rec["status"] = "cancelled"
                 return
 
-            t_file = item["target_file"]
-            t_dir = item["target_dir"]
+            t_file = win_long_path(item["target_file"])
+            t_dir = win_long_path(item["target_dir"])
             os.makedirs(t_dir, exist_ok=True)
 
             # Skip if already exists and non-empty
@@ -347,10 +360,12 @@ def download_mulacover_bundle(
                             repo_id=item["repo_id"],
                             filename=item["rfilename"],
                             repo_type=item.get("repo_type", "model"),
-                            local_dir=t_dir
+                            # The hub builds its own paths, so it gets the plain
+                            # form; our own moves below use the guarded one.
+                            local_dir=item["target_dir"]
                         )
                         # If file downloaded with full subpath, move to expected target if different
-                        subpath_file = os.path.join(t_dir, item["rfilename"])
+                        subpath_file = win_long_path(os.path.join(item["target_dir"], item["rfilename"]))
                         if subpath_file != t_file and os.path.isfile(subpath_file):
                             os.makedirs(os.path.dirname(t_file), exist_ok=True)
                             os.replace(subpath_file, t_file)
@@ -395,9 +410,9 @@ def download_mulacover_bundle(
             rec["received_bytes"] = completed_bytes
 
         # Clean stray lock files
-        for lock in glob.glob(str(root / "**" / "*.lock"), recursive=True):
+        for lock in glob.glob(os.path.join(win_long_path(root), "**", "*.lock"), recursive=True):
             try:
-                os.remove(lock)
+                os.remove(win_long_path(lock))
             except OSError:
                 pass
 
@@ -416,5 +431,5 @@ def download_mulacover_bundle(
 
     except Exception as e:
         rec["status"] = "error"
-        rec["error"] = str(e)[:500]
+        rec["error"] = describe_fs_error(e)
         logger.error(f"MuLaCover bundle download {download_id} failed: {e}")

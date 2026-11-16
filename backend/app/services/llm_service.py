@@ -1111,12 +1111,14 @@ class LLMService:
         clean_response = sanitize_lyrics(response)
         
         try:
-            with open("ai_debug.log", "a") as f:
-                f.write(f"\n\n--- INITIAL GENERATION ({datetime.now().isoformat()}) ---\n")
-                f.write(f"PROMPT:\n{prompt}\n")
-                f.write(f"RESPONSE:\n{clean_response}\n")
+            from app.core.observability import debug_log as _debug_log
+
+            _debug_log(
+                f"--- INITIAL GENERATION ({datetime.now().isoformat()}) ---\n"
+                f"PROMPT:\n{prompt}\nRESPONSE:\n{clean_response}"
+            )
         except Exception as e:
-            print(f"Failed to write to debug log: {e}")
+            logger.warning(f"Failed to write to debug log: {e}")
             
         return clean_response
 
@@ -1227,30 +1229,31 @@ class LLMService:
         )
 
         try:
-            # DEBUG: Log INPUT
+            # Verbose input dump — opt-in only (contains user lyrics).
             try:
-                with open("ai_debug.log", "a") as f:
-                    timestamp = datetime.now().isoformat()
-                    f.write(f"\n\n=== NEW REQUEST ({timestamp}) ===\n")
-                    f.write(f"USER MESSAGE: {user_message}\n")
-                    f.write(f"CONTEXT TOPIC: {topic} | TAGS: {tags}\n")
-                    f.write(f"STRUCTURE MAP: {structure_map}\n")
-                    f.write(f"CURRENT LYRICS ({len(current_lyrics)} chars):\n{current_lyrics[:200]}...\n")
-                    f.write("--------------------------------\n")
+                from app.core.observability import debug_log as _debug_log
+
+                _debug_log(
+                    f"=== NEW REQUEST ({datetime.now().isoformat()}) ===\n"
+                    f"USER MESSAGE: {user_message}\n"
+                    f"CONTEXT TOPIC: {topic} | TAGS: {tags}\n"
+                    f"STRUCTURE MAP: {structure_map}\n"
+                    f"CURRENT LYRICS ({len(current_lyrics)} chars):\n{current_lyrics[:200]}..."
+                )
             except Exception as log_e:
-                print(f"Logging failed: {log_e}")
+                logger.warning(f"Logging failed: {log_e}")
 
             # Generate Structured Plan
             result: LyricsResponse = provider.generate_structured(prompt, model, LyricsResponse, options={"temperature": 0.4})
             
             # Log
-            debug_msg = f"--- STRUCTURED ENGINE RESPONSE ---\nThought: {result.thought_process}\nOps: {len(result.operations)}\n"
-            print(debug_msg)
-            try:
-                with open("ai_debug.log", "a") as f:
-                    f.write(debug_msg)
-                    f.write(f"{result.model_dump_json(indent=2)}\n")
-            except: pass
+            debug_msg = (
+                f"--- STRUCTURED ENGINE RESPONSE ---\n"
+                f"Thought: {result.thought_process}\nOps: {len(result.operations)}"
+            )
+            from app.core.observability import debug_log as _debug_log
+
+            _debug_log(f"{debug_msg}\n{result.model_dump_json(indent=2)}")
             
             engine = StructuredLyricsEngine()
             from .lyrics_graph import sanitize_lyrics
@@ -1290,18 +1293,17 @@ class LLMService:
         provider = LLMService._get_provider()
         model = model or LLMService._get_active_model()
         
-        # Debug logging - INITIAL STATE
+        # Verbose initial-state dump — opt-in only (contains user lyrics).
         try:
-            with open("ai_debug.log", "a") as f:
-                timestamp = datetime.now().isoformat()
-                f.write(f"\n\n{'='*60}\n")
-                f.write(f"=== LYRICS CHAT REQUEST ({timestamp}) ===\n")
-                f.write(f"{'='*60}\n\n")
-                f.write(f"USER MESSAGE: {user_message}\n\n")
-                f.write(f"CONTEXT: Topic='{topic}' | Tags='{tags}'\n\n")
-                f.write(f"--- INITIAL LYRICS ({len(current_lyrics)} chars) ---\n")
-                f.write(f"{current_lyrics}\n")
-                f.write(f"--- END INITIAL LYRICS ---\n\n")
+            from app.core.observability import debug_log as _debug_log
+
+            _debug_log(
+                f"=== LYRICS CHAT REQUEST ({datetime.now().isoformat()}) ===\n"
+                f"USER MESSAGE: {user_message}\n"
+                f"CONTEXT: Topic='{topic}' | Tags='{tags}'\n"
+                f"--- INITIAL LYRICS ({len(current_lyrics)} chars) ---"
+            )
+            _debug_log(f"{current_lyrics}\n--- END INITIAL LYRICS ---")
         except Exception as log_e:
             logger.warning(f"Logging failed: {log_e}")
         
@@ -1334,18 +1336,18 @@ class LLMService:
                     model_name=p_model,
                 )
                 
-                # Debug log success with FINAL LYRICS
+                # Verbose success dump — opt-in only.
                 try:
-                    with open("ai_debug.log", "a") as f:
-                        f.write(f"--- GRAPH SUCCESS ({p_name}) ---\n")
-                        f.write(f"AI Message: {result.get('message', 'N/A')}\n\n")
-                        new_lyrics = result.get('lyrics', '')
-                        f.write(f"--- NEW LYRICS ({len(new_lyrics)} chars) ---\n")
-                        f.write(f"{new_lyrics}\n")
-                        f.write(f"--- END NEW LYRICS ---\n")
-                        f.write(f"{'='*60}\n\n")
-                except:
-                    pass
+                    from app.core.observability import debug_log as _debug_log
+
+                    _new_lyrics = result.get('lyrics', '')
+                    _debug_log(
+                        f"--- GRAPH SUCCESS ({p_name}) ---\n"
+                        f"AI Message: {result.get('message', 'N/A')}\n"
+                        f"--- NEW LYRICS ({len(_new_lyrics)} chars) ---\n{_new_lyrics}"
+                    )
+                except Exception as _log_err:
+                    logger.debug(f"Debug log skipped: {_log_err}")
                 
                 if result.get("lyrics"):
                     return result
@@ -1922,9 +1924,19 @@ class LLMService:
         fallback = f"{scene} in a palette of {pal}, evoking a {mood} mood, professional album artwork, 4K detail"
         return {"prompt": fallback, "llm_used": False, "provider": None}
 
-    @staticmethod
+    # Provider names recognised by the settings surface.
+    PROVIDER_NAMES = (
+        "nvidia", "openai", "gemini", "openrouter", "lmstudio", "ollama",
+        "deepseek", "opencode", "omlx", "anthropic",
+    )
+
     def update_config(provider_name: str, config_data: Dict[str, Any]):
         ConfigManager().update_config({provider_name: config_data})
+
+    @staticmethod
+    def update_configs(payload: Dict[str, Dict[str, Any]]):
+        """Persist several providers in one file write."""
+        ConfigManager().update_config(payload)
 
     @staticmethod
     def set_active_provider(provider_name: str):

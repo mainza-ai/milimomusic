@@ -1,0 +1,58 @@
+{
+  "provider": "omlx",
+  "ollama": {
+    "base_url": "http://localhost:11434",
+    "model": "llama3.2:3b-instruct-fp16"
+  },
+  "openai": {
+    "api_key": "",
+    "model": "gpt-4o"
+  },
+  "gemini": {
+    "api_key": "",
+    "model": "gemini-1.5-flash"
+  },
+  "openrouter": {
+    "api_key": "",
+    "model": "openai/gpt-3.5-turbo",
+    "base_url": "https://openrouter.ai/api/v1"
+  },
+  "lmstudio": {
+    "base_url": "http://localhost:1234/v1",
+    "model": "local-model"
+  },
+  "nvidia": {
+    "api_key": "",
+    "base_url": "https://integrate.api.nvidia.com/v1",
+    "model": "deepseek-ai/deepseek-v4-flash-0731"
+  },
+  "deepseek": {
+    "api_key": "",
+    "model": "deepseek-chat",
+    "base_url": "https://api.deepseek.com"
+  },
+  "opencode": {
+    "api_key": "",
+    "base_url": "https://opencode.ai/zen/go/v1",
+    "model": "deepseek-v4-flash",
+    "session_id": "adf4fa88-ac9f-42c1-b21d-01d61c433bc5"
+  },
+  "anthropic": {
+    "api_key": "",
+    "base_url": "https://api.anthropic.com",
+    "model": "claude-sonnet-4-5"
+  },
+  "omlx": {
+    "base_url": "http://localhost:8787/v1",
+    "api_key": "",
+    "model": "Qwen3.6-35B-A3B-UD-MLX-4bit"
+  },
+  "paths": {
+    "models_directory": "./models",
+    "model_directory": "./models",
+    "checkpoints_directory": "./data/checkpoints",
+    "datasets_directory": "./data/datasets",
+    "heartmula_model_path": "../heartlib/ckpt",
+    "custom_models_dir": "/test/path"
+  }
+}

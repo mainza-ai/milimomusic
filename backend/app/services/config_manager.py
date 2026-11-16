@@ -18,9 +18,9 @@ def _load_dotenv_once():
     _ENV_LOADED = True
     # Search root .env and backend/.env
     repo_root = os.path.abspath(os.path.join(os.path.dirname(__file__), "../../.."))
-    load_dotenv(os.path.join(repo_root, ".env"), override=True)
-    load_dotenv(os.path.join(repo_root, "backend", ".env"), override=True)
-    load_dotenv(".env", override=True)
+    load_dotenv(os.path.join(repo_root, ".env"), override=False)
+    load_dotenv(os.path.join(repo_root, "backend", ".env"), override=False)
+    load_dotenv(".env", override=False)
 
 
 logger = logging.getLogger(__name__)
@@ -210,8 +210,14 @@ class ConfigManager:
                         if env_val and to_save[provider].get(field) == env_val:
                             if field == "api_key":
                                 to_save[provider][field] = ""
-            with open(CONFIG_FILE, 'w') as f:
-                json.dump(to_save, f, indent=4)
+            # Atomic write: a crash or a concurrent save mid-write used to
+            # truncate llm_config.json and lose every key.
+            from app.core.win_safe_files import atomic_write_json
+            atomic_write_json(CONFIG_FILE, to_save, make_backup=True)
+            try:
+                os.chmod(CONFIG_FILE, 0o600)  # the file holds plaintext API keys
+            except OSError:
+                pass
         except Exception as e:
             logger.error(f"Failed to save config file: {e}")
 

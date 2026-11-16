@@ -38,7 +38,12 @@ logging.basicConfig(
 )
 
 logging.getLogger("multipart").setLevel(logging.WARNING)
-logging.getLogger("uvicorn.access").setLevel(logging.WARNING)
+# Access logging is ON: the previous version silenced it entirely, so nothing
+# recorded what the API served. One structured line per request, with a
+# correlation id the client can quote.
+logging.getLogger("uvicorn.access").setLevel(logging.WARNING)  # replaced by RequestContextMiddleware
+from app.core.observability import RequestContextMiddleware, configure_logging
+configure_logging()
 logging.getLogger("uvicorn.error").setLevel(logging.INFO)
 logging.getLogger("httpcore").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
@@ -244,8 +249,7 @@ def _legacy_create_db_and_tables():
                 try:
                     session.exec(text(f"ALTER TABLE job ADD COLUMN {col} {col_type};"))
                 except Exception as e:
-                    print(f"Migration notice for job.{col}: {e}")
-                    
+                    logger.warning(f"Migration notice for job.{col}: {e}")
         # Automatic Migration for project table
         existing_proj_cols = {row[1] for row in session.exec(text("PRAGMA table_info(project);")).all()}
         proj_columns = {
@@ -257,8 +261,7 @@ def _legacy_create_db_and_tables():
                 try:
                     session.exec(text(f"ALTER TABLE project ADD COLUMN {col} {col_type};"))
                 except Exception as e:
-                    print(f"Migration notice for project.{col}: {e}")
-
+                    logger.warning(f"Migration notice for project.{col}: {e}")
         # Automatic Migration for agentrun table (orchestration columns)
         existing_run_cols = {row[1] for row in session.exec(text("PRAGMA table_info(agentrun);")).all()}
         run_columns = {
@@ -273,8 +276,7 @@ def _legacy_create_db_and_tables():
                 try:
                     session.exec(text(f"ALTER TABLE agentrun ADD COLUMN {col} {col_type};"))
                 except Exception as e:
-                    print(f"Migration notice for agentrun.{col}: {e}")
-
+                    logger.warning(f"Migration notice for agentrun.{col}: {e}")
         # Backfill: legacy album/retry runs carried release_id only inside
         # input_json. Promote it to the indexed column, then index it.
         session.exec(text(
@@ -294,8 +296,7 @@ def _legacy_create_db_and_tables():
                 try:
                     session.exec(text(f"ALTER TABLE release ADD COLUMN {col} {col_type};"))
                 except Exception as e:
-                    print(f"Migration notice for release.{col}: {e}")
-
+                    logger.warning(f"Migration notice for release.{col}: {e}")
         # Automatic Migration for artistprofile table (identity columns)
         existing_prof_cols = {row[1] for row in session.exec(text("PRAGMA table_info(artistprofile);")).all()}
         profile_columns = {
@@ -309,16 +310,14 @@ def _legacy_create_db_and_tables():
                 try:
                     session.exec(text(f"ALTER TABLE artistprofile ADD COLUMN {col} {col_type};"))
                 except Exception as e:
-                    print(f"Migration notice for artistprofile.{col}: {e}")
-
+                    logger.warning(f"Migration notice for artistprofile.{col}: {e}")
         # visualasset.engine — records what actually rendered each image.
         existing_va_cols = {row[1] for row in session.exec(text("PRAGMA table_info(visualasset);")).all()}
         if existing_va_cols and "engine" not in existing_va_cols:
             try:
                 session.exec(text("ALTER TABLE visualasset ADD COLUMN engine VARCHAR;"))
             except Exception as e:
-                print(f"Migration notice for visualasset.engine: {e}")
-
+                logger.warning(f"Migration notice for visualasset.engine: {e}")
         session.commit()
 
         # Automatic Normalization for job IDs (SQLite stores UUID as TEXT, SQLAlchemy GUID expects canonical 32-hex)
@@ -473,6 +472,10 @@ else:
 # so CORS is added later and therefore wraps this gate — its headers ride along
 # on 401/403 responses.
 app.add_middleware(SecurityGate)
+
+# Correlation id + one structured access line (added after SecurityGate so it runs
+# inside it: an unauthorised request is still logged with its id).
+app.add_middleware(RequestContextMiddleware)
 
 app.add_middleware(
     CORSMiddleware,
@@ -698,6 +701,18 @@ def get_model_capabilities():
 def get_hardware_profile():
     """Detect hardware configuration and capability recommendations."""
     return {"hardware": model_manager.detect_hardware()}
+
+
+@app.get("/system/capabilities")
+def get_capability_matrix():
+    """What this build can actually do on this machine (decision D6).
+
+    The UI uses this to *disable* engines with a stated reason instead of letting
+    the user pick something that fails at runtime.
+    """
+    from app.core.capabilities import build_matrix
+
+    return build_matrix()
 
 
 @app.get("/models/check/{model_id}")
@@ -2736,26 +2751,16 @@ def update_llm_config(config: LLMConfigUpdate):
     try:
         if config.provider:
             LLMService.set_active_provider(config.provider)
-        if config.nvidia:
-            LLMService.update_config("nvidia", config.nvidia.model_dump(exclude_unset=True))
-        if config.openai:
-            LLMService.update_config("openai", config.openai.model_dump(exclude_unset=True))
-        if config.gemini:
-            LLMService.update_config("gemini", config.gemini.model_dump(exclude_unset=True))
-        if config.openrouter:
-            LLMService.update_config("openrouter", config.openrouter.model_dump(exclude_unset=True))
-        if config.lmstudio:
-            LLMService.update_config("lmstudio", config.lmstudio.model_dump(exclude_unset=True))
-        if config.ollama:
-            LLMService.update_config("ollama", config.ollama.model_dump(exclude_unset=True))
-        if config.deepseek:
-            LLMService.update_config("deepseek", config.deepseek.model_dump(exclude_unset=True))
-        if config.opencode:
-            LLMService.update_config("opencode", config.opencode.model_dump(exclude_unset=True))
-        if config.omlx:
-            LLMService.update_config("omlx", config.omlx.model_dump(exclude_unset=True))
-        if config.anthropic:
-            LLMService.update_config("anthropic", config.anthropic.model_dump(exclude_unset=True))
+        # Batch the provider updates: each `update_config` used to persist the whole
+        # file, so one save made ten sequential writes (and ten chances to truncate).
+        payload = config.model_dump(exclude_unset=True)
+        batched = {
+            name: payload[name]
+            for name in LLMService.PROVIDER_NAMES
+            if isinstance(payload.get(name), dict) and payload[name]
+        }
+        if batched:
+            LLMService.update_configs(batched)
         return LLMService.get_config()
     except Exception as e:
         logger.error(f"Route failed: {e}", exc_info=True)
@@ -3591,8 +3596,7 @@ async def generate_music(
                     session.add(studio_session)
                     session.commit()
             except Exception as e:
-                print(f"Session link notice: {e}")
-
+                logger.warning(f"Session link notice: {e}")
     # Publish initial queued event to SSE subscribers
     event_manager.publish("job_update", {
         "job_id": job_id_str,
@@ -4381,8 +4385,7 @@ def export_studio_pack(job_id: str):
                             clean_part = re.sub(r'[^a-zA-Z0-9_-]', '_', part_name)
                             zf.write(part_path.lstrip("/"), arcname=f"stems/instruments/{clean_part}.wav")
                 except Exception as e:
-                    print(f"Stem packing error: {e}")
-            
+                    logger.warning(f"Stem packing error: {e}")
             # 3. Transcription & Scores
             if job.midi_path and os.path.exists(job.midi_path.lstrip("/")):
                 zf.write(job.midi_path.lstrip("/"), arcname="transcription/score.mid")

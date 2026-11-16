@@ -193,3 +193,51 @@ def test_replay_ring_is_bounded():
     for i in range(event_manager.RING_SIZE + 50):
         event_manager.publish("job_progress", {"job_id": "ring-probe", "i": i})
     assert len(event_manager._ring) <= event_manager.RING_SIZE
+
+
+# ── rate limiting ──────────────────────────────────────────────────────────
+
+def test_rate_limit_keys_on_route_template(monkeypatch):
+    """Varying the job id must not mint a fresh bucket per request."""
+    from app.core import ratelimit
+
+    ratelimit.reset()
+    monkeypatch.setenv("MILIMO_RATE_LIMIT_PER_MIN", "3")
+
+    class _Req:
+        def __init__(self, path, route_path):
+            self.url = type("U", (), {"path": path})()
+            self.headers = {}
+            self.client = type("C", (), {"host": "127.0.0.1"})()
+            self.scope = {"route": type("R", (), {"path": route_path})()}
+
+    template = "/jobs/{job_id}/voice-convert"
+    results = [
+        ratelimit.check(_Req(f"/jobs/job-{i}/voice-convert", template))
+        for i in range(6)
+    ]
+    # Cost is 3 units per call, limit 3/min: the first call fills the window.
+    assert results[0] is None
+    assert results[1] is not None, "a different job id reused the same bucket"
+    retry_after, message = results[1]
+    assert retry_after > 0 and "voice-convert" in message
+
+
+def test_rate_limit_covers_the_expensive_routes():
+    from app.core.ratelimit import _is_protected
+
+    for path in (
+        "/tracks/abc/separate",
+        "/jobs/abc/voice-convert",
+        "/videos/render-advanced/abc",
+        "/api/training/jobs",
+        "/api/editor/projects/p/compile",
+        "/transcribe/lead-sheet",
+    ):
+        assert _is_protected(path), f"{path} is expensive but unprotected"
+
+
+def test_rate_limit_costs_are_graded():
+    from app.core.ratelimit import cost_for
+
+    assert cost_for("/generate/music") > cost_for("/tracks/{job_id}/peaks")

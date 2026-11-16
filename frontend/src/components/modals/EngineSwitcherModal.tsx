@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { X, Cpu, Zap, Trash2, Layers, Music, Video, Mic } from 'lucide-react';
-import { systemApi, type SystemTelemetry } from '../../api';
+import { systemApi, modelsApi, type SystemTelemetry, type CapabilityMatrix } from '../../api';
 import { useModalStore } from '../../stores/useModalStore';
 
 interface EngineCard {
@@ -12,6 +12,20 @@ interface EngineCard {
     icon: React.ComponentType<{ size?: number; className?: string }>;
     description: string;
 }
+
+// Which capability-matrix row governs each engine (decision D6). An engine whose
+// row is unsupported is shown disabled with the server's reason instead of
+// silently failing at generation time.
+const ENGINE_CAPABILITY: Record<string, string> = {
+    minimax: 'minimax_music3',
+    heartmula: 'heartmula',
+    mulacover: 'mulacover',
+    roformer: 'separation',
+    muscriptor: 'transcription',
+    neural_svc: 'voice',
+    wan: 'video',
+    ltx: 'video',
+};
 
 const ENGINES: EngineCard[] = [
     {
@@ -75,6 +89,7 @@ let cachedEngineTelemetry: SystemTelemetry | null = null;
 export const EngineSwitcherModal: React.FC = () => {
     const { isEngineSwitcherOpen, closeEngineSwitcher } = useModalStore();
     const [telemetry, setTelemetry] = useState<SystemTelemetry | null>(cachedEngineTelemetry);
+    const [capabilities, setCapabilities] = useState<CapabilityMatrix | null>(null);
     const [isFlushing, setIsFlushing] = useState(false);
     const [statusMessage, setStatusMessage] = useState<string | null>(null);
 
@@ -97,6 +112,15 @@ export const EngineSwitcherModal: React.FC = () => {
             // ignore
         }
     };
+
+    useEffect(() => {
+        if (!isEngineSwitcherOpen) return;
+        let cancelled = false;
+        modelsApi.getCapabilityMatrix()
+            .then(m => { if (!cancelled) setCapabilities(m); })
+            .catch(() => { /* the matrix is advisory; the modal still works */ });
+        return () => { cancelled = true; };
+    }, [isEngineSwitcherOpen]);
 
     useEffect(() => {
         if (isEngineSwitcherOpen) {
@@ -233,12 +257,19 @@ export const EngineSwitcherModal: React.FC = () => {
                         {ENGINES.map((eng) => {
                             const Icon = eng.icon;
                             const isActive = Boolean(telemetry?.active_consumer?.toLowerCase().includes(eng.id));
+                            const capKey = ENGINE_CAPABILITY[eng.id];
+                            const cap = capKey ? capabilities?.features.find(f => f.feature === capKey) : undefined;
+                            const unavailable = cap ? !cap.supported : false;
 
                             return (
                                 <div
                                     key={eng.id}
+                                    aria-disabled={unavailable}
+                                    title={unavailable ? (cap?.reason || 'Not supported on this machine') : undefined}
                                     className={`p-3.5 rounded-xl border transition-all ${
-                                        isActive
+                                        unavailable
+                                            ? 'opacity-60 bg-white dark:bg-white/[0.02] border-dashed border-amber-500/40'
+                                            : isActive
                                             ? 'bg-teal-500/10 border-teal-500/40 shadow-sm'
                                             : 'bg-white dark:bg-white/[0.02] border-black/[0.06] dark:border-white/[0.06] hover:border-black/15 dark:hover:border-white/15'
                                     }`}
@@ -266,6 +297,12 @@ export const EngineSwitcherModal: React.FC = () => {
                                     <p className="text-[11px] text-slate-500 dark:text-slate-400 line-clamp-2 leading-relaxed">
                                         {eng.description}
                                     </p>
+
+                                    {unavailable && (
+                                        <p className="mt-1.5 text-[10px] font-semibold text-amber-600 dark:text-amber-400">
+                                            Unavailable here — {cap?.reason}
+                                        </p>
+                                    )}
                                 </div>
                             );
                         })}

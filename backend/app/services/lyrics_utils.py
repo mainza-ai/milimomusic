@@ -1,7 +1,11 @@
-import re
 import difflib
-from typing import Dict, List, Optional, Tuple, Any
+import logging
+import re
+from typing import Any, Dict, List, Optional, Tuple
+
 from .lyrics_schemas import FormattedLyricsSection, LyricsEditOp
+
+logger = logging.getLogger("milimo.lyrics_utils")
 
 class LyricsParser:
     @staticmethod
@@ -123,7 +127,7 @@ class LyricsDOM:
             try:
                 self._apply_single_op(op)
             except Exception as e:
-                print(f"Failed to apply op {op}: {e}")
+                logger.warning(f"Failed to apply op {op}: {e}")
                 # We continue to try others? Or stop? 
                 # Better to continue for robustness.
 

@@ -671,7 +671,31 @@ export const api = {
     }
 };
 
+export interface CapabilityRow {
+    feature: string;
+    label: string;
+    supported: boolean;
+    installed: boolean | null;
+    reason: string | null;
+    matrix: Record<string, boolean>;
+}
+
+export interface CapabilityMatrix {
+    platform: 'apple_silicon_mlx' | 'nvidia_cuda' | 'cpu';
+    platform_label: string;
+    os: string;
+    machine: string;
+    ffmpeg: boolean;
+    features: CapabilityRow[];
+    columns: string[];
+}
+
 export const modelsApi = {
+    /** What this build can actually do on this machine (decision D6). */
+    getCapabilityMatrix: async (): Promise<CapabilityMatrix> => {
+        const res = await axios.get<CapabilityMatrix>(`${API_BASE_URL}/system/capabilities`);
+        return res.data;
+    },
     getModelTree: async (): Promise<ModelVariant[]> => {
         const res = await axios.get(`${API_BASE_URL}/models/tree`);
         return res.data?.models || (Array.isArray(res.data) ? res.data : []);

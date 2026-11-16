@@ -24,15 +24,14 @@ logger = logging.getLogger(__name__)
 
 
 def debug_log(message: str, data: Any = None):
-    """Write detailed debug info to ai_debug.log"""
-    try:
-        with open("ai_debug.log", "a") as f:
-            timestamp = datetime.now().strftime("%H:%M:%S")
-            f.write(f"[{timestamp}] {message}\n")
-            if data is not None:
-                f.write(f"{data}\n")
-    except Exception as e:
-        logger.warning(f"Debug log failed: {e}")
+    """Write verbose Co-Writer diagnostics, opt-in only (MILIMO_DEBUG_PROMPTS=1).
+
+    This used to append the full lyrics and prompt of every turn to an unbounded
+    file in the working directory, with no consent gate.
+    """
+    from app.core.observability import debug_log as _debug_log
+
+    _debug_log(message if data is None else f"{message}\n{data}")
 
 
 def sanitize_lyrics(raw_lyrics: str) -> str:

@@ -346,3 +346,18 @@ def test_cancelled_job_is_not_executed(queue, monkeypatch):
         job = session.get(Job, job_id)
         session.delete(job)
         session.commit()
+
+
+def test_interrupted_generation_tasks_are_closed(queue, monkeypatch):
+    """A music task cannot resume mid-song; boot recovery must close it honestly."""
+    import app.core.worker as worker_mod
+
+    monkeypatch.setattr(worker_mod.DurableTaskQueue, "get_instance",
+                        classmethod(lambda cls, db_path=None: queue))
+
+    worker_mod.GenerationWorker.enqueue("job-x", {"prompt": "x"})
+    queue.update_task("gen_job-x", status="paused", message="Interrupted by system restart.")
+
+    closed = worker_mod.requeue_interrupted(engine=None)
+    assert closed == 1
+    assert queue.get_task("gen_job-x").status == "error"

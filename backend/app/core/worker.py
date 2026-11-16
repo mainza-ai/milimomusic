@@ -194,8 +194,11 @@ def requeue_interrupted(engine) -> int:
     queue = DurableTaskQueue.get_instance()
     conn = queue._get_connection()
     try:
+        # The generic recovery parks interrupted tasks at 'paused'; a music task
+        # cannot resume mid-song, so close both states here.
         rows = conn.execute(
-            "SELECT task_id FROM durable_tasks WHERE task_type = ? AND status = 'running'",
+            "SELECT task_id FROM durable_tasks WHERE task_type = ? "
+            "AND status IN ('running', 'paused')",
             (MUSIC_TASK_TYPE,),
         ).fetchall()
         for row in rows:

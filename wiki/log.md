@@ -3059,3 +3059,12 @@ off-Windows no-ops, display round-trip, the actionable warning, error translatio
 assertions (the worker and bundle both resolve through the guard, while the hub keeps the
 plain path; the `MODELS_DIRECTORY` advice actually works).
 Verification: **565 passed, 0 failed**; ruff clean; frontend build + 29 tests green.
+
+## [2026-11-16] query | reply posted to GitHub issue #5
+Posted two comments on [#5](https://github.com/mainza-ai/milimomusic/issues/5) as `mainza-ai`:
+1. Root cause + recovery steps (pull, restart, re-run — it resumes from ~61%), the live-MB/s and
+   Retry fixes, and the Windows codec-symlink finding, with the platform question dropped
+   ([comment](https://github.com/mainza-ai/milimomusic/issues/5#issuecomment-6929715356)).
+2. A P.S. on the Windows long-path guard (`d685db8`), naming `MODELS_DIRECTORY` as the remedy
+   ([comment](https://github.com/mainza-ai/milimomusic/issues/5#issuecomment-6929941394)).
+Issue left **open** — the reporter should confirm the resumed download completes.

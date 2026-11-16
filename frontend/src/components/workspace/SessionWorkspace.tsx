@@ -31,6 +31,10 @@ import { API_BASE_URL, api, getStemMeta, trackApi, workspaceApi } from '../../ap
 import type { Job, TimedLine, StemsMap, NoteEvent } from '../../api';
 import { pushHotkeyScope, isTextEntryTarget, hasModifier } from '../../utils/hotkeyScope';
 import { type TimelineClip, clipsForTrack, clipEnd, defaultClip, fadeEnvelope } from './timelineClips';
+import {
+    type AutomationMap,
+    schedulePoints as automationSchedulePoints,
+} from './automation';
 import { safeJsonParse } from '../../utils/safeJsonParse';
 import { getAudioContext } from '../../utils/audioContext';
 import { useLyricsAutoScroll } from '../../hooks/useLyricsAutoScroll';
@@ -242,6 +246,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
     const [isCountingIn, setIsCountingIn] = useState(false);
     // Editable arrangement (plan 3.1). Empty = one implicit full-length clip.
     const [timelineClips, setTimelineClips] = useState<TimelineClip[]>([]);
+    const [automation, setAutomation] = useState<AutomationMap>({});
 
     const applySessionState = (s: any) => {
         if (!s || typeof s !== 'object') return;
@@ -258,6 +263,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         if (typeof s.metronomeEnabled === 'boolean') setMetronomeEnabled(s.metronomeEnabled);
         if (typeof s.countInBars === 'number') setCountInBars(s.countInBars);
         if (Array.isArray(s.clips)) setTimelineClips(s.clips as TimelineClip[]);
+        if (s.automation && typeof s.automation === 'object') setAutomation(s.automation as AutomationMap);
     };
 
     useEffect(() => {
@@ -289,8 +295,9 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         metronomeEnabled,
         countInBars,
         clips: timelineClips,
+        automation,
     }), [masterVolume, isMasterMuted, stemSource, stemChannels, loopStart, loopEnd,
-         tempoMap, metronomeEnabled, countInBars, timelineClips]);
+         tempoMap, metronomeEnabled, countInBars, timelineClips, automation]);
 
     useEffect(() => {
         const t = window.setTimeout(() => {
@@ -320,8 +327,9 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         channels: { [stemSource]: stemChannels },
         loopStart, loopEnd, tempoMap, metronomeEnabled, countInBars,
         clips: timelineClips,
+        automation,
     }), [masterVolume, isMasterMuted, stemSource, stemChannels, loopStart, loopEnd,
-         tempoMap, metronomeEnabled, countInBars, timelineClips]);
+         tempoMap, metronomeEnabled, countInBars, timelineClips, automation]);
 
     // Coalesce continuous gestures (fader drags) into one history entry.
     useEffect(() => {
@@ -352,6 +360,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         if (typeof snap.metronomeEnabled === 'boolean') setMetronomeEnabled(snap.metronomeEnabled);
         if (typeof snap.countInBars === 'number') setCountInBars(snap.countInBars);
         if (Array.isArray(snap.clips)) setTimelineClips(snap.clips);
+        if (snap.automation) setAutomation(snap.automation);
         lastCommittedRef.current = snap;
     };
 
@@ -417,6 +426,9 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
     const masterOrigGainRef = useRef<GainNode | null>(null);     // unmastered original mix bus
     const masterPostGainRef = useRef<GainNode | null>(null);     // Matchering reference mastered bus
     const stemGainRefs = useRef<Record<string, GainNode>>({});
+    // Fader level at schedule time: automation multiplies it rather than
+    // replacing it, so moving a fader mid-playback still does what you expect.
+    const stemGainScaleRef = useRef<Record<string, number>>({});
     const stemPanRefs = useRef<Record<string, StereoPannerNode>>({});
     // Post-gain AnalyserNode taps feeding the mixer's REAL peak meters.
     const stemAnalyserRefs = useRef<Record<string, AnalyserNode>>({});
@@ -941,6 +953,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
                     : (!stem.isMuted ? stem.volume / 100 : 0);
                 const gain = ensureStemNodes(stem.id, perStem);
                 if (!gain || gain.context !== ctx) return;
+                stemGainScaleRef.current[stem.id] = perStem;
 
                 const stemClips = clipsForTrack(timelineClips, stem.id);
                 if (stemClips.length === 0) {
@@ -1061,6 +1074,32 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
                 }
             });
         }
+
+        // Automation (plan 3.16): schedule the curve breakpoints on the same
+        // AudioContext clock as the stems, so a level ride is sample-accurate and
+        // survives a seek (the value at the seek point is interpolated).
+        Object.entries(automation).forEach(([trackId, curves]) => {
+            const autos = curves as Record<string, { t: number; v: number }[]>;
+            const gain = stemGainRefs.current?.[trackId];
+            const pan = stemPanRefs.current?.[trackId];
+
+            if (gain && gain.context === ctx && autos.volume?.length) {
+                const points = automationSchedulePoints('volume', autos.volume, pos, pos + 60);
+                points.forEach((p, i) => {
+                    const when = startAt + (p.t - pos);
+                    if (i === 0) gain.gain.setValueAtTime(Math.max(0.0001, p.v * (stemGainScaleRef.current[trackId] ?? 1)), when);
+                    else gain.gain.linearRampToValueAtTime(Math.max(0.0001, p.v * (stemGainScaleRef.current[trackId] ?? 1)), when);
+                });
+            }
+            if (pan && pan.context === ctx && autos.pan?.length) {
+                const points = automationSchedulePoints('pan', autos.pan, pos, pos + 60);
+                points.forEach((p, i) => {
+                    const when = startAt + (p.t - pos);
+                    if (i === 0) pan.pan.setValueAtTime(p.v, when);
+                    else pan.pan.linearRampToValueAtTime(p.v, when);
+                });
+            }
+        });
 
         // The stems' gain/panner nodes are created lazily by ensureStemNodes above.
         // Re-apply the current mix state so the graph always reflects the UI.
@@ -1589,6 +1628,35 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         setTimelineClips(next);
     }, []);
 
+    /** Automation edits (plan 3.16). Adding a first point enables the lane. */
+    const handleAutomationChange = useCallback(
+        (trackId: string, param: 'volume' | 'pan', points: { t: number; v: number }[]) => {
+            setAutomation(prev => {
+                const track = { ...(prev[trackId] || {}) };
+                if (points.length === 0) delete track[param];
+                else track[param] = points;
+                const next = { ...prev };
+                if (Object.keys(track).length === 0) delete next[trackId];
+                else next[trackId] = track;
+                return next;
+            });
+        },
+        [],
+    );
+
+    /** Enable a volume automation lane for a track (seeded at the current value). */
+    const enableAutomation = useCallback((trackId: string, param: 'volume' | 'pan' = 'volume') => {
+        setAutomation(prev => ({
+            ...prev,
+            [trackId]: {
+                ...(prev[trackId] || {}),
+                [param]: prev[trackId]?.[param]?.length
+                    ? prev[trackId]![param]!
+                    : [{ t: 0, v: param === 'volume' ? 1 : 0 }],
+            },
+        }));
+    }, []);
+
     /** Beat-grid snap step for clip edits. */
     const snapSec = useMemo(() => {
         const { bpm } = effectiveTempoMap[0] || { bpm: 120 };
@@ -1879,6 +1947,8 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
                         }
                         onClipsChange={handleClipsChange}
                         snapSec={snapSec}
+                        automation={automation}
+                        onAutomationChange={handleAutomationChange}
                     />
                 )}
 
@@ -1924,6 +1994,8 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
                         onMasterAuditionModeChange={setMasterAuditionMode}
                         hasMasteredTrack={Boolean(masteredPath || job.mastered_path)}
                         onMasteringComplete={handleMasteringComplete}
+                        onEnableAutomation={enableAutomation}
+                        automatedIds={Object.keys(automation)}
                     />
                 )}
 

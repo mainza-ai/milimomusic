@@ -8,6 +8,11 @@ import {
     moveClip,
     splitClipAt,
 } from './timelineClips';
+import {
+    type AutomationParam,
+    addPoint,
+    removePointNear,
+} from './automation';
 import { useModalStore } from '../../stores/useModalStore';
 
 // Parse-once helpers: these blobs were re-JSON.parsed on EVERY render
@@ -522,6 +527,121 @@ const ClipLaneRow: React.FC<ClipLaneProps> = ({
     );
 };
 
+interface AutomationLaneProps {
+    trackId: string;
+    param: AutomationParam;
+    points: { t: number; v: number }[];
+    totalDuration: number;
+    onChange: (points: { t: number; v: number }[]) => void;
+    onParamChange: (param: AutomationParam) => void;
+}
+
+/**
+ * Volume/pan automation lane (plan 3.16).
+ *
+ * Click empty space to add a breakpoint, drag a point to move it, double-click a
+ * point to delete it. The curve is drawn as an SVG polyline over the same time
+ * scale as the clips, so a level ride lines up with what you hear.
+ */
+const AutomationLaneRow: React.FC<AutomationLaneProps> = ({
+    trackId, param, points, totalDuration, onChange, onParamChange,
+}) => {
+    const laneRef = useRef<HTMLDivElement>(null);
+    const H = 48;
+    const pct = (t: number) => (t / Math.max(0.001, totalDuration)) * 100;
+    const yOf = (v: number) => {
+        const min = param === 'volume' ? 0 : -1;
+        const max = param === 'volume' ? 1 : 1;
+        const norm = (v - min) / Math.max(1e-6, max - min);
+        return H - Math.max(0, Math.min(1, norm)) * H;
+    };
+    const vOf = (clientY: number) => {
+        const lane = laneRef.current;
+        if (!lane) return param === 'volume' ? 1 : 0;
+        const rect = lane.getBoundingClientRect();
+        const norm = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+        return param === 'volume' ? norm : norm * 2 - 1;
+    };
+    const tOf = (clientX: number) => {
+        const lane = laneRef.current;
+        if (!lane) return 0;
+        const rect = lane.getBoundingClientRect();
+        return Math.max(0, Math.min(totalDuration, ((clientX - rect.left) / rect.width) * totalDuration));
+    };
+
+    const sorted = [...points].sort((a, b) => a.t - b.t);
+    const path = sorted.length
+        ? sorted.map((p, i) => `${i === 0 ? 'M' : 'L'}${pct(p.t) * 10},${yOf(p.v)}`).join(' ')
+        : '';
+
+    return (
+        <div className="flex items-stretch border-b border-black/[0.04] dark:border-white/5 bg-black/[0.015] dark:bg-white/[0.01]">
+            <div className="w-36 flex-shrink-0 flex flex-col justify-center px-2 gap-1 border-r border-black/[0.06] dark:border-white/10">
+                <span className="text-[9px] font-bold uppercase tracking-wide text-slate-500">Automation</span>
+                <select
+                    value={param}
+                    onChange={(e) => onParamChange(e.target.value as AutomationParam)}
+                    className="bg-transparent text-[10px] font-mono font-bold text-teal-600 dark:text-teal-400 cursor-pointer focus:outline-none"
+                    aria-label={`Automation parameter for ${trackId}`}
+                >
+                    <option value="volume">Volume</option>
+                    <option value="pan">Pan</option>
+                </select>
+            </div>
+            <div
+                ref={laneRef}
+                className="relative flex-1"
+                style={{ height: `${H}px` }}
+                onDoubleClick={(e) => {
+                    // Double-click empty space adds a breakpoint at the cursor.
+                    const target = e.target as HTMLElement;
+                    if (target.dataset.automationPoint === 'true') return;
+                    onChange(addPoint(param, points, tOf(e.clientX), vOf(e.clientY)));
+                }}
+                onMouseDown={(e) => {
+                    const target = e.target as HTMLElement;
+                    const index = target.dataset.automationIndex;
+                    if (index === undefined) return;
+                    e.stopPropagation();
+                    e.preventDefault();
+                    const move = (ev: MouseEvent) => {
+                        const next = [...sorted];
+                        const i = Number(index);
+                        if (!next[i]) return;
+                        next[i] = { t: tOf(ev.clientX), v: vOf(ev.clientY) };
+                        onChange(next);
+                    };
+                    const up = () => {
+                        window.removeEventListener('mousemove', move);
+                        window.removeEventListener('mouseup', up);
+                    };
+                    window.addEventListener('mousemove', move);
+                    window.addEventListener('mouseup', up);
+                }}
+                title="Double-click to add a point · drag a point to move · double-click a point to delete"
+            >
+                <svg className="absolute inset-0 w-full h-full" viewBox="0 0 1000 48" preserveAspectRatio="none" aria-hidden>
+                    <line x1="0" y1={yOf(param === 'volume' ? 1 : 0)} x2="1000" y2={yOf(param === 'volume' ? 1 : 0)}
+                          stroke="currentColor" className="text-slate-400/30" strokeDasharray="4 4" />
+                    {path && <path d={path} fill="none" stroke="#14b8a6" strokeWidth="2" vectorEffect="non-scaling-stroke" />}
+                </svg>
+                {sorted.map((p, i) => (
+                    <button
+                        key={`${param}-${i}-${p.t}`}
+                        data-automation-point="true"
+                        data-automation-index={i}
+                        onDoubleClick={(e) => { e.stopPropagation(); onChange(removePointNear(sorted, p.t, 0.05)); }}
+                        className="absolute w-2 h-2 -ml-1 -mt-1 rounded-full bg-teal-500 border border-white shadow cursor-ns-resize"
+                        style={{ left: `${pct(p.t)}%`, top: `${(yOf(p.v) / H) * 100}%` }}
+                        aria-label={`${param} breakpoint at ${p.t.toFixed(2)}s`}
+                        title={`${p.t.toFixed(2)}s → ${p.v.toFixed(2)} (double-click to delete)`}
+                    />
+                ))}
+            </div>
+        </div>
+    );
+};
+
 interface ArrangeTimelineProps {
     job: Job;
     stemChannels: StemChannel[];
@@ -541,6 +661,9 @@ interface ArrangeTimelineProps {
     onClipsChange?: (clips: TimelineClip[]) => void;
     /** Snap step in seconds (0 = free). */
     snapSec?: number;
+    /** Per-track automation curves (plan 3.16). */
+    automation?: Record<string, Partial<Record<AutomationParam, { t: number; v: number }[]>>>;
+    onAutomationChange?: (trackId: string, param: AutomationParam, points: { t: number; v: number }[]) => void;
 }
 
 export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
@@ -558,6 +681,8 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
     clips,
     onClipsChange,
     snapSec = 0,
+    automation = {},
+    onAutomationChange,
 }) => {
     const [zoom, setZoom] = React.useState(1);
     const totalDuration = duration || 60;
@@ -697,7 +822,8 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
 
         const editable = Boolean(clips && onClipsChange);
         return stemChannels.map((track) => (
-            editable ? (
+            <React.Fragment key={track.id}>
+            {editable ? (
                 <ClipLaneRow
                     key={track.id}
                     clips={clips as TimelineClip[]}
@@ -720,10 +846,25 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
                     totalDuration={totalDuration}
                     formatTime={formatTime}
                 />
-            )
+            )}
+            {onAutomationChange && automation[track.id] && Object.keys(automation[track.id] || {}).length > 0 && (
+                <AutomationLaneRow
+                    trackId={track.id}
+                    param={(Object.keys(automation[track.id] || {})[0] as AutomationParam) || 'volume'}
+                    points={automation[track.id]?.volume || []}
+                    totalDuration={totalDuration}
+                    onChange={(points) => onAutomationChange(
+                        track.id,
+                        (Object.keys(automation[track.id] || {})[0] as AutomationParam) || 'volume',
+                        points,
+                    )}
+                    onParamChange={(param) => onAutomationChange(track.id, param, [])}
+                />
+            )}
+            </React.Fragment>
         ));
     }, [job, stemChannels, notesByLane, stemPeaks, stemDurations, totalDuration, onSeparateStems,
-        isSeparating, clips, onClipsChange, snapSec, zoom]);
+        isSeparating, clips, onClipsChange, snapSec, zoom, automation, onAutomationChange]);
 
     return (
         <div className="flex flex-col h-full bg-[#f5f5f7] dark:bg-[#10121a] text-slate-800 dark:text-slate-200 select-none overflow-hidden transition-colors duration-200">

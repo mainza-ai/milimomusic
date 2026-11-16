@@ -24,6 +24,10 @@ interface MultitrackMixerProps {
     onMasterAuditionModeChange?: (mode: 'original' | 'mastered') => void;
     hasMasteredTrack?: boolean;
     onMasteringComplete?: (masteredPath: string, lufs: number) => void;
+    /** Enable a volume automation lane for a channel (plan 3.16). */
+    onEnableAutomation?: (id: string) => void;
+    /** Channel ids that already carry automation, for the button state. */
+    automatedIds?: string[];
 }
 
 export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
@@ -41,7 +45,9 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
     masterAuditionMode = 'mastered',
     onMasterAuditionModeChange,
     hasMasteredTrack = false,
-    onMasteringComplete
+    onMasteringComplete,
+    onEnableAutomation,
+    automatedIds = [],
 }) => {
     const [isMastering, setIsMastering] = useState(false);
     const [masteringStatus, setMasteringStatus] = useState<{ ok: boolean; text: string } | null>(null);
@@ -231,6 +237,25 @@ export const MultitrackMixer: React.FC<MultitrackMixerProps> = ({
                                 >
                                     S
                                 </button>
+                                {onEnableAutomation && (
+                                    <button
+                                        onClick={() => onEnableAutomation(channel.id)}
+                                        aria-pressed={automatedIds.includes(channel.id)}
+                                        title={
+                                            automatedIds.includes(channel.id)
+                                                ? `Volume automation is drawn in Arrange for ${channel.name}`
+                                                : `Add a volume automation lane for ${channel.name}`
+                                        }
+                                        aria-label={`Toggle automation for ${channel.name}`}
+                                        className={`w-7 h-7 rounded-lg text-[10px] font-black transition-all ${
+                                            automatedIds.includes(channel.id)
+                                                ? 'bg-teal-500 text-slate-950 shadow-sm'
+                                                : 'bg-black/5 dark:bg-white/5 text-slate-400 hover:text-teal-500'
+                                        }`}
+                                    >
+                                        A
+                                    </button>
+                                )}
                                 <button
                                     onClick={() => onToggleMute(channel.id)}
                                     title={`Mute ${channel.name} stem`}

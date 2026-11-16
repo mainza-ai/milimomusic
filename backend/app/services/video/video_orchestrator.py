@@ -807,6 +807,14 @@ class VideoOrchestrator:
             else: # 16:9 widescreen default
                 w, h = (1920, 1080) if resolution == "1080p" else (1280, 720)
 
+            # One frame rate for the whole render (plan 4.8). Extraction used a
+            # hardcoded 24 while slicing used the model's fps (16 for Wan), so
+            # beat pulses landed off-frame.
+            from app.services.video.model_specs import get_model_spec
+
+            model_spec = get_model_spec(model_name)
+            project_fps = int(getattr(model_spec, "fps", 24) or 24)
+
             vocal_stem = self.resolve_vocals_stem(job)
             face_image = self.resolve_face_image(job, config.get("character_image_path") or config.get("face_image_path"))
 
@@ -822,7 +830,7 @@ class VideoOrchestrator:
                     vocal_stem_path=vocal_stem or resolved_master,
                     drums_stem_path=drums_stem,
                     bass_stem_path=bass_stem,
-                    fps=24
+                    fps=project_fps,
                 )
                 logger.info(f"Stem audio-reactivity analysis completed ({stem_reactivity.get('total_frames')} frames)")
             except Exception as e:
@@ -845,9 +853,9 @@ class VideoOrchestrator:
             self.update_task(task_id, total_clips=total_clips, clips=[c.to_dict() for c in plan.clips])
 
             from app.services.video.generator_registry import VideoGeneratorRegistry
-            from app.services.video.model_specs import get_model_spec
 
-            model_spec = get_model_spec(model_name)
+            # model_spec was resolved before reactive analysis so one fps flows
+            # through planning, extraction and rendering (plan 4.8).
             video_generator = VideoGeneratorRegistry.resolve(model_name, provider_type)
 
             if provider_type == "cloud_fal":

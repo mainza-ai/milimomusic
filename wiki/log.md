@@ -2979,3 +2979,7 @@ Verification: **29 frontend tests** (+14 automation: sorting, clamping, interpol
 4.6: `performer_rule` was computed and stored on the scene dict but never reached `SceneClip`, so every shot was prompted as if singing. It is now a field on `SceneClip` **and** folded into `clip.prompt`, so instrumental shots state `mouth_movement: closed`.
 4.14: provider "available" chips meant "the `diffusers` package exposes this pipeline class", true on any machine. Availability now requires an **installed video model** on disk (`_has_video_weights`), and the flagship chip is no longer always-on.
 Verification: **530 passed, 0 failed**.
+
+## [2026-11-16] execute | Phase 4.8 — one frame rate through the video chain
+Audio-reactive extraction hardcoded `fps=24` while slicing and rendering used the model's rate (Wan runs at 16), so beat pulses landed on the wrong frames. The model spec is now resolved once, up front, and `project_fps` flows through extraction, slicing and the procedural branch.
+Verification: **530 passed, 0 failed**; ruff gate clean.

@@ -30,6 +30,7 @@ import { useAudioControls } from '../../context/AudioEngineContext';
 import { API_BASE_URL, api, getStemMeta, trackApi, workspaceApi } from '../../api';
 import type { Job, TimedLine, StemsMap, NoteEvent } from '../../api';
 import { pushHotkeyScope, isTextEntryTarget, hasModifier } from '../../utils/hotkeyScope';
+import { type TimelineClip, clipsForTrack, clipEnd, defaultClip, fadeEnvelope } from './timelineClips';
 import { safeJsonParse } from '../../utils/safeJsonParse';
 import { getAudioContext } from '../../utils/audioContext';
 import { useLyricsAutoScroll } from '../../hooks/useLyricsAutoScroll';
@@ -239,6 +240,8 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
     const [metronomeEnabled, setMetronomeEnabled] = useState(false);
     const [countInBars, setCountInBars] = useState(0);
     const [isCountingIn, setIsCountingIn] = useState(false);
+    // Editable arrangement (plan 3.1). Empty = one implicit full-length clip.
+    const [timelineClips, setTimelineClips] = useState<TimelineClip[]>([]);
 
     const applySessionState = (s: any) => {
         if (!s || typeof s !== 'object') return;
@@ -254,6 +257,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         if (Array.isArray(s.tempoMap) && s.tempoMap.length) setTempoMap(s.tempoMap);
         if (typeof s.metronomeEnabled === 'boolean') setMetronomeEnabled(s.metronomeEnabled);
         if (typeof s.countInBars === 'number') setCountInBars(s.countInBars);
+        if (Array.isArray(s.clips)) setTimelineClips(s.clips as TimelineClip[]);
     };
 
     useEffect(() => {
@@ -284,8 +288,9 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         tempoMap,
         metronomeEnabled,
         countInBars,
+        clips: timelineClips,
     }), [masterVolume, isMasterMuted, stemSource, stemChannels, loopStart, loopEnd,
-         tempoMap, metronomeEnabled, countInBars]);
+         tempoMap, metronomeEnabled, countInBars, timelineClips]);
 
     useEffect(() => {
         const t = window.setTimeout(() => {
@@ -314,8 +319,9 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         masterVolume, isMasterMuted, stemSource,
         channels: { [stemSource]: stemChannels },
         loopStart, loopEnd, tempoMap, metronomeEnabled, countInBars,
+        clips: timelineClips,
     }), [masterVolume, isMasterMuted, stemSource, stemChannels, loopStart, loopEnd,
-         tempoMap, metronomeEnabled, countInBars]);
+         tempoMap, metronomeEnabled, countInBars, timelineClips]);
 
     // Coalesce continuous gestures (fader drags) into one history entry.
     useEffect(() => {
@@ -345,6 +351,7 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         if (Array.isArray(snap.tempoMap)) setTempoMap(snap.tempoMap);
         if (typeof snap.metronomeEnabled === 'boolean') setMetronomeEnabled(snap.metronomeEnabled);
         if (typeof snap.countInBars === 'number') setCountInBars(snap.countInBars);
+        if (Array.isArray(snap.clips)) setTimelineClips(snap.clips);
         lastCommittedRef.current = snap;
     };
 
@@ -934,13 +941,55 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
                     : (!stem.isMuted ? stem.volume / 100 : 0);
                 const gain = ensureStemNodes(stem.id, perStem);
                 if (!gain || gain.context !== ctx) return;
-                const src = ctx.createBufferSource();
-                src.buffer = buf;
-                src.connect(gain);
-                const offset = Math.min(Math.max(pos, 0), Math.max(0, buf.duration - 0.02));
-                src.start(startAt, offset, Math.max(0, buf.duration - offset));
-                activeSourcesRef.current.add(src);
-                hasScheduledSource = true;
+
+                const stemClips = clipsForTrack(timelineClips, stem.id);
+                if (stemClips.length === 0) {
+                    // No arrangement edits: play the whole stem (original behaviour).
+                    const src = ctx.createBufferSource();
+                    src.buffer = buf;
+                    src.connect(gain);
+                    const offset = Math.min(Math.max(pos, 0), Math.max(0, buf.duration - 0.02));
+                    src.start(startAt, offset, Math.max(0, buf.duration - offset));
+                    activeSourcesRef.current.add(src);
+                    hasScheduledSource = true;
+                    return;
+                }
+
+                // Schedule each clip as its own window into the source buffer, with
+                // a per-clip gain node carrying the fade envelope.
+                stemClips.forEach(clip => {
+                    const end = clipEnd(clip);
+                    if (end <= pos + 0.005) return;             // already past
+                    const clipStartInTimeline = Math.max(clip.start, pos);
+                    const when = startAt + (clipStartInTimeline - pos);
+                    const srcOffset = Math.min(
+                        clip.offset + (clipStartInTimeline - clip.start),
+                        Math.max(0, buf.duration - 0.02),
+                    );
+                    const playDuration = Math.max(0, end - clipStartInTimeline);
+                    if (playDuration <= 0.005) return;
+
+                    const clipGain = ctx.createGain();
+                    clipGain.gain.value = 0;
+                    clipGain.connect(gain);
+                    const env = fadeEnvelope(clip);
+                    const cs = clipStartInTimeline - clip.start;  // seconds into the clip
+                    // Apply the envelope from the current position so a seek into a
+                    // fade still sounds right.
+                    const at = (t: number) => Math.max(0, t - cs);
+                    clipGain.gain.setValueAtTime(0, when);
+                    env.forEach(p => {
+                        const offsetInClip = at(p.at);
+                        clipGain.gain.linearRampToValueAtTime(p.gain, when + Math.max(0, offsetInClip));
+                    });
+
+                    const src = ctx.createBufferSource();
+                    src.buffer = buf;
+                    src.connect(clipGain);
+                    src.start(when, srcOffset, playDuration);
+                    activeSourcesRef.current.add(src);
+                    hasScheduledSource = true;
+                });
             });
         } else {
             // 3. Fallback Mode: Track has NO separated stems — schedule the single stereo master track
@@ -1535,6 +1584,17 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         }
     };
 
+    /** Persist arrangement edits (they flow into session state + undo history). */
+    const handleClipsChange = useCallback((next: TimelineClip[]) => {
+        setTimelineClips(next);
+    }, []);
+
+    /** Beat-grid snap step for clip edits. */
+    const snapSec = useMemo(() => {
+        const { bpm } = effectiveTempoMap[0] || { bpm: 120 };
+        return 60 / Math.max(1, bpm) / 4; // 1/16 note
+    }, [effectiveTempoMap]);
+
     const handleSeparateStems = async () => {
         if (!job.id || isSeparating) return;
         setIsSeparating(true);
@@ -1809,6 +1869,16 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
                         stemDurations={stemDurations}
                         onSeparateStems={handleSeparateStems}
                         isSeparating={isSeparating}
+                        clips={
+                            // Materialise one full-length clip per stem the first time
+                            // the arrangement is edited, so a lane is never empty.
+                            timelineClips.length
+                                ? timelineClips
+                                : stemChannels.map(stem =>
+                                    defaultClip(stem.id, stemDurations[stem.id] || duration))
+                        }
+                        onClipsChange={handleClipsChange}
+                        snapSec={snapSec}
                     />
                 )}
 

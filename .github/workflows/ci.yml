@@ -116,6 +116,10 @@ jobs:
         # `npm ci` (not install) so the lockfile decides, not the registry.
         run: npm ci || npm install
 
+      - name: Unit Tests (vitest)
+        working-directory: frontend
+        run: npm test
+
       - name: Build Frontend & Typecheck
         working-directory: frontend
         run: npm run build

@@ -2,6 +2,12 @@ import React, { useEffect, useMemo, useRef } from 'react';
 import { Layers, ZoomIn, ZoomOut, Sparkles, Mic, FastForward } from 'lucide-react';
 import type { Job, NoteEvent } from '../../api';
 import type { StemChannel } from './SessionWorkspace';
+import {
+    type TimelineClip,
+    clipsForTrack,
+    moveClip,
+    splitClipAt,
+} from './timelineClips';
 import { useModalStore } from '../../stores/useModalStore';
 
 // Parse-once helpers: these blobs were re-JSON.parsed on EVERY render
@@ -347,6 +353,175 @@ const TrackLaneRow: React.FC<TrackLaneRowProps> = React.memo(({
     );
 });
 
+interface ClipLaneProps {
+    clips: TimelineClip[];
+    track: StemChannel;
+    totalDuration: number;
+    snapSec: number;
+    sourceDuration: number;
+    peaks?: number[];
+    readOnly: boolean;
+    onChange: (clips: TimelineClip[]) => void;
+}
+
+/**
+ * Editable clip row (plan 3.1): drag to move, drag an edge to trim, drag a corner
+ * handle to fade, double-click to split at the click position. Positions snap to
+ * the beat grid when `snapSec > 0`.
+ */
+const ClipLaneRow: React.FC<ClipLaneProps> = ({
+    clips, track, totalDuration, snapSec, sourceDuration, peaks, readOnly, onChange,
+}) => {
+    const laneRef = useRef<HTMLDivElement>(null);
+    const dragRef = useRef<{
+        mode: 'move' | 'trim-left' | 'trim-right' | 'fade-in' | 'fade-out';
+        id: string; startX: number; original: TimelineClip;
+    } | null>(null);
+
+    const pct = (t: number) => (t / Math.max(0.001, totalDuration)) * 100;
+
+    const beginDrag = (e: React.MouseEvent, clip: TimelineClip, mode: 'move' | 'trim-left' | 'trim-right' | 'fade-in' | 'fade-out') => {
+        if (readOnly) return;
+        e.stopPropagation();
+        e.preventDefault();
+        dragRef.current = { mode, id: clip.id, startX: e.clientX, original: { ...clip } };
+
+        const move = (ev: MouseEvent) => {
+            const drag = dragRef.current;
+            const lane = laneRef.current;
+            if (!drag || !lane) return;
+            const pxPerSec = lane.getBoundingClientRect().width / Math.max(0.001, totalDuration);
+            const deltaSec = (ev.clientX - drag.startX) / pxPerSec;
+            const snap = (t: number) => (snapSec > 0 ? Math.round(t / snapSec) * snapSec : t);
+            const o = drag.original;
+
+            let patch: Parameters<typeof moveClip>[1] = {};
+            if (drag.mode === 'move') {
+                patch = { start: snap(o.start + deltaSec) };
+            } else if (drag.mode === 'trim-left') {
+                const newStart = snap(o.start + deltaSec);
+                const shift = newStart - o.start;
+                // Trimming the left edge moves the source in-point with it.
+                patch = {
+                    start: newStart,
+                    offset: o.offset + shift,
+                    duration: o.duration - shift,
+                };
+            } else if (drag.mode === 'trim-right') {
+                patch = { duration: snap(o.duration + deltaSec) };
+            } else if (drag.mode === 'fade-in') {
+                patch = { fadeIn: Math.max(0, Math.min(o.duration, o.fadeIn + deltaSec)) };
+            } else {
+                patch = { fadeOut: Math.max(0, Math.min(o.duration, o.fadeOut + deltaSec)) };
+            }
+
+            const next = moveClip(o, patch, sourceDuration, snap);
+            onChange(clips.map(c => (c.id === drag.id ? next : c)));
+        };
+
+        const up = () => {
+            dragRef.current = null;
+            window.removeEventListener('mousemove', move);
+            window.removeEventListener('mouseup', up);
+        };
+        window.addEventListener('mousemove', move);
+        window.addEventListener('mouseup', up);
+    };
+
+    const handleDoubleClick = (e: React.MouseEvent) => {
+        if (readOnly) return;
+        const lane = laneRef.current;
+        if (!lane) return;
+        const rect = lane.getBoundingClientRect();
+        const at = ((e.clientX - rect.left) / rect.width) * totalDuration;
+        const snapped = snapSec > 0 ? Math.round(at / snapSec) * snapSec : at;
+        onChange(splitClipAt(clips, track.id, snapped));
+    };
+
+    const trackClips = clipsForTrack(clips, track.id);
+
+    return (
+        <div
+            ref={laneRef}
+            onDoubleClick={handleDoubleClick}
+            className="relative h-20 border-b border-black/[0.04] dark:border-white/5 select-none"
+            data-clip-lane={track.id}
+        >
+            {trackClips.length === 0 && (
+                <div className="absolute inset-2 rounded-xl border border-dashed border-slate-300 dark:border-white/10 flex items-center justify-center text-[10px] text-slate-400">
+                    No clip — double-click to split the lane's audio here
+                </div>
+            )}
+
+            {trackClips.map(clip => {
+                const left = pct(clip.start);
+                const width = Math.max(0.4, pct(clip.duration));
+                const fadeInPct = clip.duration > 0 ? (clip.fadeIn / clip.duration) * 100 : 0;
+                const fadeOutPct = clip.duration > 0 ? (clip.fadeOut / clip.duration) * 100 : 0;
+                return (
+                    <div
+                        key={clip.id}
+                        onMouseDown={(e) => {
+                            const target = e.target as HTMLElement;
+                            const mode = target.dataset.handle as ClipLaneProps extends never ? never : any;
+                            if (mode) beginDrag(e, clip, mode);
+                            else beginDrag(e, clip, 'move');
+                        }}
+                        className={`absolute top-2 bottom-2 rounded-xl overflow-hidden bg-gradient-to-r ${track.color} shadow-sm ${
+                            track.isMuted ? 'opacity-30' : 'opacity-95'
+                        } ${readOnly ? '' : 'cursor-grab active:cursor-grabbing'}`}
+                        style={{ left: `${left}%`, width: `${width}%` }}
+                        title={`${track.name} · ${clip.duration.toFixed(2)}s from ${clip.offset.toFixed(2)}s · double-click to split`}
+                    >
+                        {peaks && peaks.length > 0 && <TimelineWaveform peaks={peaks} />}
+
+                        {/* Fade overlays (visual only; the scheduler applies the ramps) */}
+                        {clip.fadeIn > 0 && (
+                            <div
+                                className="absolute inset-y-0 left-0 bg-black/40"
+                                style={{ width: `${fadeInPct}%`, clipPath: 'polygon(0 0, 100% 0, 0 100%)' }}
+                            />
+                        )}
+                        {clip.fadeOut > 0 && (
+                            <div
+                                className="absolute inset-y-0 right-0 bg-black/40"
+                                style={{ width: `${fadeOutPct}%`, clipPath: 'polygon(100% 0, 100% 100%, 0 100%)' }}
+                            />
+                        )}
+
+                        {!readOnly && (
+                            <>
+                                <span
+                                    data-handle="trim-left"
+                                    className="absolute left-0 top-0 bottom-0 w-2 cursor-ew-resize bg-black/20 hover:bg-black/40"
+                                />
+                                <span
+                                    data-handle="trim-right"
+                                    className="absolute right-0 top-0 bottom-0 w-2 cursor-ew-resize bg-black/20 hover:bg-black/40"
+                                />
+                                <span
+                                    data-handle="fade-in"
+                                    className="absolute left-2 top-1 w-2.5 h-2.5 rounded-full bg-white/80 cursor-ew-resize"
+                                    title="Drag to set the fade-in"
+                                />
+                                <span
+                                    data-handle="fade-out"
+                                    className="absolute right-2 top-1 w-2.5 h-2.5 rounded-full bg-white/80 cursor-ew-resize"
+                                    title="Drag to set the fade-out"
+                                />
+                            </>
+                        )}
+
+                        <span className="absolute left-3 bottom-1 text-[10px] font-bold text-white/90 drop-shadow-sm truncate max-w-[80%]">
+                            {track.name}
+                        </span>
+                    </div>
+                );
+            })}
+        </div>
+    );
+};
+
 interface ArrangeTimelineProps {
     job: Job;
     stemChannels: StemChannel[];
@@ -361,6 +536,11 @@ interface ArrangeTimelineProps {
     stemDurations?: Record<string, number>;
     onSeparateStems?: () => void;
     isSeparating?: boolean;
+    /** Editable arrangement (plan 3.1). Absent = read-only visualisation. */
+    clips?: TimelineClip[];
+    onClipsChange?: (clips: TimelineClip[]) => void;
+    /** Snap step in seconds (0 = free). */
+    snapSec?: number;
 }
 
 export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
@@ -375,6 +555,9 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
     stemDurations = {},
     onSeparateStems,
     isSeparating,
+    clips,
+    onClipsChange,
+    snapSec = 0,
 }) => {
     const [zoom, setZoom] = React.useState(1);
     const totalDuration = duration || 60;
@@ -512,19 +695,35 @@ export const ArrangeTimeline: React.FC<ArrangeTimelineProps> = ({
             );
         }
 
+        const editable = Boolean(clips && onClipsChange);
         return stemChannels.map((track) => (
-            <TrackLaneRow
-                key={track.id}
-                job={job}
-                track={track}
-                trackNotes={notesByLane[track.id] || []}
-                peaks={stemPeaks[track.id]}
-                stemDur={stemDurations[track.id]}
-                totalDuration={totalDuration}
-                formatTime={formatTime}
-            />
+            editable ? (
+                <ClipLaneRow
+                    key={track.id}
+                    clips={clips as TimelineClip[]}
+                    track={track}
+                    totalDuration={totalDuration}
+                    snapSec={snapSec}
+                    sourceDuration={stemDurations[track.id] || totalDuration}
+                    peaks={stemPeaks[track.id]}
+                    readOnly={!onClipsChange}
+                    onChange={(next) => onClipsChange?.(next)}
+                />
+            ) : (
+                <TrackLaneRow
+                    key={track.id}
+                    job={job}
+                    track={track}
+                    trackNotes={notesByLane[track.id] || []}
+                    peaks={stemPeaks[track.id]}
+                    stemDur={stemDurations[track.id]}
+                    totalDuration={totalDuration}
+                    formatTime={formatTime}
+                />
+            )
         ));
-    }, [job, stemChannels, notesByLane, stemPeaks, stemDurations, totalDuration, onSeparateStems, isSeparating]);
+    }, [job, stemChannels, notesByLane, stemPeaks, stemDurations, totalDuration, onSeparateStems,
+        isSeparating, clips, onClipsChange, snapSec, zoom]);
 
     return (
         <div className="flex flex-col h-full bg-[#f5f5f7] dark:bg-[#10121a] text-slate-800 dark:text-slate-200 select-none overflow-hidden transition-colors duration-200">

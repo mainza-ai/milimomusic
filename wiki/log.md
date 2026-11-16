@@ -2899,3 +2899,10 @@ Verification: 492 passed; frontend build green.
 ## [2026-11-16] execute | Phase 5.10 — block-free confirmations and honest error surfacing
 Every `window.confirm` (12 sites) and `alert()` (5 sites) is gone. A single accessible `ConfirmDialogHost` (focus trap + Escape via the `Modal` primitive) backs a promise API (`confirmAction({title, body, tone})`) with per-action copy, and `showError(err, fallback)` puts the **server's own reason** in a toast instead of a native dialog that several call sites had discarded entirely (`alert("Audio upload and transcription failed")` threw the message away).
 Verification: 492 passed; frontend build green.
+
+## [2026-11-16] execute | Phase 3.1 — Arrange is an editor
+The Arrange tab was a read-only visualisation: each lane was one static gradient div with no region model, so there was nothing to drag, trim, split or fade. It now has a real clip model (`components/workspace/timelineClips.ts`): a clip is a window into a stem buffer (`start` on the timeline, `offset` in the source, `duration`, `gain`, `fadeIn`, `fadeOut`).
+Interactions: drag a clip to move (snapped to a 1/16 of the beat grid), drag either edge to trim (the source in-point moves with the left edge), drag the corner handles to set fades (rendered as triangular overlays), double-click a lane to split at that point. The pure geometry (clamping to the source buffer, refusing degenerate splits, fade/gain limits) is covered by **15 vitest tests** — the repo's first frontend unit tests.
+Playback honours the arrangement: `scheduleAll` schedules one `BufferSource` per clip through a per-clip gain node carrying the fade envelope, so a seek into a fade still sounds right, and falls back to whole-stem scheduling when a lane has no clips.
+Plumbing: clips live in the session document (server + localStorage) and in workspace undo/redo. Frontend unit tests are wired into CI (`npm test`, `vitest.config.ts` excludes the Playwright specs).
+Verification: 492 backend tests, 15 frontend tests, `tsc -b` + `vite build` green.

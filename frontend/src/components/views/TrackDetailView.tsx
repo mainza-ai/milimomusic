@@ -14,6 +14,7 @@ import {
     api
 } from '../../api';
 import { useAudioEngine } from '../../context/AudioEngineContext';
+import { showError } from '../../utils/confirm';
 import { toast } from '../../utils/toast';
 import { safeJsonParse } from '../../utils/safeJsonParse';
 import {
@@ -506,7 +507,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
             onTrackUpdated?.(derivative);
             if (onSelectTrack) onSelectTrack(derivative);
         } catch (e: any) {
-            alert('Voice Conversion Error: ' + (e.response?.data?.detail || e.message));
+            showError(e, 'Voice conversion failed');
         } finally {
             setIsConvertingVoice(false);
         }

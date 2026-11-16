@@ -6,6 +6,7 @@ import { TrackRowPlayer } from './TrackRowPlayer';
 import { Edit2, Check, Trash2, Search, Calendar, Heart, Sliders, Layers, Sparkles, Info, Clock } from 'lucide-react';
 import { isCancelledJobStatus, isFailedJobStatus } from '../utils/jobStatus';
 import { ProvenanceBadge } from './ui/ProvenanceBadge';
+import { confirmAction } from '../utils/confirm';
 
 interface HistoryFeedProps {
     history: Job[];
@@ -82,7 +83,12 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
             onDelete(jobId);
             return;
         }
-        if (!confirm("Are you sure you want to delete this track? This action cannot be undone.")) return;
+        if (!(await confirmAction({
+            title: 'Delete this track?',
+            body: 'Audio, stems, MIDI and artwork are removed from disk. This cannot be undone.',
+            confirmLabel: 'Delete track',
+            tone: 'danger',
+        }))) return;
         try {
             await api.deleteJob(jobId);
             onRefresh();

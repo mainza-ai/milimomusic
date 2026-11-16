@@ -29,6 +29,7 @@ import {
     type Job
 } from '../../api';
 import { toast } from '../../utils/toast';
+import { confirmAction } from '../../utils/confirm';
 
 export type VocalStudioMode = 'conversion' | 'library' | 'booth';
 
@@ -351,7 +352,12 @@ export const VocalStudioView: React.FC<VocalStudioViewProps> = ({
     };
 
     const handleDeleteProfile = async (id: string) => {
-        if (!window.confirm('Are you sure you want to delete this voice profile?')) return;
+        if (!(await confirmAction({
+            title: 'Delete this voice profile?',
+            body: 'Its reference audio and any converted takes that use it stay in your library.',
+            confirmLabel: 'Delete profile',
+            tone: 'danger',
+        }))) return;
         try {
             await voiceApi.deleteProfile(id);
             toast('Voice profile deleted', 'info');

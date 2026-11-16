@@ -14,6 +14,7 @@ import {
     Type
 } from 'lucide-react';
 import { api, type VideoClipSegment, type Job } from '../../api';
+import { confirmAction } from '../../utils/confirm';
 
 interface SongSection {
     id: string;
@@ -250,8 +251,13 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                     {onClearTimeline && (
                         <button
                             type="button"
-                            onClick={() => {
-                                if (window.confirm("Are you sure you want to clear the timeline? This will purge all planned scenes and cached keyframe stills for this track.")) {
+                            onClick={async () => {
+                                if (await confirmAction({
+                                    title: 'Clear this timeline?',
+                                    body: 'All planned scenes and cached keyframe stills for this track are purged.',
+                                    confirmLabel: 'Clear timeline',
+                                    tone: 'danger',
+                                })) {
                                     onClearTimeline();
                                 }
                             }}

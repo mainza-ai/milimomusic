@@ -1,4 +1,5 @@
 import { toast } from '../../utils/toast';
+import { confirmAction } from '../../utils/confirm';
 import { API_BASE_URL } from '../../api';
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -147,7 +148,11 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     };
 
     const detachTrack = async (releaseId: string, jobId: string, title: string) => {
-        if (!confirm(`Detach "${title}" from this release? The audio file will remain in your project.`)) return;
+        if (!(await confirmAction({
+            title: `Detach “${title}” from this release?`,
+            body: 'The audio file stays in your project library.',
+            confirmLabel: 'Detach track',
+        }))) return;
         try {
             await releaseApi.detachTrack(releaseId, jobId);
             toast(`Detached "${title}"`, 'success');
@@ -510,21 +515,34 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
         prevDeepLinkRef.current = initialProfileId ?? null;
         if (initialProfileId && (!detail || detail.profile.id !== initialProfileId)) {
             openProfile(initialProfileId);
-        } else if (typeof prev === 'string' && initialProfileId === null && detail) {
-            // Popstate back to the artists list — the URL no longer carries the
-            // id, so the detail must close to match (dirty-guard still applies).
-            if (!identityDirty || window.confirm('You have unsaved identity changes. Discard them?')) {
-                setDetail(null);
-            } else {
-                syncArtistUrl(detail.profile.id);
-            }
+            return;
         }
+        if (!(typeof prev === 'string' && initialProfileId === null && detail)) return;
+
+        // Popstate back to the artists list — the URL no longer carries the id, so
+        // the detail must close to match (dirty-guard still applies). The dialog is
+        // async, hence the IIFE.
+        void (async () => {
+            const okToClose = !identityDirty || await confirmAction({
+                title: 'Discard unsaved identity changes?',
+                body: 'Your edits to this artist profile will be lost.',
+                confirmLabel: 'Discard changes',
+                tone: 'danger',
+            });
+            if (okToClose) setDetail(null);
+            else syncArtistUrl(detail.profile.id);
+        })();
         // eslint-disable-next-line react-hooks/exhaustive-deps
     }, [initialProfileId]);
 
-    const closeDetail = () => {
+    const closeDetail = async () => {
         // Dirty-guard (C3): identity edits must not vanish silently.
-        if (identityDirty && !window.confirm('You have unsaved identity changes. Discard them?')) return;
+        if (identityDirty && !(await confirmAction({
+            title: 'Discard unsaved identity changes?',
+            body: 'Your edits to this artist profile will be lost.',
+            confirmLabel: 'Discard changes',
+            tone: 'danger',
+        }))) return;
         setDetail(null);
         syncArtistUrl(null);
     };
@@ -574,7 +592,12 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
 
     const handleDeleteProfile = async () => {
         if (!detail) return;
-        if (!window.confirm(`Delete artist "${detail.profile.name}"? Their crew is removed and album containers are deleted; finished tracks remain in Explore as standalone tracks.`)) return;
+        if (!(await confirmAction({
+            title: `Delete artist “${detail.profile.name}”?`,
+            body: 'Their crew and album containers are removed. Finished tracks remain in Explore as standalone tracks.',
+            confirmLabel: 'Delete artist',
+            tone: 'danger',
+        }))) return;
         try {
             await profilesApi.delete(detail.profile.id);
             setDetail(null);
@@ -776,7 +799,12 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
 
     const handleGenerateLore = async () => {
         if (!detail) return;
-        if (editLore !== loreBaselineRef.current && !window.confirm('Regenerating will replace the lore — including your unsaved edits. Continue?')) return;
+        if (editLore !== loreBaselineRef.current && !(await confirmAction({
+            title: 'Regenerate the lore?',
+            body: 'This replaces the current lore, including your unsaved edits.',
+            confirmLabel: 'Regenerate',
+            tone: 'danger',
+        }))) return;
         setLoreGenerating(true);
         try {
             const res = await profilesApi.generateLore(detail.profile.id);
@@ -812,7 +840,12 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
     };
 
     const handleDeleteRelease = async (rid: string, title: string) => {
-        if (!window.confirm(`Delete release "${title}"? Its finished tracks remain in Explore as standalone tracks.`)) return;
+        if (!(await confirmAction({
+            title: `Delete release “${title}”?`,
+            body: 'Its finished tracks remain in Explore as standalone tracks.',
+            confirmLabel: 'Delete release',
+            tone: 'danger',
+        }))) return;
         try {
             await releaseApi.delete(rid);
             setDetail(d => d ? { ...d, releases: d.releases.filter(r => r.id !== rid) } : d);

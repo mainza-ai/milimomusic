@@ -24,6 +24,7 @@ import {
     type Job
 } from '../../api';
 import { toast } from '../../utils/toast';
+import { confirmAction } from '../../utils/confirm';
 
 interface ImageStudioViewProps {
     songs?: Job[];
@@ -165,7 +166,12 @@ export const ImageStudioView: React.FC<ImageStudioViewProps> = ({
 
     const handleDeleteAsset = async (assetId: string, e?: React.MouseEvent) => {
         if (e) e.stopPropagation();
-        if (!window.confirm('Are you sure you want to delete this artwork from your local gallery?')) return;
+        if (!(await confirmAction({
+            title: 'Delete this artwork?',
+            body: 'It is removed from your local gallery and disk.',
+            confirmLabel: 'Delete artwork',
+            tone: 'danger',
+        }))) return;
 
         try {
             await imageStudioApi.deleteAsset(assetId);

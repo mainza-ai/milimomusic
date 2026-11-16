@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { Cpu, Download, CheckCircle2, X, Activity, AlertTriangle, Loader2, Search, Trash2, ExternalLink, Globe, Sparkles } from 'lucide-react';
 import { modelsApi, type ModelVariant, type HardwareProfile, type ModelDownloadStatus, type HuggingFaceSearchResult } from '../../api';
 import { toast } from '../../utils/toast';
+import { confirmAction } from '../../utils/confirm';
 
 interface ModelsManagerModalProps {
     isOpen: boolean;
@@ -184,7 +185,12 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
     };
 
     const handleDeleteCustom = async (modelId: string) => {
-        if (!window.confirm('Are you sure you want to delete this custom model?')) return;
+        if (!(await confirmAction({
+            title: 'Delete this custom model?',
+            body: 'The registry entry and any downloaded weights are removed.',
+            confirmLabel: 'Delete model',
+            tone: 'danger',
+        }))) return;
         setDeletingCustomId(modelId);
         try {
             await modelsApi.deleteCustomModel(modelId);

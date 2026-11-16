@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { confirmAction } from '../../utils/confirm';
 import { type Job, playlistApi, type DbPlaylist } from '../../api';
 import { Plus, ListMusic, Play, Pause, Music2, FolderPlus, Trash2, X, Loader2 } from 'lucide-react';
 import { GlassCard } from '../ui/GlassCard';
@@ -136,7 +137,12 @@ export const PlaylistsView: React.FC<PlaylistsViewProps> = ({
 
     const handleDeletePlaylist = async (id: string) => {
         const pl = playlists.find(p => p.id === id);
-        if (!window.confirm(`Permanently delete playlist "${pl?.name || 'Untitled'}"?`)) return;
+        if (!(await confirmAction({
+            title: `Delete playlist “${pl?.name || 'Untitled'}”?`,
+            body: 'The playlist is removed; the tracks themselves stay in your library.',
+            confirmLabel: 'Delete playlist',
+            tone: 'danger',
+        }))) return;
         try {
             await playlistApi.delete(id);
             const updated = playlists.filter(p => p.id !== id);

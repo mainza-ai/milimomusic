@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { confirmAction } from '../../utils/confirm';
 import {
     type Job,
     videoApi,
@@ -1192,7 +1193,12 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
 
     const handleDeleteVideo = useCallback(async () => {
         if (!activeSong) return;
-        if (!window.confirm(`Delete the rendered video for "${activeSong.title || activeSong.prompt.slice(0, 40)}"? The track and audio stay untouched.`)) return;
+        if (!(await confirmAction({
+            title: `Delete the rendered video for “${activeSong.title || activeSong.prompt.slice(0, 40)}”?`,
+            body: 'The track, audio and stems stay untouched. Keyframes and plates for this video are removed.',
+            confirmLabel: 'Delete video',
+            tone: 'danger',
+        }))) return;
         setIsDeletingVideo(true);
         try {
             await videoApi.deleteVideo(activeSong.id);

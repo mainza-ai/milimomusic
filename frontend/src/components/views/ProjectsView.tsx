@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { confirmAction } from '../../utils/confirm';
 import { type Job, type Project, type ProjectCreate, projectApi, coverApi, API_BASE_URL } from '../../api';
 import {
   FolderKanban,
@@ -244,7 +245,12 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
   };
 
   const handleDeleteProject = async (projectId: string) => {
-    if (!window.confirm('Are you sure you want to delete this project folder? (Sessions will be kept in your general library)')) return;
+    if (!(await confirmAction({
+        title: 'Delete this project folder?',
+        body: 'Sessions are kept in your general library.',
+        confirmLabel: 'Delete project',
+        tone: 'danger',
+    }))) return;
     if (isDeletingProject) return;
     setIsDeletingProject(true);
     try {

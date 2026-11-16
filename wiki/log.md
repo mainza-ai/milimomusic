@@ -2895,3 +2895,7 @@ Verification: 492 passed; frontend `tsc -b` + `vite build` green.
 4.12: `cancel_active_diffusion` is scoped to the requesting job (it aborted whatever image render was in flight, including another track's cover); `generate_cover` records its owner so a foreign cancel is a no-op.
 4.13: the video duration limits now come from `model_specs` only — the duplicate tables in `video_service` and `video_director` and the hand-rolled substring matcher were replaced by `get_model_spec`/`normalize_model_key` (with an explicit `minimax_h3 → hailuo_h3` engine alias), and the frontend's `MODEL_CONSTRAINTS` merges the server's `/videos/models` limits on mount so a slider can never offer a value the renderer clamps.
 Verification: 492 passed; frontend build green.
+
+## [2026-11-16] execute | Phase 5.10 — block-free confirmations and honest error surfacing
+Every `window.confirm` (12 sites) and `alert()` (5 sites) is gone. A single accessible `ConfirmDialogHost` (focus trap + Escape via the `Modal` primitive) backs a promise API (`confirmAction({title, body, tone})`) with per-action copy, and `showError(err, fallback)` puts the **server's own reason** in a toast instead of a native dialog that several call sites had discarded entirely (`alert("Audio upload and transcription failed")` threw the message away).
+Verification: 492 passed; frontend build green.

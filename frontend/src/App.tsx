@@ -29,6 +29,7 @@ import { useAudioControls } from './context/AudioEngineContext';
 import type { LLMConfig } from './api';
 import { toast } from './utils/toast';
 import { isTerminalJobStatus, isCancelledJobStatus } from './utils/jobStatus';
+import { confirmAction, showError } from './utils/confirm';
 import { CommandPalette, type CommandItem } from './components/ui/CommandPalette';
 
 // Dedicated Reference IA Views
@@ -43,6 +44,7 @@ const VocalStudioView = lazy(() => import('./components/views/VocalStudioView').
 const ProfileView = lazy(() => import('./components/views/ProfileView').then(m => ({ default: m.ProfileView })));
 const TrackDetailView = lazy(() => import('./components/views/TrackDetailView').then(m => ({ default: m.TrackDetailView })));
 import { GlobalAudioPlayer } from './components/ui/GlobalAudioPlayer';
+import { ConfirmDialogHost } from './components/ui/ConfirmDialogHost';
 import { AppFooter } from './components/ui/AppFooter';
 
 import {
@@ -558,7 +560,12 @@ function App() {
 
   const handleDeleteSession = async (sessionId: string, e?: React.MouseEvent) => {
     if (e) e.stopPropagation();
-    if (!window.confirm("Are you sure you want to delete this session?")) return;
+    if (!(await confirmAction({
+        title: 'Delete this session?',
+        body: 'Its chat history is removed. Tracks created here are kept in your library.',
+        confirmLabel: 'Delete session',
+        tone: 'danger',
+    }))) return;
     try {
       await sessionApi.deleteSession(sessionId);
       setSessions(prev => prev.filter(s => s.id !== sessionId));
@@ -736,7 +743,7 @@ function App() {
           setSessions(prev => prev.filter(s => s.id !== targetSession!.id));
           setActiveSession(prev => (prev?.id === targetSession!.id ? null : prev));
         }
-        alert("Producer chat error: " + (e.response?.data?.detail || e.message));
+        showError(e, 'Producer chat failed');
       }
     } finally {
       setIsChatSubmitting(false);
@@ -870,7 +877,12 @@ function App() {
   }, []);
 
   const handleDeleteJob = async (jobId: string) => {
-    if (!confirm("Are you sure you want to delete this track? This action cannot be undone.")) return;
+    if (!(await confirmAction({
+        title: 'Delete this track?',
+        body: 'The audio, stems, MIDI and cover are removed from disk. This cannot be undone.',
+        confirmLabel: 'Delete track',
+        tone: 'danger',
+    }))) return;
 
     // 1. Optimistic removal from state
     setHistory(prev => prev.filter(j => j.id !== jobId));
@@ -1135,7 +1147,7 @@ function App() {
       setParentJob(undefined);
       handleRefresh(); // Refresh immediately so the new job appears in history
     } catch (e: any) {
-      alert("Generation failed: " + (e.response?.data?.detail || e.message));
+      showError(e, 'Generation failed');
       setIsGenerating(false);
       setGenerationProgress(null);
     }
@@ -1185,7 +1197,7 @@ function App() {
       await handleGenerateMusic(data);
     } catch (e: any) {
       setIsGenerating(false);
-      alert("Producer error: " + (e.response?.data?.detail || e.message));
+      showError(e, 'Producer failed');
     }
   };
 
@@ -1244,7 +1256,7 @@ function App() {
       handleOpenWorkspace(res.job);
       handleRefresh();
     } catch (e) {
-      alert("Audio upload and transcription failed");
+      showError(e, 'Audio upload and transcription failed');
     }
   };
 
@@ -2369,6 +2381,9 @@ function App() {
         onClose={() => setIsCommandPaletteOpen(false)}
         commands={commandList}
       />
+
+      {/* One accessible confirm dialog for the whole app (replaces window.confirm). */}
+      <ConfirmDialogHost />
 
       {/* Global Apple Studio Dock Player: Contextually hidden on Track Studio & DAW Workspace views */}
       {currentNav !== 'track-detail' && currentNav !== 'workspace' && engineTrack && (

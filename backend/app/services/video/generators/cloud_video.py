@@ -27,9 +27,11 @@ class CloudVideoGenerator(BaseVideoGenerator):
     @property
     def is_available(self) -> bool:
         if self.service == "fal":
+            # Must name a hosted URL, not a data URI, so fal is only "available"
+            # when a key exists AND the caller can upload.
             return bool(os.environ.get("FAL_KEY"))
-        elif self.service == "replicate":
-            return bool(os.environ.get("REPLICATE_API_TOKEN"))
+        # D4: Replicate is not supported (its API needs a version hash and hosted
+        # image URLs; the previous branch could never succeed).
         elif self.service == "minimax":
             return bool(os.environ.get("MINIMAX_API_KEY"))
         return False
@@ -156,34 +158,6 @@ class CloudVideoGenerator(BaseVideoGenerator):
                         out_path=out_path,
                         timeout=300.0
                     )
-
-            elif self.service == "replicate":
-                token = os.environ.get("REPLICATE_API_TOKEN")
-                headers = {"Authorization": f"Bearer {token}", "Content-Type": "application/json"}
-                payload = {
-                    "version": "wan-video/wan-2.1-14b",
-                    "input": {"prompt": prompt}
-                }
-                async with httpx.AsyncClient(timeout=300.0) as client:
-                    resp = await client.post("https://api.replicate.com/v1/predictions", json=payload, headers=headers)
-                    if resp.status_code in (200, 201):
-                        pred = resp.json()
-                        pred_id = pred["id"]
-                        # Poll for completion
-                        for _ in range(60):
-                            await asyncio.sleep(4)
-                            poll_resp = await client.get(f"https://api.replicate.com/v1/predictions/{pred_id}", headers=headers)
-                            poll_data = poll_resp.json()
-                            if poll_data.get("status") == "succeeded":
-                                out_url = poll_data.get("output")
-                                if isinstance(out_url, list): out_url = out_url[0]
-                                if out_url:
-                                    vid_resp = await client.get(out_url)
-                                    with open(out_path, "wb") as f_out:
-                                        f_out.write(vid_resp.content)
-                                    return True
-                            elif poll_data.get("status") == "failed":
-                                break
 
             elif self.service == "minimax":
                 minimax_key = os.environ.get("MINIMAX_API_KEY")

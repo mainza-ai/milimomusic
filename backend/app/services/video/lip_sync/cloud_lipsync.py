@@ -18,6 +18,38 @@ logger = logging.getLogger(__name__)
 TEMP_DIR = str(get_data_dir() / "video_cache")
 
 
+
+async def _fal_upload(client, path: str, content_type: str):
+    """Upload a local file to fal storage and return its hosted URL.
+
+    Returns None when the file is missing or the upload endpoint is unavailable —
+    callers must then skip the cloud path rather than sending a data URI.
+    """
+    import os
+
+    if not path or not os.path.isfile(path):
+        return None
+    key = os.environ.get("FAL_KEY")
+    if not key:
+        return None
+    try:
+        with open(path, "rb") as fh:
+            files = {"file": (os.path.basename(path), fh.read(), content_type)}
+        async with httpx.AsyncClient(timeout=120.0) as uploader:
+            resp = await uploader.post(
+                "https://rest.alpha.fal.ai/storage/upload",
+                headers={"Authorization": f"Key {key}"},
+                files=files,
+            )
+        if resp.status_code not in (200, 201):
+            logger.warning("fal upload failed (%s): %s", resp.status_code, resp.text[:200])
+            return None
+        return (resp.json() or {}).get("url")
+    except Exception as exc:  # pragma: no cover - network path
+        logger.warning("fal upload error: %s", exc)
+        return None
+
+
 class CloudLipSyncProvider(BaseLipSyncProvider):
     def __init__(self, service: str = "fal"):
         self.service = service.lower()
@@ -30,8 +62,8 @@ class CloudLipSyncProvider(BaseLipSyncProvider):
     def is_available(self) -> bool:
         if self.service == "fal":
             return bool(os.environ.get("FAL_KEY"))
-        elif self.service == "replicate":
-            return bool(os.environ.get("REPLICATE_API_TOKEN"))
+        # D4: Replicate is not supported (its API needs hosted URLs and a version
+        # hash; the previous branch sent data URIs and could never succeed).
         return False
 
     async def render_lip_sync(
@@ -61,7 +93,8 @@ class CloudLipSyncProvider(BaseLipSyncProvider):
         await proc.communicate()
 
         try:
-            # Read files as base64 data URIs
+            # Base64 blobs are kept only for providers that accept inline data;
+            # fal does not (see _fal_upload).
             with open(face_image_path, "rb") as f:
                 img_b64 = "data:image/jpeg;base64," + base64.b64encode(f.read()).decode("utf-8")
             with open(slice_audio, "rb") as f:
@@ -70,9 +103,19 @@ class CloudLipSyncProvider(BaseLipSyncProvider):
             if self.service == "fal":
                 fal_key = os.environ.get("FAL_KEY")
                 headers = {"Authorization": f"Key {fal_key}", "Content-Type": "application/json"}
+                # fal requires *hosted* URLs. A base64 data URI 4xxs, so upload
+                # first and fail honestly when hosting is unavailable.
+                image_url = await _fal_upload(None, face_image_path, "image/jpeg")
+                audio_url = await _fal_upload(None, slice_audio, "audio/wav")
+                if not image_url or not audio_url:
+                    logger.error(
+                        "fal lip-sync skipped: could not host the inputs "
+                        "(data URIs are rejected by the API)."
+                    )
+                    return False
                 payload = {
-                    "source_image_url": img_b64,
-                    "driving_audio_url": audio_b64
+                    "source_image_url": image_url,
+                    "driving_audio_url": audio_url,
                 }
                 async with httpx.AsyncClient(timeout=300.0) as client:
                     resp = await client.post("https://queue.fal.run/fal-ai/live-portrait", json=payload, headers=headers)

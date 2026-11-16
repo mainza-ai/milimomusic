@@ -156,6 +156,12 @@ class GenerateAndTranscribePipeline:
                 })
 
             extra_gen_kwargs = {}
+            # Tempo-locked generation (plan 3.17): the project BPM/key is a
+            # conditioning input, so no post-hoc time-stretch is needed.
+            if getattr(req, "bpm", None):
+                extra_gen_kwargs["bpm"] = req.bpm
+            if getattr(req, "key_signature", None) or getattr(req, "key", None):
+                extra_gen_kwargs["key"] = getattr(req, "key_signature", None) or getattr(req, "key", None)
             if getattr(req, "is_cover", False):
                 extra_gen_kwargs.update({
                     "ref_audio_path": req.ref_audio_path,

@@ -107,7 +107,7 @@ def _engine_installed(feature: str) -> Optional[bool]:
         if feature == "minimax_music3":
             return _has_mlx()
         if feature == "cloud":
-            return bool(os.environ.get("FAL_KEY") or os.environ.get("REPLICATE_API_TOKEN"))
+            return bool(os.environ.get("FAL_KEY"))
         if feature in ("image", "video"):
             from app.services.model_manager import model_manager
 

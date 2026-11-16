@@ -279,16 +279,6 @@ class VideoOrchestrator:
                 has_api_key=bool(os.environ.get("FAL_KEY")),
                 requires_api_key=True
             ).to_dict(),
-            VideoProviderInfo(
-                id="cloud_replicate",
-                name="Cloud GPU Replicate Studio",
-                provider_type=VideoProviderType.CLOUD_REPLICATE,
-                description="Scalable cloud inference across Wan 2.1 and LivePortrait endpoints.",
-                is_available=bool(os.environ.get("REPLICATE_API_TOKEN")),
-                supported_models=["wan_14b", "live_portrait"],
-                has_api_key=bool(os.environ.get("REPLICATE_API_TOKEN")),
-                requires_api_key=True
-            ).to_dict(),
         ]
 
     def generate_karaoke_ass(

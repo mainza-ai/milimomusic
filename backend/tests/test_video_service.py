@@ -159,7 +159,8 @@ async def test_get_video_providers_endpoint(client):
     provider_ids = [p["id"] for p in data]
     assert "local_wan_14b" in provider_ids
     assert "cloud_fal" in provider_ids
-    assert "cloud_replicate" in provider_ids
+    # D4: fal is the single cloud backbone; Replicate support was removed.
+    assert "cloud_replicate" not in provider_ids
 
 
 @pytest.mark.asyncio

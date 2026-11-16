@@ -1403,6 +1403,22 @@ class MiniMaxMusic3Provider(GenerationProvider):
             "vocal_details": (provided.get("vocal_details") or "").strip() or auto_meta.get("vocal_details", ""),
             "arrangement": (provided.get("arrangement") or "").strip() or auto_meta.get("arrangement", ""),
         }
+        # Tempo-locked generation (plan 3.17): ask the model for the project tempo
+        # instead of time-stretching the result afterwards (which the project
+        # already measured as destructive).
+        requested_bpm = kwargs.get("bpm")
+        requested_key = kwargs.get("key")
+        try:
+            requested_bpm = float(requested_bpm) if requested_bpm else None
+        except (TypeError, ValueError):
+            requested_bpm = None
+        if requested_bpm and 30.0 <= requested_bpm <= 300.0:
+            tempo_note = f"tempo {requested_bpm:.0f} BPM"
+            if requested_key:
+                tempo_note += f" in {requested_key}"
+            gm = structured_meta.get("global_metadata", "")
+            structured_meta["global_metadata"] = f"{gm}, {tempo_note}" if gm else tempo_note
+
         formatted_caption = self.format_full_caption(structured_meta, eff_prompt)
         sanitized_lyrics = self.sanitize_section_tags(eff_lyrics)
 

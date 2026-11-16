@@ -149,3 +149,22 @@ def test_section_header_chapter_cue():
     assert "SectionHeader" in ass
     assert r"{\fad(250,250)}— CHORUS —" in ass
     assert "Dialogue: 0,0:00:00.00,0:00:02.00,SectionHeader" in ass
+
+
+def test_lyric_markup_is_escaped_but_karaoke_tags_survive():
+    """User text must not inject ASS markup; our own tags must remain real markup."""
+    from app.services.video.subtitle_styles import generate_karaoke_ass_script
+
+    lines = [
+        {"text": "hold {\\blur20}me", "start": 1.0, "end": 2.0,
+         "words": [{"word": "hold", "start": 1.0, "end": 1.5},
+                   {"word": "{\\blur20}me", "start": 1.5, "end": 2.0}]},
+    ]
+    ass = generate_karaoke_ass_script(
+        timed_lines=lines, width=1920, height=1080,
+        subtitle_style="neon", aspect_ratio="16:9",
+    )
+    # our override tag is real markup
+    assert r"{\kf" in ass
+    # the lyric's brace is escaped, so it cannot open an override block
+    assert r"\{\\blur20\}me" in ass

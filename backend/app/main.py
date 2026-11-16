@@ -5110,6 +5110,41 @@ def get_video_models():
     return video_service.get_available_video_models()
 
 
+def _delete_video_side_artifacts(job_id: str) -> int:
+    """Remove keyframes, scene plates and cached thumbnails belonging to a video job."""
+    data_dir = get_data_dir()
+    search = [
+        data_dir / "video_cache" / "keyframes",
+        data_dir / "video_cache" / "scene_stills",
+        data_dir / "video_cache" / "thumbs",
+        get_generated_audio_dir() / "videos" / "keyframes",
+        get_generated_audio_dir() / "videos",
+    ]
+    job_stem = str(job_id)
+    removed = 0
+    for folder in search:
+        if not folder.is_dir():
+            continue
+        try:
+            entries = list(os.scandir(folder))
+        except OSError:
+            continue
+        for entry in entries:
+            if not entry.is_file():
+                continue
+            # Plates/keyframes are named with the job id; thumbnails are keyed by
+            # source filename, so only remove those whose name contains the id.
+            if job_stem in entry.name:
+                try:
+                    os.remove(entry.path)
+                    removed += 1
+                except OSError:
+                    continue
+    if removed:
+        logger.info(f"Deleted {removed} keyframe/plate artifact(s) for video job {job_id}")
+    return removed
+
+
 @app.delete("/videos/{job_id}")
 async def delete_music_video(job_id: str):
     """Delete a track's rendered video (file + DB reference) without touching the track.
@@ -5146,6 +5181,11 @@ async def delete_music_video(job_id: str):
                             logger.info(f"Deleted video file {candidate}")
                     except OSError as e:
                         logger.warning(f"Video delete skipped {candidate}: {e}")
+
+        # Cascade: the rendered video is not the only artifact. Keyframes, scene
+        # plates and their prompt sidecars used to stay on disk forever, so a
+        # delete/re-render loop grew without bound.
+        removed += _delete_video_side_artifacts(job_id)
 
         job.video_path = None
         job.video_config_json = None
@@ -6080,25 +6120,57 @@ def apply_clip_retake(project_id: str, clip_id: str, payload: dict):
 
 @app.post("/api/editor/projects/{project_id}/compile")
 def compile_editor_render(project_id: str):
-    """Compile a non-destructive project into a rendered video.
+    """Render a non-destructive timeline project to a real MP4 (202 + poll).
 
-    Previously this returned the *command string* it would have run, plus an
-    `output_path` that was never written — so "Export" produced JSON and claimed
-    success. Rendering lands in the media-truth phase; until then this is an
-    honest 501 rather than a fake success.
+    This endpoint used to return the FFmpeg command string it would have run and an
+    `output_path` that was never written, so "Export" produced JSON and claimed
+    success. Rendering now happens in a worker thread with FFmpeg progress
+    reporting; poll `GET /api/editor/renders/{task_id}`.
     """
-    raise HTTPException(
-        status_code=501,
-        detail={
-            "error": {
-                "code": "not_implemented",
-                "message": (
-                    "Timeline rendering is not implemented yet. The previous version "
-                    "returned an FFmpeg command without rendering anything."
-                ),
-            }
+    from app.services.timeline.render import timeline_renderer, _project_file
+    from app.services.timeline.editor_projects import EditorProject
+    from app.core.win_safe_files import safe_load_json
+
+    project_file = _project_file(project_id)
+    if project_file is None:
+        raise HTTPException(status_code=404, detail={"error": {
+            "code": "project_not_found", "message": "Editor project not found."}})
+
+    try:
+        project = EditorProject.from_dict(safe_load_json(project_file))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail={"error": {
+            "code": "invalid_project", "message": f"Could not read project: {exc}"}})
+
+    task = timeline_renderer.start_render(project)
+    return JSONResponse(
+        status_code=202,
+        content={
+            "status": "queued",
+            "task_id": task.task_id,
+            "project_id": project_id,
+            "poll": f"/api/editor/renders/{task.task_id}",
         },
     )
+
+
+@app.get("/api/editor/renders/{task_id}")
+def get_editor_render_status(task_id: str):
+    from app.services.timeline.render import timeline_renderer
+
+    task = timeline_renderer.get_status(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail={"error": {
+            "code": "render_not_found", "message": "Render task not found."}})
+    return task.to_dict()
+
+
+@app.post("/api/editor/renders/{task_id}/cancel")
+def cancel_editor_render(task_id: str):
+    from app.services.timeline.render import timeline_renderer
+
+    ok = timeline_renderer.cancel_render(task_id)
+    return {"status": "cancelling" if ok else "not_active", "task_id": task_id}
 
 
 # --- Frontend Static Files & SPA Fallback (Unified Single-Process Mode) ---

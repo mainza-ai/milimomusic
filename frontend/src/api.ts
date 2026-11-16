@@ -1775,8 +1775,24 @@ export const editorApi = {
         });
         return res.data;
     },
-    compileRender: async (projectId: string): Promise<{ status: string; command: string[]; output_path: string; encoder: string }> => {
+    /** Start a real render (202). Poll `getRenderStatus` until it is terminal. */
+    compileRender: async (projectId: string): Promise<{ status: string; task_id: string; poll: string }> => {
         const res = await axios.post(`${API_BASE_URL}/api/editor/projects/${projectId}/compile`);
+        return res.data;
+    },
+    getRenderStatus: async (taskId: string): Promise<{
+        task_id: string;
+        status: 'queued' | 'rendering' | 'completed' | 'failed' | 'cancelled';
+        progress: number;
+        message: string;
+        video_url?: string | null;
+        error?: string | null;
+    }> => {
+        const res = await axios.get(`${API_BASE_URL}/api/editor/renders/${taskId}`);
+        return res.data;
+    },
+    cancelRender: async (taskId: string): Promise<{ status: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/api/editor/renders/${taskId}/cancel`);
         return res.data;
     },
 };

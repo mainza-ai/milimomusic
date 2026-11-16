@@ -219,17 +219,55 @@ class EditorProjectManager:
                 dur = clip.duration
                 start_pts = clip.start_time
 
+                # Apply the clip's transform (scale / crop / opacity) so the
+                # inspector's controls actually affect the render instead of
+                # being decorative.
+                tf = getattr(clip, "transform", None) or ClipTransform()
+                crop = getattr(tf, "crop", None) or {}
+                crop_chain = ""
+                if crop:
+                    top = max(0.0, min(0.49, float(crop.get("top", 0) or 0)))
+                    bottom = max(0.0, min(0.49, float(crop.get("bottom", 0) or 0)))
+                    left = max(0.0, min(0.49, float(crop.get("left", 0) or 0)))
+                    right = max(0.0, min(0.49, float(crop.get("right", 0) or 0)))
+                    crop_chain = (
+                        f"crop=iw*{max(0.02, 1 - left - right):.4f}:"
+                        f"ih*{max(0.02, 1 - top - bottom):.4f}:"
+                        f"iw*{left:.4f}:ih*{top:.4f},"
+                    )
+
+                clip_scale = max(0.01, float(getattr(tf, "scale", 1.0) or 1.0))
+                opacity = max(0.0, min(1.0, float(getattr(tf, "opacity", 1.0) or 1.0)))
+                alpha_chain = f",colorchannelmixer=aa={opacity:.3f}" if opacity < 0.999 else ""
+
                 v_filters.append(
                     f"[{in_idx}:v]trim=start={s_in}:duration={dur},setpts=PTS-STARTPTS,"
+                    f"{crop_chain}"
+                    f"scale=trunc(iw*{clip_scale:.4f}/2)*2:trunc(ih*{clip_scale:.4f}/2)*2,"
                     f"scale={width}:{height}:force_original_aspect_ratio=decrease,"
                     f"pad={width}:{height}:(ow-iw)/2:(oh-ih)/2,"
-                    f"format=yuva420p[{clip_label}]"
+                    f"format=yuva420p{alpha_chain}[{clip_label}]"
                 )
 
-                # Overlay onto canvas at start_pts
-                v_filters.append(
-                    f"[{current_canvas}][{clip_label}]overlay=enable='between(t,{start_pts},{start_pts + dur})':eof_action=pass[{overlay_label}]"
-                )
+                # Overlay onto canvas at start_pts, honouring the clip's x/y offset.
+                x_expr = f"(W-w)/2+{float(getattr(tf, 'x_offset', 0.0) or 0.0):.2f}"
+                y_expr = f"(H-h)/2+{float(getattr(tf, 'y_offset', 0.0) or 0.0):.2f}"
+                fade_chain = ""
+                if getattr(clip, "transition_in", None) in ("crossfade", "fade_black", "dissolve"):
+                    fade_chain = f",fade=t=in:st=0:d={min(1.0, dur / 4):.2f}:alpha=1"
+                if fade_chain:
+                    v_filters.append(
+                        f"[{clip_label}]{fade_chain.strip(',')}[{clip_label}_fx]"
+                    )
+                    v_filters.append(
+                        f"[{current_canvas}][{clip_label}_fx]overlay=x={x_expr}:y={y_expr}:"
+                        f"enable='between(t,{start_pts},{start_pts + dur})':eof_action=pass[{overlay_label}]"
+                    )
+                else:
+                    v_filters.append(
+                        f"[{current_canvas}][{clip_label}]overlay=x={x_expr}:y={y_expr}:"
+                        f"enable='between(t,{start_pts},{start_pts + dur})':eof_action=pass[{overlay_label}]"
+                    )
                 current_canvas = overlay_label
                 video_overlay_count += 1
 

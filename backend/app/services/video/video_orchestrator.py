@@ -1000,6 +1000,8 @@ class VideoOrchestrator:
                         GlobalHardwareCoordinator.flush_memory()
                     except Exception as _e:
                         logger.debug(f"Video generator unload skipped: {_e}")
+                # Intermediates are not needed once the master is remuxed.
+                self._cleanup_task_temp(task_id)
 
             if cancel_event.is_set():
                 logger.info(f"render_advanced_music_video: Cancelled after scenes render.")
@@ -1009,6 +1011,24 @@ class VideoOrchestrator:
             if not rendered_clips:
                 raise RuntimeError("No video scenes were successfully rendered.")
 
+            # Step 2.5: Normalise every clip to its planned duration and the project
+            # geometry. Diffusion only emits frame counts on a lattice and rounds
+            # down (a 3.7 s plan renders 3.56 s); nothing consumed the trim the
+            # planner computed, so a 40-clip video finished seconds before the song
+            # and every later cut drifted off its beat.
+            self.update_task(task_id, step="Normalising scene durations & geometry", progress=78)
+            # A crossfade overlaps neighbours, so the stitched video would be
+            # (n-1)*trans_dur shorter than the sum of its clips even with perfect
+            # per-clip durations. Give every non-final clip that much extra so the
+            # assembled picture lands on the song length.
+            rendered_clips = await self._normalise_rendered_clips(
+                rendered_clips=rendered_clips,
+                plan_clips=plan.clips,
+                width=w, height=h, fps=model_spec.fps,
+                task_id=task_id,
+                cancel_event=cancel_event,
+                transition_overlap=self._transition_overlap(transition_style, plan.clips),
+            )
 
             # Step 3: Scene Assembly & Concat
             self.update_task(task_id, step=f"Assembling & Stitching Video Scenes ({transition_style})", progress=82)
@@ -1050,6 +1070,27 @@ class VideoOrchestrator:
                     logger.warning(f"Could not generate ASS subtitles: {ex}")
                     ass_path = None
 
+            # The song is the master clock. `-shortest` truncated the song to the
+            # (slightly short) picture; instead fix the output length to the audio
+            # and pad the video with its last frame when assembly came up short.
+            from app.services.video.clip_normalise import probe_duration as _probe
+            from app.services.video.clip_normalise import verify_assembly as _verify
+
+            song_duration = _probe(resolved_master)
+            stitched_duration = _probe(stitched_video)
+            assembly_report = _verify(stitched_duration, song_duration)
+            if assembly_report and not assembly_report["ok"]:
+                logger.warning(
+                    "Assembly drift: video %.3fs vs song %.3fs (%.3fs). Padding to the song.",
+                    assembly_report["video_duration_s"], assembly_report["song_duration_s"],
+                    assembly_report["drift_s"],
+                )
+
+            def _duration_flags() -> List[str]:
+                if song_duration and song_duration > 0:
+                    return ["-t", f"{song_duration:.3f}", "-af", "apad"]
+                return []
+
             # Execute master remux with burned subtitles if available
             if ass_path and os.path.isfile(ass_path):
                 # Escape path for FFmpeg filter
@@ -1064,7 +1105,7 @@ class VideoOrchestrator:
                     "-map", "[v]", "-map", "1:a:0",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
                     "-c:a", "aac", "-b:a", "256k",
-                    "-shortest",
+                    *_duration_flags(),
                     out_path
                 ]
             else:
@@ -1075,7 +1116,7 @@ class VideoOrchestrator:
                     "-map", "0:v:0", "-map", "1:a:0",
                     "-c:v", "copy",
                     "-c:a", "aac", "-b:a", "256k",
-                    "-shortest",
+                    *_duration_flags(),
                     out_path
                 ]
 
@@ -1092,7 +1133,7 @@ class VideoOrchestrator:
                     "-map", "0:v:0", "-map", "1:a:0",
                     "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
                     "-c:a", "aac", "-b:a", "256k",
-                    "-shortest",
+                    *_duration_flags(),
                     out_path
                 ]
                 proc_fb = await asyncio.create_subprocess_exec(*cmd_fb, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
@@ -1106,7 +1147,11 @@ class VideoOrchestrator:
                 task_id,
                 status="completed",
                 progress=100,
-                step="Production Video Complete",
+                step=(
+                    "Production Video Complete"
+                    if not assembly_report or assembly_report["ok"]
+                    else f"Video complete (drift {assembly_report['drift_s']:+.2f}s vs song)"
+                ),
                 video_url=video_url
             )
             return video_url
@@ -1310,6 +1355,109 @@ class VideoOrchestrator:
             return max(0.5, val)
         except Exception:
             return 3.0
+
+    @staticmethod
+    def _cleanup_task_temp(task_id: str) -> int:
+        """Delete every intermediate file this render created.
+
+        Only `rendered_clips` used to be removed — and after the reactive pass that
+        pointed at `reactive_*.mp4`, so the raw `clip_*`, `stitched_*`, `norm_*`,
+        `concat_*.txt` and `subtitles_*.ass` files stayed behind. A 3-minute render
+        left hundreds of MB per run.
+        """
+        removed = 0
+        try:
+            entries = list(os.scandir(TEMP_DIR))
+        except OSError:
+            return 0
+        for entry in entries:
+            try:
+                if not entry.is_file():
+                    continue
+                name = entry.name
+                # Match the task id, and the scene-plate/subtitle side files.
+                if f"_{task_id}" in name or name.startswith(f"subtitles_{task_id}"):
+                    os.remove(entry.path)
+                    removed += 1
+            except OSError:
+                continue
+        if removed:
+            logger.info("Cleaned up %d intermediate video file(s) for task %s", removed, task_id)
+        return removed
+
+    @staticmethod
+    def _transition_overlap(transition_style: str, plan_clips: List[Any]) -> float:
+        """The crossfade duration the stitcher will use, or 0 for a hard cut.
+
+        Mirrors `_stitch_video_segments_with_transitions` (0.5 s cap, 25% of the
+        shortest clip, floored at 0.2 s) so normalisation and assembly agree.
+        """
+        style = (transition_style or "").lower()
+        if style not in {"crossfade", "dissolve", "whip_pan", "flash", "glitch"}:
+            return 0.0
+        durations = [float(getattr(c, "duration", 0.0) or 0.0) for c in plan_clips]
+        durations = [d for d in durations if d > 0]
+        if len(durations) < 2:
+            return 0.0
+        return min(0.5, max(0.2, min(durations) * 0.25))
+
+    async def _normalise_rendered_clips(
+        self,
+        rendered_clips: List[str],
+        plan_clips: List[Any],
+        width: int,
+        height: int,
+        fps: int,
+        task_id: str,
+        cancel_event: Optional[asyncio.Event] = None,
+        transition_overlap: float = 0.0,
+    ) -> List[str]:
+        """Rewrite each rendered clip to its planned duration and the project geometry.
+
+        See `services/video/clip_normalise.py`: lattice rounding loses ~0.1-0.25 s
+        per clip, and mixed model frame rates/resolutions cannot be concatenated.
+        A clip that cannot be normalised is kept as-is (better a slightly short
+        video than no video) and the drift is reported on the task.
+        """
+        from app.services.video.clip_normalise import normalise_clip, probe_duration
+
+        normalised: List[str] = []
+        for idx, clip_path in enumerate(rendered_clips):
+            if cancel_event is not None and cancel_event.is_set():
+                raise asyncio.CancelledError("Video rendering cancelled during normalisation")
+
+            target = plan_clips[idx] if idx < len(plan_clips) else None
+            target_duration = float(getattr(target, "duration", 0.0) or 0.0) if target else 0.0
+            if target_duration <= 0:
+                normalised.append(clip_path)
+                continue
+            # xfade eats `transition_overlap` from every non-final clip.
+            if transition_overlap and idx < len(rendered_clips) - 1:
+                target_duration += transition_overlap
+
+            dest = os.path.join(TEMP_DIR, f"norm_{task_id}_{idx:03d}.mp4")
+            before = probe_duration(clip_path)
+            ok = await asyncio.to_thread(
+                normalise_clip,
+                clip_path, dest,
+                duration_s=target_duration,
+                width=width, height=height, fps=fps,
+            )
+            if ok:
+                normalised.append(dest)
+                if before is not None and abs(before - target_duration) > 0.05:
+                    logger.info(
+                        "Clip %d: %.3fs rendered, trimmed/padded to %.3fs",
+                        idx + 1, before, target_duration,
+                    )
+            else:
+                logger.warning(
+                    "Clip %d could not be normalised; keeping the raw render "
+                    "(assembly may drift).", idx + 1,
+                )
+                normalised.append(clip_path)
+
+        return normalised
 
     async def _stitch_video_segments_with_transitions(
         self,

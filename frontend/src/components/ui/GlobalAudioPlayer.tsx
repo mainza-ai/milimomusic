@@ -1,7 +1,7 @@
 import React, { useMemo, useState } from 'react';
 import { type Job, type TimedLine, API_BASE_URL, api } from '../../api';
 import { safeJsonParse } from '../../utils/safeJsonParse';
-import { useAudioEngine } from '../../context/AudioEngineContext';
+import { useAudioControls, useAudioTime } from '../../context/AudioEngineContext';
 import { DEFAULT_COVER_ART } from '../../constants/assets';
 import {
   Play,
@@ -44,8 +44,6 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
   const {
     currentTrack: currentSong,
     isPlaying,
-    currentTime,
-    duration,
     volume,
     isMuted,
     playbackRate,
@@ -67,9 +65,10 @@ export const GlobalAudioPlayer: React.FC<GlobalAudioPlayerProps> = ({
     clearQueue,
     stop,
     playbackError,
-    clearPlaybackError,
-    isBuffering
-  } = useAudioEngine();
+    clearPlaybackError
+  } = useAudioControls();
+  // The playhead is the only value that ticks; keep it in its own subscription.
+  const { currentTime, duration, isBuffering } = useAudioTime();
 
   const [timeMode, setTimeMode] = useState<'elapsed' | 'remaining'>('elapsed');
   const [isSpeedMenuOpen, setIsSpeedMenuOpen] = useState(false);

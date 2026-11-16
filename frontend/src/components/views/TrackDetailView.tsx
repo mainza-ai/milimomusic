@@ -13,7 +13,7 @@ import {
     API_BASE_URL,
     api
 } from '../../api';
-import { useAudioEngine } from '../../context/AudioEngineContext';
+import { useAudioControls, useAudioTime } from '../../context/AudioEngineContext';
 import { showError } from '../../utils/confirm';
 import { toast } from '../../utils/toast';
 import { safeJsonParse } from '../../utils/safeJsonParse';
@@ -92,11 +92,11 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
     allJobs = [],
     onSelectTrack
 }) => {
+    // Controls (stable) and time (30 Hz) are separate contexts: this 2,300-line
+    // view must not re-render for every playhead tick.
     const {
         currentTrack: engineTrack,
         isPlaying: engineIsPlaying,
-        currentTime: engineCurrentTime,
-        duration: engineDuration,
         volume: engineVolume,
         isMuted: engineIsMuted,
         togglePlay: engineTogglePlay,
@@ -112,7 +112,11 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
         setPlaybackRate: engineSetPlaybackRate,
         setVolume: engineSetVolume,
         toggleMute: engineToggleMute
-    } = useAudioEngine();
+    } = useAudioControls();
+    const {
+        currentTime: engineCurrentTime,
+        duration: engineDuration,
+    } = useAudioTime();
 
     const [timeMode, setTimeMode] = useState<'elapsed' | 'remaining'>('elapsed');
     const [isSpeedOpen, setIsSpeedOpen] = useState(false);

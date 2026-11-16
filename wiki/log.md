@@ -2932,3 +2932,7 @@ Verification: **522 passed, 0 failed**.
 ## [2026-11-16] execute | Phase 5.2 complete — no untyped bodies remain
 The last 6 `dict` bodies (`profile cover`, `agent resume`, `video storyboard`, `video render`, `active video engine`, `editor project save`) are typed too, so every mutating route in the API now has a declared shape. The editor-project body keeps `extra: "allow"` because the document is intentionally opaque, but its `project_id` is now validated against path separators before it becomes a filename.
 Verification: **522 passed, 0 failed**; `grep -c "payload: dict\|body: dict"` = 0.
+
+## [2026-11-16] execute | Phase 3.11 — stop the playhead re-render storm
+The audio engine already exposed split contexts (controls vs. time) but every row-level consumer used the *merged* `useAudioEngine()`, so a 30 Hz `currentTime` tick re-rendering `TrackRowPlayer` (one per library row), the 2,300-line Track Studio, `ArtistsView` and the dock player. `TrackRowPlayer`, `TrackDetailView`, `ArtistsView` and `GlobalAudioPlayer` now subscribe to `useAudioControls()` (stable) plus `useAudioTime()` (only where the playhead is displayed).
+Verification: 522 backend tests, 15 frontend tests, build green.

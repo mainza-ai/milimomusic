@@ -1,5 +1,6 @@
 import { toast } from '../../utils/toast';
 import { confirmAction } from '../../utils/confirm';
+import { useAudioControls, useAudioTime } from '../../context/AudioEngineContext';
 import { API_BASE_URL } from '../../api';
 import React, { useState, useEffect, useRef } from 'react';
 import {
@@ -14,7 +15,6 @@ import {
     type ProfileDetail, type ExperiencerVision, type AgentRunEnvelope
 } from '../../api';
 import { useValidatedForm } from '../../hooks/useValidatedForm';
-import { useAudioEngine } from '../../context/AudioEngineContext';
 import { StaticWaveform } from '../ui/StaticWaveform';
 import { Modal } from '../ui/primitives';
 
@@ -302,7 +302,9 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
 
     // Waveform click: seek inside the current track, or start this row's
     // track at the clicked position (single fetch, user-initiated).
-    const { playTrack, swapCurrentTrack, currentTrack, currentTime, duration, seek } = useAudioEngine();
+    // `currentTime` ticks at 30 Hz; only subscribe to the time slice for it.
+    const { playTrack, swapCurrentTrack, currentTrack, seek } = useAudioControls();
+    const { currentTime, duration } = useAudioTime();
     const handleWaveSeek = async (tr: ReleaseTrackT, fraction: number) => {
         try {
             if (currentTrack?.id === tr.id && duration > 0) {

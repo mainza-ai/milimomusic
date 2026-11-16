@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Play, Pause, Download, Wand2, Sparkles, FastForward } from 'lucide-react';
-import { useAudioEngine } from '../context/AudioEngineContext';
+import { useAudioControls, useAudioTime } from '../context/AudioEngineContext';
 import { api } from '../api';
 import { StaticWaveform } from './ui/StaticWaveform';
 import { InpaintModal } from './InpaintModal';
@@ -30,15 +30,11 @@ const formatTime = (seconds: number) => {
  * inconsistency where a card could play OVER the dock player.
  */
 export const TrackRowPlayer: React.FC<TrackRowPlayerProps> = ({ job }) => {
-    const {
-        currentTrack,
-        isPlaying,
-        currentTime: engineTime,
-        duration: engineDuration,
-        playTrack,
-        togglePlay,
-        seek
-    } = useAudioEngine();
+    // Controls are stable; only `currentTime` ticks (30 Hz). Subscribing to the
+    // merged engine context made every library row re-render on every tick even
+    // when it was not the active track.
+    const { currentTrack, isPlaying, playTrack, togglePlay, seek } = useAudioControls();
+    const { currentTime: engineTime, duration: engineDuration } = useAudioTime();
     const [isInpaintOpen, setIsInpaintOpen] = useState(false);
     const { openCoverStudio, openExtendTrack } = useModalStore();
 

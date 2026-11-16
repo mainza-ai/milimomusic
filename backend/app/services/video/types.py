@@ -52,6 +52,9 @@ class SceneClip:
     negative_prompt: str = ""
     camera: str = ""
     lighting: str = ""
+    # Two-tier vocal bypass (plan 4.6): instrumental shots must state that the
+    # performer's mouth stays closed, or every shot is prompted to sing.
+    performer_rule: str = ""
     section_label: str = "Verse"
     musical_energy: int = 3
     visual_action: str = ""

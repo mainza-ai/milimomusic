@@ -353,7 +353,10 @@ def test_video_pipeline_planning_and_duration_constraints(client):
             tags="synthwave, cyberpunk",
             lyrics="[Verse 1]\nNeon shadows on the street\nElectric pulse beneath my feet\n[Chorus]\nCan you feel the signal glow",
             duration_ms=60000,
-            audio_path="/audio/sample.mp3",
+            # No such file: the director must use (and flag) its synthetic grid,
+            # keeping this segmentation assertion deterministic. A real stray
+            # `sample.mp3` used to be resolved here and made the count drift.
+            audio_path="/audio/__no_such_probe__.mp3",
             status="completed"
         )
         session.add(job)

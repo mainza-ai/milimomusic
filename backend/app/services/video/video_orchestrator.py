@@ -249,6 +249,26 @@ class VideoOrchestrator:
                 return img
         return None
 
+    @staticmethod
+    def _has_video_weights(token: str) -> bool:
+        """True when an installed video model matching `token` exists on disk.
+
+        A provider chip must mean "this can run now". `DiffusersWanGenerator
+        .is_available` only checks that `diffusers` exposes a pipeline *class*,
+        which is true on any machine with the package installed.
+        """
+        try:
+            from app.services.model_manager import model_manager
+
+            for model in model_manager.get_model_tree():
+                if model.get("category") != "video" or not model.get("is_installed"):
+                    continue
+                if token in str(model.get("id", "")):
+                    return True
+        except Exception:
+            return False
+        return False
+
     def get_video_providers(self) -> List[Dict[str, Any]]:
         """Return catalog of local and cloud providers with availability status."""
         return [
@@ -257,7 +277,9 @@ class VideoOrchestrator:
                 name="Local M3 Max Flagship (Wan 2.1 14B + LivePortrait)",
                 provider_type=VideoProviderType.LOCAL,
                 description="High-fidelity 14B text-to-video / image-to-video with LivePortrait singing avatar on Apple Silicon.",
-                is_available=self._local_wan_14b.is_available,
+                # A "flagship" chip must reflect downloaded weights, not just
+                # whether `diffusers` exposes the pipeline class.
+                is_available=self._has_video_weights("14"),
                 supported_models=["wan_14b", "live_portrait"],
                 default_for_tier=True
             ).to_dict(),
@@ -266,7 +288,10 @@ class VideoOrchestrator:
                 name="Local Fast Studio (Wan 1.3B / LTX-Video + LivePortrait)",
                 provider_type=VideoProviderType.LOCAL,
                 description="Ultra-fast local preview generation with rapid clip turnaround.",
-                is_available=True,
+                # Only claim availability when the engine can actually run: the
+                # procedural generator always can, but a diffusion model needs
+                # weights. `is_available` on the generator is the honest answer.
+                is_available=self._has_video_weights("ltx") or self._has_video_weights("1_3"),
                 supported_models=["wan_1.3b", "ltx_video", "live_portrait"]
             ).to_dict(),
             VideoProviderInfo(

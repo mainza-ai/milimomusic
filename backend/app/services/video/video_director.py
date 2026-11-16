@@ -299,7 +299,18 @@ class VideoDirector:
         if cancel_check and cancel_check():
             raise asyncio.CancelledError("Planning cancelled by user.")
 
-        audio_file = job.audio_path if job.audio_path and os.path.isfile(job.audio_path) else None
+        # Resolve the stored URL/path before testing it: `job.audio_path` is
+        # `/audio/<name>.wav`, so `os.path.isfile` was always False and every plan
+        # silently used the synthetic 120 BPM fallback grid.
+        from app.core.paths import resolve_audio_file as _resolve_audio
+
+        audio_file = _resolve_audio(job.audio_path) if job.audio_path else None
+        if not audio_file:
+            logger.warning(
+                "Video director: no audio file resolved for job %s; using the synthetic "
+                "fallback grid (cuts will NOT be beat-accurate).",
+                getattr(job, "id", "?"),
+            )
         if audio_file:
             analysis = AudioSignalAnalyzer.analyze_audio(
                 audio_path=audio_file,
@@ -308,6 +319,12 @@ class VideoDirector:
             )
         else:
             analysis = AudioSignalAnalyzer._fallback_analysis(audio_file or "unknown.mp3", duration_sec=total_duration)
+            # Say so in the plan: a synthetic grid must never masquerade as analysis.
+            try:
+                analysis.fallback_used = True
+                analysis.fallback_reason = "no resolvable audio; synthetic 120 BPM grid"
+            except Exception:
+                pass
 
         # 2. Lattice-Snapped Musical Clip Boundaries
         planned_clips: List[PlannedMusicClip] = DirectorMusicTiming.plan_capped_music_clips(
@@ -1151,14 +1168,24 @@ class VideoDirector:
                 is_vocal=s["is_vocal"],
                 scene_type=s["scene_type"],
                 lyrics=s.get("lyrics", ""),
-                prompt=s["prompt"],
+                prompt=(
+                    f"{s['prompt']}. {s.get('performer_rule')}"
+                    if s.get("performer_rule") and s.get("performer_rule") not in (s.get("prompt") or "")
+                    else s["prompt"]
+                ),
                 negative_prompt=s.get("negative_prompt", ""),
                 camera=s["camera"],
                 lighting=s["lighting"],
                 section_label=s.get("section_label", "Verse"),
                 musical_energy=s.get("musical_energy", 3),
                 visual_action=s.get("visual_action", ""),
-                directors_note=s.get("directors_note", "")
+                directors_note=s.get("directors_note", ""),
+                # Carry the performance constraint into the clip so the prompt the
+                # diffusion model receives actually honours it. Instrumental
+                # sections must not open the mouth.
+                performer_rule=s.get("performer_rule") or (
+                    "" if s.get("is_vocal") else "mouth_movement: closed; no lip sync"
+                ),
             ))
 
         vocal_count = sum(1 for c in clips if c.is_vocal)

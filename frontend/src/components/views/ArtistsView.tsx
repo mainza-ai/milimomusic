@@ -897,7 +897,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                         aria-label={`Open artist ${p.name}`}
                                         onClick={() => openProfile(p.id)}
                                         className="text-left p-5 rounded-2xl bg-white/95 dark:bg-[#141620]/95 border border-black/[0.06] dark:border-white/[0.08] shadow-apple-sm hover:shadow-apple-md transition-all hover:-translate-y-0.5 focus-visible:ring-2 focus-visible:ring-teal-500/60 outline-none"
-                                     title="Action">
+                                     title="Open this artist">
                                         <div className="flex items-center gap-3">
                                             {p.cover_image_path ? (
                                                 <img src={coverApi.getCoverUrl(p.cover_image_path)} alt="" className="w-10 h-10 rounded-xl object-cover border border-black/10 dark:border-white/10" />
@@ -1022,7 +1022,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                                     <button key={s.name} type="button" onClick={() => toggleChip(s.name)}
                                                         className={`text-[10px] font-mono px-2 py-0.5 rounded-full border transition-colors ${active
                                                             ? 'bg-teal-500 text-slate-950 border-teal-500'
-                                                            : 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-500/20 hover:bg-teal-500/20'}`} title="Action">
+                                                            : 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border-teal-500/20 hover:bg-teal-500/20'}`} title="Filter the tracklist by this style">
                                                         {s.name}
                                                     </button>
                                                 );
@@ -1597,7 +1597,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                         onClick={runExperiencer}
                         disabled={runPhase === 'running' || !briefTitle.trim() || !briefConcept.trim()}
                         className="inline-flex items-center gap-1.5 px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs shadow-md shadow-teal-500/20 active:scale-[0.98] transition-all disabled:opacity-40 disabled:pointer-events-none"
-                     title="Action">
+                     title="Run the Experiencer agent on this release">
                         {runPhase === 'running' ? <Loader2 size={13} className="animate-spin" /> : <Mic2 size={13} />}
                         <span>{runPhase === 'running' ? 'Imagining…' : 'Run Experiencer'}</span>
                     </button>
@@ -1824,7 +1824,7 @@ export const ArtistsView: React.FC<ArtistsViewProps> = ({ initialProfileId }) =>
                                     <button onClick={() => handleDeleteRelease(r.id, r.title)}
                                         className="text-[10px] font-bold px-2 py-1 rounded-lg bg-red-500/10 text-red-500 hover:bg-red-500 hover:text-slate-950 transition-colors"
                                         title="Delete release" aria-label={`Delete ${r.title}`}>Delete</button>
-                                    <button onClick={() => toggleTracks(r.id)} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] dark:hover:bg-white/10 transition-colors" title="Action">{openTracks === r.id ? 'Hide tracks' : 'Tracks'}</button>
+                                    <button onClick={() => toggleTracks(r.id)} className="text-[10px] font-bold px-2 py-1 rounded-lg bg-black/[0.04] dark:bg-white/5 text-slate-600 dark:text-slate-300 hover:bg-black/[0.08] dark:hover:bg-white/10 transition-colors" title="Show or hide the tracklist">{openTracks === r.id ? 'Hide tracks' : 'Tracks'}</button>
                                     <button onClick={() => startAlbum(r.id, r.title)} disabled={albumActive}
                                         className="text-[10px] font-bold px-2 py-1 rounded-lg bg-fuchsia-500/10 text-fuchsia-600 dark:text-fuchsia-400 hover:bg-fuchsia-500 hover:text-slate-950 transition-colors disabled:opacity-40"
                                         title={autopilot ? 'Produce this album (autopilot: no pauses)' : 'Produce this album (gated: pauses after each track)'}>Produce</button>

@@ -866,7 +866,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                             ? 'border-white scale-110 shadow-md'
                             : 'border-transparent opacity-60'
                         }`}
-                       title="Action"/>
+                       title="Project colour"/>
                     ))}
                   </div>
                 </div>
@@ -1350,7 +1350,7 @@ export const ProjectsView: React.FC<ProjectsViewProps> = ({
                               ? 'border-white scale-110 shadow-md ring-2 ring-white/20'
                               : 'border-transparent opacity-60 hover:opacity-100'
                           }`}
-                         title="Action"/>
+                         title="Project colour"/>
                       ))}
                     </div>
                   </div>

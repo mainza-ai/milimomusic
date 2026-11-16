@@ -434,7 +434,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                             onClick={handleDownloadBundle}
                                             disabled={isDownloadingModel}
                                             className="px-4 py-1.5 text-xs font-semibold rounded-lg bg-amber-500 hover:bg-amber-400 text-black shadow-md flex items-center gap-1.5 disabled:opacity-50 cursor-pointer transition-colors"
-                                         title="Action">
+                                         title="Download the deliverable bundle">
                                             {isDownloadingModel ? (
                                                 <>
                                                     <Loader2 className="w-3.5 h-3.5 animate-spin" />
@@ -525,7 +525,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                                         ? 'bg-teal-500/20 border-teal-500/50 text-white'
                                                         : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
                                                 }`}
-                                             title="Action">
+                                             title="Use neural transcription">
                                                 <div className="font-semibold text-teal-300">Milimo Neural (SOTA)</div>
                                                 <div className="text-[10px] text-zinc-400">BS-Roformer 6-stem + Pitch tracking</div>
                                             </button>
@@ -670,7 +670,7 @@ export const CoverStudioModal: React.FC<CoverStudioModalProps> = ({
                                                 onClick={handleTranscribeLeadSheet}
                                                 disabled={isTranscribing}
                                                 className="px-2.5 py-1 text-[11px] font-semibold rounded bg-teal-600 hover:bg-teal-500 text-white flex items-center gap-1.5 transition-colors flex-shrink-0 disabled:opacity-50"
-                                             title="Action">
+                                             title="Transcribe the reference audio into a lead sheet">
                                                 {isTranscribing ? (
                                                     <>
                                                         <Loader2 className="w-3 h-3 animate-spin" />

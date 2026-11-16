@@ -32,6 +32,9 @@ class GenerationCapabilities(BaseModel):
     recommended_hardware: HardwareTier = HardwareTier.MID_SINGLE_GPU
     license_class: str = "open-weights"
     default_sample_rate: int = 44100
+    # Legacy providers stay registered (for reproducibility of old projects) but
+    # are hidden from the default engine picker and receive no new features.
+    legacy: bool = False
 
 
 class GeneratedAudioResult(BaseModel):
@@ -98,7 +101,6 @@ class GenerationProvider(ABC):
         """Generate full audio track."""
         pass
 
-    @abstractmethod
     async def extend(
         self,
         job_id: str,
@@ -110,10 +112,17 @@ class GenerationProvider(ABC):
         cancel_event: Optional[Any] = None,
         **kwargs
     ) -> GeneratedAudioResult:
-        """Extend an existing audio track."""
-        pass
+        """Extend an existing audio track.
 
-    @abstractmethod
+        Concrete default: refuse honestly. Providers used to implement this by
+        generating a brand-new unrelated song and returning it as an "extension";
+        a provider may only override it if it can genuinely continue audio.
+        """
+        raise NotImplementedError(
+            f"{self.get_capabilities().provider_id} cannot continue existing audio. "
+            "Generate a new track, or use a provider that supports track extension."
+        )
+
     async def repair_segment(
         self,
         job_id: str,
@@ -124,6 +133,14 @@ class GenerationProvider(ABC):
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         **kwargs
     ) -> GeneratedAudioResult:
-        """In-paint / repair a specific audio time window."""
-        pass
+        """In-paint / repair a specific audio time window.
+
+        Concrete default: refuse honestly. Returning the input file untouched and
+        calling it "repaired" was how four providers silently no-oped; segment
+        repair is owned by ``inpainting_service``.
+        """
+        raise NotImplementedError(
+            f"{self.get_capabilities().provider_id} does not implement segment repair. "
+            "Use the inpainting service."
+        )
 

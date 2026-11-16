@@ -276,10 +276,14 @@ class AlbumOrchestrator:
                 r = session.get(AgentRun, parent_run_id)
                 rel = session.get(Release, release_id)
                 if r:
-                    r.status = "succeeded"
-                    r.progress = 100
+                    # A cancel that arrived during the last track must win: the
+                    # endpoint already marked the row cancelled, and this write
+                    # used to flip it back to "succeeded".
+                    if r.status != "cancelled":
+                        r.status = "succeeded"
+                        r.progress = 100
+                        r.budget_json = json.dumps(handle.budget.to_dict())
                     r.finished_at = _now()
-                    r.budget_json = json.dumps(handle.budget.to_dict())
                     session.add(r)
                 if rel:
                     transition_release(rel, "completed")

@@ -141,7 +141,7 @@ export const MasteringExportModal: React.FC<MasteringExportModalProps> = ({
                                             ? 'bg-teal-500/10 border-teal-500 text-teal-700 dark:text-teal-300 shadow-sm'
                                             : 'bg-black/[0.02] dark:bg-white/[0.02] border-black/5 dark:border-white/5 hover:border-black/20 dark:hover:border-white/20 text-slate-600 dark:text-slate-400'
                                     }`}
-                                 title="Action">
+                                 title="Apply this loudness target">
                                     <div className="font-bold text-xs">{preset.label}</div>
                                     <div className="text-[10px] opacity-75 mt-1 font-mono">{preset.desc}</div>
                                 </button>
@@ -156,7 +156,7 @@ export const MasteringExportModal: React.FC<MasteringExportModalProps> = ({
                                 onClick={handleRunMastering}
                                 disabled={isMastering}
                                 className="px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 text-slate-950 font-bold text-xs flex items-center gap-2 active:scale-95 transition-transform shadow-md shadow-teal-500/20 disabled:opacity-50"
-                             title="Action">
+                             title="Run reference mastering">
                                 {isMastering ? (
                                     <>
                                         <Loader2 size={14} className="animate-spin" />
@@ -191,7 +191,7 @@ export const MasteringExportModal: React.FC<MasteringExportModalProps> = ({
                                                     ? 'bg-teal-500 text-slate-950 font-black'
                                                     : 'text-slate-400 hover:text-slate-200'
                                             }`}
-                                         title="Action">
+                                         title="Choose the export container">
                                             {fmt}
                                         </button>
                                     ))}
@@ -207,7 +207,7 @@ export const MasteringExportModal: React.FC<MasteringExportModalProps> = ({
                                                     ? 'bg-cyan-500 text-slate-950 font-black'
                                                     : 'text-slate-400 hover:text-slate-200'
                                             }`}
-                                         title="Action">
+                                         title="Choose the export sample rate">
                                             {sr === '44100' ? '44.1k' : sr === '48000' ? '48k' : '96k'}
                                         </button>
                                     ))}

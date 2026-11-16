@@ -2,13 +2,21 @@
 title: MuLaCover
 type: entity
 created: 2026-09-15
-updated: 2026-09-16
+updated: 2026-11-16
 sources: [sources/v2-refactor-plan.md]
 tags: [mulacover, cover, remix, symbolic, midi, provider, model]
 aliases: [MuLaCover-3B, HeartMuLa-Cover, Remix Engine]
 ---
 
 # MuLaCover
+
+> [!NOTE]
+> **Status: KEPT, de-stubbed (Decision D3, 2026-11-16).** The engine is real — 11,958 LOC
+> vendored under `mulacover/src`, loading Qwen + codec weights that are present on disk —
+> and it is the only provider that consumes reference audio. Two stubs are removed:
+> `repair_segment()` returned its own input (`mulacover_provider.py:227-241`), and
+> `extend()` re-transcribed the parent as a *cover reference* instead of extending. See
+> [Decision Record 2026-11](../decisions-2026-11.md). No new features this cycle.
 
 **MuLaCover** (`HeartMuLa/MuLaCover`) is an open-source, controllable **AI music cover and remixing engine** integrated into Milimo Music. It conditions an autoregressive music language model on symbolic musical representations (melody, chords, drums) and style prompts to synthesize high-fidelity stereo remixes and cover songs.
 

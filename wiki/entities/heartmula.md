@@ -2,13 +2,21 @@
 title: HeartMuLa
 type: entity
 created: 2026-08-19
-updated: 2026-08-20
+updated: 2026-11-16
 sources: [sources/heartlib-bible.md, sources/readme.md]
 tags: [heartmula, model, llm, music, generation, provider]
 aliases: [HeartMuLa-3B, HeartMuLa-oss-3B]
 ---
 
 # HeartMuLa
+
+> [!NOTE]
+> **Status: KEPT, demoted to `legacy: true` (Decision D3, 2026-11-16).** The integration is
+> real (2,920 LOC `heartlib`, weights in `heartlib/ckpt/`) but it is hidden from the default
+> engine picker, frozen feature-wise, and its no-op `extend()` / `repair_segment()` stubs are
+> removed. It is retained because it is **the only local non-MLX generation path** — which is
+> what makes the no-CUDA decision (D6) affordable. See
+> [Decision Record 2026-11](../decisions-2026-11.md).
 
 **HeartMuLa** (Hear the Music Language) is the 3B-parameter music **language model** that
 is the **legacy/local** generation engine of Milimo Music. It generates high-fidelity music

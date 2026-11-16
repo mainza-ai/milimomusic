@@ -2,7 +2,7 @@
 title: Milimo Music Wiki — Index
 type: index
 created: 2026-08-19
-updated: 2026-10-24
+updated: 2026-11-16
 ---
 
 # Milimo Music Wiki — Index
@@ -102,6 +102,9 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 
 ## Reports
 
+- [Decision Record 2026-11](decisions-2026-11.md) — D1–D6 scope decisions with evidence: delete YuE2 + Training Studio, single-user/multi-tenant-ready, keep HeartMuLa (demoted) + MuLaCover, fal-only cloud, automation yes / time-stretch no, no CUDA generation + published capability matrix. `tags: [decisions, scope, yue2, providers, multi-user, cloud-video, dsp, cuda, hardware-matrix]`
+- [Full Application Audit 2026-11](application-audit-2026-11.md) — whole-app audit: 14 P0 / 46 P1 findings across honesty, security, lifecycle, schema, DAW, video, CI. `tags: [audit, gaps, security, reliability, daw, honesty, video, image, ops, ci]`
+- [Application Remediation Plan 2026-11](application-remediation-plan-2026-11.md) — 7-phase implementation plan (bleeding → provenance → spine → DAW → media truth → platform → hardening), now scoped by D1–D6. `tags: [plan, remediation, security, honesty, lifecycle, migrations, daw, video, ci]`
 - [Production Readiness Audit](production-readiness-audit.md) — security/reliability/frontend/ops findings with file:line refs and fix status.
 - [Production Readiness Plan](production-readiness-plan.md) — phased remediation (secrets → security → make-it-real → job engine → CI → packaging) with locked decisions.
 - [UI/UX & Design Audit](ui-ux-audit.md) — honesty failures, logic bugs, design-system state, DAW interaction gaps vs pro standards.

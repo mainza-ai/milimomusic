@@ -94,10 +94,27 @@ def test_voice_convert_route_f0_and_dry_wet(client, sample_job):
 
 
 def test_commit_vocal_route(client, sample_job):
-    resp = client.post(f"/tracks/{sample_job}/commit-vocal", json={
-        "vocal_path": "/audio/new_take_mic.wav",
-        "master_path": "/audio/new_remix_master.wav"
-    })
+    # The endpoint validates both paths against the media roots (security fix
+    # 0.1), so the takes must exist as real files rather than only as URL strings.
+    from app.core.paths import get_generated_audio_dir
+
+    gen_dir = get_generated_audio_dir()
+    vocal_file = gen_dir / "new_take_mic.wav"
+    master_file = gen_dir / "new_remix_master.wav"
+    created = []
+    for f in (vocal_file, master_file):
+        if not f.exists():
+            f.write_bytes(b"RIFF....WAVEfmt ")
+            created.append(f)
+
+    try:
+        resp = client.post(f"/tracks/{sample_job}/commit-vocal", json={
+            "vocal_path": "/audio/new_take_mic.wav",
+            "master_path": "/audio/new_remix_master.wav"
+        })
+    finally:
+        for f in created:
+            f.unlink(missing_ok=True)
 
     assert resp.status_code == 200, resp.text
     data = resp.json()

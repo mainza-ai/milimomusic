@@ -57,8 +57,8 @@ export const Button: React.FC<ButtonProps> = ({
             BUTTON_SIZES[size],
             className
         )}
-        {...rest}
-     title="Action">
+        title={rest.title}
+        {...rest}>
         {loading && <Loader2 size={14} className="animate-spin" />}
         {children}
     </button>
@@ -79,7 +79,7 @@ export const Spinner: React.FC<SpinnerProps> = ({ size = 16, className, label })
 );
 
 // ── Toggle switch ───────────────────────────────────────────────────────────
-// Accessible switch: real <button title="Action">, keyboard operable, aria-checked. Replaces
+// Accessible switch: a real <button>, keyboard operable, aria-checked. Replaces
 // the <div onClick> switches that keyboard users could not operate at all.
 interface ToggleProps {
     checked: boolean;

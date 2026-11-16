@@ -1237,7 +1237,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                     ? 'bg-white dark:bg-white/15 text-teal-700 dark:text-teal-300 shadow-apple-sm'
                                     : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-slate-200'
                             }`}
-                         title="Action">
+                         title="Open this tab">
                             <Icon size={14} className={isActive ? 'text-teal-500' : 'text-slate-400'} />
                             <span>{tab.label}</span>
                             {tab.count !== undefined && (
@@ -1486,7 +1486,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                             if (p) api.downloadUrlAsFile(p.startsWith('http') ? p : `${API_BASE_URL}${p}`, `${track.title || 'track'}.mid`);
                                         }}
                                         className="p-3.5 rounded-xl bg-black/[0.03] dark:bg-white/5 hover:bg-teal-500/10 border border-black/[0.06] dark:border-white/5 flex items-center justify-between group transition-colors text-left w-full cursor-pointer"
-                                     title="Action">
+                                     title="Download MIDI">
                                         <div className="flex items-center gap-2.5">
                                             <Music size={18} className="text-teal-500" />
                                             <div>
@@ -1505,7 +1505,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                             if (p) api.downloadUrlAsFile(p.startsWith('http') ? p : `${API_BASE_URL}${p}`, `${track.title || 'track'}.musicxml`);
                                         }}
                                         className="p-3.5 rounded-xl bg-black/[0.03] dark:bg-white/5 hover:bg-teal-500/10 border border-black/[0.06] dark:border-white/5 flex items-center justify-between group transition-colors text-left w-full cursor-pointer"
-                                     title="Action">
+                                     title="Download MusicXML score">
                                         <div className="flex items-center gap-2.5">
                                             <FileCode size={18} className="text-cyan-500" />
                                             <div>
@@ -1528,7 +1528,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                             a.click();
                                         }}
                                         className="p-3.5 rounded-xl bg-black/[0.03] dark:bg-white/5 hover:bg-teal-500/10 border border-black/[0.06] dark:border-white/5 flex items-center justify-between group transition-colors text-left"
-                                     title="Action">
+                                     title="Download the notes as JSON">
                                         <div className="flex items-center gap-2.5">
                                             <FileText size={18} className="text-amber-500" />
                                             <div>
@@ -1555,7 +1555,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                                     if (p) api.downloadUrlAsFile(p.startsWith('http') ? p : `${API_BASE_URL}${p}`, `${track.title || 'track'}_melody.mid`);
                                                 }}
                                                 className="p-3 rounded-xl bg-teal-500/5 hover:bg-teal-500/10 border border-teal-500/20 flex items-center justify-between group transition-colors text-left w-full cursor-pointer"
-                                             title="Action">
+                                             title="Download melody MIDI">
                                                 <div className="flex items-center gap-2">
                                                     <Music size={16} className="text-teal-500" />
                                                     <div>
@@ -1573,7 +1573,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                                     if (p) api.downloadUrlAsFile(p.startsWith('http') ? p : `${API_BASE_URL}${p}`, `${track.title || 'track'}_chords.mid`);
                                                 }}
                                                 className="p-3 rounded-xl bg-teal-500/5 hover:bg-teal-500/10 border border-teal-500/20 flex items-center justify-between group transition-colors text-left w-full cursor-pointer"
-                                             title="Action">
+                                             title="Download chord MIDI">
                                                 <div className="flex items-center gap-2">
                                                     <Music size={16} className="text-cyan-500" />
                                                     <div>
@@ -1591,7 +1591,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                                     if (p) api.downloadUrlAsFile(p.startsWith('http') ? p : `${API_BASE_URL}${p}`, `${track.title || 'track'}_drums.mid`)}
                                                 }
                                                 className="p-3 rounded-xl bg-teal-500/5 hover:bg-teal-500/10 border border-teal-500/20 flex items-center justify-between group transition-colors text-left w-full cursor-pointer"
-                                             title="Action">
+                                             title="Download drum MIDI">
                                                 <div className="flex items-center gap-2">
                                                     <Music size={16} className="text-amber-500" />
                                                     <div>
@@ -1945,7 +1945,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                             className={`w-9 h-5 rounded-full transition-colors relative ${
                                                 formantPreserve ? 'bg-amber-500' : 'bg-black/20 dark:bg-white/20'
                                             }`}
-                                         title="Action">
+                                         title="Toggle formant preservation">
                                             <div
                                                 className={`w-3.5 h-3.5 rounded-full bg-white transition-transform absolute top-0.75 left-0.75 ${
                                                     formantPreserve ? 'translate-x-4' : 'translate-x-0'
@@ -1958,7 +1958,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                         onClick={handleApplyVoiceConvert}
                                         disabled={!selectedVoiceProfile || isConvertingVoice}
                                         className="w-full py-2.5 rounded-xl bg-gradient-to-r from-amber-500 to-orange-500 hover:from-amber-400 hover:to-orange-400 text-slate-950 font-bold text-xs flex items-center justify-center gap-1.5 shadow-md shadow-amber-500/20 disabled:opacity-50 transition-all"
-                                     title="Action">
+                                     title="Convert the vocal stem to the selected voice profile">
                                         <Zap size={13} />
                                         <span>{isConvertingVoice ? 'Synthesizing Voice...' : 'Apply Voice Conversion'}</span>
                                     </button>
@@ -2347,7 +2347,7 @@ export const TrackDetailView: React.FC<TrackDetailViewProps> = ({
                                 }}
                                 disabled={isGeneratingCover}
                                 className="px-4 py-2 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs flex items-center gap-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-50 cursor-pointer"
-                             title="Action">
+                             title="Generate cover artwork">
                                 {isGeneratingCover ? (
                                     <>
                                         <RefreshCw size={13} className="animate-spin" />

@@ -28,6 +28,7 @@ import { useTheme } from './context/ThemeContext';
 import { useAudioControls } from './context/AudioEngineContext';
 import type { LLMConfig } from './api';
 import { toast } from './utils/toast';
+import { isTerminalJobStatus, isCancelledJobStatus } from './utils/jobStatus';
 import { CommandPalette, type CommandItem } from './components/ui/CommandPalette';
 
 // Dedicated Reference IA Views
@@ -949,15 +950,18 @@ function App() {
         }
 
         if (type === 'job_update') {
-          if (data.status === 'completed' || data.status === 'failed') {
+          if (isTerminalJobStatus(data.status)) {
             setIsGenerating(false);
             setGenerationProgress(null);
             setCurrentJobId(null);
             currentJobIdRef.current = null;
             // Completion hand-off (U3): surface the finished track instead of
-            // silently refreshing.
+            // silently refreshing. Cancel/interrupt are terminal but are not
+            // "failures" — they get their own event so the UI can stay calm.
             if (data.status === 'completed') {
               window.dispatchEvent(new CustomEvent('milimo_job_completed', { detail: data }));
+            } else if (isCancelledJobStatus(data.status)) {
+              window.dispatchEvent(new CustomEvent('milimo_job_cancelled', { detail: data }));
             } else {
               window.dispatchEvent(new CustomEvent('milimo_job_failed', { detail: data }));
             }
@@ -990,7 +994,7 @@ function App() {
     const interval = setInterval(async () => {
       try {
         const job = await api.getJobStatus(currentJobId);
-        if (job.status === 'completed' || job.status === 'failed') {
+        if (isTerminalJobStatus(job.status)) {
           setIsGenerating(false);
           setGenerationProgress(null);
           setCurrentJobId(null);
@@ -1517,7 +1521,7 @@ function App() {
             <button
               onClick={() => setCurrentNav('profile')}
               className="w-full p-2 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] hover:bg-black/[0.05] dark:hover:bg-white/[0.07] border border-black/[0.04] dark:border-white/5 flex items-center space-x-2.5 transition-all text-left group"
-             title="Action">
+             title="Open studio profile">
               <div className="w-8 h-8 rounded-xl bg-gradient-to-tr from-teal-500 to-cyan-500 flex items-center justify-center text-slate-950 font-bold text-xs shadow-sm flex-shrink-0">
                 MK
               </div>
@@ -1640,7 +1644,7 @@ function App() {
           <button
             onClick={() => setIsMobileMenuOpen(true)}
             className="p-1.5 rounded-lg text-slate-600 dark:text-slate-300 hover:bg-black/5 dark:hover:bg-white/10"
-           title="Action">
+           title="Open navigation">
             <Menu size={18} />
           </button>
           <MilimoLogo size="sm" />
@@ -1935,7 +1939,7 @@ function App() {
                       onClick={handleCreateNewSession}
                       disabled={isCreatingSession}
                       className="px-3 py-1.5 rounded-xl bg-black/5 dark:bg-white/5 hover:bg-black/10 dark:hover:bg-white/10 text-xs font-semibold text-slate-600 dark:text-slate-300 transition-colors disabled:opacity-50 flex items-center gap-1.5"
-                     title="Action">
+                     title="Start a new session">
                       {isCreatingSession && <Loader2 size={12} className="animate-spin" />}
                       <span>{isCreatingSession ? 'Creating...' : '+ New Session'}</span>
                     </button>

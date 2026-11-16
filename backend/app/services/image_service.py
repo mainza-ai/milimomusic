@@ -940,7 +940,17 @@ class ImageService:
                     break
                 except Exception as exc:
                     last_error = str(exc)[:300]
-                    logger.warning(f"Scene pre-build failed for scene {idx + 1} of {total}: {exc}")
+                    # A TypeError/AttributeError here is a *programming* error
+                    # (wrong signature / renamed attribute), not "diffusion is
+                    # unavailable". Logging it at warning level is how a stale
+                    # call signature went unnoticed until the tests rotted.
+                    if isinstance(exc, (TypeError, AttributeError)):
+                        logger.error(
+                            f"Scene pre-build call failed for scene {idx + 1} of {total}: {exc}",
+                            exc_info=True,
+                        )
+                    else:
+                        logger.warning(f"Scene pre-build failed for scene {idx + 1} of {total}: {exc}")
                     ok = False
 
                 if ok and os.path.isfile(dest_path) and os.path.getsize(dest_path) > 0:

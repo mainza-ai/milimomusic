@@ -104,7 +104,7 @@ export interface TimedLine {
 
 export interface Job {
     id: string;
-    status: 'queued' | 'processing' | 'completed' | 'failed';
+    status: 'queued' | 'processing' | 'completed' | 'failed' | 'cancelled' | 'interrupted';
     title?: string;
     prompt: string;
     lyrics?: string;
@@ -1042,6 +1042,25 @@ export const trackApi = {
         const res = await axios.post(`${API_BASE_URL}/tracks/${jobId}/midi`, notes);
         return res.data;
     },
+    /**
+     * Fire-and-forget save that survives unmount / tab teardown.
+     * Used by the piano roll's unmount flush so debounced edits are never lost.
+     */
+    persistMidiKeepalive: (jobId: string, notes: NoteEvent[]): void => {
+        try {
+            const token = localStorage.getItem('milimo_auth_token');
+            const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+            if (token) headers.Authorization = `Bearer ${token}`;
+            void fetch(`${API_BASE_URL}/tracks/${jobId}/midi`, {
+                method: 'POST',
+                headers,
+                body: JSON.stringify(notes),
+                keepalive: true,
+            }).catch(() => { /* best effort: unmounting */ });
+        } catch {
+            /* best effort: unmounting */
+        }
+    },
     getLrcUrl: (jobId: string): string => {
         return `${API_BASE_URL}/tracks/${jobId}/lrc`;
     },
@@ -1777,41 +1796,6 @@ export const galleryApi = {
     },
     getThumbnailUrl: (filename: string): string => {
         return `${API_BASE_URL}/api/v1/thumbnail/${filename}`;
-    },
-};
-
-// --- YuE2 Training Studio API ---
-
-export interface YuE2TrainingJob {
-    job_id: string;
-    dataset_name: string;
-    mode: 'auto' | 'guided';
-    current_stage: number;
-    total_stages: number;
-    status: string;
-    current_step: number;
-    total_steps: number;
-    rank?: number;
-    learning_rate?: number;
-    reconstruction_auditions?: Record<string, string>;
-    test_song_auditions?: Record<number, string>;
-    output_lora_path?: string | null;
-}
-
-export const trainingApi = {
-    createJob: async (datasetName: string, mode: 'auto' | 'guided' = 'auto', rank: number = 32): Promise<YuE2TrainingJob> => {
-        const res = await axios.post(`${API_BASE_URL}/api/training/jobs`, { dataset_name: datasetName, mode, rank });
-        return res.data;
-    },
-    getJob: async (jobId: string): Promise<YuE2TrainingJob> => {
-        const res = await axios.get(`${API_BASE_URL}/api/training/jobs/${jobId}`);
-        return res.data;
-    },
-    getAuditionAudioUrl: (relPath: string): string => {
-        if (!relPath) return '';
-        if (relPath.startsWith('http://') || relPath.startsWith('https://')) return relPath;
-        const clean = relPath.startsWith('/') ? relPath.slice(1) : relPath;
-        return `${API_BASE_URL}/${clean}`;
     },
 };
 

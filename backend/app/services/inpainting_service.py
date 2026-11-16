@@ -255,19 +255,28 @@ class InpaintingService:
                 musical_profile=musical_profile,
             )
 
-            provider = provider_registry.get(parent_provider)
+            provider = provider_registry.get_provider(parent_provider)
             infill_req_prompt = prompt.strip() if (prompt and prompt.strip()) else parent_prompt
 
-            infill_result = await provider.generate(
-                job_id=infill_job_id,
-                prompt=infill_req_prompt,
-                lyrics="",  # Instrumental infill to seamlessly fit accompaniment
-                duration_ms=int(max(5.0, gap_sec) * 1000),
-                tags=parent_tags,
-                seed=((parent_seed or 42) + 7919) % 2147483647,
-                structured_caption=locked_caption,
-                cancel_event=abort_event,
+            # Repair runs model inference just like the main pipeline, so it must
+            # hold the same device lock. Previously it took none while /generate
+            # held one, which is how two models ended up resident at once.
+            await GlobalHardwareCoordinator.acquire_device(
+                "Inpaint Repair", modality="audio_gen"
             )
+            try:
+                infill_result = await provider.generate(
+                    job_id=infill_job_id,
+                    prompt=infill_req_prompt,
+                    lyrics="",  # Instrumental infill to seamlessly fit accompaniment
+                    duration_ms=int(max(5.0, gap_sec) * 1000),
+                    tags=parent_tags,
+                    seed=((parent_seed or 42) + 7919) % 2147483647,
+                    structured_caption=locked_caption,
+                    cancel_event=abort_event,
+                )
+            finally:
+                GlobalHardwareCoordinator.release_device("Inpaint Repair")
 
             if abort_event.is_set():
                 raise asyncio.CancelledError("Repair cancelled by user")

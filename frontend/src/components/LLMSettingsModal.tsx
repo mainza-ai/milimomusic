@@ -209,7 +209,7 @@ export const LLMSettingsModal: React.FC<LLMSettingsModalProps> = ({
                                                 ? 'bg-white dark:bg-white/15 text-teal-700 dark:text-teal-300 shadow-apple-sm font-bold border border-teal-500/20'
                                                 : 'text-slate-600 dark:text-slate-400 hover:bg-black/[0.03] dark:hover:bg-white/5'
                                         }`}
-                                     title="Action">
+                                     title="Select this provider">
                                         <div className="flex items-center space-x-2.5 truncate">
                                             <span className="text-base">{p.icon}</span>
                                             <div className="truncate">

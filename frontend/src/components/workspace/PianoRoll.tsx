@@ -317,12 +317,25 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
     }
 
     // ── Persistence: batched, honest about its state ────────────────────────
+    const latestNotesRef = useRef<NoteEvent[]>(notesList);
+    const jobIdRef = useRef<string | undefined>(job.id);
+    const dirtyRef = useRef(false);
+
+    useEffect(() => {
+        latestNotesRef.current = notesList;
+    }, [notesList]);
+
+    useEffect(() => {
+        jobIdRef.current = job.id;
+    }, [job.id]);
+
     const flushPersist = async (notes: NoteEvent[]) => {
         if (!job.id) return;
         window.clearTimeout(saveTimerRef.current);
         setSaveState('saving');
         try {
             await trackApi.updateMidiNotes(job.id, notes);
+            dirtyRef.current = false;
             setSaveState('saved');
             window.clearTimeout(savedTimerRef.current);
             savedTimerRef.current = window.setTimeout(() => setSaveState(s => (s === 'saved' ? 'idle' : s)), 2500);
@@ -334,6 +347,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
 
     const schedulePersist = (next: NoteEvent[]) => {
         setSaveState('dirty');
+        dirtyRef.current = true;
         window.clearTimeout(saveTimerRef.current);
         saveTimerRef.current = window.setTimeout(() => void flushPersist(next), 700);
     };
@@ -639,10 +653,30 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
         });
     }, []);
 
-    // Flush pending saves when unmounting mid-edit.
-    useEffect(() => () => {
-        window.clearTimeout(saveTimerRef.current);
-        window.clearTimeout(savedTimerRef.current);
+    // Flush (not cancel) pending saves when unmounting mid-edit. The old cleanup
+    // only cleared the timers, so any edit made inside the 700 ms debounce window
+    // was silently discarded — mode switches, track switches and workspace close
+    // all unmount this panel. `keepalive` keeps the request alive through an
+    // unmount/teardown, and `beforeunload` covers a tab close or reload.
+    useEffect(() => {
+        const flushNow = () => {
+            if (!dirtyRef.current || !jobIdRef.current) return;
+            dirtyRef.current = false;
+            trackApi.persistMidiKeepalive(jobIdRef.current, latestNotesRef.current);
+        };
+        const onBeforeUnload = (e: BeforeUnloadEvent) => {
+            if (!dirtyRef.current) return;
+            flushNow();
+            e.preventDefault();
+            e.returnValue = '';
+        };
+        window.addEventListener('beforeunload', onBeforeUnload);
+        return () => {
+            window.removeEventListener('beforeunload', onBeforeUnload);
+            window.clearTimeout(saveTimerRef.current);
+            window.clearTimeout(savedTimerRef.current);
+            flushNow();
+        };
     }, []);
 
     // ── Dimension tracking (eliminates getBoundingClientRect layout reflows) ─
@@ -1892,7 +1926,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                                 className={`px-1.5 py-0.5 rounded font-bold ${
                                     rowH === h ? 'bg-teal-500/15 text-teal-600 dark:text-teal-400' : 'hover:text-slate-800 dark:hover:text-slate-200'
                                 }`}
-                             title="Action">
+                             title="Row height">
                                 {h === 18 ? 'S' : h === 24 ? 'M' : 'L'}
                             </button>
                         ))}

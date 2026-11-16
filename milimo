@@ -134,9 +134,17 @@ cmd_stop() {
         rm -f "$FRONTEND_PID_FILE"
     fi
 
-    # Gracefully kill any stray uvicorn on port 8000 if owned by user
+    # Gracefully kill the backend we started (recorded PID only — never a
+    # stranger's dev server that happens to own port 8000).
+    if [ -f "$BACKEND_PID_FILE" ]; then
+        PID=$(cat "$BACKEND_PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            kill "$PID" 2>/dev/null || true
+        fi
+        rm -f "$BACKEND_PID_FILE"
+    fi
     if lsof -ti :8000 >/dev/null 2>&1; then
-        kill $(lsof -ti :8000) 2>/dev/null || true
+        echo "   ⚠️  Port 8000 is still busy (not started by Milimo) — leaving it alone."
     fi
 
     echo "✅ All services stopped."
@@ -154,15 +162,30 @@ cmd_start() {
 
     export PYTHONPATH="$DIR/backend:$DIR/muscriptor:$DIR/heartlib:$DIR/mulacover/src:$DIR/mulacover:${PYTHONPATH:-}"
 
+    # Bind loopback by default. LAN exposure is an explicit opt-in and requires
+    # a token, because the API can spend GPU time and write to disk.
+    HOST="${MILIMO_HOST:-${HOST:-127.0.0.1}}"
+    PORT="${MILIMO_PORT:-${PORT:-8000}}"
+    case "$HOST" in
+        0.0.0.0|::|"")
+            if [ -z "${MILIMO_AUTH_TOKEN:-}" ] && [ "${MILIMO_ALLOW_ANONYMOUS:-0}" != "1" ]; then
+                echo "❌ Refusing to bind $HOST without MILIMO_AUTH_TOKEN."
+                echo "   Set MILIMO_AUTH_TOKEN=<secret> for LAN access, or MILIMO_ALLOW_ANONYMOUS=1"
+                echo "   to deliberately serve an open instance on a trusted network."
+                exit 1
+            fi
+            ;;
+    esac
+
     # Start Backend
-    nohup "$PY_BIN" -m uvicorn app.main:app --host 0.0.0.0 --port 8000 > "$LOG_DIR/backend.log" 2>&1 &
+    nohup "$PY_BIN" -m uvicorn app.main:app --host "$HOST" --port "$PORT" > "$LOG_DIR/backend.log" 2>&1 &
     echo $! > "$BACKEND_PID_FILE"
-    echo "   Backend started (PID $(cat "$BACKEND_PID_FILE")), logging to $LOG_DIR/backend.log"
+    echo "   Backend started on $HOST:$PORT (PID $(cat "$BACKEND_PID_FILE")), logging to $LOG_DIR/backend.log"
 
     # Start Frontend dev server if requested with --dev
     if [[ "$*" == *"--dev"* ]]; then
         cd "$DIR/frontend"
-        nohup npm run dev -- --host 0.0.0.0 < /dev/null > "$LOG_DIR/frontend.log" 2>&1 &
+        nohup npm run dev -- --host "$HOST" < /dev/null > "$LOG_DIR/frontend.log" 2>&1 &
         echo $! > "$FRONTEND_PID_FILE"
         echo "   Frontend dev server started (PID $(cat "$FRONTEND_PID_FILE")), logging to $LOG_DIR/frontend.log"
     fi

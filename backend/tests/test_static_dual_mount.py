@@ -33,13 +33,23 @@ async def test_audio_file_serving(client):
             pass
 
 @pytest.mark.asyncio
-async def test_cover_image_serving(client):
-    """Verify generated cover artwork is served from /covers/ without 404."""
-    from app.services.image_service import image_service
-    result = image_service.generate_cover(
+async def test_cover_image_serving(client, monkeypatch):
+    """Verify generated cover artwork is served from /covers/ without 404.
+
+    Diffusion is stubbed so the test proves the *serving* contract, not model output.
+    (With real FLUX weights installed, the unstubbed call diffuses for minutes.)
+    """
+    from app.services import image_service as isvc
+
+    def _no_diffusion(**kwargs):
+        # The real method reports unavailability in its return value, not by raising.
+        return {"engine": "none", "diffusion_error": "stubbed for static-serving test"}
+
+    monkeypatch.setattr(isvc.image_service, "_render_diffusion_image", _no_diffusion, raising=False)
+    result = isvc.image_service.generate_cover(
         prompt="dual mount cover probe",
         style="test style",
-        model_id="nonexistent-ci-model",  # forces raster fallback in CI
+        model_id="nonexistent-ci-model",  # forces raster fallback
     )
     assert result.get("url", "").startswith("/covers/")
     response = await client.get(result["url"])
@@ -48,8 +58,20 @@ async def test_cover_image_serving(client):
     assert len(response.content) > 0
 
 @pytest.mark.asyncio
-async def test_generate_cover_endpoint(client):
-    """Verify that POST /jobs/{job_id}/generate-cover generates artwork and updates the job."""
+async def test_generate_cover_endpoint(client, monkeypatch):
+    """Verify that POST /jobs/{job_id}/generate-cover generates artwork and updates the job.
+
+    Diffusion is stubbed: this asserts the endpoint contract (a `/covers/` path that is
+    immediately fetchable), not model quality. With FLUX weights on the machine the real
+    call takes minutes and used to hang the suite.
+    """
+    from app.services import image_service as isvc
+
+    def _no_diffusion(**kwargs):
+        return {"engine": "none", "diffusion_error": "stubbed for endpoint contract test"}
+
+    monkeypatch.setattr(isvc.image_service, "_render_diffusion_image", _no_diffusion, raising=False)
+
     test_job = Job(
         id=uuid.uuid4(),
         title="Test Cover Track",

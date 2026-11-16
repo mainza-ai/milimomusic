@@ -37,8 +37,22 @@ jobs:
         env:
           OPENCODE_API_KEY: "mock-ci-key"
           NVIDIA_API_KEY: "mock-ci-key"
+          # Never reach the network or load real weights from the default suite.
+          # Without these, three tests in test_production_v2.py block forever
+          # waiting on Hugging Face.
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+          HF_HUB_DISABLE_TELEMETRY: "1"
         run: |
-          PYTHONPATH=backend:muscriptor:mulacover/src pytest backend/tests/ -v
+          PYTHONPATH=backend:muscriptor:mulacover/src pytest backend/tests/ -v -m "not heavy"
+
+      - name: Hermetic Suite (must not hang)
+        env:
+          HF_HUB_OFFLINE: "1"
+          TRANSFORMERS_OFFLINE: "1"
+        run: |
+          PYTHONPATH=backend:muscriptor:mulacover/src pytest backend/tests/ -q -m "not heavy" \
+            --timeout=180 --timeout-method=thread
 
   frontend-build:
     name: Frontend Build & Typecheck

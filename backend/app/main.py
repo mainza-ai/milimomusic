@@ -334,10 +334,18 @@ def create_db_and_tables():
 
 
 def reconcile_orphan_agent_runs() -> int:
+    """Boot-time crash recovery for agent runs.
+
+    Covers **every** status that blocks operations — not just `running`. Five album
+    runs stuck at `queued` since 2026-08-25 made artist and release deletion return
+    409 `active_run` forever, and the cancel endpoint (also `running`-only) could not
+    clear them either.
+    """
     with Session(engine) as session:
         orphans = session.exec(
-            select(AgentRun).where(AgentRun.status == "running")
+            select(AgentRun).where(AgentRun.status.in_(ACTIVE_RUN_STATUSES))
         ).all()
+        seen_statuses = sorted({run.status for run in orphans})
         for run in orphans:
             run.status = "interrupted"
             run.error_type = "interrupted"
@@ -346,7 +354,10 @@ def reconcile_orphan_agent_runs() -> int:
             session.add(run)
         session.commit()
         if orphans:
-            logger.warning(f"Reconciled {len(orphans)} orphaned agent run(s).")
+            logger.warning(
+                f"Reconciled {len(orphans)} orphaned agent run(s) "
+                f"(statuses: {', '.join(seen_statuses)})."
+            )
         return len(orphans)
 
 
@@ -358,7 +369,7 @@ def reconcile_orphan_jobs() -> int:
             select(Job).where(Job.status.in_([JobStatus.QUEUED, JobStatus.PROCESSING, "QUEUED", "PROCESSING", "queued", "processing"]))
         ).all()
         for job in orphans:
-            job.status = JobStatus.FAILED
+            job.status = JobStatus.INTERRUPTED
             job.error_msg = "Interrupted by server restart."
             session.add(job)
         session.commit()
@@ -408,7 +419,7 @@ async def lifespan(app: FastAPI):
     release_instance_lock()
 
 
-from app.core.security import require_auth
+from app.core.security import require_auth, SecurityGate
 from app.core.instance_lock import acquire_instance_lock, release_instance_lock
 from app.agents.orchestrator import RunRegistry
 from app.core.ratelimit import enforce_rate_limit
@@ -441,6 +452,12 @@ else:
         "http://127.0.0.1:5173", "http://127.0.0.1:4173", "http://127.0.0.1:3000",
     ]
     _cors_credentials = True
+
+# Applied to the *entire* ASGI surface, so `app.mount()` sub-apps (/stems,
+# /generated_audio) can no longer escape authentication. Registered before CORS
+# so CORS is added later and therefore wraps this gate — its headers ride along
+# on 401/403 responses.
+app.add_middleware(SecurityGate)
 
 app.add_middleware(
     CORSMiddleware,
@@ -513,6 +530,31 @@ from app.core.paths import (
     get_models_dir, get_data_dir, get_generated_audio_dir,
     resolve_audio_file, resolve_stem_file, resolve_image_file
 )
+from app.core.media_paths import (
+    AUDIO_EXTS, IMAGE_EXTS, VIDEO_EXTS, ALL_MEDIA_EXTS,
+    MediaPathError, is_allowed_media_path, resolve_media_reference,
+    safe_media_name, to_public_media_reference,
+)
+
+
+def _guard_media(value, *, allow_exts=None, must_exist=True, field="path"):
+    """Turn a request-supplied media reference into a validated absolute path.
+
+    Status codes are chosen to avoid an existence oracle: anything the guard will
+    not serve (missing, or outside the media directories) is a **404**; only a
+    malformed reference (traversal, NUL, wrong extension) is a **400**.
+    """
+    try:
+        return resolve_media_reference(
+            value, allow_exts=allow_exts, must_exist=must_exist, field=field
+        )
+    except MediaPathError as exc:
+        status = 400 if exc.kind == "invalid" else 404
+        raise HTTPException(
+            status_code=status,
+            detail={"error": {"code": "invalid_media_path", "message": str(exc)}},
+        )
+
 get_models_dir()
 get_models_dir("audio")
 get_models_dir("image")
@@ -1392,7 +1434,10 @@ def cancel_agent_run(run_id: UUID):
         row = session.get(AgentRun, run_id)
         if not row:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Run not found."}})
-        if row.status == "running":
+        # `queued` and `awaiting_approval` also block delete/create operations, so
+        # they must be cancellable too — otherwise a stale queued row is a
+        # permanent 409 on the artist it belongs to.
+        if row.status in ACTIVE_RUN_STATUSES:
             row.status = "cancelled"
             row.finished_at = datetime.now(timezone.utc)
             session.add(row)
@@ -3534,7 +3579,7 @@ async def transcribe_lead_sheet(req: LeadSheetExtractRequest):
     from app.services.mulacover.symbolic_hub import symbolic_hub, detect_tempo
     import uuid
 
-    audio_path = _resolve_audio_file(req.audio_path)
+    audio_path = _guard_media(req.audio_path, allow_exts=AUDIO_EXTS, field="audio_path")
     if not audio_path or not os.path.isfile(audio_path):
         raise HTTPException(status_code=404, detail=f"Audio file not found: {req.audio_path}")
 
@@ -4076,6 +4121,10 @@ def update_job(job_id: str, data: JobUpdate):
             except ValueError as e:
                 raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": str(e)}})
         allowed_fields = ["title", "tags", "prompt", "is_favorite", "project_id", "cover_image_path", "lyrics"]
+        if updates.get("cover_image_path"):
+            updates["cover_image_path"] = _guard_media(
+                updates["cover_image_path"], allow_exts=IMAGE_EXTS, field="cover_image_path"
+            )
         for key in allowed_fields:
             if key in updates:
                 setattr(job, key, updates[key])
@@ -4375,16 +4424,24 @@ def commit_vocal_to_track(job_id: str, body: dict = Body(...)):
         raise HTTPException(status_code=400, detail="vocal_path is required")
     master_path = body.get("master_path")
 
+    # Both fields reach the filesystem (and `master_path` lands on job.audio_path,
+    # which /download_track serves), so they must name media, not arbitrary files.
+    vocal_path = _guard_media(vocal_path, allow_exts=ALL_MEDIA_EXTS, field="vocal_path")
+    if master_path:
+        master_path = _guard_media(master_path, allow_exts=ALL_MEDIA_EXTS, field="master_path")
+
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)
         if not job:
             raise HTTPException(status_code=404, detail="Track not found")
 
         stems = json.loads(job.stems_json) if job.stems_json else {}
-        stems["vocals"] = vocal_path
+        # Store the public URL form, not the resolved absolute path, so the
+        # frontend keeps building `<audio src="/audio/...">`.
+        stems["vocals"] = to_public_media_reference(vocal_path)
         job.stems_json = json.dumps(stems)
         if master_path:
-            job.audio_path = master_path
+            job.audio_path = to_public_media_reference(master_path)
         job.updated_at = datetime.now(timezone.utc)
         session.add(job)
         session.commit()
@@ -4413,6 +4470,11 @@ def download_track(job_id: str):
             resolved = f"generated_audio/{filename}"
             if not os.path.isfile(resolved):
                 raise HTTPException(status_code=404, detail="Audio file not found on disk")
+
+        # Defense in depth: legacy rows may hold a path written before the
+        # request-side guard existed. Never serve outside the media roots.
+        if not is_allowed_media_path(resolved, allow_exts=ALL_MEDIA_EXTS):
+            raise HTTPException(status_code=404, detail="Audio file not found on disk")
 
         ext = os.path.splitext(resolved)[1].lower()
         media_type = {
@@ -4565,10 +4627,15 @@ def cancel_job(job_id: str):
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)
         if job and job.status in [JobStatus.QUEUED, JobStatus.PROCESSING]:
-            job.status = JobStatus.FAILED
+            job.status = JobStatus.CANCELLED
             job.error_msg = "Cancelled by user"
             session.add(job)
             session.commit()
+            event_manager.publish("job_update", {
+                "job_id": str(job.id),
+                "status": JobStatus.CANCELLED.value,
+                "error": "Cancelled by user",
+            })
             return {"status": "cancelled", "id": job_id}
             
     raise HTTPException(status_code=400, detail="Job not active or already completed")
@@ -5392,7 +5459,11 @@ async def generate_video_keyframes(job_id: str, req: KeyframesRequest = Body(def
                     logger.info(f"Background keyframe generation task {task_id} successfully cancelled.")
                 except Exception as e:
                     logger.error(f"Background keyframe generation failed for {job_id}: {e}")
-                    video_service.update_task(task_id, status="error", error=str(e))
+                    # VideoService has no `update_task`; the durable queue owns
+                    # task state. The old call raised AttributeError inside the
+                    # error handler, so the row never reached a terminal state.
+                    from app.core.task_queue import DurableTaskQueue
+                    DurableTaskQueue.get_instance().fail_task(task_id, str(e))
                 finally:
                     video_service.unregister_render_task(task_id)
 
@@ -5771,7 +5842,10 @@ def get_video_thumbnail(filename: str):
     """Serve cached first-frame JPEG poster for fast gallery loading."""
     from app.services.gallery.media_bridge import MediaBridge
     from app.core.paths import resolve_video_file
-    clean_name = filename.split("?")[0]
+    try:
+        clean_name = safe_media_name(filename, allow_exts=VIDEO_EXTS)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
     # Search common video locations
     found = resolve_video_file(clean_name)
     if not found:
@@ -5802,53 +5876,18 @@ def get_video_thumbnail(filename: str):
 @app.post("/api/gallery/route")
 def route_gallery_media(payload: dict):
     """1-Click Gallery-to-Input media routing to Studio / Director slots."""
-    import urllib.parse
     from app.services.gallery.media_bridge import MediaBridge
-    from app.core.paths import get_data_dir, get_generated_audio_dir, resolve_video_file, resolve_image_file, resolve_audio_file
 
     media_path = payload.get("media_path")
     target_slot = payload.get("target_slot")
     if not media_path or not target_slot:
         raise HTTPException(status_code=400, detail="media_path and target_slot are required")
 
-    # Clean URL scheme, domain, query parameters and extract path
-    parsed = urllib.parse.urlparse(str(media_path))
-    clean_path = parsed.path if parsed.path else str(media_path)
-    clean_rel = clean_path.lstrip("/")
-
-    # Try resolving via helper functions first
-    resolved_str = (
-        resolve_video_file(clean_path)
-        or resolve_video_file(clean_rel)
-        or resolve_image_file(clean_path)
-        or resolve_image_file(clean_rel)
-        or resolve_audio_file(clean_path)
-        or resolve_audio_file(clean_rel)
-    )
-
-    if resolved_str and os.path.isfile(resolved_str):
-        resolved = Path(resolved_str)
-    else:
-        resolved = Path(clean_path)
-        if not resolved.exists():
-            for prefix in [
-                Path("."),
-                Path(".."),
-                get_generated_audio_dir() / "videos",
-                get_generated_audio_dir(),
-                get_data_dir() / "video_cache",
-                get_data_dir() / "video_cache" / "scene_stills",
-                get_data_dir() / "video_cache" / "keyframes",
-                get_data_dir(),
-                Path("generated_audio") / "videos",
-                Path("generated_audio"),
-                Path("assets"),
-                Path("data"),
-            ]:
-                candidate = (prefix / clean_rel).resolve()
-                if candidate.exists() and candidate.is_file():
-                    resolved = candidate
-                    break
+    # Resolve strictly inside the media roots. The previous implementation also
+    # searched Path(".") and Path(".."), i.e. the repo parent — a read-and-route
+    # primitive for any file on the host.
+    resolved_str = _guard_media(media_path, allow_exts=ALL_MEDIA_EXTS, field="media_path")
+    resolved = Path(resolved_str)
 
     try:
         routed = MediaBridge.route_to_input(
@@ -5917,56 +5956,25 @@ def apply_clip_retake(project_id: str, clip_id: str, payload: dict):
 
 @app.post("/api/editor/projects/{project_id}/compile")
 def compile_editor_render(project_id: str):
-    """Compile non-destructive project into single-pass hardware FFmpeg command."""
-    from app.services.timeline.editor_projects import EditorProject, EditorProjectManager
-    from app.core.win_safe_files import safe_load_json
-    proj_file = Path("data/editor_projects") / f"{project_id}.json"
-    if not proj_file.exists():
-        raise HTTPException(status_code=404, detail="Editor project not found")
-    data = safe_load_json(proj_file)
-    project = EditorProject.from_dict(data)
+    """Compile a non-destructive project into a rendered video.
 
-    output_path = f"generated_audio/render_{project_id}.mp4"
-    cmd = EditorProjectManager.compile_editor_render_command(project, output_path)
-    return {
-        "status": "ok",
-        "command": cmd,
-        "output_path": output_path,
-        "encoder": EditorProjectManager.detect_hardware_video_encoder(),
-    }
-
-
-@app.post("/api/training/jobs")
-async def create_training_job(payload: dict):
-    """Create a new YuE2 training job (Auto Mode or Guided Mode)."""
-    import uuid
-    import asyncio
-    from app.services.training.yue2_trainer import YuE2TrainingStudio, TrainingWorkflowMode
-    dataset_name = payload.get("dataset_name", "custom_dataset")
-    mode_str = payload.get("mode", "auto")
-    rank = int(payload.get("rank", 32))
-    job_id = f"yue2_train_{uuid.uuid4().hex[:8]}"
-    mode = TrainingWorkflowMode(mode_str)
-    job = YuE2TrainingStudio.create_job(job_id=job_id, dataset_name=dataset_name, mode=mode, rank=rank)
-    if mode == TrainingWorkflowMode.AUTO:
-        asyncio.create_task(YuE2TrainingStudio.run_auto_pipeline(job.job_id))
-    return job.to_dict()
-
-
-@app.get("/api/training/jobs/{job_id}")
-def get_training_job(job_id: str):
-    """Get training job status and audition artifacts."""
-    from app.services.training.yue2_trainer import YuE2TrainingStudio
-    job = YuE2TrainingStudio.get_job(job_id)
-    if not job:
-        raise HTTPException(status_code=404, detail="Training job not found")
-    return job.to_dict()
-
-
-# Audition audio files mount
-auditions_dir = Path("data/training_auditions").resolve()
-auditions_dir.mkdir(parents=True, exist_ok=True)
-app.mount("/data/training_auditions", RangedStaticFiles(directories=[auditions_dir]), name="training_auditions")
+    Previously this returned the *command string* it would have run, plus an
+    `output_path` that was never written — so "Export" produced JSON and claimed
+    success. Rendering lands in the media-truth phase; until then this is an
+    honest 501 rather than a fake success.
+    """
+    raise HTTPException(
+        status_code=501,
+        detail={
+            "error": {
+                "code": "not_implemented",
+                "message": (
+                    "Timeline rendering is not implemented yet. The previous version "
+                    "returned an FFmpeg command without rendering anything."
+                ),
+            }
+        },
+    )
 
 
 # --- Frontend Static Files & SPA Fallback (Unified Single-Process Mode) ---
@@ -5984,10 +5992,16 @@ if os.path.exists(frontend_dist):
         if any(full_path.startswith(p) for p in api_prefixes):
             raise HTTPException(status_code=404, detail="Endpoint not found")
 
-        # Static file lookup
-        file_path = os.path.join(frontend_dist, full_path)
-        if full_path and os.path.exists(file_path) and os.path.isfile(file_path):
-            return FileResponse(file_path)
+        # Static file lookup — must stay inside frontend/dist (the `:path`
+        # converter passes `..` through untouched).
+        if full_path:
+            dist_root = Path(frontend_dist).resolve()
+            try:
+                candidate = (dist_root / full_path).resolve()
+            except (OSError, ValueError):
+                raise HTTPException(status_code=404, detail="Not found")
+            if candidate.is_file() and (candidate == dist_root or dist_root in candidate.parents):
+                return FileResponse(candidate)
 
         # SPA history fallback
         index_file = os.path.join(frontend_dist, "index.html")

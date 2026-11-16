@@ -574,7 +574,7 @@ export const NotationViewer: React.FC<NotationViewerProps> = ({ job, currentTime
                                         ? 'bg-teal-500 text-slate-950 shadow-sm'
                                         : 'text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white'
                                 }`}
-                             title="Action">
+                             title={`Show ${inst} only`}>
                                 {inst}
                             </button>
                         ))}

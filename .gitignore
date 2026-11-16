@@ -93,3 +93,6 @@ backend/.milimo.lock
 
 # local scratch/verification scripts
 scratch/
+
+# Harness / agent runtime state (never project content)
+.opencode/

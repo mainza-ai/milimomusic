@@ -29,6 +29,9 @@ EXEMPT_ROUTES: dict[tuple[str, str], str] = {
 
 _AXIOS_RE = re.compile(r"axios\.(get|post|put|patch|delete)(?:<[^>]*>)?\(\s*[`'\"]([^`'\"]+)[`'\"]")
 _FETCH_RE = re.compile(r"(?:fetch|EventSource)\(\s*[`'\"]([^`'\"]+)[`'\"]")
+# `fetch(url, { method: 'POST' })` — the method lives in the options object, so
+# assume GET only when the call site does not declare one.
+_FETCH_METHOD_RE = re.compile(r"method\s*:\s*['\"](\w+)['\"]")
 # Plain template URL builders (window.open / href / src / returned URLs).
 # Applied per-line, skipping axios.* lines (those carry their real method).
 # The middle alternative covers a slash glued to an interpolation (`/${x}`).
@@ -68,11 +71,16 @@ def frontend_calls() -> set[tuple[str, str]]:
         for m in _FETCH_RE.finditer(text):
             url = m.group(1).replace("${API_BASE_URL}", "")
             if url.startswith("/") or url.startswith("http"):
-                out.add(("GET", _norm(url)))
+                # Look ahead for the options object so `fetch(url, {method:'POST'})`
+                # is recorded as POST rather than guessed as GET.
+                tail = text[m.end():m.end() + 240]
+                method_match = _FETCH_METHOD_RE.search(tail)
+                method = (method_match.group(1).upper() if method_match else "GET")
+                out.add((method, _norm(url)))
         # Plain template URL builders (window.open / href / src / returns).
-        # Skip axios.* lines: those templates carry their real HTTP method.
+        # Skip axios.*/fetch lines: those carry their real HTTP method above.
         for line in text.splitlines():
-            if "axios." in line:
+            if "axios." in line or "fetch(" in line:
                 continue
             line = _VITE_ENV_RE.sub("${API_BASE_URL}", line)
             for m in _URL_LITERAL_RE.finditer(line):

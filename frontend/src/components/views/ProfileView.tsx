@@ -104,7 +104,7 @@ export const ProfileView: React.FC<ProfileViewProps> = ({ songs, onPlaySong, onO
                     <button
                         onClick={() => setIsEditing(!isEditing)}
                         className="px-4 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300 font-bold text-xs transition-all border border-black/[0.06] dark:border-white/10"
-                     title="Action">
+                     title="Edit profile">
                         {isEditing ? 'Cancel' : 'Edit Profile'}
                     </button>
                 </div>

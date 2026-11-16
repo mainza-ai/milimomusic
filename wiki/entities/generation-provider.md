@@ -2,7 +2,7 @@
 title: Generation Provider Abstraction
 type: entity
 created: 2026-08-20
-updated: 2026-09-25
+updated: 2026-11-16
 tags: [generation, provider, abstraction, architecture, backend, stable-audio, musicgen, lifecycle]
 aliases: [GenerationProvider, ProviderRegistry, provider abstraction]
 ---
@@ -12,6 +12,16 @@ aliases: [GenerationProvider, ProviderRegistry, provider abstraction]
 The **generation-provider layer** decouples Milimo's generation flow from any single model.
 It is the §3.1 "capabilities, not model names" design from the [v2 plan](../roadmap.md),
 now implemented. Backend lives in `backend/app/providers/`.
+
+> [!IMPORTANT]
+> **Capability manifests are currently aspirational, not tested** (audit 2026-11). Unknown
+> provider ids silently resolve to MiniMax (`registry.py:138-140`), `is_ready()` returns
+> `True` for any HF repo id containing `/` before weights exist, and
+> `supports_lora`/`supports_segment_repair`/`supports_voice_conversion` are set `True` on
+> providers with no such code. Plan 1.6 makes a capability `True` only when a test proves the
+> method exists and is not a stub. The hardware side is now fixed by
+> [D6](../decisions-2026-11.md): MiniMax is Apple-Silicon-MLX only, and the published matrix
+> — not the manifest copy — governs what the UI offers.
 
 ## Interface (`providers/base.py`)
 `GenerationProvider` (ABC) defines:

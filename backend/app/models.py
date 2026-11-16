@@ -11,6 +11,8 @@ class JobStatus(str, Enum):
     PROCESSING = "processing"
     COMPLETED = "completed"
     FAILED = "failed"
+    CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
 
 
 # Canonical defaults / limits for user-facing names. Single source of truth:

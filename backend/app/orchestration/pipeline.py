@@ -36,11 +36,21 @@ def _job_status(engine, job_id) -> Optional[str]:
 def _abort_if_terminal(engine, job_id, cancel_event=None, stage: str = "") -> None:
     """Raise CancelledError when the job is cancelled/failed/interrupted or the
     cancel event fired. Called BETWEEN heavy steps so orphaned work can never
-    resurrect a dead job or burn GPU after external termination."""
+    resurrect a dead job or burn GPU after external termination.
+
+    A missing row is terminal too: `DELETE /jobs/{id}` removes the row while the
+    pipeline is still running, and the old code treated `None` as "keep going"
+    and wrote stems/MIDI for a job that no longer existed.
+    """
     if cancel_event is not None and cancel_event.is_set():
         raise asyncio.CancelledError("Cancelled by request")
     status = _job_status(engine, job_id)
-    terminal = {"failed", "cancelled", "interrupted"}
+    terminal = {
+        JobStatus.FAILED.value,
+        JobStatus.CANCELLED.value,
+        JobStatus.INTERRUPTED.value,
+        None,
+    }
     if status in terminal:
         raise asyncio.CancelledError(
             f"Job already terminal ({status}); aborting {stage} stage")
@@ -87,14 +97,21 @@ class GenerateAndTranscribePipeline:
     ):
         job_id_str = str(job_id)
 
-        # Update DB status: PROCESSING
+        # Atomic claim: only a job that is still QUEUED may start. The old code
+        # wrote PROCESSING unconditionally, so cancelling a queued job marked it
+        # FAILED and the background task then flipped it back to PROCESSING and
+        # ran to completion — the user's cancel visibly "un-cancelled".
+        from sqlalchemy import update as _sql_update
         with Session(engine) as session:
-            job = session.get(Job, job_id)
-            if not job:
-                return
-            job.status = JobStatus.PROCESSING
-            session.add(job)
+            claim = session.execute(
+                _sql_update(Job)
+                .where(Job.id == job_id, Job.status == JobStatus.QUEUED)
+                .values(status=JobStatus.PROCESSING)
+            )
             session.commit()
+            if claim.rowcount == 0:
+                logger.info(f"Job {job_id_str} is no longer QUEUED; skipping pipeline start.")
+                return
 
         # Step 1: Model Generation
         try:
@@ -136,7 +153,16 @@ class GenerateAndTranscribePipeline:
                     "transcription_engine": getattr(req, "transcription_engine", "milimo_neural"),
                 })
 
-            if getattr(req, "is_extension", False) and hasattr(provider, "extend") and getattr(req, "parent_audio_path", None):
+            if getattr(req, "is_extension", False) and getattr(req, "parent_audio_path", None):
+                # Only call extend() on a provider that can genuinely continue
+                # audio. Every provider inherits the base class, so `hasattr`
+                # was always true and four of them generated a fresh song.
+                _caps = provider.get_capabilities()
+                if not _caps.supports_track_extension:
+                    raise RuntimeError(
+                        f"{_caps.display_name} cannot extend existing audio. "
+                        "Choose a provider with track-extension support (MiniMax Music 3)."
+                    )
                 gen_result = await provider.extend(
                     job_id=job_id_str,
                     parent_audio_path=req.parent_audio_path,
@@ -539,12 +565,12 @@ class GenerateAndTranscribePipeline:
             logger.info(f"Pipeline cancelled for job {job_id_str}")
             with Session(engine) as session:
                 job = session.get(Job, job_id)
-                if job:
-                    job.status = JobStatus.FAILED
+                if job and job.status not in (JobStatus.FAILED, JobStatus.COMPLETED):
+                    job.status = JobStatus.CANCELLED
                     job.error_msg = "Cancelled by user"
                     session.add(job)
                     session.commit()
-            event_manager.publish("job_update", {"job_id": job_id_str, "status": "failed", "error": "Cancelled by user"})
+            event_manager.publish("job_update", {"job_id": job_id_str, "status": JobStatus.CANCELLED.value, "error": "Cancelled by user"})
 
         except Exception as e:
             logger.error(f"Pipeline failed for job {job_id_str}: {e}", exc_info=True)

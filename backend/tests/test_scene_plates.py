@@ -25,7 +25,8 @@ def counts(tmp_path, monkeypatch):
     counters = {"render": 0, "unload": 0, "resolve": 0}
 
     def fake_render(full_prompt, width, height, chosen_model_id, local_path, repo_id,
-                    is_installed, dest_path, steps=None, guidance=None, log_label="image"):
+                    is_installed, dest_path, steps=None, guidance=None, log_label="image",
+                    cancel_check=None):
         counters["render"] += 1
         assert "no people" in full_prompt, f"people-free suffix missing: {full_prompt}"
         Image.new("RGB", (int(width), int(height)), (10, 20, 30)).save(dest_path)

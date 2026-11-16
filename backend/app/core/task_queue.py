@@ -226,6 +226,20 @@ class DurableTaskQueue:
         task.updated_at = now
         return task
 
+    def fail_task(self, task_id: str, error: str, message: Optional[str] = None) -> Optional[PersistentTask]:
+        """Mark a durable task as failed.
+
+        Callers (e.g. the video cancel path) used to invoke this method before it
+        existed, raising AttributeError inside the handler that was meant to stop
+        work — leaving the row non-terminal so restart recovery revived it.
+        """
+        return self.update_task(
+            task_id,
+            status="error",
+            error=error,
+            message=message or error,
+        )
+
     def recover_interrupted_tasks(self) -> List[PersistentTask]:
         """
         Interrupted Job Auto-Recovery:

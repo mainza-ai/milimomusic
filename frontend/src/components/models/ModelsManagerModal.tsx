@@ -395,7 +395,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                     ? 'bg-teal-500/20 border-teal-500/40 text-teal-700 dark:text-teal-300 font-bold'
                                                     : 'bg-black/[0.02] dark:bg-white/[0.02] border-black/[0.05] dark:border-white/5 text-slate-500 hover:text-slate-800 dark:hover:text-slate-200'
                                             }`}
-                                         title="Action">
+                                         title="Search this catalogue">
                                             {chip.label}
                                         </button>
                                     ))}
@@ -521,7 +521,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                                                 onClick={() => handleActivateModel(matched.id)}
                                                                                 disabled={activatingId === matched.id}
                                                                                 className="px-2.5 py-1 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-sm active:scale-95 disabled:opacity-50"
-                                                                             title="Action">
+                                                                             title="Activate this model">
                                                                                 {activatingId === matched.id ? 'Activating…' : 'Select'}
                                                                             </button>
                                                                         );
@@ -541,7 +541,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                                 onClick={() => handleDownload(res.repo_id, (['audio', 'image', 'video'] as const).includes(res.category as any) ? (res.category as any) : undefined)}
                                                                 disabled={busy}
                                                                 className="px-3 py-1.5 rounded-xl bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs flex items-center space-x-1.5 transition-all shadow-sm active:scale-95 disabled:opacity-50"
-                                                             title="Action">
+                                                             title="Download this model">
                                                                 {busy && download?.repo_id === res.repo_id ? (
                                                                     <Loader2 size={13} className="animate-spin" />
                                                                 ) : (
@@ -628,7 +628,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                             onClick={() => handleActivateModel(m.id)}
                                                             disabled={activatingId === m.id}
                                                             className="px-3 py-1.5 bg-gradient-to-r from-teal-500 to-cyan-500 hover:from-teal-400 hover:to-cyan-400 text-slate-950 font-bold text-xs rounded-xl transition-all shadow-sm active:scale-95 disabled:opacity-50"
-                                                         title="Action">
+                                                         title="Activate this model">
                                                             {activatingId === m.id ? 'Activating…' : 'Select'}
                                                         </button>
                                                     )}
@@ -728,7 +728,7 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                                                 onClick={() => handleActivateModel(m.id)}
                                                                 disabled={activatingId === m.id}
                                                                 className="px-2.5 py-1 bg-black/5 dark:bg-white/5 hover:bg-teal-500/20 text-slate-700 dark:text-slate-200 hover:text-teal-600 dark:hover:text-teal-300 font-bold rounded-xl text-xs transition-all border border-black/5 dark:border-white/5"
-                                                             title="Action">
+                                                             title="Activate this model">
                                                                 {activatingId === m.id ? 'Activating…' : 'Activate'}
                                                             </button>
                                                         )}

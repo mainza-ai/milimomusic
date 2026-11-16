@@ -3,12 +3,21 @@ title: YuE2 48kHz Stereo Music Provider
 type: entity
 tags: [yue2, music, 48khz, stereo, abc-notation, style-lora, provider, my-music]
 created: 2026-09-16
-updated: 2026-09-24
+updated: 2026-11-16
 sources: [sources/maestro-creative-studio.md]
 aliases: [YuE2, YuE2Provider, 48kHzMusicEngine]
 ---
 
 # YuE2 48kHz Stereo Music Provider
+
+> [!WARNING]
+> **Status: DELETED (Decision D1, 2026-11-16).** What shipped under this name was not a
+> model: `backend/app/providers/yue2_provider.py:110-140` was a four-chord sine generator
+> (A-minor → F → C → G) that ignored prompt, lyrics, seed and caption, set
+> `used_fallback_synth=False` on the output, and whose `initialize()` merely set a ready
+> flag. No YuE2 weights ever existed on disk. The provider, its endpoints and the YuE2
+> Training Studio were removed. See [Decision Record 2026-11](../decisions-2026-11.md).
+> This page is retained as design intent only — **nothing below describes shipping code.**
 
 **YuE2 3B** is an open-weight foundation model for full-length **48 kHz stereo music generation**, integrated into Milimo Music as a frontier generative provider alongside MiniMax Music 3 and legacy HeartMuLa.
 

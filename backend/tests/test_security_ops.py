@@ -66,10 +66,15 @@ class TestAuth:
         r = client.get("/profiles", headers={"Authorization": "Bearer sekrit"})
         assert r.status_code == 200
 
-    def test_query_param_token_for_eventsource_style_clients(self, client, monkeypatch):
+    def test_query_param_token_only_on_sse(self, client, monkeypatch):
+        """`?auth=` is accepted on /events (EventSource cannot set headers) and
+        rejected everywhere else, so the token cannot leak via logs/Referer."""
         monkeypatch.setenv("MILIMO_AUTH_TOKEN", "sekrit")
         r = client.get("/profiles?auth=sekrit")
-        assert r.status_code == 200
+        assert r.status_code == 401
+        from app.core.security import evaluate_request
+
+        assert evaluate_request("GET", "/events", {}, "sekrit", "203.0.113.9")[0] is True
 
     def test_health_exempt_even_with_token(self, client, monkeypatch):
         monkeypatch.setenv("MILIMO_AUTH_TOKEN", "sekrit")
@@ -148,7 +153,7 @@ def test_reconcile_orphan_jobs():
 
     with Session(engine) as session:
         refreshed = session.get(Job, zombie_id)
-        assert refreshed.status == JobStatus.FAILED
+        assert refreshed.status == JobStatus.INTERRUPTED
         assert "restart" in (refreshed.error_msg or "").lower()
         session.delete(refreshed)
         session.commit()

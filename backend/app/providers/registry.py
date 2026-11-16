@@ -39,12 +39,6 @@ class ProviderRegistry:
             logger.warning(f"HeartMuLaProvider registration deferred: {e}")
 
         try:
-            from app.providers.yue2_provider import YuE2Provider
-            self.register_provider("yue2", YuE2Provider())
-        except Exception as e:
-            logger.warning(f"YuE2Provider registration deferred: {e}")
-
-        try:
             import sys
             from pathlib import Path
             repo_root = Path(__file__).resolve().parents[3]

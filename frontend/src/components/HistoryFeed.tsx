@@ -4,6 +4,7 @@ import type { Job } from '../api';
 import { api, API_BASE_URL } from '../api';
 import { TrackRowPlayer } from './TrackRowPlayer';
 import { Edit2, Check, Trash2, Search, Calendar, Heart, Sliders, Layers, Sparkles, Info, Clock } from 'lucide-react';
+import { isCancelledJobStatus, isFailedJobStatus } from '../utils/jobStatus';
 
 interface HistoryFeedProps {
     history: Job[];
@@ -138,7 +139,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                         ? 'bg-white dark:bg-white/20 text-teal-700 dark:text-teal-300 shadow-apple-sm font-bold'
                                         : 'text-slate-500 dark:text-slate-400 hover:text-slate-800 dark:hover:text-slate-200'
                                 }`}
-                             title="Action">
+                             title="Filter tracks by status">
                                 {status}
                             </button>
                         ))}
@@ -212,7 +213,9 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                         className={`w-10 h-10 rounded-xl flex items-center justify-center font-bold text-sm shadow-sm overflow-hidden p-1 cursor-pointer hover:scale-105 transition-transform ${
                                                             job.status === 'completed'
                                                                 ? 'bg-teal-500/10 text-teal-700 dark:text-teal-300 border border-teal-500/20'
-                                                                : job.status === 'failed'
+                                                                : isCancelledJobStatus(job.status)
+                                                                ? 'bg-slate-500/10 text-slate-600 dark:text-slate-300 border border-slate-500/20'
+                                                                : isFailedJobStatus(job.status)
                                                                 ? 'bg-rose-500/10 text-rose-600 dark:text-rose-400 border border-rose-500/20'
                                                                 : 'bg-amber-500/10 text-amber-600 dark:text-amber-400 border border-amber-500/20 animate-pulse'
                                                         }`}
@@ -391,9 +394,15 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                                                 </div>
                                             )}
 
-                                            {job.status === 'failed' && (
+                                            {isFailedJobStatus(job.status) && (
                                                 <div className="mt-2 pt-2 border-t border-rose-500/20 text-[11px] text-rose-500 font-medium">
-                                                    Generation Failed: {job.error_msg || 'Unknown error occurred during generation'}
+                                                    {job.status === 'interrupted' ? 'Interrupted by server restart' : 'Generation Failed'}: {job.error_msg || 'Unknown error occurred during generation'}
+                                                </div>
+                                            )}
+
+                                            {isCancelledJobStatus(job.status) && (
+                                                <div className="mt-2 pt-2 border-t border-slate-500/20 text-[11px] text-slate-500 font-medium">
+                                                    Cancelled — no audio was produced.
                                                 </div>
                                             )}
 
@@ -439,7 +448,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
                             onClick={onLoadMore}
                             disabled={isLoadingMore}
                             className="px-5 py-2 rounded-xl bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 border border-black/[0.06] dark:border-white/10 text-xs font-bold text-slate-700 dark:text-slate-200 transition-colors disabled:opacity-50"
-                         title="Action">
+                         title="Load more tracks">
                             {isLoadingMore ? 'Loading…' : 'Load More Tracks'}
                         </button>
                     </div>

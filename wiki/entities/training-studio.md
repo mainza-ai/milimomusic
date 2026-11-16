@@ -2,7 +2,7 @@
 title: Training Studio (Deprecated)
 type: entity
 created: 2026-08-19
-updated: 2026-09-08
+updated: 2026-11-16
 sources: [sources/training-studio-guide.md, sources/readme.md]
 tags: [training, lora, finetune, studio, deprecated, minimax, heartmula]
 aliases: [LoRA Training Studio]
@@ -13,6 +13,14 @@ aliases: [LoRA Training Studio]
 > [!WARNING]
 > **Status: Deprecated & Retired (2026-09-08)**  
 > The Training Studio has been formally decommissioned and removed from the active codebase. Milimo Music v2 has standardized on **MiniMax Music 3** as its primary production music generation engine and **RVC v2** for vocal cloning. Local LoRA training for MiniMax Music 3 is technically infeasible for consumer workstations.
+>
+> **Contradiction recorded 2026-11-16:** the retirement above was incomplete. A *second*
+> training surface shipped afterwards — `backend/app/services/training/yue2_trainer.py`,
+> exposed at `POST /api/training/jobs` and in the Voice Studio UI's `yue2_studio` tab. It was
+> **theater**: four `asyncio.sleep(0.5)` calls, then a 20-byte fake checkpoint
+> (`f.write(b"YUE2_LORA_V24_CHECKPOINT")`) reported as "Training complete! LoRA saved to …",
+> with audition WAV paths that were never created. **Decision D1 (2026-11-16) deletes it**;
+> see [Decision Record 2026-11](../decisions-2026-11.md).
 
 ## Architectural Decision Record (Why Training Studio Was Retired)
 

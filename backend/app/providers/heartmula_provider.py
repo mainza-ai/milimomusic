@@ -34,13 +34,16 @@ class HeartMuLaProvider(GenerationProvider):
             max_duration_sec=240,
             supports_structured_caption=False,
             supports_section_tags=True,
-            supports_lora=True,
-            supports_voice_conversion=True,
-            supports_track_extension=True,
-            supports_segment_repair=True,
+            supports_lora=False,
+            supports_voice_conversion=False,
+            # No continuation or in-painting implementation exists; the stubs that
+            # used to claim otherwise returned generated songs or the input file.
+            supports_track_extension=False,
+            supports_segment_repair=False,
             recommended_hardware=HardwareTier.MID_SINGLE_GPU,
             license_class="Apache-2.0",
-            default_sample_rate=48000
+            default_sample_rate=48000,
+            legacy=True,
         )
 
     def is_ready(self) -> bool:
@@ -147,41 +150,4 @@ class HeartMuLaProvider(GenerationProvider):
             duration_sec=duration_ms / 1000.0,
             sample_rate=48000,
             metadata={"seed": seed, "provider": "heartmula"}
-        )
-
-    async def extend(
-        self,
-        job_id: str,
-        parent_audio_path: str,
-        extend_ms: int,
-        lyrics: Optional[str] = None,
-        prompt: Optional[str] = None,
-        progress_callback: Optional[Callable[[int, int, str], None]] = None,
-        cancel_event: Optional[Any] = None,
-        **kwargs
-    ) -> GeneratedAudioResult:
-        return await self.generate(
-            job_id=job_id,
-            prompt=prompt or "",
-            lyrics=lyrics,
-            duration_ms=extend_ms,
-            progress_callback=progress_callback,
-            cancel_event=cancel_event,
-            **kwargs
-        )
-
-    async def repair_segment(
-        self,
-        job_id: str,
-        audio_path: str,
-        start_time_sec: float,
-        end_time_sec: float,
-        prompt: Optional[str] = None,
-        progress_callback: Optional[Callable[[int, int, str], None]] = None,
-        **kwargs
-    ) -> GeneratedAudioResult:
-        return GeneratedAudioResult(
-            audio_path=audio_path,
-            duration_sec=end_time_sec - start_time_sec,
-            metadata={"repaired_range": [start_time_sec, end_time_sec]}
         )

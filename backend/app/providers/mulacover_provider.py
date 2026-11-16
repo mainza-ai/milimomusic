@@ -42,7 +42,8 @@ class MuLaCoverProvider(GenerationProvider):
             supports_section_tags=True,
             supports_lora=False,
             supports_voice_conversion=True,
-            supports_track_extension=True,
+            # See extend(): a cover is not a continuation.
+            supports_track_extension=False,
             supports_segment_repair=False,
             recommended_hardware=HardwareTier.MID_SINGLE_GPU,
             license_class="CC BY-NC 4.0",
@@ -212,32 +213,15 @@ class MuLaCoverProvider(GenerationProvider):
         cancel_event: Optional[Any] = None,
         **kwargs
     ) -> GeneratedAudioResult:
-        """Extend an existing track using MuLaCover."""
-        return await self.generate(
-            job_id=job_id,
-            prompt=prompt or "",
-            lyrics=lyrics,
-            duration_ms=extend_ms,
-            progress_callback=progress_callback,
-            cancel_event=cancel_event,
-            ref_audio_path=parent_audio_path,
-            **kwargs
-        )
+        """Refuse: MuLaCover produces a *cover*, never a continuation.
 
-    async def repair_segment(
-        self,
-        job_id: str,
-        audio_path: str,
-        start_time_sec: float,
-        end_time_sec: float,
-        prompt: Optional[str] = None,
-        progress_callback: Optional[Callable[[int, int, str], None]] = None,
-        **kwargs
-    ) -> GeneratedAudioResult:
-        return GeneratedAudioResult(
-            audio_path=audio_path,
-            duration_sec=end_time_sec - start_time_sec,
-            metadata={"repaired_range": [start_time_sec, end_time_sec]}
+        The previous implementation called ``generate()`` with the parent as a
+        ``ref_audio_path``, which re-transcribes the parent and emits a brand-new
+        cover song — not an extension of it.
+        """
+        raise NotImplementedError(
+            "MuLaCover generates cover/remix tracks from a reference. It cannot "
+            "continue existing audio; use a provider with track-extension support."
         )
 
 

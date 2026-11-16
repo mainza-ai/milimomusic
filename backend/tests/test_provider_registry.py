@@ -22,7 +22,13 @@ def test_provider_registry_defaults():
     assert isinstance(heartmula, HeartMuLaProvider)
     hm_caps = heartmula.get_capabilities()
     assert hm_caps.provider_id == "heartmula"
-    assert hm_caps.supports_lora is True
+    # Decision D3: HeartMuLa is kept as a legacy engine with honest capabilities.
+    # It has no LoRA loader, no continuation and no in-painting — the old flags
+    # advertised all three.
+    assert hm_caps.legacy is True
+    assert hm_caps.supports_lora is False
+    assert hm_caps.supports_track_extension is False
+    assert hm_caps.supports_segment_repair is False
 
     # Verify HeartMuLa alias
     heartmula_alias = registry.get_provider("heartmula_3b")

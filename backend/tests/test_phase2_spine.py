@@ -275,3 +275,74 @@ def test_purge_removes_the_row(client):
 
     with Session(engine) as session:
         assert session.get(Job, job_id) is None
+
+
+# ── durable generation worker (plan 2.1) ───────────────────────────────────
+
+def test_generation_enqueues_a_durable_task(queue, monkeypatch):
+    """A generation job must survive a crash between commit and pickup."""
+    import app.core.worker as worker_mod
+
+    monkeypatch.setattr(worker_mod.DurableTaskQueue, "get_instance",
+                        classmethod(lambda cls, db_path=None: queue))
+
+    task_id = worker_mod.GenerationWorker.enqueue("job-abc", {"prompt": "x", "duration_ms": 5000})
+    assert task_id == "gen_job-abc"
+
+    stored = queue.get_task(task_id)
+    assert stored is not None
+    assert stored.task_type == worker_mod.MUSIC_TASK_TYPE
+    assert stored.status == "queued"
+    assert stored.payload["job_id"] == "job-abc"
+
+
+def test_worker_claims_each_task_once(queue, monkeypatch):
+    import app.core.worker as worker_mod
+
+    monkeypatch.setattr(worker_mod.DurableTaskQueue, "get_instance",
+                        classmethod(lambda cls, db_path=None: queue))
+    worker = worker_mod.GenerationWorker(engine=None, poll_seconds=0)
+
+    worker_mod.GenerationWorker.enqueue("job-1", {"prompt": "a"})
+    worker_mod.GenerationWorker.enqueue("job-2", {"prompt": "b"})
+
+    first = worker._claim_next()
+    second = worker._claim_next()
+    third = worker._claim_next()
+
+    assert first and second
+    assert first["payload"]["job_id"] != second["payload"]["job_id"]
+    assert third is None, "a claimed task must not be handed out twice"
+
+
+def test_cancelled_job_is_not_executed(queue, monkeypatch):
+    """A job cancelled while queued must not start when the worker reaches it."""
+    import uuid as _uuid
+
+    import app.core.worker as worker_mod
+    from app.main import engine
+    from app.models import Job
+
+    monkeypatch.setattr(worker_mod.DurableTaskQueue, "get_instance",
+                        classmethod(lambda cls, db_path=None: queue))
+    worker = worker_mod.GenerationWorker(engine=engine, poll_seconds=0)
+
+    job_id = _uuid.uuid4()
+    with Session(engine) as session:
+        session.add(Job(id=job_id, prompt="queued then cancelled", status=JobStatus.CANCELLED))
+        session.commit()
+
+    worker_mod.GenerationWorker.enqueue(job_id.hex, {"prompt": "x"})
+    claimed = worker._claim_next()
+    assert claimed is not None
+
+    import asyncio as _asyncio
+    _asyncio.get_event_loop_policy().new_event_loop().run_until_complete(worker._run_one(claimed))
+
+    stored = queue.get_task(claimed["task_id"])
+    assert stored.status == "completed", "the task should close without running the pipeline"
+
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        session.delete(job)
+        session.commit()

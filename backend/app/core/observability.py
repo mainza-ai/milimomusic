@@ -88,9 +88,13 @@ def configure_logging(log_dir: Optional[str] = None, level: int = logging.INFO) 
         "%(asctime)s - [%(levelname)s] %(name)s: %(message)s", datefmt="%H:%M:%S"
     )
 
-    stream = logging.StreamHandler()
-    stream.setFormatter(fmt)
-    root.addHandler(stream)
+    # uvicorn installs its own handlers before the app imports; adding another
+    # StreamHandler duplicated every line.
+    if not any(isinstance(h, logging.StreamHandler) and not isinstance(h, RotatingFileHandler)
+               for h in root.handlers):
+        stream = logging.StreamHandler()
+        stream.setFormatter(fmt)
+        root.addHandler(stream)
 
     if log_dir:
         try:

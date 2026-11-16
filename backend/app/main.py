@@ -426,6 +426,12 @@ async def lifespan(app: FastAPI):
                 logger.warning(f"Stall sweeper error: {_sweep_err}")
 
     _sweeper_task = asyncio.create_task(_stall_sweeper())
+
+    # Durable generation worker: survives restarts via the queue.
+    from app.core.worker import GenerationWorker, requeue_interrupted
+    requeue_interrupted(engine)
+    _generation_worker = GenerationWorker.get_instance(engine)
+    _generation_worker.start()
     try:
         _retention_days = int(os.environ.get("MILIMO_RUN_RETENTION_DAYS", "30"))
     except ValueError:
@@ -441,6 +447,7 @@ async def lifespan(app: FastAPI):
         yield
     finally:
         stop_storage_gc()
+        await _generation_worker.stop()
         _sweeper_task.cancel()
         try:
             await _sweeper_task
@@ -3760,8 +3767,15 @@ async def generate_music(
         "model_provider": job_provider
     })
 
-    # Enqueue pipeline in background
-    background_tasks.add_task(music_service.generate_task, job_id_val, req, engine)
+    # Durable queue (plan 2.1): a crash between this commit and pickup used to
+    # leave a queued row nobody owned.
+    from app.core.worker import GenerationWorker
+
+    try:
+        GenerationWorker.enqueue(job_id_val, req.model_dump())
+    except Exception as _q_err:
+        logger.warning(f"Durable enqueue failed ({_q_err}); falling back to BackgroundTasks")
+        background_tasks.add_task(music_service.generate_task, job_id_val, req, engine)
     
     _response = {
         "job_id": job_id_val,

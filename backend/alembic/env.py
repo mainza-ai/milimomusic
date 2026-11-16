@@ -21,8 +21,10 @@ if BACKEND_DIR not in sys.path:
 
 config = context.config
 
-if config.config_file_name is not None:
-    fileConfig(config.config_file_name)
+# Do NOT call `fileConfig` here: it reconfigures the *root* logger, which tears
+# down the application's own handlers when migrations run inside the app lifespan
+# (the symptom was the boot log stopping at "Will assume non-transactional DDL").
+# Alembic's own loggers inherit from the app configuration instead.
 
 
 def _database_url() -> str:

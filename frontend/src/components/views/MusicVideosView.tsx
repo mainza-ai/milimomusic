@@ -640,8 +640,38 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             };
         });
         setPlanResult(prev => prev ? { ...prev, clips: chained } : null);
-        toast('Scene sequence updated.', 'info');
-    }, []);
+        // Persist so a reload keeps the sequence, and warn when the reorder has
+        // detached picture from the music (the renderer uses these windows).
+        if (activeSong?.id) {
+            videoApi.saveStoryboard(activeSong.id, chained).then((res) => {
+                if (res.timeline_gaps?.length) {
+                    toast(`Sequence saved, but ${res.timeline_gaps.length} scene(s) no longer align with the song.`, 'info');
+                } else {
+                    toast('Scene sequence updated.', 'info');
+                }
+            }).catch(() => {
+                toast('Sequence updated locally — could not save it to the track.', 'error');
+            });
+        } else {
+            toast('Scene sequence updated.', 'info');
+        }
+    }, [activeSong?.id]);
+
+    // Restore a hand-edited storyboard (plan 4.3) so reloads do not lose edits.
+    useEffect(() => {
+        const jobId = activeSong?.id;
+        if (!jobId) return;
+        let alive = true;
+        videoApi.getStoryboard(jobId)
+            .then((res) => {
+                if (!alive || !res.clips?.length) return;
+                setPlanResult((prev) => prev
+                    ? prev
+                    : ({ clips: res.clips } as unknown as VideoPlanResult));
+            })
+            .catch(() => { /* no saved storyboard */ });
+        return () => { alive = false; };
+    }, [activeSong?.id]);
 
     // AI Visual Director Treatment Generator
     const handleGenerateDirectorTreatment = useCallback(async () => {

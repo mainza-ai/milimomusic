@@ -357,3 +357,51 @@ def test_workspace_session_rejects_non_object(client):
     res = client.request("PUT", f"/workspace/{job_id}/session", json={"state": "not-an-object"})
     assert res.status_code == 422
     assert res.json()["error"]["code"] == "invalid_session_state"
+
+
+# ── video storyboard persistence (plan 4.3) ────────────────────────────────
+
+def _video_job():
+    import uuid as _uuid
+    from sqlmodel import Session
+
+    from app.main import engine
+    from app.models import Job
+
+    job_id = _uuid.uuid4()
+    with Session(engine) as session:
+        session.add(Job(id=job_id, prompt="storyboard probe", status="completed"))
+        session.commit()
+    return job_id
+
+
+def test_storyboard_roundtrip_and_gap_report(client):
+    job_id = _video_job()
+    clips = [
+        {"start_time": 0.0, "duration": 4.0, "prompt": "opening wide"},
+        # Deliberate 2s gap: the API must report it rather than silently accept.
+        {"start_time": 6.0, "duration": 3.0, "prompt": "chorus push-in"},
+    ]
+    saved = client.request("PATCH", f"/videos/{job_id}/storyboard", json={"clips": clips})
+    assert saved.status_code == 200, saved.text
+    body = saved.json()
+    assert body["count"] == 2
+    assert body["clips"][0]["clip_index"] == 1
+    assert body["timeline_gaps"], "an obvious gap must be reported"
+
+    loaded = client.get(f"/videos/{job_id}/storyboard").json()
+    assert [c["prompt"] for c in loaded["clips"]] == ["opening wide", "chorus push-in"]
+
+
+def test_storyboard_rejects_a_clip_without_duration(client):
+    job_id = _video_job()
+    res = client.request("PATCH", f"/videos/{job_id}/storyboard",
+                         json={"clips": [{"start_time": 0, "duration": 0}]})
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "invalid_storyboard"
+
+
+def test_storyboard_rejects_empty_payload(client):
+    job_id = _video_job()
+    res = client.request("PATCH", f"/videos/{job_id}/storyboard", json={"clips": []})
+    assert res.status_code == 422

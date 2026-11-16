@@ -2910,3 +2910,7 @@ Verification: 492 backend tests, 15 frontend tests, `tsc -b` + `vite build` gree
 ## [2026-11-16] execute | Phase 2.2 — bounded retries for transient failures
 `core/retry.py`: `is_transient()` classifies errors (OOM/MPS allocation, 5xx, connection reset, timeout, 429, disk-full → retryable; invalid key/401/403/not-found/not-implemented/malformed/cancel → terminal) and `with_retries()` retries with exponential backoff + jitter, an optional per-attempt callback and immediate stop on cancellation. Generation — the only non-optional pipeline step — is now wrapped in it, `Job.attempts` records each retry, and `GenerationRequest.max_attempts` (1–5, default 2) lets a caller choose.
 Verification: **512 passed, 0 failed** (+20 `test_retry_policy.py`).
+
+## [2026-11-16] execute | Phase 4.3 — storyboard persistence
+Scene edits and clip reordering were client-only: a reload discarded them, and a reorder silently detached every later scene from its lyric window while the audio stayed put. New `PATCH /videos/{job_id}/storyboard` normalises and persists the edited plan on the job (re-numbering, sorting, validating that each clip has a duration) and **reports the gaps** a reorder introduced; `GET` restores it, and the Music Videos view saves on reorder and rehydrates an edited storyboard when a track opens. Reordering now warns when the sequence no longer aligns with the song instead of pretending it does.
+Verification: **515 passed, 0 failed** (+3 storyboard tests); frontend build green.

@@ -1687,6 +1687,15 @@ export const videoApi = {
         const res = await axios.get(`${API_BASE_URL}/videos/active-engine`);
         return res.data;
     },
+    /** Persist hand-edited scenes (plan 4.3) so a reload keeps them. */
+    saveStoryboard: async (jobId: string, clips: unknown[]): Promise<{ status: string; count: number; timeline_gaps: number[] }> => {
+        const res = await axios.patch(`${API_BASE_URL}/videos/${jobId}/storyboard`, { clips });
+        return res.data;
+    },
+    getStoryboard: async (jobId: string): Promise<{ job_id: string; clips: any[] | null; edited_at?: string }> => {
+        const res = await axios.get(`${API_BASE_URL}/videos/${jobId}/storyboard`);
+        return res.data;
+    },
     setActiveVideoEngine: async (engine: string): Promise<{ status: string; engine: string; model_id: string | null; name: string | null; weights_present: boolean }> => {
         const res = await axios.post(`${API_BASE_URL}/videos/active-engine`, { engine });
         return res.data;

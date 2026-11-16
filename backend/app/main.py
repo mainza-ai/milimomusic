@@ -5229,6 +5229,87 @@ async def generate_video_storyboard(job_id: str, body: dict = Body(default={})):
         }
 
 
+@app.patch("/videos/{job_id}/storyboard")
+def update_video_storyboard(job_id: str, payload: dict = Body(...)):
+    """Persist hand-edited scenes (plan 4.3).
+
+    Scene edits and clip reordering used to be client-only: a reload discarded them
+    and a reorder silently detached every later scene from its lyric window. The
+    edited plan is stored on the job and reused by the renderer.
+    """
+    clips = payload.get("clips") or payload.get("scenes")
+    if not isinstance(clips, list) or not clips:
+        raise HTTPException(status_code=422, detail={"error": {
+            "code": "invalid_storyboard", "message": "clips must be a non-empty list"}})
+
+    normalised = []
+    for idx, clip in enumerate(clips):
+        if not isinstance(clip, dict):
+            raise HTTPException(status_code=422, detail={"error": {
+                "code": "invalid_storyboard", "message": f"clip {idx} must be an object"}})
+        start = float(clip.get("start_time", idx))
+        duration = float(clip.get("duration", 0) or 0)
+        if duration <= 0:
+            raise HTTPException(status_code=422, detail={"error": {
+                "code": "invalid_storyboard", "message": f"clip {idx} has no duration"}})
+        normalised.append({
+            **clip,
+            "clip_index": idx + 1,
+            "start_time": round(start, 3),
+            "end_time": round(float(clip.get("end_time", start + duration) or (start + duration)), 3),
+            "duration": round(duration, 3),
+        })
+
+    # Reject overlaps/gaps that would desync picture from the song.
+    normalised.sort(key=lambda c: c["start_time"])
+    drift = []
+    for prev, cur in zip(normalised, normalised[1:]):
+        gap = cur["start_time"] - prev["end_time"]
+        if abs(gap) > 0.05:
+            drift.append(round(gap, 3))
+
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        try:
+            config = json.loads(job.video_config_json) if job.video_config_json else {}
+        except (TypeError, ValueError):
+            config = {}
+        config["storyboard"] = normalised
+        config["storyboard_edited_at"] = datetime.now(timezone.utc).isoformat()
+        job.video_config_json = json.dumps(config)
+        job.updated_at = datetime.now(timezone.utc)
+        session.add(job)
+        session.commit()
+
+    return {
+        "status": "saved",
+        "job_id": str(job_id),
+        "clips": normalised,
+        "count": len(normalised),
+        # Surfaced so the UI can warn that picture and lyrics no longer line up.
+        "timeline_gaps": drift,
+    }
+
+
+@app.get("/videos/{job_id}/storyboard")
+def get_video_storyboard(job_id: str):
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        raw = job.video_config_json
+    if not raw:
+        return {"job_id": str(job_id), "clips": None}
+    try:
+        config = json.loads(raw)
+    except (TypeError, ValueError):
+        return {"job_id": str(job_id), "clips": None}
+    return {"job_id": str(job_id), "clips": config.get("storyboard"),
+            "edited_at": config.get("storyboard_edited_at")}
+
+
 @app.post("/videos/render/{job_id}")
 async def render_music_video(job_id: str, body: dict = Body(default={})):
     visual_style = body.get("visual_style", "neon-cyberpunk")

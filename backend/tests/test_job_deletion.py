@@ -60,7 +60,7 @@ async def test_delete_job_32_hex_id(client):
             assert job.title == "Hex Delete Test"
 
         # Delete via API
-        r = await client.delete(f"/jobs/{test_hex}")
+        r = await client.delete(f"/jobs/{test_hex}?purge=true")
         assert r.status_code == 200, r.text
         data = r.json()
         assert data["status"] == "deleted"
@@ -115,7 +115,7 @@ async def test_delete_job_36_hyphenated_uuid(client):
             assert job_hex is not None
 
         # Delete via API using hyphenated UUID
-        r = await client.delete(f"/jobs/{test_uuid}")
+        r = await client.delete(f"/jobs/{test_uuid}?purge=true")
         assert r.status_code == 200, r.text
         data = r.json()
         assert data["status"] == "deleted"
@@ -185,7 +185,7 @@ async def test_delete_job_cascades_foreign_references(client):
 
     try:
         # Delete parent job
-        r = await client.delete(f"/jobs/{test_id}")
+        r = await client.delete(f"/jobs/{test_id}?purge=true")
         assert r.status_code == 200, r.text
 
         # Verify cascades

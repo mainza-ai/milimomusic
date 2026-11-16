@@ -877,10 +877,11 @@ function App() {
   }, []);
 
   const handleDeleteJob = async (jobId: string) => {
+    // Default delete is recoverable server-side (soft delete); the copy reflects that.
     if (!(await confirmAction({
-        title: 'Delete this track?',
-        body: 'The audio, stems, MIDI and cover are removed from disk. This cannot be undone.',
-        confirmLabel: 'Delete track',
+        title: 'Remove this track?',
+        body: 'It disappears from your library. The audio is kept on disk, so it can be recovered — use Purge in the API to erase it permanently.',
+        confirmLabel: 'Remove track',
         tone: 'danger',
     }))) return;
 

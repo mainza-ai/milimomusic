@@ -79,3 +79,53 @@ def restore_model_registry_state():
                     fh.write(blob)
         except OSError:
             pass
+
+
+@pytest.fixture()
+def client():
+    """Shared ASGI test client.
+
+    Several modules had grown their own copy; this is the same shape so tests can
+    be added anywhere without re-declaring it.
+    """
+    import asyncio
+
+    import httpx
+
+    from app.main import app
+
+    class _SyncClient:
+        def __init__(self, asgi_app):
+            self._asyncio = asyncio
+            self.transport = httpx.ASGITransport(app=asgi_app)
+
+        def _run(self, coro):
+            loop = self._asyncio.new_event_loop()
+            try:
+                return loop.run_until_complete(coro)
+            finally:
+                loop.close()
+
+        def request(self, method, url, **kw):
+            async def _go():
+                async with httpx.AsyncClient(transport=self.transport, base_url="http://test") as c:
+                    return await c.request(method, url, **kw)
+
+            return self._run(_go())
+
+        def get(self, url, **kw):
+            return self.request("GET", url, **kw)
+
+        def post(self, url, **kw):
+            return self.request("POST", url, **kw)
+
+        def put(self, url, **kw):
+            return self.request("PUT", url, **kw)
+
+        def patch(self, url, **kw):
+            return self.request("PATCH", url, **kw)
+
+        def delete(self, url, **kw):
+            return self.request("DELETE", url, **kw)
+
+    return _SyncClient(app)

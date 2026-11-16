@@ -264,7 +264,8 @@ def _legacy_create_db_and_tables():
             "attempts": "INTEGER DEFAULT 0",
             "max_attempts": "INTEGER DEFAULT 2",
             "session_state_json": "TEXT",
-            "owner_id": "VARCHAR DEFAULT 'local'"
+            "owner_id": "VARCHAR DEFAULT 'local'",
+            "deleted_at": "DATETIME"
         }
         for col, col_type in new_columns.items():
             if col not in existing_cols:
@@ -2145,7 +2146,7 @@ def get_release(release_id: UUID):
         release = session.get(Release, release_id)
         if not release:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
-        track_total = len(session.exec(select(Job.id).where(Job.release_id == canonical_id(release_id))).all())
+        track_total = len(session.exec(select(Job.id).where(Job.release_id == canonical_id(release_id), Job.deleted_at.is_(None))).all())
         active = session.exec(
             select(AgentRun.id).where(
                 AgentRun.agent_name == "album_orchestrator",
@@ -2345,7 +2346,7 @@ def set_release_track_order(release_id: UUID, payload: ReleaseTrackOrderRequest)
         release = session.get(Release, release_id)
         if not release:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
-        valid = {str(r) for r in session.exec(select(Job.id).where(Job.release_id == canonical_id(release_id))).all()}
+        valid = {str(r) for r in session.exec(select(Job.id).where(Job.release_id == canonical_id(release_id), Job.deleted_at.is_(None))).all()}
         unknown = [i for i in ids if i not in valid]
         if unknown:
             raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": f"Unknown track ids for this release: {unknown[:3]}"}})
@@ -3240,7 +3241,7 @@ def list_sessions():
         for s in sessions:
             s_id = s.id
             messages = session.exec(select(SessionMessage).where(SessionMessage.session_id == s_id)).all()
-            jobs = session.exec(select(Job).where(Job.session_id == canonical_id(s_id))).all()
+            jobs = session.exec(select(Job).where(Job.session_id == canonical_id(s_id), Job.deleted_at.is_(None))).all()
             s_dict = s.model_dump()
             s_dict["message_count"] = len(messages)
             s_dict["job_count"] = len(jobs)
@@ -3329,7 +3330,7 @@ def delete_session(session_id: UUID):
             session.delete(m)
             
         # Dissociate jobs
-        jobs = session.exec(select(Job).where(Job.session_id == canonical_id(session_id))).all()
+        jobs = session.exec(select(Job).where(Job.session_id == canonical_id(session_id), Job.deleted_at.is_(None))).all()
         for j in jobs:
             j.session_id = None
             session.add(j)
@@ -4322,8 +4323,8 @@ def get_job_status(job_id: str):
 @app.get("/history", response_model=List[Job])
 def get_history(limit: int = 50, offset: int = 0, status: Optional[str] = None, search: Optional[str] = None):
     with Session(engine) as session:
-        query = select(Job).order_by(Job.created_at.desc())
-        
+        query = select(Job).where(Job.deleted_at.is_(None)).order_by(Job.created_at.desc())
+
         if status and status != 'all':
             if status == 'favorites':
                 query = query.where(Job.is_favorite == True)
@@ -4949,8 +4950,30 @@ def _delete_job_artifacts(job_id_str: str, audio_public_path: Optional[str] = No
 
 
 @app.delete("/jobs/{job_id}")
-def delete_job(job_id: str):
+def delete_job(job_id: str, purge: bool = False):
+    """Remove a track.
+
+    Default is a **soft delete**: the row is hidden (`deleted_at`) and the audio is
+    kept, so a mistaken click is recoverable. `?purge=true` performs the previous
+    irreversible behaviour (row + every artifact).
+    """
     music_service.cancel_job(str(job_id))
+
+    if not purge:
+        with Session(engine) as session:
+            job = get_job_by_id(session, job_id)
+            if not job:
+                raise HTTPException(status_code=404, detail="Job not found")
+            if job.deleted_at is None:
+                job.deleted_at = datetime.now(timezone.utc)
+                # Free the slots it occupied without destroying anything.
+                session.exec(text("DELETE FROM playlisttrack WHERE job_id = :tid;").params(tid=job.id.hex))
+                session.add(job)
+                session.commit()
+            job_id_str = str(job.id)
+        event_manager.publish("job_update", {"job_id": job_id_str, "status": "deleted", "deleted": True})
+        return {"status": "deleted", "job_id": job_id_str, "soft": True,
+                "note": "Audio and metadata are kept. Use ?purge=true to erase permanently."}
 
     clean_str = str(job_id).strip()
     hex_str = clean_str.replace("-", "")
@@ -5055,7 +5078,7 @@ def list_projects():
         for p in projects:
             p_id_str = canonical_id(p.id)
             # Count child sessions
-            jobs = session.exec(select(Job).where(Job.project_id == p_id_str)).all()
+            jobs = session.exec(select(Job).where(Job.project_id == p_id_str, Job.deleted_at.is_(None))).all()
             total_duration_s = sum((j.duration_ms or 0) / 1000 for j in jobs if j.status == JobStatus.COMPLETED)
             stems_count = sum(1 for j in jobs if j.stems_json is not None)
             midi_count = sum(1 for j in jobs if j.midi_path is not None)
@@ -5077,7 +5100,7 @@ def get_project(project_id: UUID):
             raise HTTPException(status_code=404, detail="Project not found")
         
         p_id_str = canonical_id(project_id)
-        jobs = session.exec(select(Job).where(Job.project_id == p_id_str).order_by(Job.created_at.desc())).all()
+        jobs = session.exec(select(Job).where(Job.project_id == p_id_str, Job.deleted_at.is_(None)).order_by(Job.created_at.desc())).all()
         
         p_dict = project.model_dump()
         p_dict["jobs"] = [j.model_dump() for j in jobs]
@@ -5133,7 +5156,7 @@ def delete_project(project_id: UUID):
         
         # Dissociate child jobs rather than deleting audio files
         p_id_str = canonical_id(project_id)
-        jobs = session.exec(select(Job).where(Job.project_id == p_id_str)).all()
+        jobs = session.exec(select(Job).where(Job.project_id == p_id_str, Job.deleted_at.is_(None))).all()
         for j in jobs:
             j.project_id = None
             session.add(j)
@@ -5221,7 +5244,7 @@ def export_project_studio_pack(project_id: UUID):
             raise HTTPException(status_code=404, detail="Project not found")
             
         p_id_str = canonical_id(project_id)
-        jobs = session.exec(select(Job).where(Job.project_id == p_id_str).order_by(Job.created_at.asc())).all()
+        jobs = session.exec(select(Job).where(Job.project_id == p_id_str, Job.deleted_at.is_(None)).order_by(Job.created_at.asc())).all()
         
         zip_buffer = io.BytesIO()
         safe_proj_name = re.sub(r'[^a-zA-Z0-9_-]', '_', project.name or "project").strip()

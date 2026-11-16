@@ -171,6 +171,10 @@ class Job(SQLModel, table=True):
     max_attempts: int = Field(default=2)
     error_msg: Optional[str] = None
     is_favorite: bool = Field(default=False)
+    # Soft delete (plan 2.11): a mistaken DELETE used to destroy the audio file
+    # permanently. `deleted_at` hides the row; `?purge=true` is the explicit,
+    # irreversible removal.
+    deleted_at: Optional[datetime] = Field(default=None)
 
 
 class JobUpdate(SQLModel):

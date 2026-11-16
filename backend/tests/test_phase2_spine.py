@@ -228,3 +228,50 @@ def test_scoped_helper_is_a_noop_for_the_local_owner():
         statement = scoped(select(Job), Job)
         # The statement must still execute (no schema assumptions).
         session.exec(statement).all()
+
+
+# ── soft delete (plan 2.11) ────────────────────────────────────────────────
+
+def test_delete_is_soft_by_default(client):
+    """A mistaken DELETE must be recoverable; ?purge=true is the explicit erase."""
+    import uuid as _uuid
+
+    from app.main import engine
+    from app.models import Job
+
+    job_id = _uuid.uuid4()
+    with Session(engine) as session:
+        session.add(Job(id=job_id, prompt="soft delete probe", status=JobStatus.COMPLETED))
+        session.commit()
+
+    res = client.request("DELETE", f"/jobs/{job_id}")
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["soft"] is True
+
+    with Session(engine) as session:
+        job = session.get(Job, job_id)
+        assert job is not None, "the row must survive a soft delete"
+        assert job.deleted_at is not None
+
+    # It must disappear from history.
+    history = client.get("/history?limit=200").json()
+    assert all(str(j.get("id")).replace("-", "") != job_id.hex for j in history)
+
+
+def test_purge_removes_the_row(client):
+    import uuid as _uuid
+
+    from app.main import engine
+    from app.models import Job
+
+    job_id = _uuid.uuid4()
+    with Session(engine) as session:
+        session.add(Job(id=job_id, prompt="purge probe", status=JobStatus.COMPLETED))
+        session.commit()
+
+    res = client.request("DELETE", f"/jobs/{job_id}?purge=true")
+    assert res.status_code == 200, res.text
+
+    with Session(engine) as session:
+        assert session.get(Job, job_id) is None

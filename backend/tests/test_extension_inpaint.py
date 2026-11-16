@@ -206,7 +206,8 @@ def test_inpaint_track_endpoint():
         child = session.get(Job, uuid.UUID(repair_id) if "-" in repair_id else repair_id)
         assert child is not None
         assert child.is_repair is True
-        assert child.parent_job_id == str(parent_id)
+        # Association ids are stored canonically (one UUID encoding, plan 2.8).
+        assert (child.parent_job_id or '').replace('-', '') == str(parent_id).replace('-', '')
         assert child.title == "Inpaint Parent Track (Repaired)"
 
     # Invalid bounds checks: start >= end

@@ -26,6 +26,7 @@ from app.agents.critic.schemas import CriticBrief
 from app.models import GenerationRequest, Job
 from app.services.lyrics_graph import sanitize_lyrics
 
+from app.core.ids import canonical_id
 logger = logging.getLogger("milimo.agents.bridge")
 
 
@@ -305,7 +306,7 @@ async def create_track_from_seed(
         cfg_scale=req.cfg_scale,
         topk=req.topk,
         artist_profile_id=str(artist_profile_id),
-        release_id=str(release_id),
+        release_id=canonical_id(release_id),
         voice_profile_id=str(voice_profile_id) if voice_profile_id else None,
     )
 

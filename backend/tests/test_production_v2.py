@@ -112,9 +112,23 @@ def test_playlists_full_lifecycle(client):
     assert p_detail["name"] == "Production Test Playlist"
     assert p_detail["tracks"] == []
 
-    # 3. Add Tracks
+    # 3. Add Tracks — real jobs, because playlist membership now has a foreign key.
+    from sqlmodel import Session as _S, select
+    from app.main import engine as _engine
+    from app.models import Job as _Job
     track1_id = str(uuid4())
     track2_id = str(uuid4())
+    with _S(_engine) as _s:
+        _s.add(_Job(id=uuid4(), prompt="playlist track 1", status="completed"))
+        _s.commit()
+    with _S(_engine) as _s:
+        j1 = _s.exec(select(_Job).where(_Job.prompt == "playlist track 1")).first()
+        track1_id = str(j1.id)
+        _s.add(_Job(id=uuid4(), prompt="playlist track 2", status="completed"))
+        _s.commit()
+    with _S(_engine) as _s:
+        j2 = _s.exec(select(_Job).where(_Job.prompt == "playlist track 2")).first()
+        track2_id = str(j2.id)
     res = client.post(f"/playlists/{p_id}/tracks", json={"job_id": track1_id, "position": 0})
     assert res.status_code in (200, 201, 202)
 
@@ -139,7 +153,8 @@ def test_playlists_full_lifecycle(client):
     p_data = res.json()
     assert len(p_data["song_ids"]) == 1
     assert p_data["track_count"] == 1
-    assert p_data["song_ids"][0] == track2_id
+    # Membership stores the canonical 32-hex id (one UUID encoding, plan 2.8).
+    assert p_data["song_ids"][0].replace("-", "") == track2_id.replace("-", "")
 
     # 6. Delete Playlist
     res = client.delete(f"/playlists/{p_id}")
@@ -1075,7 +1090,8 @@ def test_project_studio_pack_export_zip(client):
         with Session(engine) as session:
             job = Job(
                 id=job_id,
-                project_id=p_id,
+                # Association columns hold the canonical 32-hex id (plan 2.8).
+                project_id=str(p_id).replace("-", ""),
                 title="Sunny Reverie",
                 prompt="Acoustic guitar morning sun",
                 lyrics="[Verse 1]\nWaking up to the morning rays\nGolden light through the haze",

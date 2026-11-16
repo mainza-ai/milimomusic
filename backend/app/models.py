@@ -2,8 +2,29 @@ from datetime import datetime, timezone
 from typing import Optional, Any, Dict, List
 from uuid import UUID, uuid4
 from sqlmodel import Field, SQLModel
-from pydantic import field_validator
+from pydantic import field_serializer, field_validator
 from enum import Enum
+
+
+def _canonical_uuidish(value):
+    """Normalise any UUID-shaped string to the 32-hex form the DB stores.
+
+    SQLAlchemy writes `UUID` columns as 32 hex characters, but association columns
+    are plain strings and callers send the hyphenated form. Foreign keys compare
+    raw text, so a validator here makes one encoding the only possibility —
+    including for test fixtures and any future code path (plan 2.8).
+    """
+    if value is None:
+        return value
+    if isinstance(value, UUID):
+        return value.hex
+    text = str(value).strip()
+    if not text or "/" in text or "?" in text:
+        return value
+    try:
+        return UUID(text).hex
+    except (ValueError, AttributeError, TypeError):
+        return value
 
 
 class JobStatus(str, Enum):
@@ -103,9 +124,32 @@ class Job(SQLModel, table=True):
     #   placeholder — at least one stage produced synthetic stand-in content
     quality: Optional[str] = Field(default=None)
 
-    # Project & Session Association
-    project_id: Optional[str] = Field(default=None, index=True)
-    session_id: Optional[str] = Field(default=None, index=True)
+    # Project & Session Association (real FKs — see Alembic 0006; a dangling
+    # pointer used to be possible and the boot cascade code existed to paper over it)
+    project_id: Optional[str] = Field(
+        default=None, index=True, foreign_key="project.id", ondelete="SET NULL")
+    session_id: Optional[str] = Field(
+        default=None, index=True, foreign_key="session.id", ondelete="SET NULL")
+
+    @field_validator("project_id", "session_id", "release_id", "artist_profile_id", mode="before")
+    @classmethod
+    def _canonical_assoc_ids(cls, v):
+        return _canonical_uuidish(v)
+
+    @field_serializer("project_id", "session_id", "release_id", "artist_profile_id",
+                      "parent_job_id", when_used="json")
+    def _present_assoc_ids(self, v):
+        """Emit the hyphenated form so association ids look like `id` on the wire.
+
+        The database keeps the canonical 32-hex form (foreign keys compare raw
+        strings); the API stays uniform so clients never see two spellings.
+        """
+        if not v:
+            return v
+        try:
+            return str(UUID(str(v)))
+        except (ValueError, AttributeError, TypeError):
+            return v
     mastered_path: Optional[str] = None   # B8: mastering result stored separately — original master never clobbered
     release_id: Optional[str] = Field(default=None, index=True)
     artist_profile_id: Optional[str] = Field(default=None, index=True)  # album provenance (declared: migration adds the column; bridge writes it)
@@ -575,8 +619,22 @@ class AgentAssignment(SQLModel, table=True):
 class Release(SQLModel, table=True):
     """An album/EP container. Tracks (Jobs) attach via release_id."""
 
+    @field_validator("profile_id", mode="before")
+    @classmethod
+    def _canonical_profile_id(cls, v):
+        return _canonical_uuidish(v)
+
+    @field_serializer("profile_id", when_used="json")
+    def _present_profile_id(self, v):
+        if not v:
+            return v
+        try:
+            return str(UUID(str(v)))
+        except (ValueError, AttributeError, TypeError):
+            return v
+
     id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
-    profile_id: str = Field(..., index=True)
+    profile_id: str = Field(..., index=True, foreign_key="artistprofile.id", ondelete="CASCADE")
     title: str
     description: str = ""
     status: str = "planned"               # planned | in_progress | completed

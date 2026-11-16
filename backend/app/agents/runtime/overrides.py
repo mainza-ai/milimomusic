@@ -22,6 +22,7 @@ from sqlmodel import Session, select
 
 from app.agents.runtime.policy import ModelProfile
 
+from app.core.ids import canonical_id
 logger = logging.getLogger("milimo.agents.overrides")
 
 
@@ -49,7 +50,7 @@ def resolve_chain_head(session: Session, profile_id: Optional[str], agent_name: 
 
     assignment = session.exec(
         select(AgentAssignment).where(
-            AgentAssignment.profile_id == str(pid),
+            AgentAssignment.profile_id == (canonical_id(pid) or str(pid)),
             AgentAssignment.agent_name == agent_name,
         )
     ).first()

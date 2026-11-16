@@ -550,6 +550,9 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
 # `detail` is preserved so existing UI code keeps working; `error.code` is always
 # present so new code can branch on the failure kind instead of parsing prose.
 from app.core.errors import install_error_handlers
+from app.core.ids import canonical_id, canonical_or_raw
+from app.core import ids as ids_mod
+ids_mod.install()  # one UUID encoding at the persistence boundary (plan 2.8)
 from fastapi import Header
 
 _idempotency_singleton = None
@@ -1430,7 +1433,7 @@ def list_agent_runs(profile_id: str = None, limit: int = 50, offset: int = 0):
     """Run history ledger — newest first, optionally scoped to an artist."""
     q = select(AgentRun)
     if profile_id:
-        q = q.where(AgentRun.profile_id == profile_id)
+        q = q.where(AgentRun.profile_id == canonical_id(profile_id))
     with Session(engine) as session:
         total = session.exec(select(func.count()).select_from(q.subquery())).one()
         q = (q.order_by(AgentRun.created_at.desc())
@@ -1453,7 +1456,7 @@ def agent_run_stats(profile_id: str = None, window_days: int = 0):
     with Session(engine) as session:
         q = select(AgentRun)
         if profile_id:
-            q = q.where(AgentRun.profile_id == profile_id)
+            q = q.where(AgentRun.profile_id == canonical_id(profile_id))
         rows = session.exec(q.order_by(AgentRun.created_at.desc()).limit(500)).all()
         if window_days and window_days > 0:
             cutoff = datetime.now(timezone.utc) - timedelta(days=window_days)
@@ -1848,22 +1851,27 @@ def list_artist_profiles(
         out: Dict[str, Any] = {"profiles": profiles, "total": int(total[0]) if isinstance(total, Sequence) else int(total)}
         if with_stats and profiles:
             ids = [str(p.id) for p in profiles]
+            # Group rows are keyed by the canonical column value; the response is
+            # keyed by the hyphenated id the client used.
+            canonical = {canonical_id(i) or i: i for i in ids}
             stats = {pid: {"crew_count": 0, "release_count": 0, "last_activity": None} for pid in ids}
             for pid, cnt in session.exec(
                 select(AgentAssignment.profile_id, func.count())
-                .where(AgentAssignment.profile_id.in_(ids))
+                .where(AgentAssignment.profile_id.in_(list(canonical)))
                 .group_by(AgentAssignment.profile_id)
             ).all():
-                if pid in stats:
-                    stats[pid]["crew_count"] = int(cnt)
+                key = canonical.get(pid)
+                if key in stats:
+                    stats[key]["crew_count"] = int(cnt)
             for pid, cnt, latest in session.exec(
                 select(Release.profile_id, func.count(), func.max(Release.created_at))
-                .where(Release.profile_id.in_(ids))
+                .where(Release.profile_id.in_(list(canonical)))
                 .group_by(Release.profile_id)
             ).all():
-                if pid in stats:
-                    stats[pid]["release_count"] = int(cnt)
-                    stats[pid]["last_activity"] = str(latest) if latest else None
+                key = canonical.get(pid)
+                if key in stats:
+                    stats[key]["release_count"] = int(cnt)
+                    stats[key]["last_activity"] = str(latest) if latest else None
             for p in profiles:
                 prof_ts = str(p.updated_at) if p.updated_at else None
                 cur = stats[str(p.id)]["last_activity"]
@@ -1915,10 +1923,10 @@ def get_artist_profile(profile_id: UUID):
         if not profile:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
         assignments = session.exec(
-            select(AgentAssignment).where(AgentAssignment.profile_id == str(profile.id))
+            select(AgentAssignment).where(AgentAssignment.profile_id == canonical_id(profile.id))
         ).all()
         releases = session.exec(
-            select(Release).where(Release.profile_id == str(profile.id)).order_by(Release.created_at.desc())
+            select(Release).where(Release.profile_id == canonical_id(profile.id)).order_by(Release.created_at.desc())
         ).all()
         return {"profile": profile, "assignments": assignments, "releases": releases}
 
@@ -1945,13 +1953,13 @@ async def generate_profile_lore(profile_id: UUID):
 
     ctx = RunContext(
         agent_name="world_builder",
-        artist_profile_id=str(profile_id),
+        artist_profile_id=canonical_id(profile_id),
         artist_lore=existing_lore or None,
     )
     with Session(engine) as session:
         run_row = AgentRun(
             agent_name="world_builder", status="running",
-            profile_id=str(profile_id),
+            profile_id=canonical_id(profile_id),
             input_json=brief.model_dump_json(),
         )
         session.add(run_row)
@@ -2031,16 +2039,16 @@ def delete_artist_profile(profile_id: UUID):
         if not profile:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
         releases = session.exec(
-            select(Release).where(Release.profile_id == str(profile.id))
+            select(Release).where(Release.profile_id == canonical_id(profile.id))
         ).all()
-        release_ids = {str(r.id) for r in releases}
+        release_ids = {canonical_id(r.id) for r in releases}
         # Block deletion while a run is live on this profile or one of its
         # releases (indexed: profile_id / release_id columns; in_([]) is safe).
         blocking = session.exec(
             select(AgentRun).where(
                 AgentRun.status.in_(ACTIVE_RUN_STATUSES),
                 or_(
-                    AgentRun.profile_id == str(profile_id),
+                    AgentRun.profile_id == canonical_id(profile_id),
                     AgentRun.release_id.in_(list(release_ids)),
                 ),
             )
@@ -2051,11 +2059,11 @@ def delete_artist_profile(profile_id: UUID):
                           "message": f"An agent run is {blocking[0].status} for this artist — cancel it before deleting."}})
         detached = 0
         for a in session.exec(
-            select(AgentAssignment).where(AgentAssignment.profile_id == str(profile.id))
+            select(AgentAssignment).where(AgentAssignment.profile_id == canonical_id(profile.id))
         ).all():
             session.delete(a)
         for rel in releases:
-            for job in session.exec(select(Job).where(Job.release_id == str(rel.id))).all():
+            for job in session.exec(select(Job).where(Job.release_id == canonical_id(rel.id))).all():
                 job.release_id = None
                 job.artist_profile_id = None
                 session.add(job)
@@ -2090,14 +2098,14 @@ def set_artist_assignments(profile_id: UUID, payload: AgentAssignmentSet):
                     "error": {"code": "unknown_agent", "message": f"No agent registered as '{name}'."}
                 })
         existing = session.exec(
-            select(AgentAssignment).where(AgentAssignment.profile_id == str(profile.id))
+            select(AgentAssignment).where(AgentAssignment.profile_id == canonical_id(profile.id))
         ).all()
         for a in existing:
             session.delete(a)
         created = []
         for spec in payload.assignments:
             row = AgentAssignment(
-                profile_id=str(profile_id),
+                profile_id=canonical_id(profile_id),
                 role=spec.role,
                 agent_name=spec.agent_name,
                 model_provider=spec.model_provider,
@@ -2120,7 +2128,7 @@ def create_release(payload: ReleaseCreate):
         profile = session.get(ArtistProfile, UUID(payload.profile_id))
         if not profile:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Artist profile not found."}})
-        release = Release(profile_id=str(payload.profile_id), title=payload.title, description=payload.description)
+        release = Release(profile_id=canonical_id(payload.profile_id), title=payload.title, description=payload.description)
         # Persist the studio's vision so produce() reuses ITS seeds (track
         # target honored) instead of re-imagining with the default count.
         if payload.vision:
@@ -2137,12 +2145,12 @@ def get_release(release_id: UUID):
         release = session.get(Release, release_id)
         if not release:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
-        track_total = len(session.exec(select(Job.id).where(Job.release_id == str(release_id))).all())
+        track_total = len(session.exec(select(Job.id).where(Job.release_id == canonical_id(release_id))).all())
         active = session.exec(
             select(AgentRun.id).where(
                 AgentRun.agent_name == "album_orchestrator",
                 AgentRun.status.in_(ACTIVE_RUN_STATUSES),
-                AgentRun.release_id == str(release_id),
+                AgentRun.release_id == canonical_id(release_id),
             )
         ).first()
         return {"release": release, "track_total": track_total, "active_run": active is not None}
@@ -2187,14 +2195,14 @@ def delete_release(release_id: UUID):
             select(AgentRun).where(
                 AgentRun.agent_name == "album_orchestrator",
                 AgentRun.status.in_(ACTIVE_RUN_STATUSES),
-                AgentRun.release_id == str(release_id),
+                AgentRun.release_id == canonical_id(release_id),
             )
         ).all()
         if active:
             raise HTTPException(status_code=409, detail={"error": {"code": "run_active",
                 "message": f"An album run is {active[0].status} for this release — cancel it before deleting."}})
         detached = 0
-        for job in session.exec(select(Job).where(Job.release_id == str(release_id))).all():
+        for job in session.exec(select(Job).where(Job.release_id == canonical_id(release_id))).all():
             job.release_id = None
             session.add(job)
             detached += 1
@@ -2260,11 +2268,11 @@ def release_tracks(release_id: UUID):
         if not release:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
         rows = session.exec(
-            select(Job).where(Job.release_id == str(release_id)).order_by(Job.created_at)
+            select(Job).where(Job.release_id == canonical_id(release_id)).order_by(Job.created_at)
         ).all()
         album_runs = session.exec(
             select(AgentRun)
-            .where(AgentRun.agent_name == "album_orchestrator", AgentRun.release_id == str(release_id))
+            .where(AgentRun.agent_name == "album_orchestrator", AgentRun.release_id == canonical_id(release_id))
             .order_by(AgentRun.created_at.desc())
         ).all()
         out = []
@@ -2337,7 +2345,7 @@ def set_release_track_order(release_id: UUID, payload: ReleaseTrackOrderRequest)
         release = session.get(Release, release_id)
         if not release:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
-        valid = {str(r) for r in session.exec(select(Job.id).where(Job.release_id == str(release_id))).all()}
+        valid = {str(r) for r in session.exec(select(Job.id).where(Job.release_id == canonical_id(release_id))).all()}
         unknown = [i for i in ids if i not in valid]
         if unknown:
             raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": f"Unknown track ids for this release: {unknown[:3]}"}})
@@ -2356,7 +2364,8 @@ def detach_release_track(release_id: UUID, job_id: UUID):
         if not release:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Release not found."}})
         job = session.get(Job, job_id)
-        if not job or str(job.release_id) != str(release_id):
+        # Release ids are stored canonically; compare like for like (plan 2.8).
+        if not job or canonical_id(job.release_id) != canonical_id(release_id):
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Track not found in this release."}})
 
         job.release_id = None
@@ -2389,7 +2398,7 @@ def attach_release_track(release_id: UUID, payload: ReleaseTrackAttachRequest):
         if not job:
             raise HTTPException(status_code=404, detail={"error": {"code": "not_found", "message": "Job not found."}})
 
-        job.release_id = str(release_id)
+        job.release_id = canonical_id(release_id)
         if release.profile_id:
             job.artist_profile_id = str(release.profile_id)
         session.add(job)
@@ -2428,7 +2437,7 @@ async def retry_release_track(release_id: UUID, job_id: UUID):
             select(AgentRun).where(
                 AgentRun.agent_name.in_(["album_orchestrator", "track_retry"]),
                 AgentRun.status.in_(ACTIVE_RUN_STATUSES),
-                AgentRun.release_id == str(release_id),
+                AgentRun.release_id == canonical_id(release_id),
             )
         ).all()
         if live:
@@ -2439,7 +2448,7 @@ async def retry_release_track(release_id: UUID, job_id: UUID):
         for r in session.exec(
             select(AgentRun).where(
                 AgentRun.agent_name == "album_orchestrator",
-                AgentRun.release_id == str(release_id),
+                AgentRun.release_id == canonical_id(release_id),
             )
         ).all():
             try:
@@ -2465,7 +2474,7 @@ async def retry_release_track(release_id: UUID, job_id: UUID):
 
         parent = AgentRun(agent_name="track_retry", status="queued",
                           profile_id=str(release.profile_id),
-                          release_id=str(release_id),
+                          release_id=canonical_id(release_id),
                           input_json=json.dumps({
                               "release_id": str(release_id),
                               "job_id": str(job_id),
@@ -2509,7 +2518,7 @@ async def produce_release(release_id: UUID, payload: Optional[ProduceReleaseRequ
             select(AgentRun).where(
                 AgentRun.agent_name == "album_orchestrator",
                 AgentRun.status.in_(ACTIVE_RUN_STATUSES),
-                AgentRun.release_id == str(release_id),
+                AgentRun.release_id == canonical_id(release_id),
             )
         ).all()
         if active:
@@ -2522,7 +2531,7 @@ async def produce_release(release_id: UUID, payload: Optional[ProduceReleaseRequ
         parent = AgentRun(agent_name="album_orchestrator", status="queued",
                           input_json=json.dumps({"release_id": str(release_id), "autopilot": autopilot, "crew": crew}),
                           profile_id=str(release.profile_id),
-                          release_id=str(release_id),
+                          release_id=canonical_id(release_id),
                           budget_json=json.dumps({"caps": {"deadline_s": budget.deadline_s}}))
         session.add(parent)
         session.commit()
@@ -2567,7 +2576,7 @@ async def resume_agent_run(run_id: UUID, payload: Optional[AgentResumeRequest] =
 @app.get("/profiles/{profile_id}/releases")
 def list_releases(profile_id: UUID, limit: int = 100, offset: int = 0):
     with Session(engine) as session:
-        base = select(Release).where(Release.profile_id == str(profile_id))
+        base = select(Release).where(Release.profile_id == canonical_id(profile_id))
         total = session.exec(select(func.count()).select_from(base.subquery())).one()
         releases = session.exec(
             base.order_by(Release.created_at.desc())
@@ -3231,7 +3240,7 @@ def list_sessions():
         for s in sessions:
             s_id = s.id
             messages = session.exec(select(SessionMessage).where(SessionMessage.session_id == s_id)).all()
-            jobs = session.exec(select(Job).where(Job.session_id == str(s_id))).all()
+            jobs = session.exec(select(Job).where(Job.session_id == canonical_id(s_id))).all()
             s_dict = s.model_dump()
             s_dict["message_count"] = len(messages)
             s_dict["job_count"] = len(jobs)
@@ -3273,7 +3282,7 @@ def get_session(session_id: UUID):
         
         jobs = session.exec(
             select(Job)
-            .where(Job.session_id == str(session_id))
+            .where(Job.session_id == canonical_id(session_id))
             .order_by(Job.created_at.desc())
         ).all()
         
@@ -3296,9 +3305,9 @@ def update_session(session_id: UUID, data: SessionUpdate):
             except ValueError as e:
                 raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": str(e)}})
         if data.project_id is not None:
-            studio_session.project_id = data.project_id
+            studio_session.project_id = canonical_or_raw(data.project_id)
         if data.active_job_id is not None:
-            studio_session.active_job_id = data.active_job_id
+            studio_session.active_job_id = canonical_or_raw(data.active_job_id)
             
         studio_session.updated_at = datetime.now(timezone.utc)
         session.add(studio_session)
@@ -3320,7 +3329,7 @@ def delete_session(session_id: UUID):
             session.delete(m)
             
         # Dissociate jobs
-        jobs = session.exec(select(Job).where(Job.session_id == str(session_id))).all()
+        jobs = session.exec(select(Job).where(Job.session_id == canonical_id(session_id))).all()
         for j in jobs:
             j.session_id = None
             session.add(j)
@@ -3701,8 +3710,8 @@ async def generate_music(
         model_provider=chosen_provider,
         llm_model=req.llm_model,
         parent_job_id=req.parent_job_id,
-        project_id=req.project_id,
-        session_id=req.session_id,
+        project_id=canonical_or_raw(req.project_id),
+        session_id=canonical_or_raw(req.session_id),
         cover_image_path=req.cover_image_path,
         image_prompt=req.image_prompt,
         temperature=req.temperature,
@@ -3736,7 +3745,7 @@ async def generate_music(
             try:
                 studio_session = session.get(StudioSession, UUID(req.session_id))
                 if studio_session:
-                    studio_session.active_job_id = job_id_str
+                    studio_session.active_job_id = canonical_id(job_id_str)
                     studio_session.updated_at = datetime.now(timezone.utc)
                     session.add(studio_session)
                     session.commit()
@@ -3800,8 +3809,8 @@ async def generate_cover(req: CoverGenerationRequest, background_tasks: Backgrou
         cfg_scale=req.cfg_scale,
         topk=req.topk,
         model_provider=req.model_provider or "mulacover",
-        project_id=req.project_id,
-        session_id=req.session_id,
+        project_id=canonical_or_raw(req.project_id),
+        session_id=canonical_or_raw(req.session_id),
         voice_profile_id=req.voice_profile_id,
         is_cover=True,
         ref_audio_path=req.ref_audio_path,
@@ -4201,7 +4210,7 @@ async def extend_track(job_id: UUID, req: TrackExtendRequest, background_tasks: 
             try:
                 studio_session = session.get(StudioSession, UUID(str(parent_session_id)))
                 if studio_session:
-                    studio_session.active_job_id = child_job_id_str
+                    studio_session.active_job_id = canonical_id(child_job_id_str)
                     studio_session.updated_at = datetime.now(timezone.utc)
                     session.add(studio_session)
                     session.commit()
@@ -5044,7 +5053,7 @@ def list_projects():
         projects = session.exec(select(Project).order_by(Project.updated_at.desc())).all()
         result = []
         for p in projects:
-            p_id_str = str(p.id)
+            p_id_str = canonical_id(p.id)
             # Count child sessions
             jobs = session.exec(select(Job).where(Job.project_id == p_id_str)).all()
             total_duration_s = sum((j.duration_ms or 0) / 1000 for j in jobs if j.status == JobStatus.COMPLETED)
@@ -5067,7 +5076,7 @@ def get_project(project_id: UUID):
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
         
-        p_id_str = str(project_id)
+        p_id_str = canonical_id(project_id)
         jobs = session.exec(select(Job).where(Job.project_id == p_id_str).order_by(Job.created_at.desc())).all()
         
         p_dict = project.model_dump()
@@ -5123,7 +5132,7 @@ def delete_project(project_id: UUID):
             raise HTTPException(status_code=404, detail="Project not found")
         
         # Dissociate child jobs rather than deleting audio files
-        p_id_str = str(project_id)
+        p_id_str = canonical_id(project_id)
         jobs = session.exec(select(Job).where(Job.project_id == p_id_str)).all()
         for j in jobs:
             j.project_id = None
@@ -5154,7 +5163,7 @@ def add_track_to_project(project_id: UUID, body: ProjectTrackRequest):
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
             
-        job.project_id = str(project_id)
+        job.project_id = canonical_id(project_id)
         project.updated_at = datetime.now(timezone.utc)
         session.add(job)
         session.add(project)
@@ -5211,7 +5220,7 @@ def export_project_studio_pack(project_id: UUID):
         if not project:
             raise HTTPException(status_code=404, detail="Project not found")
             
-        p_id_str = str(project_id)
+        p_id_str = canonical_id(project_id)
         jobs = session.exec(select(Job).where(Job.project_id == p_id_str).order_by(Job.created_at.asc())).all()
         
         zip_buffer = io.BytesIO()
@@ -6188,12 +6197,19 @@ def delete_playlist(playlist_id: str):
 
 @app.post("/playlists/{playlist_id}/tracks")
 def add_track_to_playlist(playlist_id: str, body: PlaylistTrackRequest):
-    job_id_str = str(body.job_id)
+    # FK comparisons are string equality: store the canonical 32-hex form.
+    job_id_str = canonical_or_raw(body.job_id) or ""
 
     with Session(engine) as session:
         playlist = session.get(Playlist, playlist_id)
         if not playlist:
             raise HTTPException(status_code=404, detail="Playlist not found")
+        # The FK would reject this anyway; answer with a useful message instead of
+        # a 500, and never store a dangling membership.
+        if not get_job_by_id(session, job_id_str):
+            raise HTTPException(status_code=404, detail={"error": {
+                "code": "track_not_found",
+                "message": f"No track with id {job_id_str}."}})
         
         existing = session.exec(
             select(PlaylistTrack)
@@ -6215,7 +6231,8 @@ def add_track_to_playlist(playlist_id: str, body: PlaylistTrackRequest):
 
 @app.delete("/playlists/{playlist_id}/tracks/{job_id}")
 def remove_track_from_playlist(playlist_id: str, job_id: str):
-    job_id_str = str(job_id)
+    # Membership rows store the canonical form, so a hyphenated URL must normalise.
+    job_id_str = canonical_or_raw(job_id) or str(job_id)
     with Session(engine) as session:
         playlist = session.get(Playlist, playlist_id)
         if not playlist:

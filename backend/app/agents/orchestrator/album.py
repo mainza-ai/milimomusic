@@ -25,6 +25,7 @@ from app.experiencer_bridge import run_experiencer_for_release
 from app.models import AgentRun, ArtistProfile, Release
 from app.release_state import transition_release
 
+from app.core.ids import canonical_id
 logger = logging.getLogger("milimo.agents.album")
 
 
@@ -231,7 +232,7 @@ class AlbumOrchestrator:
                     seed={**seed, "target_duration_s": seed.get("target_duration_s", 180)},
                     album_context=album_context,
                     artist_profile_id=release_profile_id_val,
-                    release_id=str(release_id),
+                    release_id=canonical_id(release_id),
                     project_id=str(project_id_val or "") or None,
                     provider_name="minimax_music3",
                     voice_profile_id=artist_voice,

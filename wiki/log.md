@@ -2906,3 +2906,7 @@ Interactions: drag a clip to move (snapped to a 1/16 of the beat grid), drag eit
 Playback honours the arrangement: `scheduleAll` schedules one `BufferSource` per clip through a per-clip gain node carrying the fade envelope, so a seek into a fade still sounds right, and falls back to whole-stem scheduling when a lane has no clips.
 Plumbing: clips live in the session document (server + localStorage) and in workspace undo/redo. Frontend unit tests are wired into CI (`npm test`, `vitest.config.ts` excludes the Playwright specs).
 Verification: 492 backend tests, 15 frontend tests, `tsc -b` + `vite build` green.
+
+## [2026-11-16] execute | Phase 2.2 — bounded retries for transient failures
+`core/retry.py`: `is_transient()` classifies errors (OOM/MPS allocation, 5xx, connection reset, timeout, 429, disk-full → retryable; invalid key/401/403/not-found/not-implemented/malformed/cancel → terminal) and `with_retries()` retries with exponential backoff + jitter, an optional per-attempt callback and immediate stop on cancellation. Generation — the only non-optional pipeline step — is now wrapped in it, `Job.attempts` records each retry, and `GenerationRequest.max_attempts` (1–5, default 2) lets a caller choose.
+Verification: **512 passed, 0 failed** (+20 `test_retry_policy.py`).

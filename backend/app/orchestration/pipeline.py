@@ -203,21 +203,39 @@ class GenerateAndTranscribePipeline:
                     **extra_gen_kwargs
                 )
             else:
-                gen_result = await provider.generate(
-                    job_id=job_id_str,
-                    prompt=req.prompt,
-                    lyrics=req.lyrics,
-                    duration_ms=req.duration_ms,
-                    tags=req.tags,
-                    seed=req.seed,
-                    temperature=req.temperature,
-                    cfg_scale=req.cfg_scale,
-                    topk=req.topk,
-                    llm_model=req.llm_model,
-                    progress_callback=_gen_progress,
+                from app.core.retry import with_retries
+
+                async def _attempt_generate():
+                    return await provider.generate(
+                        job_id=job_id_str,
+                        prompt=req.prompt,
+                        lyrics=req.lyrics,
+                        duration_ms=req.duration_ms,
+                        tags=req.tags,
+                        seed=req.seed,
+                        temperature=req.temperature,
+                        cfg_scale=req.cfg_scale,
+                        topk=req.topk,
+                        llm_model=req.llm_model,
+                        progress_callback=_gen_progress,
+                        cancel_event=cancel_event,
+                        structured_caption=req.structured_caption or None,
+                        **extra_gen_kwargs
+                    )
+
+                def _record_attempt(_attempt, _exc, _delay):
+                    with Session(engine) as _s:
+                        _j = _s.get(Job, job_id)
+                        if _j:
+                            _j.attempts = (_j.attempts or 0) + 1
+                            _s.add(_j)
+                            _s.commit()
+
+                gen_result = await with_retries(
+                    _attempt_generate,
+                    attempts=max(1, int(getattr(req, "max_attempts", 2) or 2)),
+                    on_retry=_record_attempt,
                     cancel_event=cancel_event,
-                    structured_caption=req.structured_caption or None,
-                    **extra_gen_kwargs
                 )
 
             # Orphan-work guard: the blocking inference thread cannot be

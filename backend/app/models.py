@@ -332,6 +332,8 @@ class SceneRegenerateRequest(SQLModel):
 class GenerationRequest(SQLModel):
     model_config = {"protected_namespaces": ()}
     prompt: str
+    # Bounded retries for transient failures (plan 2.2).
+    max_attempts: int = Field(default=2, ge=1, le=5)
     lyrics: Optional[str] = None
     title: Optional[str] = None
     duration_ms: int = 30000

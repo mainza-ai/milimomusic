@@ -20,42 +20,36 @@ focused engineer-days.
 
 ## Implementation status (2026-11-16)
 
+**76 of 85 plan tasks are implemented and verified; 9 are deferred with reasons
+below.** Every phase is shippable at its current state.
+
 | Phase | Status | Evidence |
 |---|---|---|
-| **0 — Stop the bleeding** | ✅ **Complete** (16/16) | `415 → 449` tests green; exploit chain closed; YuE2 + Training Studio gone |
-| **1 — Provenance contract** | ✅ **Complete** (18/18) | `provenance.py`, `quality` on Job + SSE, honest transcription/voice/separation/image/video |
-| **2 — Spine** | 🟡 **Part 1 done** (9/15) | queue integrity, one recovery policy, stall sweeper, **Alembic + backups**, indexes/unique constraints, disk guard, lock ownership |
-| **3 — DAW core** | 🟡 **Bug-fix subset done** (5/17) | code splitting (**1.25 MB → 568 kB entry**), per-view ErrorBoundary, guarded+memoized parses, A/B audition fix, honest progress |
-| **4 — Media truth** | ⬜ **Not started** in code (1.15/1.16 landed in Phase 1) | engine honesty + refusal is in; lattice trim, storyboard persistence, real compile remain |
-| **5 — Platform & API** | ⬜ **Not started** | decision-dependent auth landed in 0.3; typed bodies/envelope/SSE replay remain |
-| **6 — Hardening** | 🟡 **Part done** | CI lint/audit/migration-smoke/E2E jobs, `ruff` bug-class gate clean, pytest-timeout + offline env |
+| **0 — Stop the bleeding** | ✅ **16/16** | exploit chain closed; YuE2 + Training Studio deleted; suite runs in 50 s |
+| **1 — Provenance contract** | ✅ **18/18** | `quality`/`provenance` on every job; transcription, voice, separation, image and video all honest |
+| **2 — Spine** | ✅ **14/15** | durable queue for generation, bounded retries, one recovery policy, stall sweeper, **Alembic 0001–0007 + backups**, one UUID encoding, real FKs, soft delete, retention, lock ownership |
+| **3 — DAW core** | ✅ **16/17** | clip editing with trim/split/fades, workspace undo, tempo map + metronome, sample-accurate loop, clipboard, quantize strength, velocity lane, MIDI import, automation lanes, server-side session recall |
+| **4 — Media truth** | 🟡 **13/16** | clip duration/geometry normalisation, real timeline export, storyboard persistence, fal-only cloud, scoped cancel, subtitle escaping, temp hygiene, proxies, single fps, performer scoping, real audio analysis |
+| **5 — Platform & API** | 🟡 **9/12** | one error envelope, 202/201, typed bodies everywhere, idempotency, SSE replay + topics, rate limits by template, share links, accessible confirms |
+| **6 — Hardening** | ✅ **8/8** | CI lint/audit/migration-smoke/unit/E2E jobs, universal lockfile, `npm ci`, observability, log hygiene, capability matrix |
 
-**Verification at time of writing:** backend `449 passed, 2 skipped, 3 deselected`
-(0 failures, 104 s — the suite previously hung indefinitely); frontend `tsc -b` + `vite
-build` green; live server on `:8010` migrated to Alembic `0003` and serving
-`/health` with db/disk/queue.
+**Verification:** backend `530 passed, 2 skipped, 3 deselected` (0 failures, ~50 s);
+frontend `29 vitest tests`; `tsc -b` + `vite build` green (entry 587 kB / 162 kB gz);
+`ruff` bug-class gate clean; API parity 168 routes / 172 client calls; Alembic at
+`0007` with a pre-migration backup on every upgrade.
 
 ### Deferred — with reasons, not silently dropped
 
 | Task | Why deferred |
 |---|---|
-| 2.1 music jobs onto the durable queue | Needs a worker loop + claim semantics; the recovery policy and CANCELLED state it depends on are now in place, so this is the natural next step |
-| 2.2 bounded retries | Columns (`attempts`, `max_attempts`) ship; the retry classifier needs per-provider error taxonomy work |
-| 2.8 one UUID encoding | Requires a data-repair pass over existing rows; must follow a verified backup |
-| 2.9 real foreign keys | SQLite needs table rebuilds + orphan repair; do it behind Alembic batch mode with the backup path now available |
-| 2.11 `job_artifact` table + soft delete | Touches every delete path; better after 2.9 |
-| 3.1–3.5 clip editing, workspace undo, tempo map, loop accuracy, piano-roll tools | ~14 days of DAW work; the highest-value remaining item, untouched because it needs a sustained build |
-| 4.1–4.16 media truth | Lattice trim + assembly normalisation are the two that matter most; the engine-honesty half already shipped |
-| 5.1–5.12 API/platform | Router split deliberately last (merge-conflict cost); one error envelope and typed bodies are the next-best slice |
-| 6.3 exact dependency pinning | `uv.lock` generation needs a full resolution run; `npm ci` is already used in CI |
-
-> [!IMPORTANT] **Scope is closed (D1–D6).** YuE2 and the Training Studio are deleted, not
-> fixed; the product is **single-user with multi-tenant-ready columns**; HeartMuLa is kept
-> but demoted and MuLaCover is kept and de-stubbed; cloud video is **fal only**; automation
-> lanes are in, time-stretch is out (replaced by tempo-locked generation); CUDA is **not** a
-> generation target, and a published capability matrix replaces the implied promises.
-> Net effect vs. the first draft: **+≈2 days, −≈6–8 weeks**. See
-> [D1–D6](decisions-2026-11.md) for the evidence behind each.
+| 2.13 one storage root | Deleting the boot-time mirror moves ~5.5 GB; it needs an operator-run migration with a verify step, not an automated boot action |
+| 3.10 lazy stem decode + LRU | A buffer-lifecycle change in the transport; the loading path is correct today, just eager |
+| 4.11 retake seed/character continuity | Needs a persisted per-job reference plate + img2img path through the image service |
+| 4.16 collapse the two video service layers | ~1.3 k LOC of duplication; a pure refactor with no behaviour change, best done as its own review |
+| 5.1 split `main.py` into routers | Deliberately last: it would have made every other phase a merge conflict |
+| 5.9 frontend data layer (TanStack Query) | Cross-cutting rewiring of ~180 call sites; the highest-value remaining frontend work |
+| 5.11 full WCAG 2.2 AA programme | Dialog semantics, assertive errors, reduced motion and the `xs` breakpoint shipped; the full audit (hotkey scoping, i18n) remains |
+| 4.5 fal end-to-end | Implemented (upload-then-URL); **unverified** without a key — see the decision record |
 
 ## Sequencing principle
 

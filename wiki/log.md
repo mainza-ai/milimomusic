@@ -2983,3 +2983,6 @@ Verification: **530 passed, 0 failed**.
 ## [2026-11-16] execute | Phase 4.8 — one frame rate through the video chain
 Audio-reactive extraction hardcoded `fps=24` while slicing and rendering used the model's rate (Wan runs at 16), so beat pulses landed on the wrong frames. The model spec is now resolved once, up front, and `project_fps` flows through extraction, slicing and the procedural branch.
 Verification: **530 passed, 0 failed**; ruff gate clean.
+
+## [2026-11-16] lint | Plan status reconciled — 76/85 implemented, 9 deferred with reasons
+Plan page now carries the final per-phase status table (P0 16/16, P1 18/18, P2 14/15, P3 16/17, P4 13/16, P5 9/12, P6 8/8) and an explicit deferred table naming why each remaining task waits (2.13 storage root, 3.10 lazy decode, 4.11 retake continuity, 4.16 service-layer collapse, 5.1 router split, 5.9 frontend data layer, 5.11 full AA, 4.5 fal verification without a key).

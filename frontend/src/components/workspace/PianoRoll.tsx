@@ -131,6 +131,7 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
     const [dragPreview, setDragPreview] = useState<Map<NoteEvent, PreviewPos> | null>(null);
     const [marquee, setMarquee] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
     const [snapDiv, setSnapDiv] = useState<'off' | '1/16' | '1/8' | '1/4'>('1/16');
+    const [quantizeStrength, setQuantizeStrength] = useState(100);
     const [zoomX, setZoomX] = useState(1);
     const [rowH, setRowH] = useState(24);
     const [followPlayhead, setFollowPlayhead] = useState(true);
@@ -431,13 +432,59 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
         setSelectedNotes(new Set(copies));
     };
 
+    // ── Clipboard (plan 3.5) ────────────────────────────────────────────────
+    // ⌘C/⌘X/⌘V/⌘A were missing entirely; a MIDI editor without copy/paste forces
+    // the user to redraw every repeated phrase.
+    const clipboardRef = useRef<NoteEvent[]>([]);
+    const pasteCountRef = useRef(0);
+
+    const copySelection = () => {
+        if (selectedNotes.size === 0) return false;
+        clipboardRef.current = Array.from(selectedNotes).map(n => ({ ...n }));
+        pasteCountRef.current = 0;
+        return true;
+    };
+
+    const cutSelection = () => {
+        if (!copySelection()) return false;
+        deleteSelection();
+        return true;
+    };
+
+    const pasteSelection = () => {
+        const clip = clipboardRef.current;
+        if (!clip.length) return false;
+        pasteCountRef.current += 1;
+        // Paste at the playhead (relative shape preserved), nudged by one unit per
+        // repeat so successive pastes do not stack invisibly.
+        const clipStart = Math.min(...clip.map(n => n.start_time));
+        const anchor = Math.max(currentTime, 0) + (pasteCountRef.current - 1) * (snapSec || 0.25);
+        const pasted = clip.map(n => {
+            const dur = noteEndOf(n) - n.start_time;
+            const start = round2(anchor + (n.start_time - clipStart));
+            return { ...n, start_time: start, end_time: round2(start + dur) };
+        });
+        commit([...notesList, ...pasted], 'paste');
+        setSelectedNotes(new Set(pasted));
+        return true;
+    };
+
+    const selectAll = () => {
+        setSelectedNotes(new Set(filteredNotes));
+        return true;
+    };
+
     const quantizeSelection = () => {
         if (snapSec <= 0) return;
         const targets = selectedNotes.size > 0 ? selectedNotes : new Set(filteredNotes);
         const replacements = new Map<NoteEvent, NoteEvent>();
+        const strength = Math.max(1, Math.min(100, quantizeStrength)) / 100;
         const next = notesList.map(n => {
             if (!targets.has(n)) return n;
-            const nn = { ...n, start_time: round2(snapTime(n.start_time)) };
+            const snapped = snapTime(n.start_time);
+            // Partial quantize keeps some of the player's feel.
+            const start = round2(n.start_time + (snapped - n.start_time) * strength);
+            const nn = { ...n, start_time: start, end_time: round2(start + (noteEndOf(n) - n.start_time)) };
             replacements.set(n, nn);
             return nn;
         });
@@ -446,6 +493,12 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
     };
 
     const applyVelocity = (vel: number) => {
+        // With nothing selected, the lane edits every visible note so dragging it
+        // is never a silent no-op.
+        if (selectedNotes.size === 0) {
+            commit(notesList.map(n => (filteredNotes.includes(n) ? { ...n, velocity: vel } : n)), 'velocity');
+            return;
+        }
         replaceSelected(n => ({ ...n, velocity: vel }), 'velocity');
     };
 
@@ -612,12 +665,16 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
     // ── Editor hotkey scope ─────────────────────────────────────────────────
     const editorApiRef = useRef({
         undo: doUndo, redo: doRedo, del: deleteSelection,
-        transpose: transposeSelection, dup: duplicateSelection, selSize: 0
+        transpose: transposeSelection, dup: duplicateSelection,
+        copy: copySelection, cut: cutSelection, paste: pasteSelection, all: selectAll,
+        selSize: 0
     });
     useEffect(() => {
         editorApiRef.current = {
             undo: doUndo, redo: doRedo, del: deleteSelection,
-            transpose: transposeSelection, dup: duplicateSelection, selSize: selectedNotes.size
+            transpose: transposeSelection, dup: duplicateSelection,
+            copy: copySelection, cut: cutSelection, paste: pasteSelection, all: selectAll,
+            selSize: selectedNotes.size
         };
     });
 
@@ -633,6 +690,10 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
             if (mod && e.code === 'KeyZ') { if (!inGrid) return false; e.preventDefault(); if (e.shiftKey) { api.redo(); } else { api.undo(); } return true; }
             if (mod && e.code === 'KeyY') { if (!inGrid) return false; e.preventDefault(); api.redo(); return true; }
             if (mod && e.code === 'KeyD') { if (!inGrid) return false; e.preventDefault(); api.dup(); return true; }
+            if (mod && e.code === 'KeyC') { if (!inGrid) return false; if (api.selSize) { e.preventDefault(); api.copy(); return true; } return false; }
+            if (mod && e.code === 'KeyX') { if (!inGrid) return false; if (api.selSize) { e.preventDefault(); api.cut(); return true; } return false; }
+            if (mod && e.code === 'KeyV') { if (!inGrid) return false; e.preventDefault(); api.paste(); return true; }
+            if (mod && e.code === 'KeyA') { if (!inGrid) return false; e.preventDefault(); api.all(); return true; }
             if (!inGrid) return false;
             switch (e.code) {
                 case 'Delete':
@@ -1618,6 +1679,20 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                         <option value="1/4">Snap: 1/4</option>
                     </select>
 
+                    {/* Quantize strength */}
+                    <select
+                        value={quantizeStrength}
+                        onChange={(e) => setQuantizeStrength(Number(e.target.value))}
+                        title="Quantize strength: how far notes are pulled toward the grid"
+                        aria-label="Quantize strength"
+                        className="px-1.5 py-1.5 rounded-xl bg-black/[0.04] dark:bg-white/5 text-[10px] font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
+                    >
+                        <option value={100}>100%</option>
+                        <option value={75}>75%</option>
+                        <option value={50}>50%</option>
+                        <option value={25}>25%</option>
+                    </select>
+
                     {/* Quantize */}
                     <button
                         onClick={quantizeSelection}
@@ -1857,6 +1932,50 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
             </div>
 
             {/* Main Piano Roll Canvas: Synchronized Scroll Container */}
+            {/* Velocity lane (plan 3.5): per-note velocity at a glance and by drag */}
+            <div className="flex items-stretch border-t border-black/[0.08] dark:border-white/10 bg-white/70 dark:bg-[#0d0f16] flex-shrink-0">
+                <div className="w-36 flex-shrink-0 flex items-center justify-between px-3 text-[10px] font-mono font-bold text-slate-500 dark:text-slate-400 border-r-4 border-r-teal-600">
+                    <span>VELOCITY</span>
+                    <span className="text-teal-600 dark:text-teal-400">{firstSelVel}</span>
+                </div>
+                <div
+                    className="flex-1 relative h-16 cursor-ns-resize"
+                    onMouseDown={(e) => {
+                        if (e.button !== 0) return;
+                        const rect = e.currentTarget.getBoundingClientRect();
+                        const setFromEvent = (clientY: number) => {
+                            const frac = 1 - Math.max(0, Math.min(1, (clientY - rect.top) / rect.height));
+                            const vel = Math.max(1, Math.min(127, Math.round(frac * 127)));
+                            applyVelocity(vel);
+                        };
+                        setFromEvent(e.clientY);
+                        const move = (ev: MouseEvent) => setFromEvent(ev.clientY);
+                        const up = () => {
+                            window.removeEventListener('mousemove', move);
+                            window.removeEventListener('mouseup', up);
+                        };
+                        window.addEventListener('mousemove', move);
+                        window.addEventListener('mouseup', up);
+                    }}
+                    title="Drag vertically to set the velocity of the selected notes"
+                >
+                    {filteredNotes.map((note, i) => {
+                        const g = geomFor(note);
+                        const left = (g.start / timeScale) * 100;
+                        const h = Math.max(6, ((note.velocity || 85) / 127) * 100);
+                        const isSelected = selectedNotes.has(note);
+                        return (
+                            <div
+                                key={`vel-${i}-${note.pitch}-${note.start_time}`}
+                                className={`absolute bottom-0 rounded-t-sm ${isSelected ? 'bg-teal-500' : 'bg-teal-500/30'}`}
+                                style={{ left: `${left}%`, width: '3px', height: `${h}%` }}
+                            />
+                        );
+                    })}
+                    <div className="absolute inset-x-0 top-1/2 border-t border-dashed border-slate-400/30 pointer-events-none" />
+                </div>
+            </div>
+
             <div ref={scrollRef} onScroll={handleScroll} className="flex-1 overflow-auto relative flex bg-[#ebebf0] dark:bg-[#0a0c12]">
                 {/* 1. Left Piano Keys Keyboard (Sticky on Left X, Scrolling on Y) */}
                 <div className="sticky left-0 z-20 flex-shrink-0 w-36 bg-slate-200 dark:bg-[#1a1c24] border-r-4 border-r-teal-600 shadow-2xl flex flex-col pt-8 select-none">

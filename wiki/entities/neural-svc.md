@@ -2,13 +2,20 @@
 title: Neural Singing Voice Conversion (Neural SVC)
 type: entity
 created: 2026-09-15
-updated: 2026-09-15
+updated: 2026-11-16
 sources: [sources/v2-refactor-plan.md, sources/readme.md]
 tags: [voice, svc, neural, timbre, audio, pitch, formant]
 aliases: [Neural SVC, NeuralSVCService, Singing Voice Conversion Engine]
 ---
 
 # Neural Singing Voice Conversion (Neural SVC)
+
+> [!NOTE]
+> **2026-11 remediation:** this is a **spectral-envelope morph with phase reuse**, not a
+> neural timbre transplant — `NeuralSVCService` loads no checkpoint and the config claim
+> was corrected. Voice conversion now records `method` ∈ `{svc, spectral_dsp, failed}`,
+> never `copyfile`s the input, and never fails an otherwise-successful job.
+
 
 The **Neural SVC Engine** (`backend/app/services/voice/neural_svc.py`) provides pitch-adaptive vocal timbre transfer, formant morphing, and zero-shot singer identity conversion.
 

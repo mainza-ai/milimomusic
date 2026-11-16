@@ -2,13 +2,23 @@
 title: Backend & API
 type: entity
 created: 2026-08-19
-updated: 2026-09-09
+updated: 2026-11-16
 sources: [sources/readme.md, sources/training-studio-guide.md, sources/inpainting-debug.md]
 tags: [backend, fastapi, sqlmodel, api, sse, sqlite]
 aliases: [Backend, FastAPI backend]
 ---
 
 # Backend & API
+
+> [!NOTE]
+> **2026-11 remediation:** one error envelope (`{detail, error:{code,message,details}}`
+> for every failure), `201` for creates and `202` for accepted-async work,
+> pydantic bodies on **every** mutating route (no bare `dict` left), `Idempotency-Key`
+> on generation (SQLite-backed, 409 on key reuse with a different body), SSE with
+> monotonic ids + `Last-Event-ID` replay + `?job_id=` scoping, rate limits keyed on the
+> **route template** with graded costs, per-request correlation ids, signed read-only
+> share links, and soft delete with an explicit `?purge=true`.
+
 
 The **backend** is Milimo Music's Python API layer — **FastAPI** with **SQLModel** and
 **SQLite** (now `backend/database.db`). It runs on `http://localhost:8000` (`uvicorn app.main:app`).

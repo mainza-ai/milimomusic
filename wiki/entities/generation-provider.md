@@ -14,14 +14,15 @@ It is the §3.1 "capabilities, not model names" design from the [v2 plan](../roa
 now implemented. Backend lives in `backend/app/providers/`.
 
 > [!IMPORTANT]
-> **Capability manifests are currently aspirational, not tested** (audit 2026-11). Unknown
-> provider ids silently resolve to MiniMax (`registry.py:138-140`), `is_ready()` returns
-> `True` for any HF repo id containing `/` before weights exist, and
-> `supports_lora`/`supports_segment_repair`/`supports_voice_conversion` are set `True` on
-> providers with no such code. Plan 1.6 makes a capability `True` only when a test proves the
-> method exists and is not a stub. The hardware side is now fixed by
-> [D6](../decisions-2026-11.md): MiniMax is Apple-Silicon-MLX only, and the published matrix
-> — not the manifest copy — governs what the UI offers.
+> **Capability manifests are now earned, not asserted** (2026-11 remediation). Unknown
+> provider ids raise `ProviderNotFoundError` instead of silently resolving to MiniMax,
+> `supports_*` flags are validated by `test_capability_manifests.py` (a flag may only be
+> `True` when the method exists, is not inherited from the base "refuse honestly"
+> default, and is not a no-op shape), `extend()`/`repair_segment()` stubs are gone from
+> HeartMuLa/MuLaCover/MusicGen/StableAudio, and `GeneratedAudioResult` carries
+> `source`/`truncated`/`requested_duration_sec`. The hardware side is fixed by
+> [D6](../decisions-2026-11.md): MiniMax is Apple-Silicon-MLX only, and the published
+> matrix — not the manifest copy — governs what the UI offers.
 
 ## Interface (`providers/base.py`)
 `GenerationProvider` (ABC) defines:

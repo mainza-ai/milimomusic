@@ -3,12 +3,19 @@ title: Standalone Image Generation Studio & Visual Asset Gallery
 type: entity
 tags: [image-studio, visual-gallery, flux, flow, asset-library, covers, album-art, concepts, google-flow]
 created: 2026-09-26
-updated: 2026-09-26
+updated: 2026-11-16
 sources: [backend-api, image-service, maestro-creative-studio]
 aliases: [ImageStudio, VisualGallery, VisualAssetManager, MediaLibrary, GoogleFlowStudio]
 ---
 
 # Standalone Image Generation Studio & Visual Asset Gallery
+
+> [!NOTE]
+> **2026-11 remediation:** `VisualAsset` records the `engine` that produced each image,
+> procedural plates are labelled as placeholders in the studio toast, and diffusion
+> cancellation is scoped to the requesting job instead of aborting any in-flight
+> render.
+
 
 > [!NOTE]
 > The **Standalone Image Generation Studio & Visual Asset Gallery** (`frontend/src/components/views/ImageStudioView.tsx` and `backend/app/services/image_service.py`) is Milimo Music's dedicated creative visual workspace, inspired by Google Flow and modern visual canvas suites. It elevates visual creation into a first-class creative pillar alongside audio and video, providing an interactive generation canvas, persistent asset storage, and universal 1-click routing to album covers, project artwork, and video performer portraits.

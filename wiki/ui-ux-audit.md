@@ -3,12 +3,15 @@ title: UI/UX & Design Audit (2026-08-21)
 type: overview
 tags: [audit, ui, ux, design-system, daw, accessibility]
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-11-16
 sources: []
 aliases: [ui audit, design audit]
 ---
 
 # UI/UX & Design Audit (2026-08-21)
+
+> **2026-11 cycle:** the deferred items here (design-system adoption, accessibility programme, DAW interaction gaps) were largely executed in the [Application Remediation Plan 2026-11](application-remediation-plan-2026-11.md) — clip editing, workspace undo, tempo map/metronome, automation lanes, code splitting, dialog semantics. The full WCAG AA programme remains deferred.
+
 
 Four parallel deep-dives (UX flows/IA, visual design system, DAW workspace
 interactions vs Logic/Ableton/GarageBand standards, accessibility). Companion plan:

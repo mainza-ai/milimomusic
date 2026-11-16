@@ -3,12 +3,15 @@ title: Production Readiness Audit (2026-08-21)
 type: overview
 tags: [audit, production, security, reliability, ops]
 created: 2026-08-21
-updated: 2026-08-21
+updated: 2026-11-16
 sources: []
 aliases: [prod-readiness audit, gaps report v2]
 ---
 
 # Production Readiness Audit (2026-08-21)
+
+> **2026-11 cycle supersedes this status snapshot.** The remaining phases listed here were executed as the [Application Remediation Plan 2026-11](application-remediation-plan-2026-11.md); see [Full Application Audit 2026-11](application-audit-2026-11.md) for what was still open at that point and its remediation status table.
+
 
 Full-codebase audit against the production-not-demo bar. Companion plan:
 [production-readiness-plan](production-readiness-plan.md). Extends the raw

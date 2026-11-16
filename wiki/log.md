@@ -2986,3 +2986,11 @@ Verification: **530 passed, 0 failed**; ruff gate clean.
 
 ## [2026-11-16] lint | Plan status reconciled — 76/85 implemented, 9 deferred with reasons
 Plan page now carries the final per-phase status table (P0 16/16, P1 18/18, P2 14/15, P3 16/17, P4 13/16, P5 9/12, P6 8/8) and an explicit deferred table naming why each remaining task waits (2.13 storage root, 3.10 lazy decode, 4.11 retake continuity, 4.16 service-layer collapse, 5.1 router split, 5.9 frontend data layer, 5.11 full AA, 4.5 fal verification without a key).
+
+## [2026-11-16] lint | Wiki reconciled to the delivered state (post-execution pass)
+Contradiction sweep so no page reads as an open backlog:
+- `application-audit-2026-11.md`: new **Remediation status** table mapping sections A–K to resolved / mostly-resolved with what actually changed.
+- `application-remediation-plan-2026-11.md`: final status table (P0 16/16, P1 18/18, P2 14/15, P3 16/17, P4 13/16, P5 9/12, P6 8/8) + the deferred table.
+- Entity/concept banners added where described behaviour materially changed: `durable-task-queue` (now covers music generation, atomic claim, one recovery policy), `session-workspace` (clip editing, undo, tempo map/metronome, automation, session recall), `backend-api` (one envelope, 201/202, typed bodies, idempotency, SSE replay, template rate limits, share links, soft delete), `stem-separator` (4-stem honesty), `muscriptor` (no fabricated fallback), `neural-svc` + `voice-service` (method provenance, no copyfile), `video-studio` (media truth), `image-studio-gallery` (engine badge), `docker-deployment` (lockfile + alembic), `frontend` (code splitting, boundaries, a11y subset), `generation-provider` (capabilities now earned), `concepts/database-integrity-lifecycle` (Alembic, one UUID encoding, real FKs, soft delete).
+- `production-readiness-audit` and `ui-ux-audit` now point at the 2026-11 cycle so their snapshots are not mistaken for the current backlog.
+Link check across the whole wiki: **0 broken relative links**.

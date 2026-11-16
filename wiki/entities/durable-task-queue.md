@@ -3,12 +3,21 @@ title: Durable Task Queue & Job Lifecycle Manager
 type: entity
 tags: [queue, tasks, sqlite, persistence, recovery, checkpointing, lifecycle]
 created: 2026-09-16
-updated: 2026-09-16
+updated: 2026-11-16
 sources: [sources/maestro-creative-studio.md]
 aliases: [DurableTaskQueue, JobLifecycleManager, UniversalQueue]
 ---
 
 # Durable Task Queue & Job Lifecycle Manager
+
+> [!NOTE]
+> **2026-11 remediation:** the queue now covers **music generation**, not just video
+> (`core/worker.py` claims tasks atomically, closes cancelled/short-circuited work
+> honestly, and `requeue_interrupted` closes crash-left tasks at boot). Two defects
+> were fixed: a leaked SQLite connection per update, and a non-atomic
+> read-modify-write. Recovery now has one policy (`core/recovery.py`) plus a stall
+> sweeper keyed on `Job.last_heartbeat_at`.
+
 
 The **Durable Task Queue** (`backend/app/core/task_queue.py`) is Milimo Music's persistent asynchronous job scheduling and execution engine.
 

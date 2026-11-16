@@ -2,13 +2,22 @@
 title: Frontend
 type: entity
 created: 2026-08-19
-updated: 2026-09-24
+updated: 2026-11-16
 sources: [sources/readme.md, sources/v2-refactor-plan.md]
 tags: [frontend, react, vite, tailwind, ui, daw]
 aliases: [Web UI, Frontend app]
 ---
 
 # Frontend
+
+> [!NOTE]
+> **2026-11 remediation:** code splitting (`React.lazy` per view + `manualChunks`) took
+> the entry chunk from 1,252 kB to ~587 kB (328 → 162 kB gzipped); an `ErrorBoundary`
+> keyed on the active view contains a crash; `safeJsonParse` is memoised on the source
+> string; `window.confirm`/`alert` are replaced by an accessible promise dialog and
+> `role="alert"` toasts; the shell no longer disables text selection; `xs` exists and
+> `prefers-reduced-motion` is honoured.
+
 
 The **frontend** is Milimo Music's web UI — **React 19 + Vite + Tailwind CSS** on
 `http://localhost:5173` (`npm run dev`). Author: Mainza Kangombe. It implements the

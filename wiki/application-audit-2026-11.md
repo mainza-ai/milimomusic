@@ -352,6 +352,26 @@ Specific defects:
    27 untyped bodies, one optional token, `title="Action"`, palette shortcuts that do not
    exist. → *Typed bodies, one error envelope, generated OpenAPI used by the frontend client.*
 
+## Remediation status (2026-11-16)
+
+This audit drove the [Application Remediation Plan 2026-11](application-remediation-plan-2026-11.md).
+**76 of 85 plan tasks are implemented and verified**; the table below records what
+happened to each section so this page is not read as an open backlog.
+
+| Section | Status | What changed |
+|---|---|---|
+| A. Trust failures | ✅ Resolved | YuE2 + Training Studio deleted; MuScriptor writes nothing on failure; voice conversion reports `method` and never copies; in-paint fixed (`get_provider`) and locked; `repair_segment` stubs removed; piano-roll unmount flush; timeline export renders; clip durations normalised |
+| B. Security | ✅ Resolved | Media-path allowlist + serve-time check; ASGI auth gate covers mounts; fail-closed non-loopback; SPA containment; launcher binds loopback; signed share links replace "multi-user" |
+| C. Lifecycle | ✅ Resolved | Durable queue for generation; `CANCELLED`/`INTERRUPTED`; atomic claim; one recovery policy + stall sweeper; `fail_task`/`update_task` call sites fixed; bounded retries; cancel reaches transcription |
+| D. Persistence | ✅ Resolved* | Alembic 0001–0007 with pre-migration backups; real FKs after orphan repair; one UUID encoding; missing indexes + unique constraints; soft delete; retention + disk guard. *`2.13 single storage root` deferred |
+| E. Capability contract | ✅ Resolved | Capabilities earned by test; `ProviderNotFoundError`; truncation reported; 4-stem reality; derived notes marked; transcription on the delivered master |
+| F. Video & image | 🟡 Mostly | Engine refusal for unimplemented models, evidence-based availability, fal-only cloud with upload, storyboard persistence, real export, proxies/posters, ASS escaping, single fps, performer scoping. *Retake continuity + two-service-layer collapse deferred* |
+| G. Frontend DAW | 🟡 Mostly | Clip editing, workspace undo, tempo map/metronome, sample-accurate loop, automation lanes, honest progress, guarded parses, per-view boundaries, code splitting. *Lazy stem decode + TanStack data layer deferred* |
+| H. Ops/CI | ✅ Resolved | CI lint/audit/migration/unit/E2E jobs, universal lockfile, `npm ci`, observability (request id + access log), log rotation, capability matrix |
+| I. Missing functionality | 🟡 Partial | Clip editing, undo, tempo/meter, metronome, MIDI import, automation, share links, export presets landed; multi-user accounts and a render queue remain out of scope by decision |
+| J. Strengths | ✅ Preserved | Replay verification, provenance plumbing, sample-locked transport, hotkey scopes, upload hardening, hardware coordinator |
+| K. Systemic patterns | ✅ Addressed | Provenance is now a contract; capabilities are tested; lifecycle has one owner; schema has an authority; API contracts are typed |
+
 ## Severity tally (verified + corroborated)
 
 | Severity | Count | Concentration |

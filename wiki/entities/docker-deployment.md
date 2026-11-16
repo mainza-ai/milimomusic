@@ -2,12 +2,19 @@
 title: Docker Deployment & Single-Process Architecture
 type: entity
 created: 2026-09-07
-updated: 2026-09-24
+updated: 2026-11-16
 tags: [docker, deployment, container, production, nginx, uvicorn, packaging]
 aliases: [Docker, Containerization, Docker Deployment, Production Container]
 ---
 
 # Docker Deployment & Single-Process Architecture
+
+> [!NOTE]
+> **2026-11 remediation:** the image and CI install `backend/requirements.lock.txt` (a
+> universal `uv` resolution) instead of floating ranges, and the frontend uses `npm ci`
+> so `package-lock.json` decides. Schema is applied by `alembic upgrade head` with a
+> pre-migration backup, not by boot-time `ALTER TABLE`.
+
 
 Milimo Music provides a turnkey, multi-stage **production container deployment** strategy
 that packages the entire platform—the Python 3.11 backend, DSP audio tools (`ffmpeg`, `libsndfile1`),

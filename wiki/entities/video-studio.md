@@ -2,12 +2,23 @@
 title: AI Music Video Studio
 type: entity
 created: 2026-09-07
-updated: 2026-10-07
+updated: 2026-11-16
 tags: [video, studio, wan, liveportrait, ltx-video, minimax-h3, diffusers, lipsync, karaoke, ass, director, timeline, cancellation, attention-slicing, lyric-video, typography, videotoolbox]
 aliases: [VideoStudio, MusicVideosView, VideoService, VideoOrchestrator, VideoGeneratorRegistry]
 ---
 
 # AI Music Video Studio
+
+> [!NOTE]
+> **2026-11 remediation (media truth):** clip durations are normalised to the plan
+> (frame-lattice loss fixed; crossfade overlap reserved) so the picture ends with the
+> song; the final mux uses an explicit `-t <song>` instead of `-shortest`; engines with
+> no local pipeline are refused rather than rendering an animatic; availability requires
+> installed weights; cloud is **fal only** with upload-then-URL; storyboards persist;
+> the timeline export renders a real MP4; 480p proxies + first-frame posters exist;
+> subtitle text is ASS-escaped with real bundled fonts; one fps flows through the
+> reactive chain.
+
 
 The **AI Music Video Studio** (`backend/app/services/video/` and frontend `MusicVideosView.tsx`) is Milimo Music's production-grade AI music video generation, neural singing avatar animation, and visual performance engine. It turns generated music tracks into broadcast-grade music videos with beat-matched scene cuts, neural facial lip-syncing driven by isolated vocal stems, pre-rendered scene keyframes, synchronized karaoke subtitles, cinematic video diffusion, and a non-destructive multi-track timeline editor.
 

@@ -2,12 +2,23 @@
 title: Session Workspace (DAW)
 type: entity
 created: 2026-08-20
-updated: 2026-10-07
+updated: 2026-11-16
 tags: [daw, workspace, piano-roll, notation, mixer, arrange, multitrack, web-audio]
 aliases: [SessionWorkspace, DAW, Web Audio DAW]
 ---
 
 # Session Workspace (DAW)
+
+> [!NOTE]
+> **2026-11 remediation:** the workspace is now an editor, not a viewer. It gained an
+> editable Arrange clip model (drag/trim/split/fades, snap to 1/16), workspace-level
+> undo/redo, a tempo map + metronome + count-in scheduled on the AudioContext clock,
+> sample-accurate A/B looping (`source.loop` instead of rAF re-scheduling), volume/pan
+> automation lanes, piano-roll clipboard/quantize-strength/velocity lane, MIDI import,
+> and **server-side session recall** (`GET/PUT /workspace/{id}/session`) so mix, loop,
+> tempo and clips survive a cache clear. Row-level consumers no longer subscribe to the
+> merged audio context, so the 30 Hz playhead no longer re-renders the library.
+
 
 The **Session Workspace** (`frontend/src/components/workspace/SessionWorkspace.tsx`) is
 Milimo's in-browser **DAW**. Any completed, transcribed track can be opened here (via

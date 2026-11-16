@@ -2,12 +2,20 @@
 title: Stem Separation (Dual-Engine)
 type: entity
 created: 2026-08-20
-updated: 2026-08-21
+updated: 2026-11-16
 tags: [stems, separation, roformer, bs-roformer, muscriptor, per-instrument, daw]
 aliases: [StemSeparator, stem separation, BS-Roformer, Roformer, real_separator]
 ---
 
 # Stem Separation (Dual-Engine)
+
+> [!NOTE]
+> **2026-11 remediation:** separation no longer claims "BS-RoFormer 6-stem" while
+> running 4-stem HTDemucs — `source_id` names the checkpoint that actually ran and the
+> UI message is generated from `result.stems.keys()`. Per-instrument parts derived from
+> piano notes are marked `synthetic_derivation` with the piano original removed, so one
+> performance is not reported as two instruments.
+
 
 Milimo produces DAW stems from **two complementary engines** and lets the user choose
 which source the DAW reflects — production-grade, never a single hard-coded path:

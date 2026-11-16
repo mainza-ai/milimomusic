@@ -3,12 +3,26 @@ title: Database Integrity, UUID Standards & Track Lifecycle
 type: concept
 tags: [database, sqlite, sqlalchemy, sqlmodel, uuid, lifecycle, cascade-delete, data-integrity]
 created: 2026-09-09
-updated: 2026-09-09
+updated: 2026-11-16
 sources: [entities/backend-api.md, entities/session-workspace.md]
 aliases: [Data Integrity, UUID Standards, Track Deletion Lifecycle, Cascade Deletion]
 ---
 
 # Database Integrity, UUID Standards & Track Lifecycle
+
+> [!IMPORTANT]
+> **2026-11 remediation supersedes parts of this page.** Schema changes now go
+> through **Alembic** (`backend/alembic`, revisions 0001–0007) with a timestamped
+> SQLite backup before every upgrade; the boot-time `ALTER TABLE` loop is a loudly
+> logged fallback only. The dual UUID encoding is resolved: one `before_flush`
+> listener canonicalises every FK attribute to the stored 32-hex form, association
+> queries compare canonically, and `field_serializer`s emit the hyphenated form so the
+> API is uniform. Association columns now carry **real foreign keys**
+> (`SET NULL` for job links, `CASCADE` for release/profile and playlist membership)
+> after a one-time orphan repair. Deletion defaults to **soft delete**
+> (`Job.deleted_at`) with an explicit `?purge=true` hard delete. See
+> [Application Remediation Plan 2026-11](../application-remediation-plan-2026-11.md)
+> tasks 2.6–2.11.
 
 In Milimo Music, tracks (`Job` entities) are the core artifacts linking audio masters, stems, MIDI scores, lyrics, album releases, and studio sessions. Ensuring robust data integrity across SQLite and the SQLAlchemy/SQLModel ORM requires strict adherence to UUID encoding standards, relational cascading rules, and atomic filesystem sweeps.
 

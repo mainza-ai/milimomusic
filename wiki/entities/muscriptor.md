@@ -2,13 +2,21 @@
 title: MuScriptor
 type: entity
 created: 2026-08-19
-updated: 2026-08-20
+updated: 2026-11-16
 sources: [sources/v2-refactor-plan.md, sources/readme.md]
 tags: [muscriptor, transcription, midi, musicxml]
 aliases: [muscriptor]
 ---
 
 # MuScriptor
+
+> [!NOTE]
+> **2026-11 remediation:** a failed transcription no longer writes a hardcoded
+> I–vi–IV–V progression at 124 BPM as if it were transcribed audio. `TranscriptionResult`
+> carries `source`/`degraded`/`reason`, the pipeline writes **no** MIDI/MusicXML when it
+> is unavailable, and transcription now runs on the **delivered** master (after the voice
+> remix) rather than the raw generation.
+
 
 **MuScriptor** (Kyutai × Mirelo) is a **multi-instrument Automatic Music Transcription**
 model — **not a generator**. It turns any audio (including Milimo's own generated output)

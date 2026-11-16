@@ -2,12 +2,18 @@
 title: Voice Studio (SVC)
 type: entity
 created: 2026-08-20
-updated: 2026-09-24
+updated: 2026-11-16
 tags: [voice, svc, rvc, cloning, consent, singing, acoustic-dsp, vocal-booth]
 aliases: [VoiceService, Voice Training Studio, Vocal Studio, SVC]
 ---
 
 # Voice Studio (SVC)
+
+> [!NOTE]
+> **2026-11 remediation:** conversion provenance is explicit (`method`, `degraded`,
+> `reason`), a byte-identical copy is refused rather than shipped as "converted", and a
+> failed conversion degrades the take instead of failing the generation job.
+
 
 The **Voice Service** (`services/voice_service.py` + frontend `VocalStudioView` and `VoiceStudioModal`) is
 Milimo's offline **Singing Voice Conversion (SVC)**, vocal-identity cloning, and vocal production workstation.

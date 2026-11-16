@@ -85,6 +85,12 @@ from app.models import (
     RetakeClipRequest,
     EditorRetakeRequest,
     ActiveModelRequest,
+    ProfileCoverRequest,
+    AgentResumeRequest,
+    VideoStoryboardRequest,
+    VideoRenderRequestModel,
+    ActiveVideoEngineRequest,
+    EditorProjectRequest,
     DEFAULT_SESSION_TITLE,
     validate_display_name,
     GenerationRequest,
@@ -1867,9 +1873,9 @@ def list_artist_profiles(
 
 
 @app.patch("/profiles/{profile_id}/cover")
-async def set_profile_cover(profile_id: UUID, payload: dict):
+async def set_profile_cover(profile_id: UUID, payload: ProfileCoverRequest):
     """Attach an uploaded image (via /upload/image) as the artist's visual identity."""
-    path = (payload or {}).get("cover_image_path", "").strip()
+    path = (payload.cover_image_path or "").strip()
     if not path or not path.startswith("/"):
         raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "cover_image_path must be a public /image path from /upload/image."}})
     with Session(engine) as session:
@@ -2530,7 +2536,7 @@ async def produce_release(release_id: UUID, payload: Optional[ProduceReleaseRequ
 
 
 @app.post("/agents/runs/{run_id}/resume")
-async def resume_agent_run(run_id: UUID, payload: dict = None):
+async def resume_agent_run(run_id: UUID, payload: Optional[AgentResumeRequest] = None):
     """Approve + continue a gated album run (or re-kick an interrupted one).
     Cursor state_json decides what still needs doing."""
     from app.agents.orchestrator.album import AlbumOrchestrator
@@ -5292,9 +5298,9 @@ def export_project_studio_pack(project_id: UUID):
 # ==========================================
 
 @app.post("/videos/storyboard/{job_id}")
-async def generate_video_storyboard(job_id: str, body: dict = Body(default={})):
-    visual_style = body.get("visual_style", "neon-cyberpunk")
-    custom_style_prompt = body.get("custom_style_prompt")
+async def generate_video_storyboard(job_id: str, body: Optional[VideoStoryboardRequest] = None):
+    visual_style = (body.visual_style if body else None) or "neon-cyberpunk"
+    custom_style_prompt = body.custom_style_prompt if body else None
     from app.services.video_service import video_service
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)
@@ -5391,9 +5397,9 @@ def get_video_storyboard(job_id: str):
 
 
 @app.post("/videos/render/{job_id}")
-async def render_music_video(job_id: str, body: dict = Body(default={})):
-    visual_style = body.get("visual_style", "neon-cyberpunk")
-    resolution = body.get("resolution", "720p")
+async def render_music_video(job_id: str, body: Optional[VideoRenderRequestModel] = None):
+    visual_style = (body.visual_style if body else None) or "neon-cyberpunk"
+    resolution = (body.resolution if body else None) or "720p"
     from app.services.video_service import video_service
     with Session(engine) as session:
         job = get_job_by_id(session, job_id)
@@ -5547,9 +5553,9 @@ def get_active_video_engine():
 
 
 @app.post("/videos/active-engine")
-def set_active_video_engine(body: dict = Body(...)):
+def set_active_video_engine(body: ActiveVideoEngineRequest):
     """Set the active video engine, persist to active_models.json, and sync with model_manager."""
-    engine_or_model = body.get("engine") or body.get("model_id")
+    engine_or_model = body.engine or body.model_id
     if not engine_or_model:
         raise HTTPException(status_code=400, detail="engine or model_id is required")
     from app.services.video_service import video_service
@@ -6425,12 +6431,18 @@ def route_gallery_media(payload: GalleryRouteRequest):
 
 
 @app.post("/api/editor/projects")
-def save_editor_project(payload: dict):
+def save_editor_project(payload: EditorProjectRequest):
     """Create or update a non-destructive multi-track editor project."""
     from app.services.timeline.editor_projects import EditorProject
     from app.core.win_safe_files import atomic_write_json
     try:
-        project = EditorProject.from_dict(payload)
+        # `extra=allow` keeps the opaque project document intact.
+        document = payload.model_dump()
+        project = EditorProject.from_dict(document)
+        # Containment: the id becomes a filename.
+        if any(sep in project.project_id for sep in ("/", "\\", "..")):
+            raise HTTPException(status_code=422, detail={"error": {
+                "code": "invalid_project_id", "message": "project_id must be a plain identifier."}})
         out_dir = Path("data/editor_projects")
         out_dir.mkdir(parents=True, exist_ok=True)
         out_file = out_dir / f"{project.project_id}.json"

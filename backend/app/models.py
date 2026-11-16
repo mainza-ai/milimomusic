@@ -855,3 +855,37 @@ class EditorRetakeRequest(SQLModel):
 
 class ActiveModelRequest(SQLModel):
     model_id: str
+
+
+class ProfileCoverRequest(SQLModel):
+    cover_image_path: str
+
+
+class AgentResumeRequest(SQLModel):
+    approve: bool = True
+    note: Optional[str] = None
+
+
+class VideoStoryboardRequest(SQLModel):
+    visual_style: Optional[str] = None
+    custom_style_prompt: Optional[str] = None
+
+
+class VideoRenderRequestModel(SQLModel):
+    visual_style: Optional[str] = None
+    resolution: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    burn_lyrics: bool = True
+    audio_reactive: bool = True
+
+
+class ActiveVideoEngineRequest(SQLModel):
+    engine: Optional[str] = None
+    model_id: Optional[str] = None
+
+
+class EditorProjectRequest(SQLModel):
+    """An editor project is an opaque, versioned document; only the id is required."""
+    model_config = {"extra": "allow"}
+
+    project_id: str

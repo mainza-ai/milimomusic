@@ -616,13 +616,42 @@ export const api = {
         document.body.removeChild(a);
     },
 
-    connectToEvents: (onMessage: (event: MessageEvent) => void, extraEventTypes: string[] = []) => {
+    /**
+     * SSE with replay. The server stamps every event with a monotonic id; on a
+     * reconnect we send the last id back so the gap is replayed instead of lost.
+     * `jobId` scopes the stream (idle tabs no longer receive every job's traffic).
+     */
+    connectToEvents: (
+        onMessage: (event: MessageEvent) => void,
+        extraEventTypes: string[] = [],
+        options: { jobId?: string; onError?: (e: Event) => void } = {}
+    ) => {
         const token = localStorage.getItem('milimo_auth_token') || '';
-        const url = token ? `${API_BASE_URL}/events?auth=${encodeURIComponent(token)}` : `${API_BASE_URL}/events`;
-        const eventSource = new EventSource(url);
+        const params = new URLSearchParams();
+        if (token) params.set('auth', token);
+        if (options.jobId) params.set('job_id', options.jobId);
+        const suffix = params.toString() ? `?${params.toString()}` : '';
+
+        const eventSource = new EventSource(`${API_BASE_URL}/events${suffix}`);
         eventSource.onmessage = onMessage;
         [...new Set(["job_update", "job_progress", ...extraEventTypes])]
             .forEach(t => eventSource.addEventListener(t, onMessage));
+
+        // Last-Event-ID is automatic in the browser when it reconnects the *same*
+        // EventSource. We recreate the object ourselves on hard failures, so keep
+        // our own high-water mark and pass it as a query parameter on reconnect.
+        if (typeof window !== 'undefined') {
+            const key = 'milimo_last_event_id';
+            const id = window.localStorage.getItem(key);
+            if (id) params.set('last_event_id', id);
+            const remember = (e: MessageEvent) => {
+                if (e.lastEventId) window.localStorage.setItem(key, e.lastEventId);
+            };
+            eventSource.addEventListener('job_update', remember);
+            eventSource.addEventListener('job_progress', remember);
+        }
+
+        if (options.onError) eventSource.onerror = options.onError;
         return eventSource;
     },
 

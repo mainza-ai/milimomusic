@@ -45,6 +45,9 @@ STATIC_PREFIXES = ("/audio/", "/covers/")
 
 
 def _norm(path: str) -> str:
+    # A template glued straight onto the path with no separator is a query/build
+    # suffix (`/events${suffix}`), not another path segment.
+    path = re.sub(r"(?<=[A-Za-z0-9_])\$\{[^}]+\}", "", path)
     path = re.sub(r"\$\{[^}]+\}", "{id}", path)
     path = re.sub(r"\{[^}]+\}", "{id}", path)
     return path
@@ -84,7 +87,12 @@ def frontend_calls() -> set[tuple[str, str]]:
                 continue
             line = _VITE_ENV_RE.sub("${API_BASE_URL}", line)
             for m in _URL_LITERAL_RE.finditer(line):
-                out.add(("GET", _norm(m.group(1))))
+                url = m.group(1)
+                # A template that appends a query string (`/events?${params}`) names
+                # the route before the `?`; the query is not part of the path.
+                url = url.split("?")[0]
+                if url:
+                    out.add(("GET", _norm(url)))
     return out
 
 

@@ -521,20 +521,24 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     )
 
 
-from fastapi.exceptions import RequestValidationError
-from fastapi.exception_handlers import request_validation_exception_handler
-from starlette.requests import Request
+# One error envelope for the whole surface: `{detail, error:{code,message,details}}`.
+# `detail` is preserved so existing UI code keeps working; `error.code` is always
+# present so new code can branch on the failure kind instead of parsing prose.
+from app.core.errors import install_error_handlers
+from fastapi import Header
+
+_idempotency_singleton = None
 
 
-@app.exception_handler(RequestValidationError)
-async def validation_exception_handler(request: Request, exc: RequestValidationError):
-    logger.warning(f"Validation error on {request.method} {request.url.path}: {exc.errors()}")
-    res = await request_validation_exception_handler(request, exc)
-    origin = request.headers.get("origin")
-    cors_hdrs = _build_cors_headers(origin)
-    for k, v in cors_hdrs.items():
-        res.headers[k] = v
-    return res
+def _idempotency_store():
+    """Process-wide idempotency store bound to the app engine."""
+    global _idempotency_singleton
+    if _idempotency_singleton is None:
+        from app.core.idempotency import IdempotencyStore
+        _idempotency_singleton = IdempotencyStore(engine)
+    return _idempotency_singleton
+
+install_error_handlers(app)
 
 
 
@@ -2445,7 +2449,7 @@ async def retry_release_track(release_id: UUID, job_id: UUID):
     return {"run_id": str(parent.id), "status": "queued", "seed_slot": target[1]}
 
 
-@app.post("/releases/{release_id}/produce")
+@app.post("/releases/{release_id}/produce", status_code=202)
 async def produce_release(release_id: UUID, payload: dict):
     """Album Orchestrator: vision → per-seed songwriter+generation children.
 
@@ -3086,7 +3090,7 @@ def list_sessions():
         return result
 
 
-@app.post("/sessions", response_model=StudioSession)
+@app.post("/sessions", response_model=StudioSession, status_code=201)
 def create_session(data: SessionCreate):
     with Session(engine) as session:
         try:
@@ -3464,9 +3468,37 @@ def _refuse_if_disk_full():
             "code": "insufficient_storage", "message": reason}})
 
 
-@app.post("/generate/music")
-async def generate_music(req: GenerationRequest, background_tasks: BackgroundTasks):
+@app.post("/generate/music", status_code=202)
+async def generate_music(
+    req: GenerationRequest,
+    background_tasks: BackgroundTasks,
+    idempotency_key: Optional[str] = Header(default=None, alias="Idempotency-Key"),
+):
+    # Direct Python callers (e.g. /generate/cover re-entering here) get the raw
+    # Header marker instead of a resolved string.
+    if not isinstance(idempotency_key, str):
+        idempotency_key = None
+
     _refuse_if_disk_full()
+
+    # Idempotency: a retried request must not create a second job (and a second
+    # GPU run). Replays the stored response; a key reused for different work is a
+    # 409 rather than a silent mismatch.
+    _idem = _idempotency_store()
+    # Snapshot the body BEFORE the handler fills in defaults (a generated seed, the
+    # resolved active provider, ...) — the fingerprint must describe what the
+    # client sent, not what the server derived.
+    _idem_payload = req.model_dump() if idempotency_key else None
+    if idempotency_key:
+        _cached = _idem.lookup(idempotency_key, _idem_payload)
+        if _cached and _cached.get("__conflict__"):
+            raise HTTPException(status_code=409, detail={"error": {
+                "code": "idempotency_conflict",
+                "message": "This Idempotency-Key was already used with a different request body.",
+            }})
+        if _cached:
+            from starlette.responses import JSONResponse as _JSONResponse
+            return _JSONResponse(status_code=202, content={**_cached, "idempotent_replay": True})
     # Upfront validation for MuLaCover
     is_cover_job = getattr(req, "is_cover", False) or (req.model_provider == "mulacover")
     if is_cover_job:
@@ -3572,13 +3604,16 @@ async def generate_music(req: GenerationRequest, background_tasks: BackgroundTas
     # Enqueue pipeline in background
     background_tasks.add_task(music_service.generate_task, job_id_val, req, engine)
     
-    return {
+    _response = {
         "job_id": job_id_val,
         "status": job_status,
         "model_provider": job_provider,
         "title": job_title,
-        "cover_image_path": job_cover
+        "cover_image_path": job_cover,
     }
+    if idempotency_key:
+        _idem.remember(idempotency_key, _idem_payload, _response)
+    return _response
 
 
 @app.post("/generate/cover")
@@ -4767,7 +4802,7 @@ def cancel_job(job_id: str):
 
 # --- Projects System API ---
 
-@app.post("/projects", response_model=Project)
+@app.post("/projects", response_model=Project, status_code=201)
 def create_project(data: ProjectCreate):
     with Session(engine) as session:
         project = Project(
@@ -5451,7 +5486,7 @@ async def reimagine_scene_endpoint(
         }
 
 
-@app.post("/videos/render-advanced/{job_id}")
+@app.post("/videos/render-advanced/{job_id}", status_code=202)
 async def render_advanced_music_video_endpoint(job_id: str, req: VideoRenderRequest = Body(default=VideoRenderRequest())):
     """Start production multi-clip video pipeline with lip-sync, karaoke lyric burning, and scene stitching."""
     from app.services.video_service import video_service
@@ -5586,7 +5621,7 @@ def cancel_keyframe_generation_endpoint(job_id: str):
 
 
 @app.post("/videos/keyframes/{job_id}")
-async def generate_video_keyframes(job_id: str, req: KeyframesRequest = Body(default=KeyframesRequest())):
+async def generate_video_keyframes(job_id: str, req: KeyframesRequest = Body(default=KeyframesRequest()), response: Response = None):
     """Generate visual keyframe stills for each scene asynchronously with live progress tracking."""
     from app.services.video_service import video_service
     with Session(engine) as session:
@@ -5608,6 +5643,9 @@ async def generate_video_keyframes(job_id: str, req: KeyframesRequest = Body(def
         task_id = f"kf_{uuid.uuid4().hex[:12]}"
 
         if req.background:
+            if response is not None:
+                response.status_code = 202  # accepted, not finished
+
             async def _run_kf_bg():
                 try:
                     await video_service.generate_scene_keyframes(
@@ -5967,17 +6005,50 @@ def update_studio_profile(data: StudioUserProfileUpdate):
 
 
 @app.get("/events")
-async def events():
+async def events(
+    request: Request,
+    job_id: Optional[str] = Query(default=None, description="Only deliver events for this job"),
+):
+    """Server-Sent Events with replay.
+
+    Every event carries a monotonic `id:`; a reconnect sends `Last-Event-ID` and the
+    server replays whatever the client missed from a bounded ring. `job_id` filters
+    the stream so five idle tabs no longer receive five copies of every other job's
+    prompt and lyrics.
+    """
+    last_event_id = 0
+    raw_last = request.headers.get("last-event-id") or request.query_params.get("last_event_id")
+    if raw_last:
+        try:
+            last_event_id = int(raw_last)
+        except (TypeError, ValueError):
+            last_event_id = 0
+
+    def _matches(payload: str) -> bool:
+        if not job_id:
+            return True
+        # Cheap containment check: the payload embeds its job_id as JSON.
+        return f'"{job_id}"' in payload
+
     async def event_generator():
         q = event_manager.subscribe()
         try:
-            # Yield initial keep-alive comment so EventSource connects cleanly
             yield ": ping\n\n"
+            # Replay the gap first (bounded by the ring), then live events.
+            if last_event_id:
+                for seq, evt_name, payload_json in event_manager.replay_since(last_event_id):
+                    if evt_name == "shutdown":
+                        continue
+                    if not _matches(payload_json):
+                        continue
+                    yield event_manager.format_event(seq, evt_name, payload_json)
             while True:
                 try:
                     data = await asyncio.wait_for(q.get(), timeout=15.0)
                     if "event: shutdown" in data:
                         break
+                    if job_id and "event: job_" in data and not _matches(data):
+                        continue
                     yield data
                 except asyncio.TimeoutError:
                     yield ": ping\n\n"

@@ -994,6 +994,13 @@ function App() {
       } catch (err) {
         console.error("SSE Parse Error", err);
       }
+    }, [], {
+      onError: () => {
+        // EventSource retries on its own; make the state visible rather than
+        // letting a dead stream look like a stalled generation. The next /health
+        // poll restores 'online' when the backend is actually reachable.
+        setBackendHealth('offline');
+      },
     });
 
     return () => evtSource.close();

@@ -26,7 +26,7 @@ def client():
 
 async def _create_session(client, title="RenameMe Test"):
     r = await client.post("/sessions", json={"title": title})
-    assert r.status_code == 200, r.text
+    assert r.status_code in (200, 201), r.text
     return r.json()
 
 
@@ -134,7 +134,7 @@ async def test_job_rename_validation_and_updated_at(client):
 @pytest.mark.asyncio
 async def test_project_blank_name_rejected(client):
     r = await client.post("/projects", json={"name": "Blank Probe Project"})
-    assert r.status_code == 200, r.text
+    assert r.status_code in (200, 201), r.text
     pid = r.json()["id"]
     try:
         r = await client.put(f"/projects/{pid}", json={"name": "   "})

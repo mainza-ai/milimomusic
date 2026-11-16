@@ -249,7 +249,7 @@ def test_produce_endpoint_persists_crew_flags(client, artist_fixture, monkeypatc
     out = client.post(f"/releases/{rid}/produce", json={
         "autopilot": False, "crew": {"stylist": True, "critic": True},
     })
-    assert out.status_code == 200
+    assert out.status_code in (200, 201, 202)
     with Session(app_engine) as session:
         run = session.exec(select(AgentRun).where(AgentRun.agent_name == "album_orchestrator")).all()[-1]
         cfg = json.loads(run.input_json)

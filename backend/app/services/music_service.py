@@ -22,6 +22,10 @@ class EventManager:
             cls._instance = super(EventManager, cls).__new__(cls)
             cls._instance.subscribers = []
             cls._instance._lock = threading.Lock()
+            # Replay ring: bounded, shared by every subscriber.
+            cls._instance._seq = 0
+            cls._instance._ring = []
+            cls._instance._ring_lock = threading.Lock()
         return cls._instance
 
     def subscribe(self):
@@ -37,6 +41,31 @@ class EventManager:
         with self._lock:
             if q in self.subscribers:
                 self.subscribers.remove(q)
+
+    # ── Replay buffer ───────────────────────────────────────────────────────
+    # An EventSource reconnect (laptop sleep, network blip, proxy timeout) used to
+    # lose every event in the gap, so clients had to poll /jobs/{id} to stay
+    # correct — defeating the point of SSE. Events now carry a monotonic id and a
+    # bounded ring replays whatever the client missed via Last-Event-ID.
+    RING_SIZE = 500
+
+    def _ring_append(self, event_type: str, payload_json: str) -> int:
+        with self._ring_lock:
+            self._seq += 1
+            seq = self._seq
+            self._ring.append((seq, event_type, payload_json))
+            if len(self._ring) > self.RING_SIZE:
+                del self._ring[: len(self._ring) - self.RING_SIZE]
+            return seq
+
+    def replay_since(self, last_event_id: int) -> list:
+        """Events with id > last_event_id, oldest first (bounded by the ring)."""
+        with self._ring_lock:
+            return [item for item in self._ring if item[0] > last_event_id]
+
+    @staticmethod
+    def format_event(seq: int, event_type: str, payload_json: str) -> str:
+        return f"id: {seq}\nevent: {event_type}\ndata: {payload_json}\n\n"
 
     @staticmethod
     def _safe_put(q: asyncio.Queue, msg: str):
@@ -54,7 +83,9 @@ class EventManager:
             evt_name = str(event_type)
             data = data or {}
 
-        msg = f"event: {evt_name}\ndata: {json.dumps(data)}\n\n"
+        payload_json = json.dumps(data)
+        seq = self._ring_append(evt_name, payload_json)
+        msg = self.format_event(seq, evt_name, payload_json)
         with self._lock:
             subscribers_snapshot = list(self.subscribers)
 
@@ -78,7 +109,8 @@ class EventManager:
 
     def shutdown(self):
         """Broadcast shutdown signal to all subscribers to release connections."""
-        msg = "event: shutdown\ndata: {}\n\n"
+        seq = self._ring_append("shutdown", "{}")
+        msg = self.format_event(seq, "shutdown", "{}")
         with self._lock:
             subscribers_snapshot = list(self.subscribers)
         for q in subscribers_snapshot:

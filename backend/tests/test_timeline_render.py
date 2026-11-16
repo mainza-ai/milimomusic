@@ -140,3 +140,41 @@ def test_cancel_before_start_is_honest(tmp_path, monkeypatch):
     deadline = time.time() + 30
     while blocker.status in ("queued", "rendering") and time.time() < deadline:
         time.sleep(0.1)
+
+
+def test_detected_encoder_can_actually_encode():
+    """Regression: CI picked `h264_nvenc` on a runner with no CUDA.
+
+    `ffmpeg -encoders` lists a wrapper whether or not the driver is present, so
+    detection must be backed by a real one-frame encode.
+    """
+    import subprocess as _sp
+
+    from app.services.timeline.editor_projects import EditorProjectManager
+
+    encoder = EditorProjectManager.detect_hardware_video_encoder()
+    assert encoder
+
+    if not HAS_FFMPEG:
+        pytest.skip("ffmpeg required")
+    probe = _sp.run(
+        ["ffmpeg", "-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.1",
+         "-c:v", encoder, "-f", "null", "-"],
+        capture_output=True, text=True,
+    )
+    assert probe.returncode == 0, (
+        f"detected encoder {encoder!r} cannot encode on this host: "
+        f"{(probe.stderr or '')[-300:]}"
+    )
+
+
+@pytest.mark.skipif(not HAS_FFMPEG, reason="ffmpeg required")
+def test_render_honours_an_explicit_encoder(tmp_path):
+    """Callers can pin the encoder; the command must use exactly that one."""
+    asset = _make_asset(str(tmp_path / "a.mp4"))
+    project = _project(asset)
+    cmd = EditorProjectManager.compile_editor_render_command(
+        project, str(tmp_path / "out.mp4"), video_encoder="libx264"
+    )
+    assert "libx264" in cmd
+    assert not any("nvenc" in part or "videotoolbox" in part for part in cmd)

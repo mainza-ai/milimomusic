@@ -11,9 +11,7 @@ import json
 import logging
 import math
 import os
-import platform
 import shutil
-import subprocess
 from dataclasses import asdict, dataclass, field
 from datetime import datetime, timezone
 from pathlib import Path
@@ -142,30 +140,21 @@ class EditorProjectManager:
 
     @classmethod
     def detect_hardware_video_encoder(cls) -> str:
-        """Auto-detect available hardware accelerated FFmpeg encoder."""
-        sys_os = platform.system()
-        if sys_os == "Darwin":
-            # Apple Silicon VideoToolbox
-            return "h264_videotoolbox"
+        """Pick a video encoder that can actually encode on THIS machine.
 
-        # Check for NVIDIA NVENC
+        Grepping `ffmpeg -encoders` only proves the *build* has the wrapper: a
+        GitHub Linux runner lists `h264_nvenc` and then fails with
+        "Cannot load libcuda.so.1". `subtitle_styles.detect_hardware_encoder`
+        already probes with a real one-frame encode, so delegate to it — one
+        implementation, and correctness by construction.
+        """
         try:
-            res = subprocess.run(
-                ["ffmpeg", "-hide_banner", "-encoders"],
-                capture_output=True,
-                text=True,
-                check=False,
-            )
-            if "h264_nvenc" in res.stdout:
-                return "h264_nvenc"
-            if "h264_qsv" in res.stdout:
-                return "h264_qsv"
-            if "h264_vaapi" in res.stdout:
-                return "h264_vaapi"
-        except Exception:
-            pass
+            from app.services.video.subtitle_styles import detect_hardware_encoder
 
-        return "libx264"
+            encoder, _flags = detect_hardware_encoder()
+            return encoder
+        except Exception:
+            return "libx264"
 
     @classmethod
     def compile_editor_render_command(

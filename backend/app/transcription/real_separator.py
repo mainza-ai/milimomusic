@@ -31,7 +31,10 @@ STEM_DIR = str(get_generated_audio_dir() / "stems")
 class SeparationResult:
     """Structured result from neural source separation supporting dynamic stem topologies."""
     stems: Dict[str, str] = field(default_factory=dict)
-    source_id: str = "bs_roformer_6stem"
+    # Must name the engine that actually produced the stems. A hardcoded
+    # "bs_roformer_6stem" made the UI offer guitar/piano stems that 4-stem
+    # HTDemucs never produces.
+    source_id: str = "unknown"
     sources_available: List[str] = field(default_factory=list)
     stem_count: int = 0
 
@@ -162,9 +165,11 @@ def separate_sources(
                     pass
             stems[stem_key] = f"/audio/stems/{dest_name}"
 
+        # Name the checkpoint that actually ran, not a fixed marketing label.
+        _sid = os.path.splitext(os.path.basename(model_name))[0].replace(".ckpt", "")
         return SeparationResult(
             stems=stems,
-            source_id="bs_roformer_6stem",
+            source_id=f"{_sid}_{len(stems)}stem",
             sources_available=list(stems.keys()),
             stem_count=len(stems)
         )
@@ -184,7 +189,10 @@ def separate_sources(
         from demucs.apply import apply_model
 
         t0 = time.time()
-        model = get_model("htdemucs_6s" if False else "htdemucs")
+        # 4-stem HTDemucs (drums/bass/other/vocals). The dead ternary
+        # `"htdemucs_6s" if False else "htdemucs"` claimed a 6-stem model.
+        _demucs_repo = "htdemucs"
+        model = get_model(_demucs_repo)
         _separator_instance = model
         
         # Demucs device placement: CUDA -> MPS -> CPU
@@ -233,7 +241,7 @@ def separate_sources(
         logger.info(f"Neural separation completed in {time.time() - t0:.1f}s for {len(stems_dict)} sources.")
         return SeparationResult(
             stems=stems_dict,
-            source_id="neural_stems",
+            source_id=f"{_demucs_repo}_4stem",
             sources_available=list(stems_dict.keys()),
             stem_count=len(stems_dict)
         )

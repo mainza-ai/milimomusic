@@ -50,6 +50,31 @@ class GeneratedAudioResult(BaseModel):
     # persisted on the Job so users can always tell real MiniMax output apart.
     used_fallback_synth: bool = False
     fallback_reason: Optional[str] = None
+    # What actually produced the audio, independent of the provider's identity:
+    #   "model" | "dsp" | "placeholder"
+    source: str = "model"
+    # True when the produced audio is shorter than what the caller asked for.
+    truncated: bool = False
+    requested_duration_sec: Optional[float] = None
+    truncation_reason: Optional[str] = None
+
+    @property
+    def degraded(self) -> bool:
+        return self.used_fallback_synth or self.source != "model" or self.truncated
+
+    def provenance(self) -> Dict[str, Any]:
+        """Stage-level provenance record persisted on the Job."""
+        return {
+            "stage": "generation",
+            "source": self.source,
+            "degraded": self.degraded,
+            "reason": self.fallback_reason,
+            "truncated": self.truncated,
+            "requested_duration_sec": self.requested_duration_sec,
+            "sample_rate": self.sample_rate,
+            "metadata": {k: v for k, v in (self.metadata or {}).items()
+                         if k in ("provider", "seed", "extension_mode", "channels")},
+        }
 
 
 class GenerationProvider(ABC):

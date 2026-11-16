@@ -5,9 +5,12 @@ import { trackApi } from '../../api';
 // One fetch per (jobId, buckets) per session, shared across every surface
 // that renders the same waveform. HTTP cache handles cross-reload reuse.
 const peaksCache = new Map<string, number[]>();
-const inflight = new Map<string, Promise<number[]>>();
+const syntheticCache = new Map<string, boolean>();
+const inflight = new Map<string, Promise<PeaksResult>>();
 
-// Deterministic fallback peak envelope generator so waveforms never display "unavailable"
+// A fabricated envelope. NEVER cached and ALWAYS labelled: presenting a
+// hash-derived sine as the track's real waveform made a placeholder look like
+// measured audio (plan 1.17).
 function generateFallbackPeaks(id: string, count: number = 240): number[] {
     let hash = 0;
     for (let i = 0; i < id.length; i++) {
@@ -25,24 +28,39 @@ function generateFallbackPeaks(id: string, count: number = 240): number[] {
     return res;
 }
 
-async function loadPeaks(jobId: string, buckets: number): Promise<number[]> {
+interface PeaksResult {
+    peaks: number[];
+    /** True when the server said its own envelope is synthetic, or we had to guess. */
+    synthetic: boolean;
+}
+
+async function loadPeaks(jobId: string, buckets: number): Promise<PeaksResult> {
     const key = `${jobId}:${buckets}`;
     const hit = peaksCache.get(key);
-    if (hit) return hit;
+    if (hit) return { peaks: hit, synthetic: syntheticCache.get(key) === true };
     const pending = inflight.get(key);
     if (pending) return pending;
+
     const p = trackApi.getTrackPeaks(jobId, buckets)
         .then(res => {
-            const data = (res && res.peaks && res.peaks.length > 0) ? res.peaks : generateFallbackPeaks(jobId, buckets);
-            peaksCache.set(key, data);
+            const real = (res && res.peaks && res.peaks.length > 0) ? res.peaks : null;
+            if (!real) {
+                // No peaks: report unavailable rather than inventing one.
+                inflight.delete(key);
+                return { peaks: generateFallbackPeaks(jobId, buckets), synthetic: true };
+            }
+            const synthetic = Boolean((res as { synthetic?: boolean }).synthetic);
+            // Real envelopes are cached; synthetic ones are never cached as if real.
+            if (!synthetic) {
+                peaksCache.set(key, real);
+                syntheticCache.set(key, false);
+            }
             inflight.delete(key);
-            return data;
+            return { peaks: real, synthetic };
         })
         .catch(() => {
             inflight.delete(key);
-            const fallback = generateFallbackPeaks(jobId, buckets);
-            peaksCache.set(key, fallback);
-            return fallback;
+            return { peaks: generateFallbackPeaks(jobId, buckets), synthetic: true };
         });
     inflight.set(key, p);
     return p;
@@ -74,6 +92,8 @@ export const StaticWaveform: React.FC<StaticWaveformProps> = ({
 }) => {
     const holderRef = useRef<HTMLDivElement>(null);
     const [peaks, setPeaks] = useState<number[] | null>(() => peaksCache.get(`${jobId}:${buckets}`) || null);
+    const [synthetic, setSynthetic] = useState<boolean>(() => syntheticCache.get(`${jobId}:${buckets}`) === true);
+    const [unavailable, setUnavailable] = useState(false);
 
     // Fetch only when the card approaches the viewport.
     useEffect(() => {
@@ -84,8 +104,16 @@ export const StaticWaveform: React.FC<StaticWaveformProps> = ({
         let cancelled = false;
         const start = () => {
             loadPeaks(jobId, buckets)
-                .then(p => { if (!cancelled) setPeaks(p); })
-                .catch(() => { if (!cancelled) setPeaks(generateFallbackPeaks(jobId, buckets)); });
+                .then(res => {
+                    if (cancelled) return;
+                    setPeaks(res.peaks);
+                    setSynthetic(res.synthetic);
+                    setUnavailable(false);
+                })
+                .catch(() => {
+                    if (cancelled) return;
+                    setUnavailable(true);
+                });
         };
 
         if (typeof IntersectionObserver === 'undefined') { start(); return; }
@@ -140,7 +168,20 @@ export const StaticWaveform: React.FC<StaticWaveformProps> = ({
                 onSeekFraction ? 'cursor-pointer' : ''
             } ${className || ''}`}
         >
-            {!peaks && (
+            {synthetic && (
+                <span
+                    className="absolute top-1 right-1 z-10 rounded bg-amber-500/15 px-1.5 py-0.5 text-[8px] font-bold uppercase tracking-wide text-amber-700 dark:text-amber-300"
+                    title="No audio envelope available for this track — this is a placeholder shape, not its waveform."
+                >
+                    No waveform
+                </span>
+            )}
+            {unavailable && !peaks && (
+                <div className="absolute inset-0 flex items-center justify-center text-[10px] font-medium text-slate-400">
+                    Waveform unavailable
+                </div>
+            )}
+            {!peaks && !unavailable && (
                 <div className="absolute inset-0 flex items-center justify-around px-2 opacity-30">
                     {Array.from({ length: 36 }).map((_, i) => (
                         <div key={i} className="w-[3px] rounded-full bg-slate-400 dark:bg-slate-500 animate-pulse" style={{ height: '20%' }} />

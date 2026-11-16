@@ -3,9 +3,15 @@ Generation Provider Registry and Capability Negotiation.
 """
 
 import logging
+
 from typing import Dict, List, Optional
 from app.providers.base import GenerationProvider, GenerationCapabilities
 from app.providers.minimax_provider import MiniMaxMusic3Provider
+
+
+class ProviderNotFoundError(RuntimeError):
+    """Requested generation provider does not exist / is not installed."""
+
 
 logger = logging.getLogger(__name__)
 
@@ -129,9 +135,14 @@ class ProviderRegistry:
         except Exception:
             pass
 
-        logger.warning(f"Provider '{target_id}' not found, falling back to 'minimax_music3'")
-        fallback_id = "minimax_music3" if "minimax_music3" in self.providers else list(self.providers.keys())[0]
-        return self.providers[fallback_id]
+        # Refuse honestly. Silently substituting MiniMax meant a user who picked a
+        # model that is not installed got MiniMax audio while the Job still said
+        # `model_provider=<what they picked>` — an unflagged bait-and-switch.
+        available = ", ".join(sorted(self.providers)) or "(none registered)"
+        raise ProviderNotFoundError(
+            f"Generation provider '{target_id}' is not available. "
+            f"Install it in the Model Manager, or choose one of: {available}"
+        )
 
     def set_active_provider(self, provider_id: str) -> bool:
         if provider_id in self.providers:

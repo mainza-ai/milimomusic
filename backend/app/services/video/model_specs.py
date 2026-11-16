@@ -22,6 +22,10 @@ class VideoModelSpec:
     default_width: int
     default_height: int
     description: str
+    # False when no diffusion pipeline exists for this model yet: selecting it
+    # used to render a Ken Burns animatic while the picker said "diffusion".
+    implemented: bool = True
+    unimplemented_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return {
@@ -37,6 +41,8 @@ class VideoModelSpec:
             "default_width": self.default_width,
             "default_height": self.default_height,
             "description": self.description,
+            "implemented": self.implemented,
+            "unimplemented_reason": self.unimplemented_reason,
         }
 
     def compute_lattice_frames(self, target_duration: float) -> Tuple[int, float]:
@@ -137,6 +143,11 @@ VIDEO_MODEL_SPECS: Dict[str, VideoModelSpec] = {
         default_width=1280,
         default_height=720,
         description="5B 3D causal VAE model with emotive cinematic depth zooms",
+        implemented=False,
+        unimplemented_reason=(
+            "No CogVideoX pipeline is wired in this build — selecting it renders a "
+            "procedural animatic, not diffusion output."
+        ),
     ),
     "hunyuan": VideoModelSpec(
         model_id="hunyuan",
@@ -151,6 +162,11 @@ VIDEO_MODEL_SPECS: Dict[str, VideoModelSpec] = {
         default_width=1280,
         default_height=720,
         description="Tencent HunyuanVideo 13B DiT for extended visual takes",
+        implemented=False,
+        unimplemented_reason=(
+            "No HunyuanVideo pipeline is wired in this build — selecting it renders a "
+            "procedural animatic, not diffusion output."
+        ),
     ),
     "audioreactive": VideoModelSpec(
         model_id="audioreactive",
@@ -165,6 +181,7 @@ VIDEO_MODEL_SPECS: Dict[str, VideoModelSpec] = {
         default_width=1280,
         default_height=720,
         description="Continuous full-timeline audio reactive spectrum & waveform visualizer",
+        # This one really is procedural; the UI labels it as such.
     ),
 }
 

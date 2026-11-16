@@ -22,6 +22,7 @@ from app.transcription.karaoke import lyric_sync_engine
 from app.services.producer_service import extract_final_lyrics
 from app.services.voice_service import voice_service
 from app.core.hardware_lock import GlobalHardwareCoordinator
+from app.core import provenance as provenance_util
 
 logger = logging.getLogger(__name__)
 
@@ -225,6 +226,7 @@ class GenerateAndTranscribePipeline:
                     # the reason — surfaced to the UI so fallbacks are never silent.
                     job.used_fallback_synth = gen_result.used_fallback_synth
                     job.fallback_reason = gen_result.fallback_reason
+                    provenance_util.merge_stage(job, gen_result.provenance())
                     meta = gen_result.metadata or {}
                     if getattr(req, "is_extension", False) and meta.get("extension_mode"):
                         job.extension_mode = meta["extension_mode"]
@@ -284,7 +286,7 @@ class GenerateAndTranscribePipeline:
                 "total_steps": 4,
                 "phase": "stems",
                 "progress": 50,
-                "message": "Neural source separation (BS-Roformer 6-stem): vocals, drums, bass, guitar, piano, other..."
+                "message": "Separating the master into neural stems (drums, bass, other, vocals)..."
             })
 
             from app.transcription.karaoke import _resolve_audio_file
@@ -312,9 +314,23 @@ class GenerateAndTranscribePipeline:
                 )
                 if hasattr(separation_res, "stems"):
                     real_stems = dict(separation_res.stems)
-                    stems_source_id = getattr(separation_res, "source_id", "bs_roformer_6stem")
+                    stems_source_id = getattr(separation_res, "source_id", "unknown")
                 elif isinstance(separation_res, dict):
                     real_stems = dict(separation_res)
+                    stems_source_id = "unknown"
+                with Session(engine) as _s:
+                    _j = _s.get(Job, job_id)
+                    if _j:
+                        provenance_util.merge_stage(_j, {
+                            "stage": "separation",
+                            "source": "model" if real_stems else "placeholder",
+                            "degraded": not bool(real_stems),
+                            "reason": None if real_stems else "separator returned no stems",
+                            "engine": stems_source_id,
+                            "stems": sorted(real_stems.keys()),
+                        })
+                        _s.add(_j)
+                        _s.commit()
             except Exception as e:
                 logger.warning(
                     f"Neural separation failed for {job_id_str} ({e}); "
@@ -328,6 +344,15 @@ class GenerateAndTranscribePipeline:
                     "progress": 50,
                     "message": "Neural separation unavailable; using MuScriptor per-instrument parts.",
                 })
+                with Session(engine) as _s:
+                    _j = _s.get(Job, job_id)
+                    if _j:
+                        provenance_util.merge_stage(_j, {
+                            "stage": "separation", "source": "placeholder", "degraded": True,
+                            "reason": f"separator failed: {str(e)[:160]}", "stems": [],
+                        })
+                        _s.add(_j)
+                        _s.commit()
 
             # Release the separation model from memory
             try:
@@ -347,11 +372,54 @@ class GenerateAndTranscribePipeline:
                     "progress": 70,
                     "message": f"Applying Voice Identity '{req.voice_profile_id}' to vocal stem..."
                 })
-                final_vocal_path = await voice_service.convert_vocals(
-                    vocal_stem_path=real_stems.get("vocals", ""),
-                    profile_id=req.voice_profile_id,
-                    job_id=job_id_str
-                )
+                # Voice conversion is an enhancement, never a single point of
+                # failure: separation is already optional and may leave no vocal
+                # stem, which used to raise FileNotFoundError and fail a job whose
+                # generation had succeeded.
+                try:
+                    final_vocal_path = await voice_service.convert_vocals(
+                        vocal_stem_path=real_stems.get("vocals", ""),
+                        profile_id=req.voice_profile_id,
+                        job_id=job_id_str
+                    )
+                except Exception as _vc_err:
+                    final_vocal_path = ""
+                    logger.warning(
+                        f"Voice conversion skipped for {job_id_str}: {_vc_err}. "
+                        "Continuing with the original vocal."
+                    )
+                    with Session(engine) as _s:
+                        _j = _s.get(Job, job_id)
+                        if _j:
+                            provenance_util.merge_stage(_j, {
+                                "stage": "voice",
+                                "source": "placeholder",
+                                "degraded": True,
+                                "reason": str(_vc_err)[:200],
+                                "method": "failed",
+                                "profile_id": req.voice_profile_id,
+                            })
+                            _s.add(_j)
+                            _s.commit()
+
+            # If voice conversion occurred, remix final master track audio with converted vocals
+            final_master_path = gen_result.audio_path
+            if req.voice_profile_id and final_vocal_path:
+                with Session(engine) as _s:
+                    _j = _s.get(Job, job_id)
+                    if _j:
+                        provenance_util.merge_stage(_j, getattr(voice_service, "last_conversion", None))
+                        _s.add(_j)
+                        _s.commit()
+                try:
+                    final_master_path = voice_service.remix_master_with_vocal(
+                        original_audio_path=gen_result.audio_path,
+                        converted_vocal_path=final_vocal_path,
+                        stems_dict=real_stems,
+                        output_filename=f"{job_id_str}_remixed_master.wav"
+                    )
+                except Exception as e:
+                    logger.warning(f"Master track remix with converted vocal failed: {e}. Keeping gen_result.audio_path.")
 
             # Step 4: MuScriptor Automatic Music Transcription
             event_manager.publish("job_progress", {
@@ -363,8 +431,13 @@ class GenerateAndTranscribePipeline:
                 "message": "MuScriptor neural transcribing to MIDI, MusicXML & note events..."
             })
 
+            # Transcribe what will actually be delivered: step 3 may have replaced
+            # the vocal stem and the finalize step swaps the master to the remix, so
+            # transcribing `gen_result.audio_path` produced MIDI for audio the user
+            # never receives.
+            _transcription_target = final_master_path or gen_result.audio_path
             transcription_result = await muscriptor_provider.transcribe(
-                audio_file_path=gen_result.audio_path,
+                audio_file_path=_transcription_target,
                 job_id=job_id_str,
                 progress_callback=lambda s, t, m: event_manager.publish("job_progress", {
                     "job_id": job_id_str, "step": 4, "total_steps": 4, "phase": "transcription", "progress": 90, "message": m
@@ -413,19 +486,6 @@ class GenerateAndTranscribePipeline:
 
             _abort_if_terminal(engine, job_id, cancel_event, stage="finalize")
 
-            # If voice conversion occurred, remix final master track audio with converted vocals
-            final_master_path = gen_result.audio_path
-            if req.voice_profile_id and final_vocal_path:
-                try:
-                    final_master_path = voice_service.remix_master_with_vocal(
-                        original_audio_path=gen_result.audio_path,
-                        converted_vocal_path=final_vocal_path,
-                        stems_dict=real_stems,
-                        output_filename=f"{job_id_str}_remixed_master.wav"
-                    )
-                except Exception as e:
-                    logger.warning(f"Master track remix with converted vocal failed: {e}. Keeping gen_result.audio_path.")
-
             # Auto-generate album artwork if enabled and no manual cover is set
             should_auto_cover = getattr(req, "auto_generate_cover", True)
             final_cover_path = getattr(req, "cover_image_path", None)
@@ -473,10 +533,14 @@ class GenerateAndTranscribePipeline:
                     job.audio_path = final_master_path
                     if final_cover_path and not job.cover_image_path:
                         job.cover_image_path = final_cover_path
-                    job.midi_path = transcription_result.midi_path
-                    job.musicxml_path = transcription_result.musicxml_path
-                    job.notes_json = json.dumps(transcription_result.notes)
-                    job.beat_grid_json = json.dumps(transcription_result.beat_grid)
+                    # Never store fabricated notation: an unavailable transcription
+                    # leaves these empty and records why (plan 1.3).
+                    job.midi_path = transcription_result.midi_path or None
+                    job.musicxml_path = transcription_result.musicxml_path or None
+                    job.notes_json = json.dumps(transcription_result.notes) if transcription_result.available else None
+                    if transcription_result.beat_grid:
+                        job.beat_grid_json = json.dumps(transcription_result.beat_grid)
+                    provenance_util.merge_stage(job, transcription_result.provenance())
                     # REAL separated stems (BS-Roformer) + the transcription-driven
                     # DAW sources. MuScriptor remains the MIDI/notation engine;
                     # audio stems are the genuine separated audio.
@@ -538,6 +602,8 @@ class GenerateAndTranscribePipeline:
                     # Capture for the SSE payload below (object detaches after commit).
                     _tail_ok_out = job.tail_lyrics_ok if getattr(req, "is_extension", False) else None
                     _rv_out = job.replay_verified if getattr(req, "is_extension", False) else None
+                    _quality_out = provenance_util.git_quality(job)
+                    _provenance_out = provenance_util.load(job)
 
             # Emit final completion event (DB-persisted master path, not the
             # pre-voice-remix generator path, so consumers never get a stale URL)
@@ -550,6 +616,9 @@ class GenerateAndTranscribePipeline:
                 "extension_mode": (gen_result.metadata or {}).get("extension_mode") if getattr(req, "is_extension", False) else None,
                 "tail_lyrics_ok": _tail_ok_out,
                 "replay_verified": _rv_out,
+                # Provenance verdict: the UI badges anything that is not "neural".
+                "quality": _quality_out,
+                "provenance": _provenance_out,
             })
             event_manager.publish("job_progress", {
                 "job_id": job_id_str,
@@ -557,7 +626,13 @@ class GenerateAndTranscribePipeline:
                 "total_steps": 4,
                 "phase": "done",
                 "progress": 100,
-                "message": "Track generation, stems, and MuScriptor transcription complete!"
+                "message": (
+                    "Track ready (degraded: "
+                    + ", ".join(sorted(k for k, v in (_provenance_out or {}).items() if v.get("degraded")))
+                    + ")"
+                    if _quality_out and _quality_out != "neural"
+                    else "Track generation, stems, and MuScriptor transcription complete!"
+                )
             })
             logger.info(f"Pipeline completed successfully for job {job_id_str}")
 

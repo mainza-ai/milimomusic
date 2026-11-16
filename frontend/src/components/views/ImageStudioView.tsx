@@ -120,7 +120,13 @@ export const ImageStudioView: React.FC<ImageStudioViewProps> = ({
             });
 
             if (res.success && res.asset) {
-                toast(`Artwork generated successfully with ${res.engine || 'local studio engine'}!`, 'success');
+                const engine = res.engine || res.asset?.engine || 'local studio engine';
+                if (engine.includes('procedural') || engine === 'none') {
+                    // Never dress a placeholder gradient up as model output.
+                    toast('Placeholder artwork created — no diffusion weights for this model. Install one in the Model Manager.', 'info');
+                } else {
+                    toast(`Artwork generated with ${engine}!`, 'success');
+                }
                 // Prepend to gallery
                 setAssets(prev => [res.asset, ...prev]);
 

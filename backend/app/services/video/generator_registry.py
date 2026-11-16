@@ -68,9 +68,16 @@ class VideoGeneratorRegistry:
             generator = ProceduralVideoGenerator()
 
         else:
-            # For other declared models (cogvideox, hunyuan) without a dedicated local diffusers pipeline yet,
-            # use procedural generator with explicit model attribution rather than silently hijacking to Wan 14B.
-            logger.info(f"Model '{canonical_key}' selected; using procedural video generator with {canonical_key} parameters.")
+            spec = get_model_spec(canonical_key)
+            if not getattr(spec, "implemented", True):
+                # Refuse instead of substituting an animatic for a diffusion model.
+                # The old path logged a line and rendered Ken Burns output while the
+                # picker still said "CogVideoX"/"HunyuanVideo".
+                raise NotImplementedError(
+                    spec.unimplemented_reason
+                    or f"Model '{canonical_key}' has no local pipeline in this build."
+                )
+            logger.info(f"Model '{canonical_key}' selected; procedural generator (declared procedural).")
             generator = ProceduralVideoGenerator()
 
         cls._instances[instance_key] = generator

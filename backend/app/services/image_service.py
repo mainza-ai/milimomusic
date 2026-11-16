@@ -1048,6 +1048,7 @@ class ImageService:
             image_url=image_url,
             image_path=dest_path,
             model_id=cover_res.get("model_id"),
+            engine=cover_res.get("engine"),
             width=width,
             height=height,
             linked_job_id=str(linked_job_id) if linked_job_id else None,

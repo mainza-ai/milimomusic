@@ -899,7 +899,14 @@ class VideoOrchestrator:
                             if not success or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
                                 if cancel_event.is_set():
                                     raise asyncio.CancelledError("Video rendering cancelled by user.")
-                                # Fallback to smooth provider
+                                # Fallback to the smooth (jaw-warp) provider. This is
+                                # NOT a neural avatar: say so, the same way the video
+                                # diffusion path records its fallback.
+                                task_info.fallback_used = True
+                                task_info.fallback_reason = (
+                                    f"Neural lip sync unavailable for clip {idx + 1}; "
+                                    "used the procedural jaw-warp animator."
+                                )
                                 await self._fallback_lipsync.render_lip_sync(
                                     face_image_path=face_image,
                                     vocal_audio_path=vocal_audio_source,

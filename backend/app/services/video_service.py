@@ -380,15 +380,35 @@ class VideoService:
         exact_match = next((m for m in tree if m["id"] == model_id or m.get("repo_id") == model_id), None)
 
         # Prioritize installed model variants in the same family
+        def _loadable(m: Dict[str, Any]) -> bool:
+            """Prefer weights this build can actually drive.
+
+            A downloaded `Wan-AI/Wan2.1-T2V-14B` (no `-Diffusers` suffix) has no
+            `model_index.json`, so DiffusersWanGenerator cannot load it and the
+            render silently degrades. Prefer the Diffusers repo, then the catalog
+            entry over a user-registered duplicate.
+            """
+            repo = str(m.get("repo_id") or "").lower()
+            if "wan" in str(m.get("id", "")).lower() or "wan" in repo:
+                return repo.endswith("-diffusers")
+            return not str(m.get("id", "")).startswith("custom_")
+
+        def _best_installed(pred):
+            matches = [m for m in video_models if pred(m) and m.get("is_installed")]
+            if not matches:
+                return None
+            matches.sort(key=lambda m: (not _loadable(m), str(m.get("id", "")).startswith("custom_")))
+            return matches[0]
+
         installed_match = None
         if "h3" in target or "hailuo" in target or "minimax" in target:
-            installed_match = next((m for m in video_models if ("h3" in m["id"] or "minimax" in m["id"]) and m.get("is_installed")), None)
+            installed_match = _best_installed(lambda m: "h3" in m["id"] or "minimax" in m["id"])
         elif "14" in target or target == "wan_14b":
-            installed_match = next((m for m in video_models if "14" in m["id"] and m.get("is_installed")), None)
+            installed_match = _best_installed(lambda m: "14" in m["id"])
         elif "1.3" in target or target == "wan_1.3b":
-            installed_match = next((m for m in video_models if ("1_3" in m["id"] or "1.3" in m["id"]) and m.get("is_installed")), None)
+            installed_match = _best_installed(lambda m: "1_3" in m["id"] or "1.3" in m["id"])
         elif "wan" in target:
-            installed_match = next((m for m in video_models if "wan" in m["id"] and m.get("is_installed")), None)
+            installed_match = _best_installed(lambda m: "wan" in m["id"])
 
         if installed_match:
             match = installed_match

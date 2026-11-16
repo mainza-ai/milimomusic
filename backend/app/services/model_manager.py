@@ -43,6 +43,10 @@ class ModelVariant:
     repo_id: Optional[str] = None
     is_default: bool = False
     is_active: bool = False
+    # Why a model is present on disk but unusable (e.g. weights not in the
+    # layout the runtime needs). Surfaced in the Model Manager instead of a
+    # false "Ready" badge.
+    install_note: Optional[str] = None
 
 
 @dataclass
@@ -546,7 +550,7 @@ class ModelManager:
                 "license": "Apache-2.0",
                 "recommended_hardware": "Consumer GPU / Apple Silicon (16GB+ RAM)",
                 "category": "video",
-                "repo_id": "Wan-AI/Wan2.1-T2V-1.3B",
+                "repo_id": "Wan-AI/Wan2.1-T2V-1.3B-Diffusers",
                 "is_default": True
             },
             {
@@ -558,7 +562,7 @@ class ModelManager:
                 "license": "Apache-2.0",
                 "recommended_hardware": "NVIDIA GPU (24GB+ VRAM) / Dual GPU",
                 "category": "video",
-                "repo_id": "Wan-AI/Wan2.1-T2V-14B",
+                "repo_id": "Wan-AI/Wan2.1-T2V-14B-Diffusers",
                 "is_default": False
             },
             {
@@ -637,6 +641,25 @@ class ModelManager:
                         is_installed = True
                         local_path = resolved
 
+                # A downloaded directory is not a usable model. Wan / LTX run through
+                # diffusers, which requires a `model_index.json`; a raw repo download
+                # (e.g. Wan-AI/Wan2.1-T2V-14B without the -Diffusers suffix) has none,
+                # so the app reported "✅ Ready", the render silently degraded to a
+                # procedural animatic, and 28 GB sat on disk unused.
+                if (is_installed and local_path
+                        and item.get("category") == "video"
+                        and str(item.get("repo_id", "")).lower().startswith(("wan-ai/", "lightricks/"))
+                        and not os.path.isfile(os.path.join(local_path, "model_index.json"))):
+                    is_installed = False
+                    local_path = None
+                    item = dict(item)
+                    item["install_note"] = (
+                        "Downloaded weights are not in diffusers layout (no model_index.json). "
+                        "Install the -Diffusers repository instead."
+                    )
+                    raw_items.append((item, is_installed, local_path))
+                    continue
+
             raw_items.append((item, is_installed, local_path))
 
         # Determine definitive active ID per category from persisted config or installed fallback
@@ -692,7 +715,8 @@ class ModelManager:
                 category=item["category"],
                 repo_id=item.get("repo_id"),
                 is_default=item.get("is_default", False),
-                is_active=is_active
+                is_active=is_active,
+                install_note=item.get("install_note"),
             )
             results.append(asdict(variant))
 
@@ -974,6 +998,21 @@ class ModelManager:
 
         custom_models = [m for m in custom_models if m["id"] != target["id"]]
         self._save_custom_models(custom_models)
+
+        # Clear any active pointer left dangling by this delete. Otherwise
+        # active_models.json keeps naming a model that no longer exists, and the
+        # engine picker resolves to nothing on the next boot.
+        try:
+            active = self._load_active_models()
+            changed = False
+            for category, active_id in list(active.items()):
+                if active_id in (target["id"], target.get("repo_id")):
+                    active.pop(category, None)
+                    changed = True
+            if changed:
+                self._save_active_models(active)
+        except Exception as exc:
+            logger.warning(f"Could not clear dangling active-model pointer for {target['id']}: {exc}")
 
         # Remove local disk files if present
         paths_to_check = []

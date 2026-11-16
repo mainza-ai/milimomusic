@@ -5,6 +5,7 @@ import { api, API_BASE_URL } from '../api';
 import { TrackRowPlayer } from './TrackRowPlayer';
 import { Edit2, Check, Trash2, Search, Calendar, Heart, Sliders, Layers, Sparkles, Info, Clock } from 'lucide-react';
 import { isCancelledJobStatus, isFailedJobStatus } from '../utils/jobStatus';
+import { ProvenanceBadge } from './ui/ProvenanceBadge';
 
 interface HistoryFeedProps {
     history: Job[];
@@ -231,6 +232,7 @@ export const HistoryFeed: React.FC<HistoryFeedProps> = ({
 
                                                     <div className="flex-1 min-w-0">
                                                         <div className="flex items-center gap-2 flex-wrap">
+                                                            <ProvenanceBadge job={job} variant="compact" />
                                                             {editingId === job.id ? (
                                                                 <div className="flex items-center gap-1.5">
                                                                     <input

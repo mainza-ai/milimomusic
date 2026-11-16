@@ -283,10 +283,27 @@ def enrich_and_partition_notes(notes: list[dict], job_id: str, duration_sec: flo
                     cl["instrument"] = "Clarinet"
                     cl["program"] = 71
                     cl["channel"] = 0
+                    # Honesty (plan 1.11): this note was derived from a piano
+                    # note, not heard as a clarinet. Mark it so the DAW can label
+                    # it, and drop the piano original so one performance is not
+                    # counted twice.
+                    cl["derived_from"] = "piano"
+                    cl["synthetic_derivation"] = True
                     added_clar.append(cl)
         if added_clar:
+            derived_ids = {(n.get("start_time"), n.get("pitch")) for n in added_clar}
+            partitioned = [
+                n for n in partitioned
+                if not (
+                    "piano" in (n.get("instrument") or "").lower()
+                    and (n.get("start_time"), n.get("pitch")) in derived_ids
+                )
+            ]
             partitioned.extend(added_clar)
-            logger.info("enrich_and_partition_notes: extracted %d Clarinet woodwind melody notes across the song", len(added_clar))
+            logger.info(
+                "enrich_and_partition_notes: derived %d clarinet notes FROM piano "
+                "(synthetic_derivation=True, piano original removed)", len(added_clar)
+            )
 
     # Enrich Clean Electric Guitar if guitar notes are sparse (< 20 notes)
     guitar_notes = [n for n in partitioned if "guitar" in (n.get("instrument") or "").lower()]
@@ -306,10 +323,23 @@ def enrich_and_partition_notes(notes: list[dict], job_id: str, duration_sec: flo
                     g["instrument"] = "Clean Electric Guitar"
                     g["program"] = 27
                     g["channel"] = 0
+                    g["derived_from"] = "piano"
+                    g["synthetic_derivation"] = True
                     added_guitar.append(g)
         if added_guitar:
+            derived_ids = {(n.get("start_time"), n.get("pitch")) for n in added_guitar}
+            partitioned = [
+                n for n in partitioned
+                if not (
+                    "piano" in (n.get("instrument") or "").lower()
+                    and (n.get("start_time"), n.get("pitch")) in derived_ids
+                )
+            ]
             partitioned.extend(added_guitar)
-            logger.info("enrich_and_partition_notes: extracted %d guitar chord comping notes across the song", len(added_guitar))
+            logger.info(
+                "enrich_and_partition_notes: derived %d guitar notes FROM piano "
+                "(synthetic_derivation=True, piano original removed)", len(added_guitar)
+            )
 
     # Enrich Voice notes if vocal notes are sparse and vocal stem exists
     vocal_notes = [n for n in partitioned if "voice" in (n.get("instrument") or "").lower() or "vocal" in (n.get("instrument") or "").lower()]

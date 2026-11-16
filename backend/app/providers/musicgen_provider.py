@@ -48,9 +48,9 @@ class MusicGenProvider(HuggingFaceAudioProvider):
             supports_structured_caption=False,
             supports_section_tags=False,
             supports_lora=False,
-            supports_voice_conversion=True,
-            supports_track_extension=True,
-            supports_segment_repair=True,
+            supports_voice_conversion=False,
+            supports_track_extension=False,
+            supports_segment_repair=False,
             recommended_hardware=HardwareTier.ENTRY_CPU if "small" in self.model_path else HardwareTier.MID_SINGLE_GPU,
             license_class="MIT License",
             default_sample_rate=44100,
@@ -147,7 +147,9 @@ class MusicGenProvider(HuggingFaceAudioProvider):
         out_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{job_id}.wav"
         output_path = str(out_dir / filename)
-        duration_sec = min(120.0, max(1.0, duration_ms / 1000.0))
+        requested_sec = max(1.0, duration_ms / 1000.0)
+        duration_sec = min(120.0, requested_sec)
+        truncated = requested_sec > duration_sec + 0.05
 
         if cancel_event and cancel_event.is_set():
             raise asyncio.CancelledError("Generation cancelled before start")
@@ -260,11 +262,18 @@ class MusicGenProvider(HuggingFaceAudioProvider):
             duration_sec=duration_sec,
             sample_rate=sr,
             structured_caption=structured_caption,
+            truncated=truncated,
+            requested_duration_sec=requested_sec,
+            truncation_reason=(
+                f"MusicGen generates at most {duration_sec:.0f}s per call"
+                if truncated else None
+            ),
             metadata={
                 "provider_id": self.get_capabilities().provider_id,
                 "model_name": self.model_path,
                 "effective_prompt": prompt,
                 "effective_tags": tags or "",
+                "truncated": truncated,
             },
         )
 
@@ -279,15 +288,10 @@ class MusicGenProvider(HuggingFaceAudioProvider):
         cancel_event: Optional[Any] = None,
         **kwargs
     ) -> GeneratedAudioResult:
-        kwargs["ref_audio_path"] = parent_audio_path
-        return await self.generate(
-            job_id=f"{job_id}_ext",
-            prompt=prompt or "extension",
-            lyrics=lyrics,
-            duration_ms=extend_ms,
-            progress_callback=progress_callback,
-            cancel_event=cancel_event,
-            **kwargs
+        """Refuse: MusicGen regenerates from a reference, it does not continue audio."""
+        raise NotImplementedError(
+            "MusicGen cannot continue existing audio; use a provider with "
+            "track-extension support (MiniMax Music 3)."
         )
 
     async def repair_segment(
@@ -300,13 +304,8 @@ class MusicGenProvider(HuggingFaceAudioProvider):
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         **kwargs
     ) -> GeneratedAudioResult:
-        duration_ms = int((end_time_sec - start_time_sec) * 1000)
-        return await self.generate(
-            job_id=f"{job_id}_repair",
-            prompt=prompt or "repair",
-            lyrics=None,
-            duration_ms=duration_ms,
-            progress_callback=progress_callback,
-            **kwargs
+        """Refuse: generating an unrelated clip is not in-painting."""
+        raise NotImplementedError(
+            "MusicGen does not implement segment repair; use the inpainting service."
         )
 

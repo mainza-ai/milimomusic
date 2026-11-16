@@ -1,5 +1,5 @@
 import pytest
-from app.providers.registry import ProviderRegistry
+from app.providers.registry import ProviderNotFoundError, ProviderRegistry
 from app.providers.minimax_provider import MiniMaxMusic3Provider
 from app.providers.heartmula_provider import HeartMuLaProvider
 
@@ -35,9 +35,9 @@ def test_provider_registry_defaults():
     assert isinstance(heartmula_alias, HeartMuLaProvider)
 
 
-def test_provider_registry_fallback():
+def test_provider_registry_unknown_engine_raises():
+    """Silently substituting MiniMax made a missing model look installed."""
     registry = ProviderRegistry()
-    # Non-existent provider should cleanly fall back without throwing
-    fallback = registry.get_provider("non_existent_engine_xyz")
-    assert fallback is not None
-    assert fallback.get_capabilities().provider_id in ["minimax_music3", "heartmula"]
+    with pytest.raises(ProviderNotFoundError) as exc:
+        registry.get_provider("non_existent_engine_xyz")
+    assert "not available" in str(exc.value)

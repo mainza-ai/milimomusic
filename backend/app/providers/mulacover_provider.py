@@ -41,7 +41,7 @@ class MuLaCoverProvider(GenerationProvider):
             supports_structured_caption=True,
             supports_section_tags=True,
             supports_lora=False,
-            supports_voice_conversion=True,
+            supports_voice_conversion=False,
             # See extend(): a cover is not a continuation.
             supports_track_extension=False,
             supports_segment_repair=False,

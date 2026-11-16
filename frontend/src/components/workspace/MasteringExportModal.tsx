@@ -191,7 +191,7 @@ export const MasteringExportModal: React.FC<MasteringExportModalProps> = ({
                                                     ? 'bg-teal-500 text-slate-950 font-black'
                                                     : 'text-slate-400 hover:text-slate-200'
                                             }`}
-                                         title="Choose the export container">
+                                         title="Export container (server-side transcode)">
                                             {fmt}
                                         </button>
                                     ))}
@@ -207,7 +207,7 @@ export const MasteringExportModal: React.FC<MasteringExportModalProps> = ({
                                                     ? 'bg-cyan-500 text-slate-950 font-black'
                                                     : 'text-slate-400 hover:text-slate-200'
                                             }`}
-                                         title="Choose the export sample rate">
+                                         title="Export sample rate (server-side transcode)">
                                             {sr === '44100' ? '44.1k' : sr === '48000' ? '48k' : '96k'}
                                         </button>
                                     ))}
@@ -230,7 +230,13 @@ export const MasteringExportModal: React.FC<MasteringExportModalProps> = ({
                                     </div>
                                 </div>
                                 <button
-                                    onClick={() => handleDownloadAsset('master', masterAudioUrl, `${job.title || 'master'}.${audioFormat}`)}
+                                    onClick={() => handleDownloadAsset(
+                                        'master',
+                                        // Real transcode: the server encodes the requested
+                                        // container/sample rate instead of renaming the WAV.
+                                        `${API_BASE_URL}/jobs/${job.id}/export?format=${audioFormat}&sample_rate=${sampleRate}`,
+                                        `${job.title || 'master'}_${Number(sampleRate) / 1000}k.${audioFormat}`
+                                    )}
                                     disabled={!masterAudioUrl || isDownloading === 'master'}
                                     className="p-2 rounded-xl bg-black/5 dark:bg-white/10 hover:bg-teal-500 hover:text-slate-950 transition-colors shrink-0 disabled:opacity-50"
                                     title="Download Master Stereo Mix"

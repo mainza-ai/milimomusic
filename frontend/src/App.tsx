@@ -911,7 +911,8 @@ function App() {
     step: number;
     total_steps: number;
     phase: string;
-    progress: number;
+    /** null = the stage reports no percentage; render an indeterminate bar. */
+    progress: number | null;
     message: string;
   } | null>(null);
 
@@ -942,7 +943,9 @@ function App() {
               step: data.step || 1,
               total_steps: data.total_steps || 4,
               phase: data.phase || 'generation',
-              progress: data.progress || 25,
+              // `?? null`, not `|| 25`: a stage that reports no percentage must
+              // render an indeterminate bar, not a fabricated 25%.
+              progress: typeof data.progress === 'number' ? data.progress : null,
               message: data.message || 'Synthesizing master...'
             });
           }
@@ -1723,7 +1726,7 @@ function App() {
                       Synthesizing Master & Multi-Stem Transcription
                     </h4>
                     <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-teal-500/10 text-teal-700 dark:text-teal-300 font-bold border border-teal-500/20">
-                      Step {generationProgress?.step || 1}/4
+                      Step {generationProgress?.step || 1}/{generationProgress?.total_steps || 4}
                     </span>
                   </div>
                   <p className="text-[11px] text-teal-600 dark:text-teal-400 font-medium truncate mt-0.5">
@@ -1744,11 +1747,23 @@ function App() {
             </div>
 
             {/* Glowing Studio Progress Bar */}
-            <div className="w-full h-2 bg-black/[0.04] dark:bg-white/5 rounded-full overflow-hidden relative">
-              <div
-                className="h-full rounded-full bg-gradient-to-r from-teal-500 via-cyan-400 to-sky-500 transition-all duration-300 shadow-[0_0_12px_rgba(20,184,166,0.6)]"
-                style={{ width: `${Math.max(8, generationProgress?.progress || 15)}%` }}
-              />
+            <div
+              className="w-full h-2 bg-black/[0.04] dark:bg-white/5 rounded-full overflow-hidden relative"
+              role="progressbar"
+              aria-valuemin={0}
+              aria-valuemax={100}
+              aria-valuenow={typeof generationProgress?.progress === 'number' ? generationProgress.progress : undefined}
+              aria-label="Generation progress"
+            >
+              {typeof generationProgress?.progress === 'number' ? (
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-teal-500 via-cyan-400 to-sky-500 transition-all duration-300 shadow-[0_0_12px_rgba(20,184,166,0.6)]"
+                  style={{ width: `${Math.max(2, Math.min(100, generationProgress.progress))}%` }}
+                />
+              ) : (
+                // Honest indeterminate stripe: this stage reports no percentage.
+                <div className="h-full w-1/3 rounded-full bg-gradient-to-r from-teal-500 via-cyan-400 to-sky-500 animate-[indeterminate_1.2s_ease-in-out_infinite_alternate]" />
+              )}
             </div>
           </div>
         )}

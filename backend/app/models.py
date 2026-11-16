@@ -93,6 +93,15 @@ class Job(SQLModel, table=True):
     # or the procedural fallback synth (surfaced to the UI, never silent).
     used_fallback_synth: bool = Field(default=False)
     fallback_reason: Optional[str] = Field(default=None)
+    # Per-stage provenance for every artifact produced for this job (plan 1.1/1.2):
+    # {"generation": {...}, "separation": {...}, "transcription": {...},
+    #  "voice": {...}, "image": {...}}. Absent stage = not attempted.
+    provenance_json: Optional[str] = Field(default=None)
+    # Derived one-word verdict the UI can filter on:
+    #   neural    — every produced artifact came from real model inference
+    #   degraded  — at least one stage fell back to DSP/heuristic output
+    #   placeholder — at least one stage produced synthetic stand-in content
+    quality: Optional[str] = Field(default=None)
 
     # Project & Session Association
     project_id: Optional[str] = Field(default=None, index=True)
@@ -722,6 +731,10 @@ class VisualAsset(SQLModel, table=True):
     image_url: str
     image_path: str
     model_id: Optional[str] = None
+    # What actually rendered this image ("mflux_flux2_mlx",
+    # "diffusers_neural_diffusion", "studio_procedural_raster", "user_upload").
+    # Without it a Pillow gradient was indistinguishable from FLUX output.
+    engine: Optional[str] = None
     seed: Optional[int] = None
     width: int = Field(default=1024)
     height: int = Field(default=1024)

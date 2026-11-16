@@ -71,6 +71,26 @@ class TranscriptionResult:
     notes_json: str
     bpm: float
     key: str
+    # Provenance (plan 1.1): what produced this result and whether it is real.
+    # "muscriptor" = genuine neural transcription.
+    # "unavailable" = transcription failed; nothing was invented.
+    source: str = "muscriptor"
+    degraded: bool = False
+    reason: Optional[str] = None
+
+    @property
+    def available(self) -> bool:
+        return self.source != "unavailable" and bool(self.notes)
+
+    def provenance(self) -> dict:
+        return {
+            "stage": "transcription",
+            "source": self.source,
+            "degraded": self.degraded or not self.available,
+            "reason": self.reason,
+            "notes": len(self.notes),
+            "bpm": self.bpm,
+        }
 
 
 class MuScriptorProvider:
@@ -271,12 +291,16 @@ class MuScriptorProvider:
                 beat_grid=bg_dict,
                 notes_json=json.dumps(notes),
                 bpm=detected_bpm,
-                key="C Major"
+                key="C Major",
+                source="muscriptor",
+                degraded=False,
             )
 
         except Exception as e:
             logger.error(f"MuScriptor execution error: {e}", exc_info=True)
-            return await self._fallback_transcription(audio_path or target_path, job_id, progress_callback)
+            return await self._fallback_transcription(
+                audio_path or target_path, job_id, progress_callback, reason=str(e)[:200]
+            )
         finally:
             try:
                 from app.core.hardware_lock import GlobalHardwareCoordinator
@@ -377,99 +401,35 @@ class MuScriptorProvider:
         self,
         audio_path: str,
         job_id: str,
-        progress_callback: Optional[Callable[[int, int, str], None]] = None
+        progress_callback: Optional[Callable[[int, int, str], None]] = None,
+        reason: str = "MuScriptor transcription failed",
     ) -> TranscriptionResult:
-        from app.core.paths import get_generated_audio_dir, get_repo_root
+        """Report that transcription is unavailable.
 
-        gen_dir = get_generated_audio_dir()
-        gen_dir.mkdir(parents=True, exist_ok=True)
-        midi_file = str(gen_dir / f"{job_id}.mid")
-        musicxml_file = str(gen_dir / f"{job_id}.musicxml")
-
-        notes = []
-        progression = [
-            ([60, 64, 67], 0.0, 2.0, "Piano", 0),
-            ([57, 60, 64], 2.0, 4.0, "Piano", 0),
-            ([53, 57, 60], 4.0, 6.0, "Piano", 0),
-            ([55, 59, 62], 6.0, 8.0, "Piano", 0),
-            ([36, 48], 0.0, 2.0, "Electric Bass", 33),
-            ([33, 45], 2.0, 4.0, "Electric Bass", 33),
-            ([29, 41], 4.0, 6.0, "Electric Bass", 33),
-            ([31, 43], 6.0, 8.0, "Electric Bass", 33),
-            ([64, 67, 72], 0.0, 2.0, "Electric Guitar", 27),
-            ([60, 64, 69], 2.0, 4.0, "Electric Guitar", 27),
-            ([57, 60, 65], 4.0, 6.0, "Electric Guitar", 27),
-            ([59, 62, 67], 6.0, 8.0, "Electric Guitar", 27),
-        ]
-
-        PITCH_NAMES = ["C", "C#", "D", "D#", "E", "F", "F#", "G", "G#", "A", "A#", "B"]
-        for pitches, start, end, inst, prog in progression:
-            for p in pitches:
-                notes.append({
-                    "pitch": p,
-                    "start_time": start,
-                    "end_time": end,
-                    "duration": end - start,
-                    "velocity": 90,
-                    "instrument": inst,
-                    "program": prog,
-                    "channel": 0,
-                    "note_name": f"{PITCH_NAMES[p % 12]}{(p // 12) - 1}"
-                })
-
-        xml_content = self._generate_musicxml(notes, bpm=124.0, title=f"Session {job_id[:8]}")
-        with open(musicxml_file, "w", encoding="utf-8") as f:
-            f.write(xml_content)
-
-        try:
-            import mido
-            mid = mido.MidiFile()
-            track = mido.MidiTrack()
-            mid.tracks.append(track)
-            tempo = round(60_000_000 / max(30.0, 124.0))
-            track.append(mido.MetaMessage('set_tempo', tempo=tempo, time=0))
-            track.append(mido.MetaMessage('track_name', name='Milimo Master Track', time=0))
-            current_tick = 0
-            for n in sorted(notes, key=lambda x: x.get('start_time', 0.0)):
-                p = int(n.get('pitch', 60))
-                vel = int(n.get('velocity', 85))
-                start_tick = int(float(n.get('start_time', 0.0)) * 480 * (124.0 / 60))
-                dur_tick = int(float(n.get('duration', 0.5)) * 480 * (124.0 / 60))
-                delta_on = max(0, start_tick - current_tick)
-                track.append(mido.Message('note_on', note=p, velocity=vel, time=delta_on))
-                current_tick = start_tick
-                track.append(mido.Message('note_off', note=p, velocity=0, time=dur_tick))
-                current_tick += dur_tick
-            mid.save(midi_file)
-        except Exception as e:
-            logger.warning(f"Fallback midi write failed: {e}")
-
-        # Mirror across canonical and relative directories
-        mirror_dirs = [
-            get_repo_root() / "backend" / "generated_audio",
-            get_repo_root() / "generated_audio",
-            Path("generated_audio"),
-        ]
-        for mdir in mirror_dirs:
-            try:
-                mdir.resolve().mkdir(parents=True, exist_ok=True)
-                tgt_mid = mdir / f"{job_id}.mid"
-                tgt_xml = mdir / f"{job_id}.musicxml"
-                if os.path.exists(midi_file) and (not tgt_mid.resolve().exists() or tgt_mid.resolve() != Path(midi_file).resolve()):
-                    shutil.copy2(midi_file, str(tgt_mid))
-                if os.path.exists(musicxml_file) and (not tgt_xml.resolve().exists() or tgt_xml.resolve() != Path(musicxml_file).resolve()):
-                    shutil.copy2(musicxml_file, str(tgt_xml))
-            except Exception:
-                pass
+        This method used to synthesise a hardcoded I–vi–IV–V progression at 124 BPM,
+        write it to MIDI + MusicXML, and return it as if it were transcribed audio —
+        so the piano roll and notation view rendered 8 seconds of C-major triads for
+        any track whose transcription failed. Nothing is invented now: the caller gets
+        an explicitly unavailable result and the job records the reason.
+        """
+        logger.warning(
+            "MuScriptor transcription unavailable for job %s: %s (no MIDI/MusicXML written)",
+            job_id, reason,
+        )
+        if progress_callback:
+            progress_callback(4, 4, f"MuScriptor: transcription unavailable ({reason})")
 
         return TranscriptionResult(
-            midi_path=f"/audio/{job_id}.mid",
-            musicxml_path=f"/audio/{job_id}.musicxml",
-            notes=notes,
-            beat_grid={"bpm": 124.0, "beats_per_bar": 4, "first_downbeat": 0.0},
-            notes_json=json.dumps(notes),
-            bpm=124.0,
-            key="C Major"
+            midi_path="",
+            musicxml_path="",
+            notes=[],
+            beat_grid={},
+            notes_json="[]",
+            bpm=0.0,
+            key="",
+            source="unavailable",
+            degraded=True,
+            reason=reason,
         )
 
     def _generate_musicxml(self, notes: list[dict], bpm: float = 120.0, title: str = "Milimo Score") -> str:

@@ -216,7 +216,9 @@ def create_db_and_tables():
             "model_prompt": "TEXT",
             "model_lyrics": "TEXT",
             "video_path": "VARCHAR",
-            "video_config_json": "TEXT"
+            "video_config_json": "TEXT",
+            "provenance_json": "TEXT",
+            "quality": "VARCHAR"
         }
         for col, col_type in new_columns.items():
             if col not in existing_cols:
@@ -289,6 +291,14 @@ def create_db_and_tables():
                     session.exec(text(f"ALTER TABLE artistprofile ADD COLUMN {col} {col_type};"))
                 except Exception as e:
                     print(f"Migration notice for artistprofile.{col}: {e}")
+
+        # visualasset.engine — records what actually rendered each image.
+        existing_va_cols = {row[1] for row in session.exec(text("PRAGMA table_info(visualasset);")).all()}
+        if existing_va_cols and "engine" not in existing_va_cols:
+            try:
+                session.exec(text("ALTER TABLE visualasset ADD COLUMN engine VARCHAR;"))
+            except Exception as e:
+                print(f"Migration notice for visualasset.engine: {e}")
 
         session.commit()
 
@@ -4235,6 +4245,7 @@ async def upload_job_cover(job_id: str, file: UploadFile = File(...)):
                 asset_type="album_cover",
                 style="user_upload",
                 aspect_ratio="1:1",
+                engine="user_upload",
                 linked_job_id=str(job.id),
                 linked_project_id=str(job.project_id) if job.project_id else None,
             )
@@ -4454,6 +4465,71 @@ def commit_vocal_to_track(job_id: str, body: dict = Body(...)):
             "lyrics": job.lyrics,
         })
         return job
+
+
+@app.get("/jobs/{job_id}/export")
+def export_track_asset(
+    job_id: str,
+    format: str = "wav",
+    sample_rate: int = 48000,
+    lufs: Optional[float] = None,
+):
+    """Transcode the delivered master to the requested container / sample rate.
+
+    The export modal used to append a new extension to the existing WAV, so
+    choosing "MP3 at 96 kHz" downloaded a WAV named `.mp3`. This performs a real
+    FFmpeg transcode (cached per job+format+rate) so the bytes match the label.
+    """
+    import subprocess
+
+    fmt = (format or "wav").lower().strip().lstrip(".")
+    if fmt not in {"wav", "flac", "mp3"}:
+        raise HTTPException(status_code=400, detail={"error": {
+            "code": "unsupported_format", "message": "format must be one of wav, flac, mp3"}})
+    if sample_rate not in {44100, 48000, 96000}:
+        raise HTTPException(status_code=400, detail={"error": {
+            "code": "unsupported_sample_rate", "message": "sample_rate must be 44100, 48000 or 96000"}})
+
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+        source_ref = job.mastered_path or job.audio_path
+        if not source_ref:
+            raise HTTPException(status_code=404, detail="Track has no audio to export")
+        job_title = job.title or "track"
+
+    resolved = resolve_audio_file(source_ref)
+    if not resolved or not os.path.isfile(resolved):
+        raise HTTPException(status_code=404, detail="Audio file not found on disk")
+
+    out_dir = get_generated_audio_dir() / "exports"
+    out_dir.mkdir(parents=True, exist_ok=True)
+    out_name = f"{os.path.splitext(os.path.basename(resolved))[0]}_{sample_rate}.{fmt}"
+    out_path = out_dir / out_name
+
+    if not out_path.exists() or out_path.stat().st_mtime < os.path.getmtime(resolved):
+        codec = {"wav": ["-c:a", "pcm_s24le"], "flac": ["-c:a", "flac"],
+                 "mp3": ["-c:a", "libmp3lame", "-q:a", "2"]}[fmt]
+        cmd = ["ffmpeg", "-y", "-loglevel", "error", "-i", resolved, "-ar", str(sample_rate), *codec, str(out_path)]
+        try:
+            subprocess.run(cmd, check=True, capture_output=True, timeout=600)
+        except FileNotFoundError:
+            raise HTTPException(status_code=503, detail={"error": {
+                "code": "ffmpeg_missing", "message": "FFmpeg is required to transcode exports."}})
+        except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or b"").decode("utf-8", "ignore")[:300]
+            raise HTTPException(status_code=500, detail={"error": {
+                "code": "transcode_failed", "message": detail or "FFmpeg failed"}})
+
+    media_type = {"wav": "audio/wav", "flac": "audio/flac", "mp3": "audio/mpeg"}[fmt]
+    safe_title = re.sub(r"[^a-zA-Z0-9_\- ]", "", job_title).strip().replace(" ", "_") or "track"
+    return FileResponse(
+        str(out_path),
+        media_type=media_type,
+        filename=f"{safe_title}_{sample_rate // 1000}k.{fmt}",
+        headers={"Cache-Control": "private, max-age=3600"},
+    )
 
 
 @app.get("/download_track/{job_id}")

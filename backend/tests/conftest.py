@@ -36,3 +36,46 @@ def setup_test_database():
                 os.remove(f)
             except Exception:
                 pass
+
+
+@pytest.fixture(autouse=True)
+def restore_model_registry_state():
+    """Snapshot/restore the on-disk model registry around every test.
+
+    Several tests activate, register and delete models through the real endpoints,
+    which writes `data/models/active_models.json` and `custom_models.json`. Without
+    this, one run leaves e.g. `video: custom_wan_ai_...` behind and the next run's
+    engine-resolution assertions fail — tests must not mutate developer state.
+    """
+    from app.services import model_manager as mm
+
+    paths = []
+    for resolver in ("_get_custom_models_path", "_get_active_models_path"):
+        fn = getattr(mm, resolver, None)
+        if not callable(fn):
+            continue
+        try:
+            paths.append(fn())
+        except Exception:
+            pass
+
+    snapshots = {}
+    for p in paths:
+        try:
+            with open(p, "rb") as fh:
+                snapshots[p] = fh.read()
+        except OSError:
+            snapshots[p] = None
+
+    yield
+
+    for p, blob in snapshots.items():
+        try:
+            if blob is None:
+                if os.path.exists(p):
+                    os.remove(p)
+            else:
+                with open(p, "wb") as fh:
+                    fh.write(blob)
+        except OSError:
+            pass

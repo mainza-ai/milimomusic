@@ -117,6 +117,10 @@ export interface Job {
     seed?: number;
     is_favorite?: boolean;
 
+    // Provenance (plan 1.2): what actually produced each artifact.
+    quality?: 'neural' | 'degraded' | 'placeholder' | string;
+    provenance_json?: string;
+
     // Visual Artwork Assets
     cover_image_path?: string;
     image_prompt?: string;
@@ -1812,6 +1816,8 @@ export interface VisualAsset {
     image_url: string;
     image_path: string;
     model_id?: string;
+    /** What actually rendered this image; `studio_procedural_raster` = placeholder. */
+    engine?: string;
     seed?: number;
     width: number;
     height: number;

@@ -43,9 +43,9 @@ class StableAudioProvider(GenerationProvider):
             supports_structured_caption=False,
             supports_section_tags=False,
             supports_lora=False,
-            supports_voice_conversion=True,
-            supports_track_extension=True,
-            supports_segment_repair=True,
+            supports_voice_conversion=False,
+            supports_track_extension=False,
+            supports_segment_repair=False,
             recommended_hardware=HardwareTier.MID_SINGLE_GPU,
             license_class="Stability AI Community License",
             default_sample_rate=44100,
@@ -146,7 +146,12 @@ class StableAudioProvider(GenerationProvider):
         out_dir.mkdir(parents=True, exist_ok=True)
         filename = f"{job_id}.wav"
         output_path = str(out_dir / filename)
-        duration_sec = min(47.0, max(1.0, duration_ms / 1000.0))
+        requested_sec = max(1.0, duration_ms / 1000.0)
+        # The model's window is ~47 s. Report the truncation instead of quietly
+        # returning a shorter track and letting the pipeline overwrite the Job's
+        # duration as if the request had been honoured.
+        duration_sec = min(47.0, requested_sec)
+        truncated = requested_sec > duration_sec + 0.05
 
         if cancel_event and cancel_event.is_set():
             raise asyncio.CancelledError("Generation cancelled before start")
@@ -222,11 +227,18 @@ class StableAudioProvider(GenerationProvider):
             duration_sec=duration_sec,
             sample_rate=sr,
             structured_caption=structured_caption,
+            truncated=truncated,
+            requested_duration_sec=requested_sec,
+            truncation_reason=(
+                f"Stable Audio Open generates at most {duration_sec:.0f}s per call"
+                if truncated else None
+            ),
             metadata={
                 "provider_id": "stable_audio_open_1_0",
                 "model_name": "Stable Audio Open 1.0",
                 "effective_prompt": prompt,
                 "effective_tags": tags or "",
+                "truncated": truncated,
             },
         )
 
@@ -241,14 +253,10 @@ class StableAudioProvider(GenerationProvider):
         cancel_event: Optional[Any] = None,
         **kwargs
     ) -> GeneratedAudioResult:
-        return await self.generate(
-            job_id=f"{job_id}_ext",
-            prompt=prompt or "extension",
-            lyrics=lyrics,
-            duration_ms=extend_ms,
-            progress_callback=progress_callback,
-            cancel_event=cancel_event,
-            **kwargs
+        """Refuse: this provider generates from a prompt, it does not continue audio."""
+        raise NotImplementedError(
+            "Stable Audio Open cannot continue existing audio; use a provider with "
+            "track-extension support (MiniMax Music 3)."
         )
 
     async def repair_segment(
@@ -261,13 +269,12 @@ class StableAudioProvider(GenerationProvider):
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         **kwargs
     ) -> GeneratedAudioResult:
-        duration_ms = int((end_time_sec - start_time_sec) * 1000)
-        return await self.generate(
-            job_id=f"{job_id}_repair",
-            prompt=prompt or "audio segment",
-            lyrics=None,
-            duration_ms=duration_ms,
-            progress_callback=progress_callback,
-            **kwargs
+        """Refuse: generating an unrelated clip is not in-painting.
+
+        Segment repair is owned by ``inpainting_service``, which splices a
+        regenerated window back into the original audio on the beat grid.
+        """
+        raise NotImplementedError(
+            "Stable Audio Open does not implement segment repair; use the inpainting service."
         )
 

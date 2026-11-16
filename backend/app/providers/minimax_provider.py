@@ -1194,10 +1194,13 @@ class MiniMaxMusic3Provider(GenerationProvider):
             max_duration_sec=300,
             supports_structured_caption=True,
             supports_section_tags=True,
-            supports_lora=True,
-            supports_voice_conversion=True,
+            # Honest flags (plan 1.6). This provider loads no LoRA adapters, does
+            # not convert voices (the pipeline owns that), and cannot in-paint —
+            # `repair_segment` returned its input untouched.
+            supports_lora=False,
+            supports_voice_conversion=False,
             supports_track_extension=True,
-            supports_segment_repair=True,
+            supports_segment_repair=False,
             recommended_hardware=HardwareTier.MID_SINGLE_GPU,
             license_class="MiniMax Open Weights",
             default_sample_rate=44100
@@ -2091,12 +2094,17 @@ class MiniMaxMusic3Provider(GenerationProvider):
         progress_callback: Optional[Callable[[int, int, str], None]] = None,
         **kwargs
     ) -> GeneratedAudioResult:
-        return GeneratedAudioResult(
-            audio_path=audio_path,
-            duration_sec=end_time_sec - start_time_sec,
-            metadata={"repaired_range": [start_time_sec, end_time_sec]}
+        """Refuse: segment repair is owned by ``inpainting_service``.
+
+        The old implementation returned ``audio_path`` unchanged while claiming
+        the range had been repaired — a silent no-op presented as a feature.
+        """
+        raise NotImplementedError(
+            "MiniMax Music 3 does not implement segment repair directly; "
+            "use the inpainting service."
         )
 
 
-MiniMaxProvider = MiniMaxMusic3Provider
 
+# Backwards-compatible alias (tests and older imports use the short name).
+MiniMaxProvider = MiniMaxMusic3Provider

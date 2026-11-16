@@ -374,6 +374,17 @@ class VoiceService:
 
         output_filename = f"{effective_job_id}_voice_{effective_profile_id}.wav"
         output_path = os.path.join(CONVERTED_DIR, output_filename)
+        # Provenance (plan 1.5): how the vocal was actually produced. The caller
+        # reads this to badge the take honestly — an EQ shelf is not a timbre
+        # transplant, and a copied file is not a conversion at all.
+        self.last_conversion = {
+            "stage": "voice",
+            "source": "dsp",
+            "degraded": True,
+            "reason": "conversion not attempted",
+            "method": "none",
+            "profile_id": effective_profile_id,
+        }
 
         resolved_vocal = self.resolve_audio_file(vocal_stem_path)
         if not resolved_vocal:
@@ -405,9 +416,14 @@ class VoiceService:
                 f0_method=effective_f0,
             )
             converted_successfully = True
+            self.last_conversion = {
+                "stage": "voice", "source": "model", "degraded": False,
+                "reason": None, "method": "svc", "profile_id": effective_profile_id,
+            }
             logger.info(f"True Neural SVC conversion completed for profile {effective_profile_id} (F0: {effective_f0})")
         except Exception as e:
             logger.warning(f"Neural SVC conversion failed: {e}. Falling back to acoustic timbre shaping.")
+            self.last_conversion["reason"] = f"neural SVC unavailable: {str(e)[:160]}"
 
         # 2. Advanced Acoustic & Formant Timbre Shaping Engine
         if not converted_successfully:
@@ -467,10 +483,19 @@ class VoiceService:
                     waveform = waveform / max_val * 0.92
 
                 _save_audio_tensor(output_path, waveform, sr)
+                self.last_conversion.update({"method": "spectral_dsp", "source": "dsp", "degraded": True})
                 logger.info(f"Vocal profile {effective_profile_id} processed with acoustic timbre shaping (dry_wet={dry_wet}, pitch_shift={pitch_shift}).")
             except Exception as e:
-                logger.warning(f"Acoustic DSP chain failed: {e}. Falling back to clean copy.")
-                shutil.copyfile(resolved_vocal, output_path)
+                # A byte-identical copy labelled "converted" is worse than an
+                # honest failure: it ships the original singer under a new name.
+                self.last_conversion.update({
+                    "method": "failed", "source": "placeholder", "degraded": True,
+                    "reason": f"acoustic DSP chain failed: {str(e)[:160]}",
+                })
+                raise RuntimeError(
+                    f"Voice conversion failed for profile {effective_profile_id}. "
+                    "Neither neural SVC nor the acoustic DSP chain produced audio."
+                ) from e
 
         return f"/audio/converted_vocals/{output_filename}"
 

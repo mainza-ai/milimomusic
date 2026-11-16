@@ -776,3 +776,82 @@ class VisualAssetUpdate(SQLModel):
     asset_type: Optional[str] = None
 
 
+
+
+# ── Typed request bodies (plan 5.2) ─────────────────────────────────────────
+# These routes accepted a bare `dict`, so they had no OpenAPI contract, no 422
+# validation, and `payload.get("x")` reached the database unchecked.
+
+class ShareRequest(SQLModel):
+    ttl_hours: Optional[float] = Field(default=72, ge=0.1, le=24 * 365)
+
+
+class StoryboardRequest(SQLModel):
+    clips: List[Dict[str, Any]] = Field(default_factory=list)
+    scenes: Optional[List[Dict[str, Any]]] = None
+
+
+class WorkspaceSessionRequest(SQLModel):
+    state: Dict[str, Any]
+
+
+class GalleryRouteRequest(SQLModel):
+    media_path: str
+    target_slot: str
+    target_job_or_session_id: Optional[str] = None
+    extra_params: Optional[Dict[str, Any]] = None
+
+
+class PlaylistTrackRequest(SQLModel):
+    job_id: str
+
+
+class ProjectTrackRequest(SQLModel):
+    job_id: str
+
+
+class ReleaseTrackAttachRequest(SQLModel):
+    job_id: str
+
+
+class ReleaseTrackOrderRequest(SQLModel):
+    """Accepts the documented `job_ids` or the legacy `track_order`."""
+    job_ids: Optional[List[str]] = None
+    track_order: Optional[List[str]] = None
+
+
+class ProduceReleaseRequest(SQLModel):
+    autopilot: bool = False
+    crew: Optional[Dict[str, bool]] = None
+    song_plan: Optional[List[Dict[str, Any]]] = None
+    budget: Optional[Dict[str, Any]] = None
+
+
+class CommitVocalRequest(SQLModel):
+    vocal_path: str
+    master_path: Optional[str] = None
+
+
+class VoiceConvertRequest(SQLModel):
+    voice_profile_id: str
+    pitch_shift: int = Field(default=0, ge=-24, le=24)
+    formant_preserve: bool = True
+    # The API accepts 0-1 or 0-100 (percent); the handler normalises.
+    dry_wet: float = Field(default=1.0, ge=0.0, le=100.0)
+    f0_method: Optional[str] = None
+
+
+class RetakeClipRequest(SQLModel):
+    prompt: Optional[str] = None
+    visual_style: Optional[str] = None
+    resolution: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    reference_image_path: Optional[str] = None
+
+
+class EditorRetakeRequest(SQLModel):
+    asset_path: str
+
+
+class ActiveModelRequest(SQLModel):
+    model_id: str

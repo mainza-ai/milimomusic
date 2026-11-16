@@ -71,6 +71,20 @@ from app.models import (
     Job,
     JobStatus,
     JobUpdate,
+    ShareRequest,
+    StoryboardRequest,
+    WorkspaceSessionRequest,
+    GalleryRouteRequest,
+    PlaylistTrackRequest,
+    ProjectTrackRequest,
+    ReleaseTrackAttachRequest,
+    ReleaseTrackOrderRequest,
+    ProduceReleaseRequest,
+    CommitVocalRequest,
+    VoiceConvertRequest,
+    RetakeClipRequest,
+    EditorRetakeRequest,
+    ActiveModelRequest,
     DEFAULT_SESSION_TITLE,
     validate_display_name,
     GenerationRequest,
@@ -733,11 +747,9 @@ def get_active_model_variant():
 
 
 @app.post("/models/select")
-def set_active_model_variant(body: dict = Body(...)):
+def set_active_model_variant(body: ActiveModelRequest):
     """Set the active model variant (e.g., minimax_music3_bf16 vs mxfp4)."""
-    model_id = body.get("model_id")
-    if not model_id:
-        raise HTTPException(status_code=400, detail="model_id is required")
+    model_id = body.model_id
     try:
         updated = model_manager.set_active_model(model_id)
         return {"status": "ok", "active_model": updated}
@@ -2302,10 +2314,10 @@ def release_tracks(release_id: UUID):
 
 
 @app.patch("/releases/{release_id}/track-order")
-def set_release_track_order(release_id: UUID, payload: dict):
+def set_release_track_order(release_id: UUID, payload: ReleaseTrackOrderRequest):
     """Curate the tracklist order. `job_ids` may be a subset — ordered jobs are
     positioned first, remaining tracks keep their natural order after them."""
-    ids_raw = (payload or {}).get("job_ids")
+    ids_raw = (payload.job_ids if payload.job_ids is not None else payload.track_order) or []
     if not isinstance(ids_raw, list):
         raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "job_ids must be an array of track ids."}})
     seen: set = set()
@@ -2358,9 +2370,9 @@ def detach_release_track(release_id: UUID, job_id: UUID):
 
 
 @app.post("/releases/{release_id}/tracks")
-def attach_release_track(release_id: UUID, payload: dict):
+def attach_release_track(release_id: UUID, payload: ReleaseTrackAttachRequest):
     """Attach an existing job/track to a release."""
-    target_job_id = (payload or {}).get("job_id")
+    target_job_id = payload.job_id if payload else None
     if not target_job_id:
         raise HTTPException(status_code=422, detail={"error": {"code": "invalid_input", "message": "job_id is required."}})
     with Session(engine) as session:
@@ -2467,7 +2479,7 @@ async def retry_release_track(release_id: UUID, job_id: UUID):
 
 
 @app.post("/releases/{release_id}/produce", status_code=202)
-async def produce_release(release_id: UUID, payload: dict):
+async def produce_release(release_id: UUID, payload: Optional[ProduceReleaseRequest] = None):
     """Album Orchestrator: vision → per-seed songwriter+generation children.
 
     Gated-by-default (pauses after each track; approve via /agents/runs/{id}/resume).
@@ -2475,8 +2487,8 @@ async def produce_release(release_id: UUID, payload: dict):
     from app.agents.orchestrator import BudgetState
     from app.agents.orchestrator.album import AlbumOrchestrator
 
-    autopilot = bool((payload or {}).get("autopilot", False))
-    caps = (payload or {}).get("budget") or {}
+    autopilot = bool(payload.autopilot) if payload else False
+    caps = (payload.budget if payload else None) or {}
     budget = BudgetState(
         deadline_s=float(caps["deadline_s"]) if caps.get("deadline_s") else None,
     )
@@ -2499,7 +2511,7 @@ async def produce_release(release_id: UUID, payload: dict):
                 "message": f"An album run is already {active[0].status} for this release — resume or cancel it before producing again."}})
         # Crew flags (opt-in): stylist refines tags pre-generation; critic gates
         # the draft with one bounded revision. Default OFF — cost control.
-        crew_in = (payload or {}).get("crew") if isinstance((payload or {}).get("crew"), dict) else {}
+        crew_in = (payload.crew if payload else None) or {}
         crew = {"stylist": bool(crew_in.get("stylist")), "critic": bool(crew_in.get("critic"))}
         parent = AgentRun(agent_name="album_orchestrator", status="queued",
                           input_json=json.dumps({"release_id": str(release_id), "autopilot": autopilot, "crew": crew}),
@@ -2541,7 +2553,7 @@ async def resume_agent_run(run_id: UUID, payload: dict = None):
     orchestrator = AlbumOrchestrator(run_registry, event_manager.publish)
     spawn_background_task(orchestrator.execute(
         parent_run_id=run_id, release_id=release_id,
-        autopilot=bool((payload or {}).get("autopilot", False)),
+        autopilot=bool(payload.autopilot) if payload else False,
         engine=engine))
     return {"run_id": str(run_id), "status": "resumed"}
 
@@ -2606,9 +2618,9 @@ def get_workspace_session(job_id: str):
 
 
 @app.put("/workspace/{job_id}/session")
-def put_workspace_session(job_id: str, payload: dict = Body(...)):
+def put_workspace_session(job_id: str, payload: WorkspaceSessionRequest):
     """Persist the DAW session. The body is opaque to the server (versioned JSON)."""
-    state = payload.get("state", payload)
+    state = payload.state
     if not isinstance(state, dict):
         raise HTTPException(status_code=422, detail={"error": {
             "code": "invalid_session_state", "message": "state must be an object"}})
@@ -4481,7 +4493,7 @@ async def upload_job_cover(job_id: str, file: UploadFile = File(...)):
 
 
 @app.post("/tracks/{job_id}/share")
-def create_track_share(job_id: str, payload: dict = Body(default={})):
+def create_track_share(job_id: str, payload: Optional[ShareRequest] = None):
     """Mint a signed, expiring, read-only link for one track (decision D2)."""
     from app.core.sharing import mint_share_token
 
@@ -4492,7 +4504,7 @@ def create_track_share(job_id: str, payload: dict = Body(default={})):
         if not job.audio_path:
             raise HTTPException(status_code=400, detail="Track has no audio to share yet")
 
-    ttl = payload.get("ttl_hours")
+    ttl = payload.ttl_hours if payload else None
     share = mint_share_token(str(job_id), ttl_hours=ttl)
     return {**share, "status": "ok"}
 
@@ -4633,15 +4645,15 @@ def export_studio_pack(job_id: str):
 
 
 @app.post("/jobs/{job_id}/voice-convert", response_model=Job)
-async def voice_convert_job(job_id: str, body: dict = Body(...)):
-    voice_profile_id = body.get("voice_profile_id")
+async def voice_convert_job(job_id: str, body: VoiceConvertRequest):
+    voice_profile_id = body.voice_profile_id
     if not voice_profile_id:
         raise HTTPException(status_code=400, detail="voice_profile_id is required")
-    pitch_shift = int(body.get("pitch_shift", 0))
-    raw_dry_wet = float(body.get("dry_wet", 1.0))
+    pitch_shift = int(body.pitch_shift)
+    raw_dry_wet = float(body.dry_wet)
     dry_wet = raw_dry_wet / 100.0 if raw_dry_wet > 1.0 else max(0.0, min(1.0, raw_dry_wet))
-    formant_preserve = bool(body.get("formant_preserve", True))
-    f0_method = str(body.get("f0_method") or "rmvpe").lower()
+    formant_preserve = bool(body.formant_preserve)
+    f0_method = str(body.f0_method or "rmvpe").lower()
         
     from app.services.voice_service import voice_service
     with Session(engine) as session:
@@ -4709,12 +4721,12 @@ async def voice_convert_job(job_id: str, body: dict = Body(...)):
 
 
 @app.post("/tracks/{job_id}/commit-vocal", response_model=Job)
-def commit_vocal_to_track(job_id: str, body: dict = Body(...)):
+def commit_vocal_to_track(job_id: str, body: CommitVocalRequest):
     """Commit a converted vocal take or microphone stem in-place onto the specified track."""
-    vocal_path = body.get("vocal_path")
+    vocal_path = body.vocal_path
     if not vocal_path:
         raise HTTPException(status_code=400, detail="vocal_path is required")
-    master_path = body.get("master_path")
+    master_path = body.master_path
 
     # Both fields reach the filesystem (and `master_path` lands on job.audio_path,
     # which /download_track serves), so they must name media, not arbitrary files.
@@ -5117,8 +5129,8 @@ def delete_project(project_id: UUID):
 
 
 @app.post("/projects/{project_id}/tracks")
-def add_track_to_project(project_id: UUID, body: dict = Body(...)):
-    job_id_str = body.get("job_id")
+def add_track_to_project(project_id: UUID, body: ProjectTrackRequest):
+    job_id_str = body.job_id
     if not job_id_str:
         raise HTTPException(status_code=400, detail="job_id is required")
         
@@ -5298,14 +5310,14 @@ async def generate_video_storyboard(job_id: str, body: dict = Body(default={})):
 
 
 @app.patch("/videos/{job_id}/storyboard")
-def update_video_storyboard(job_id: str, payload: dict = Body(...)):
+def update_video_storyboard(job_id: str, payload: StoryboardRequest):
     """Persist hand-edited scenes (plan 4.3).
 
     Scene edits and clip reordering used to be client-only: a reload discarded them
     and a reorder silently detached every later scene from its lyric window. The
     edited plan is stored on the job and reused by the renderer.
     """
-    clips = payload.get("clips") or payload.get("scenes")
+    clips = payload.clips or payload.scenes
     if not isinstance(clips, list) or not clips:
         raise HTTPException(status_code=422, detail={"error": {
             "code": "invalid_storyboard", "message": "clips must be a non-empty list"}})
@@ -5976,7 +5988,7 @@ async def generate_video_keyframes(job_id: str, req: KeyframesRequest = Body(def
 
 
 @app.post("/videos/retake-clip/{job_id}/{clip_index}")
-async def retake_video_clip_endpoint(job_id: str, clip_index: int, payload: dict = Body(default={})):
+async def retake_video_clip_endpoint(job_id: str, clip_index: int, payload: Optional[RetakeClipRequest] = None):
     """Generate a visual retake for a specific planned scene clip with a fresh keyframe."""
     from app.services.video_service import KEYFRAMES_DIR
     from app.services.image_service import image_service
@@ -5985,10 +5997,10 @@ async def retake_video_clip_endpoint(job_id: str, clip_index: int, payload: dict
         if not job:
             raise HTTPException(status_code=404, detail="Job not found")
 
-        prompt = payload.get("prompt")
-        visual_style = payload.get("visual_style", "neon-cyberpunk")
-        res = payload.get("resolution", "720p")
-        ar = payload.get("aspect_ratio", "16:9")
+        prompt = payload.prompt if payload else None
+        visual_style = (payload.visual_style if payload else None) or "neon-cyberpunk"
+        res = (payload.resolution if payload else None) or "720p"
+        ar = (payload.aspect_ratio if payload else None) or "16:9"
         if ar == "9:16":
             w, h = (1080, 1920) if res == "1080p" else (720, 1280)
         elif ar == "1:1":
@@ -6169,11 +6181,8 @@ def delete_playlist(playlist_id: str):
 
 
 @app.post("/playlists/{playlist_id}/tracks")
-def add_track_to_playlist(playlist_id: str, body: dict = Body(...)):
-    job_id = body.get("job_id")
-    if not job_id:
-        raise HTTPException(status_code=400, detail="job_id is required")
-    job_id_str = str(job_id)
+def add_track_to_playlist(playlist_id: str, body: PlaylistTrackRequest):
+    job_id_str = str(body.job_id)
 
     with Session(engine) as session:
         playlist = session.get(Playlist, playlist_id)
@@ -6388,12 +6397,12 @@ def get_video_thumbnail(filename: str):
 
 
 @app.post("/api/gallery/route")
-def route_gallery_media(payload: dict):
+def route_gallery_media(payload: GalleryRouteRequest):
     """1-Click Gallery-to-Input media routing to Studio / Director slots."""
     from app.services.gallery.media_bridge import MediaBridge
 
-    media_path = payload.get("media_path")
-    target_slot = payload.get("target_slot")
+    media_path = payload.media_path
+    target_slot = payload.target_slot
     if not media_path or not target_slot:
         raise HTTPException(status_code=400, detail="media_path and target_slot are required")
 
@@ -6407,8 +6416,8 @@ def route_gallery_media(payload: dict):
         routed = MediaBridge.route_to_input(
             media_path=str(resolved),
             target_slot=target_slot,
-            target_job_or_session_id=payload.get("target_job_or_session_id"),
-            extra_params=payload.get("extra_params"),
+            target_job_or_session_id=payload.target_job_or_session_id,
+            extra_params=payload.extra_params,
         )
         return {"status": "ok", "routed": routed.to_dict()}
     except Exception as e:
@@ -6446,7 +6455,7 @@ def get_editor_project(project_id: str):
 
 
 @app.post("/api/editor/projects/{project_id}/clip/{clip_id}/retake")
-def apply_clip_retake(project_id: str, clip_id: str, payload: dict):
+def apply_clip_retake(project_id: str, clip_id: str, payload: EditorRetakeRequest):
     """Apply an AI take replacement to a timeline clip without altering cuts or audio sync."""
     from app.services.timeline.editor_projects import EditorProject, EditorProjectManager
     from app.core.win_safe_files import atomic_write_json, safe_load_json
@@ -6456,7 +6465,7 @@ def apply_clip_retake(project_id: str, clip_id: str, payload: dict):
     data = safe_load_json(proj_file)
     project = EditorProject.from_dict(data)
 
-    new_asset_path = payload.get("new_asset_path")
+    new_asset_path = payload.asset_path
     if not new_asset_path:
         raise HTTPException(status_code=400, detail="new_asset_path is required")
 

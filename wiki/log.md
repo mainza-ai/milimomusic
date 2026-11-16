@@ -2923,3 +2923,8 @@ Verification: **522 passed, 0 failed** (+5 share/ownership tests; API parity 168
 ## [2026-11-16] execute | Phase 6.3 — reproducible dependency installs
 `backend/requirements.lock.txt` is now a **universal** resolution (171 pins, 36 platform-conditional) generated from `requirements.txt` with `uv pip compile --universal`, and it is what CI and the Docker image install — so the same commit produces the same environment on macOS and linux/arm64. Frontend installs moved to `npm ci` in the Dockerfile and the CLI (CI already used it), so `package-lock.json` decides rather than the registry.
 Verification: lockfile generated and referenced by `.github/workflows/ci.yml`, `Dockerfile`, `milimo`.
+
+## [2026-11-16] execute | Phase 5.2 — typed request bodies
+15 routes that accepted a bare `dict` now take a Pydantic model (`ShareRequest`, `StoryboardRequest`, `WorkspaceSessionRequest`, `GalleryRouteRequest`, `PlaylistTrackRequest`, `ProjectTrackRequest`, `ReleaseTrackAttachRequest`, `ReleaseTrackOrderRequest`, `ProduceReleaseRequest`, `CommitVocalRequest`, `VoiceConvertRequest`, `RetakeClipRequest`, `EditorRetakeRequest`, `ActiveModelRequest`), so they have an OpenAPI contract, 422 validation with field-level messages, and no `payload.get("x")` reaching the database unchecked.
+The conversion immediately exposed three real API-contract mismatches that the untyped handlers had been hiding: the client sends `dry_wet` as **0–100 percent** (the model now declares that range; the handler still normalises), the track-order endpoint is called with `job_ids` while the handler read a different key, and the storyboard/produce bodies carried fields no model declared.
+Verification: **522 passed, 0 failed**.

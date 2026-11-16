@@ -356,7 +356,8 @@ def test_workspace_session_rejects_non_object(client):
 
     res = client.request("PUT", f"/workspace/{job_id}/session", json={"state": "not-an-object"})
     assert res.status_code == 422
-    assert res.json()["error"]["code"] == "invalid_session_state"
+    # Rejected by the typed body before the handler; still the same envelope.
+    assert res.json()["error"]["code"] in ("invalid_session_state", "validation_error")
 
 
 # ── video storyboard persistence (plan 4.3) ────────────────────────────────

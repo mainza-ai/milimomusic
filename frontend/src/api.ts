@@ -791,7 +791,16 @@ export const workspaceApi = {
     },
     saveNotes: async (jobId: string, notes: NoteEvent[]): Promise<void> => {
         await axios.post(`${API_BASE_URL}/workspace/${jobId}/notes`, notes);
-    }
+    },
+    /** Server-side DAW session recall (plan 3.8). */
+    getWorkspaceSession: async (jobId: string): Promise<{ job_id: string; version: number; state: any | null }> => {
+        const res = await axios.get(`${API_BASE_URL}/workspace/${jobId}/session`);
+        return res.data;
+    },
+    saveWorkspaceSession: async (jobId: string, state: unknown): Promise<{ status: string; bytes: number }> => {
+        const res = await axios.put(`${API_BASE_URL}/workspace/${jobId}/session`, { state });
+        return res.data;
+    },
 };
 
 export interface ProviderConfig {
@@ -1118,8 +1127,26 @@ export const trackApi = {
             /* best effort: unmounting */
         }
     },
+    /** Import a Standard MIDI File into the piano roll (plan 3.7). */
+    importMidi: async (jobId: string, file: File): Promise<{ status: string; notes: NoteEvent[]; count: number; bpm: number }> => {
+        const form = new FormData();
+        form.append('file', file);
+        const res = await axios.post(`${API_BASE_URL}/tracks/${jobId}/midi/import`, form, {
+            headers: { 'Content-Type': 'multipart/form-data' },
+        });
+        return res.data;
+    },
     getLrcUrl: (jobId: string): string => {
         return `${API_BASE_URL}/tracks/${jobId}/lrc`;
+    },
+    /** Server-side DAW session recall (plan 3.8). */
+    getWorkspaceSession: async (jobId: string): Promise<{ job_id: string; version: number; state: any | null }> => {
+        const res = await axios.get(`${API_BASE_URL}/workspace/${jobId}/session`);
+        return res.data;
+    },
+    saveWorkspaceSession: async (jobId: string, state: unknown): Promise<{ status: string; bytes: number }> => {
+        const res = await axios.put(`${API_BASE_URL}/workspace/${jobId}/session`, { state });
+        return res.data;
     },
     realignLyrics: async (jobId: string, lyrics?: string): Promise<{ status: string; timed_lyrics: any[]; job: Job }> => {
         const res = await axios.post(`${API_BASE_URL}/tracks/${jobId}/realign_lyrics`, { lyrics });

@@ -241,3 +241,119 @@ def test_rate_limit_costs_are_graded():
     from app.core.ratelimit import cost_for
 
     assert cost_for("/generate/music") > cost_for("/tracks/{job_id}/peaks")
+
+
+# ── MIDI import (plan 3.7) ─────────────────────────────────────────────────
+
+def test_midi_import_roundtrip(client, tmp_path):
+    """A Standard MIDI File must land in the piano roll as NoteEvent dicts."""
+    import pretty_midi
+
+    # Build a tiny 2-note MIDI file.
+    midi = pretty_midi.PrettyMIDI(initial_tempo=96.0)
+    inst = pretty_midi.Instrument(program=0, name="Piano")
+    inst.notes.append(pretty_midi.Note(velocity=90, pitch=60, start=0.0, end=0.5))
+    inst.notes.append(pretty_midi.Note(velocity=80, pitch=64, start=0.5, end=1.0))
+    midi.instruments.append(inst)
+    midi_path = tmp_path / "probe.mid"
+    midi.write(str(midi_path))
+
+    from sqlmodel import Session
+
+    from app.main import engine
+    from app.models import Job
+    import uuid as _uuid
+
+    job_id = _uuid.uuid4()
+    with Session(engine) as session:
+        session.add(Job(id=job_id, prompt="midi import probe", status="completed"))
+        session.commit()
+
+    data = midi_path.read_bytes()
+    res = client.post(
+        f"/tracks/{job_id}/midi/import",
+        files={"file": ("probe.mid", data, "audio/midi")},
+    )
+    assert res.status_code == 200, res.text
+    body = res.json()
+    assert body["count"] == 2
+    pitches = [n["pitch"] for n in body["notes"]]
+    assert pitches == [60, 64]
+    assert all("instrument" in n and "velocity" in n for n in body["notes"])
+    assert abs(body["bpm"] - 96.0) < 0.01
+
+
+def test_midi_import_rejects_garbage(client):
+    from sqlmodel import Session
+
+    from app.main import engine
+    from app.models import Job
+    import uuid as _uuid
+
+    job_id = _uuid.uuid4()
+    with Session(engine) as session:
+        session.add(Job(id=job_id, prompt="midi import garbage", status="completed"))
+        session.commit()
+
+    res = client.post(
+        f"/tracks/{job_id}/midi/import",
+        files={"file": ("bad.mid", b"not a midi file at all", "audio/midi")},
+    )
+    assert res.status_code in (400, 413, 415), res.text
+    assert res.json()["error"]["code"] in ("invalid_midi", "bad_content", "bad_type")
+
+
+# ── DAW session state (plan 3.8) ───────────────────────────────────────────
+
+def test_workspace_session_roundtrip(client):
+    """Mix/loop/tempo live on the Job, not one browser's localStorage."""
+    import uuid as _uuid
+    from sqlmodel import Session
+
+    from app.main import engine
+    from app.models import Job
+
+    job_id = _uuid.uuid4()
+    with Session(engine) as session:
+        session.add(Job(id=job_id, prompt="session probe", status="completed"))
+        session.commit()
+
+    empty = client.get(f"/workspace/{job_id}/session")
+    assert empty.status_code == 200
+    assert empty.json()["state"] is None
+
+    state = {
+        "version": 1,
+        "masterVolume": 0.8,
+        "stemSource": "neural",
+        "loopStart": 4.0,
+        "loopEnd": 12.0,
+        "tempoMap": [{"t": 0, "bpm": 96, "sig": 4}, {"t": 32, "bpm": 120, "sig": 3}],
+        "metronomeEnabled": True,
+        "countInBars": 2,
+    }
+    saved = client.request("PUT", f"/workspace/{job_id}/session", json={"state": state})
+    assert saved.status_code == 200, saved.text
+    assert saved.json()["status"] == "saved"
+
+    loaded = client.get(f"/workspace/{job_id}/session").json()["state"]
+    assert loaded["tempoMap"][1]["bpm"] == 120
+    assert loaded["metronomeEnabled"] is True
+    assert loaded["loopEnd"] == 12.0
+
+
+def test_workspace_session_rejects_non_object(client):
+    import uuid as _uuid
+    from sqlmodel import Session
+
+    from app.main import engine
+    from app.models import Job
+
+    job_id = _uuid.uuid4()
+    with Session(engine) as session:
+        session.add(Job(id=job_id, prompt="session probe 2", status="completed"))
+        session.commit()
+
+    res = client.request("PUT", f"/workspace/{job_id}/session", json={"state": "not-an-object"})
+    assert res.status_code == 422
+    assert res.json()["error"]["code"] == "invalid_session_state"

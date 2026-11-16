@@ -116,6 +116,9 @@ class Job(SQLModel, table=True):
     # Liveness: bumped by every pipeline progress tick. `updated_at` cannot serve
     # as a heartbeat because the pipeline only writes it on status transitions.
     last_heartbeat_at: Optional[datetime] = Field(default=None)
+    # DAW session state (plan 3.8): mix, loop, tempo map, automation and clip edits
+    # live here so they survive a cache clear or a different browser. Versioned JSON.
+    session_state_json: Optional[str] = Field(default=None)
     # Bounded retries (plan 2.2): a transient OOM/503 must not permanently fail a job.
     attempts: int = Field(default=0)
     max_attempts: int = Field(default=2)

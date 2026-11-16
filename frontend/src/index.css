@@ -92,3 +92,17 @@ body {
   }
 }
 @keyframes milimo-toast-in{from{transform:translateY(8px);opacity:0}to{transform:translateY(0);opacity:1}}
+
+/* ── Reduced motion ──────────────────────────────────────────────────────────
+   The app animates continuously (pulse, ping, indeterminate stripes, framer
+   layout transitions). Users who ask their OS for less motion must get it. */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

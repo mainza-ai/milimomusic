@@ -1262,7 +1262,7 @@ function App() {
   };
 
   return (
-    <div className="h-screen w-full bg-[#f5f5f7] dark:bg-[#000000] flex overflow-hidden font-sans text-slate-900 dark:text-slate-100 select-none transition-colors duration-200">
+    <div className="h-screen w-full bg-[#f5f5f7] dark:bg-[#000000] flex overflow-hidden font-sans text-slate-900 dark:text-slate-100 transition-colors duration-200">
 
       {/* Mobile Drawer Overlay Backdrop */}
       {isMobileMenuOpen && (

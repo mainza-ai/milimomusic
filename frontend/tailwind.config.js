@@ -7,6 +7,11 @@ export default {
     ],
     theme: {
         extend: {
+            screens: {
+                // `xs:` is used by several components but was never defined, so
+                // `hidden xs:inline` hid those labels permanently on narrow screens.
+                xs: '420px',
+            },
             fontFamily: {
                 sans: ['-apple-system', 'BlinkMacSystemFont', '"SF Pro Display"', '"SF Pro Text"', 'Inter', 'system-ui', 'sans-serif'],
                 mono: ['"SF Mono"', '"JetBrains Mono"', 'Menlo', 'Monaco', 'Consolas', 'monospace'],

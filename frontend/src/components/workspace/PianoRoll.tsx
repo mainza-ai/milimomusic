@@ -1,13 +1,14 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
     Download, Trash2, Volume2, Maximize2, Check, RefreshCw, Music, Drum,
-    Undo2, Redo2, Magnet, Crosshair, ZoomIn, ZoomOut, Save, AlertTriangle, Sparkles
+    Undo2, Redo2, Magnet, Crosshair, ZoomIn, ZoomOut, Save, AlertTriangle, Sparkles, Upload
 } from 'lucide-react';
 import { API_BASE_URL, trackApi } from '../../api';
 import type { Job, NoteEvent } from '../../api';
 import { pushHotkeyScope, isTextEntryTarget } from '../../utils/hotkeyScope';
 import { safeJsonParse } from '../../utils/safeJsonParse';
 import { useModalStore } from '../../stores/useModalStore';
+import { toast } from '../../utils/toast';
 
 interface PianoRollProps {
     job: Job;
@@ -624,7 +625,9 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
         return pushHotkeyScope((e) => {
             if (isTextEntryTarget(e.target)) return false;
             const t = e.target as HTMLElement | null;
-            const inGrid = !!t?.closest?.('[data-hotkey-local]');
+            // The whole *panel* is the editor, not just the note grid: clicking
+            // Quantize used to move focus to the button and disable ⌘Z/⌘D.
+            const inGrid = !t || !!t.closest?.('#piano-roll-panel') || !!t.closest?.('[data-hotkey-local]');
             const api = editorApiRef.current;
             const mod = e.metaKey || e.ctrlKey;
             if (mod && e.code === 'KeyZ') { if (!inGrid) return false; e.preventDefault(); if (e.shiftKey) { api.redo(); } else { api.undo(); } return true; }
@@ -1548,7 +1551,10 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
     }, [filteredNotes, selectedNotes, dragPreview, rowH, timeScale, visibleWindow]);
 
     return (
-        <div className="flex flex-col h-full bg-[#f4f4f7] dark:bg-[#0b0d13] text-slate-900 dark:text-slate-200 select-none overflow-hidden transition-colors duration-200">
+        <div
+            id="piano-roll-panel"
+            className="flex flex-col h-full bg-[#f4f4f7] dark:bg-[#0b0d13] text-slate-900 dark:text-slate-200 select-none overflow-hidden transition-colors duration-200"
+        >
             {/* Top Toolbar Header */}
             <div className="flex flex-wrap items-center justify-between gap-3 px-6 py-3 border-b border-black/[0.06] dark:border-white/[0.08] bg-white/95 dark:bg-[#12141c]/95 z-20 shadow-apple-sm">
                 <div className="flex items-center space-x-3">
@@ -1794,6 +1800,39 @@ export const PianoRoll: React.FC<PianoRollProps> = ({
                             </span>
                         </button>
                     )}
+
+                    <label
+                        title="Import a Standard MIDI File into this piano roll"
+                        className="px-3 py-1.5 bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-600 dark:text-slate-300 font-bold text-xs rounded-xl flex items-center space-x-1.5 cursor-pointer transition-colors"
+                    >
+                        <Upload size={13} />
+                        <span>Import</span>
+                        <input
+                            type="file"
+                            accept=".mid,.midi,audio/midi,audio/x-midi"
+                            className="hidden"
+                            onChange={async (ev) => {
+                                const file = ev.target.files?.[0];
+                                ev.target.value = '';
+                                if (!file || !job.id) return;
+                                try {
+                                    const res = await trackApi.importMidi(job.id, file);
+                                    setNotesList(res.notes);
+                                    undoRef.current = [];
+                                    redoStackRef.current = [];
+                                    setHistFlags({ u: false, r: false });
+                                    setSelectedNotes(new Set());
+                                    setSaveState('saved');
+                                    toast(`Imported ${res.count} notes from ${file.name}`, 'success');
+                                } catch (err) {
+                                    const detail = (err as any)?.response?.data?.error?.message
+                                        || (err as any)?.message
+                                        || 'Could not read that MIDI file';
+                                    toast(detail, 'error');
+                                }
+                            }}
+                        />
+                    </label>
 
                     <button
                         onClick={() => window.open(`${API_BASE_URL}/transcribe/export/${job.id}/midi`, '_blank')}

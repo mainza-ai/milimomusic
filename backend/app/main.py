@@ -242,7 +242,8 @@ def _legacy_create_db_and_tables():
             "quality": "VARCHAR",
             "last_heartbeat_at": "DATETIME",
             "attempts": "INTEGER DEFAULT 0",
-            "max_attempts": "INTEGER DEFAULT 2"
+            "max_attempts": "INTEGER DEFAULT 2",
+            "session_state_json": "TEXT"
         }
         for col, col_type in new_columns.items():
             if col not in existing_cols:
@@ -2578,6 +2579,131 @@ async def update_track_midi(job_id: str, notes: List[Dict[str, Any]] = Body(...)
         session.refresh(job)
 
         return {"status": "saved", "job": job}
+
+
+@app.get("/workspace/{job_id}/session")
+def get_workspace_session(job_id: str):
+    """Return the saved DAW session for a track (plan 3.8).
+
+    Mix levels, loop region, tempo map, automation curves and clip edits live on
+    the Job, not in one browser's localStorage, so opening the workspace on
+    another machine (or after clearing storage) restores the arrangement.
+    """
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+        raw = job.session_state_json
+    if not raw:
+        return {"job_id": str(job_id), "version": 1, "state": None}
+    try:
+        state = json.loads(raw)
+    except (TypeError, ValueError):
+        logger.warning("Discarding unparseable session_state_json for job %s", job_id)
+        state = None
+    return {"job_id": str(job_id), "version": 1, "state": state}
+
+
+@app.put("/workspace/{job_id}/session")
+def put_workspace_session(job_id: str, payload: dict = Body(...)):
+    """Persist the DAW session. The body is opaque to the server (versioned JSON)."""
+    state = payload.get("state", payload)
+    if not isinstance(state, dict):
+        raise HTTPException(status_code=422, detail={"error": {
+            "code": "invalid_session_state", "message": "state must be an object"}})
+
+    serialised = json.dumps(state)
+    if len(serialised) > 2_000_000:
+        raise HTTPException(status_code=413, detail={"error": {
+            "code": "session_too_large", "message": "Session state exceeds 2 MB."}})
+
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+        job.session_state_json = serialised
+        job.updated_at = datetime.now(timezone.utc)
+        session.add(job)
+        session.commit()
+    return {"status": "saved", "job_id": str(job_id), "bytes": len(serialised)}
+
+
+@app.post("/tracks/{job_id}/midi/import")
+async def import_midi_into_track(job_id: str, file: UploadFile = File(...)):
+    """Import a Standard MIDI File into a track's piano roll (plan 3.7).
+
+    The DAW could only *export* MIDI, so an external part (or a take from another
+    tool) had no way in. Notes are parsed into the same NoteEvent shape the piano
+    roll edits, then persisted through the normal path so undo, save and
+    transcription stay consistent.
+    """
+    from app.core.uploads import save_upload
+    from app.core.paths import get_generated_audio_dir
+    from app.transcription.muscriptor_provider import muscriptor_provider
+
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Track not found")
+
+    upload_dir = get_generated_audio_dir() / "symbolic" / "imports"
+    dest_path, filename = await save_upload(file, str(upload_dir), kind="midi")
+
+    try:
+        import pretty_midi
+
+        midi = pretty_midi.PrettyMIDI(dest_path)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail={"error": {
+            "code": "invalid_midi", "message": f"Could not read MIDI file: {exc}"}})
+
+    notes = []
+    for instrument in midi.instruments:
+        name = (instrument.name or "").strip() or ("Drums" if instrument.is_drum else "Piano")
+        for note in instrument.notes:
+            notes.append({
+                "pitch": int(note.pitch),
+                "start_time": round(float(note.start), 4),
+                "duration": round(max(0.01, float(note.end) - float(note.start)), 4),
+                "end_time": round(float(note.end), 4),
+                "velocity": int(note.velocity),
+                "instrument": name,
+                "channel": 9 if instrument.is_drum else int(instrument.program // 8),
+                "note_name": pretty_midi.note_number_to_name(int(note.pitch)),
+            })
+
+    if not notes:
+        raise HTTPException(status_code=400, detail={"error": {
+            "code": "empty_midi", "message": "The MIDI file contains no notes."}})
+
+    notes.sort(key=lambda n: (n["start_time"], n["pitch"]))
+    tempo = 120.0
+    try:
+        times = midi.get_tempo_changes()[1]
+        if len(times):
+            tempo = float(times[0])
+    except Exception:
+        pass
+
+    result = await muscriptor_provider.update_midi_notes(job_id, notes, bpm=tempo)
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if job:
+            job.notes_json = result.notes_json
+            job.midi_path = result.midi_path
+            job.musicxml_path = result.musicxml_path
+            job.updated_at = datetime.now(timezone.utc)
+            session.add(job)
+            session.commit()
+
+    return {
+        "status": "imported",
+        "job_id": str(job_id),
+        "notes": notes,
+        "count": len(notes),
+        "bpm": tempo,
+        "filename": filename,
+    }
 
 
 @app.get("/tracks/{job_id}/lrc")

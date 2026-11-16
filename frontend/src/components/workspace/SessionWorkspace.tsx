@@ -25,7 +25,7 @@ import {
     Check
 } from 'lucide-react';
 import { useAudioControls } from '../../context/AudioEngineContext';
-import { API_BASE_URL, api, getStemMeta, trackApi } from '../../api';
+import { API_BASE_URL, api, getStemMeta, trackApi, workspaceApi } from '../../api';
 import type { Job, TimedLine, StemsMap, NoteEvent } from '../../api';
 import { pushHotkeyScope, isTextEntryTarget, hasModifier } from '../../utils/hotkeyScope';
 import { safeJsonParse } from '../../utils/safeJsonParse';
@@ -226,53 +226,76 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         void prepareBuffers(nextChannels);
     };
 
-    // ── Per-track session persistence ────────────────────────────────────────
-    // Mixer levels, stem source and loop region survive refresh — session
-    // recall is table stakes in every commercial DAW. The active MODE is
-    // deliberately excluded: the workspace always opens on its home (Listen).
+    // ── Per-track session persistence (server-side, plan 3.8) ────────────────
+    // Mix, stem source, loop region, tempo map and metronome survive a refresh,
+    // a cache clear and a different browser: the server is the source of truth
+    // and localStorage is an offline mirror. The active MODE is deliberately
+    // excluded — the workspace always opens on its home (Listen) view.
     const wsKey = `milimo_ws_${job.id}`;
     const wsHydratedRef = useRef(false);
+    const [tempoMap, setTempoMap] = useState<{ t: number; bpm: number; sig: number }[]>([]);
+    const [metronomeEnabled, setMetronomeEnabled] = useState(false);
+    const [countInBars, setCountInBars] = useState(0);
+    const [isCountingIn, setIsCountingIn] = useState(false);
+
+    const applySessionState = (s: any) => {
+        if (!s || typeof s !== 'object') return;
+        if (typeof s.masterVolume === 'number') setMasterVolume(s.masterVolume);
+        if (typeof s.isMasterMuted === 'boolean') setIsMasterMuted(s.isMasterMuted);
+        if ((s.stemSource === 'neural' || s.stemSource === 'muscriptor') && Array.isArray(s.channels?.[s.stemSource])) {
+            setStemSource(s.stemSource);
+            setStemChannels((s.channels[s.stemSource] as StemChannel[]).map(c => ({ ...c })));
+            mixMemoryRef.current[s.stemSource] = s.channels[s.stemSource];
+        }
+        if (typeof s.loopStart === 'number') setLoopStart(s.loopStart);
+        if (typeof s.loopEnd === 'number') setLoopEnd(s.loopEnd);
+        if (Array.isArray(s.tempoMap) && s.tempoMap.length) setTempoMap(s.tempoMap);
+        if (typeof s.metronomeEnabled === 'boolean') setMetronomeEnabled(s.metronomeEnabled);
+        if (typeof s.countInBars === 'number') setCountInBars(s.countInBars);
+    };
 
     useEffect(() => {
         if (wsHydratedRef.current) return;
         wsHydratedRef.current = true;
+
+        // Offline mirror first (instant paint), then the server copy when it lands.
         try {
             const raw = localStorage.getItem(wsKey);
-            if (!raw) return;
-            const s = JSON.parse(raw);
-            if (typeof s.masterVolume === 'number') setMasterVolume(s.masterVolume);
-            if (typeof s.isMasterMuted === 'boolean') setIsMasterMuted(s.isMasterMuted);
-            // NOTE: `mode` is intentionally NOT restored — entering the DAW must
-            // always land on its home (Listen) view, never teleport into an
-            // editor because a previous visit ended elsewhere. Mix levels,
-            // stem source and loop region still recall per track.
-            if ((s.stemSource === 'neural' || s.stemSource === 'muscriptor') && Array.isArray(s.channels?.[s.stemSource])) {
-                setStemSource(s.stemSource);
-                setStemChannels((s.channels[s.stemSource] as StemChannel[]).map(c => ({ ...c })));
-                mixMemoryRef.current[s.stemSource] = s.channels[s.stemSource];
-            }
-            if (typeof s.loopStart === 'number') setLoopStart(s.loopStart);
-            if (typeof s.loopEnd === 'number') setLoopEnd(s.loopEnd);
+            if (raw) applySessionState(JSON.parse(raw));
         } catch (e) {
-            console.warn('Workspace session restore failed', e);
+            console.warn('Workspace session restore (local) failed', e);
         }
+
+        workspaceApi.getWorkspaceSession(job.id)
+            .then(res => { if (res?.state) applySessionState(res.state); })
+            .catch(() => { /* offline or older backend: local mirror is enough */ });
     }, [wsKey]);
+
+    const sessionState = useMemo(() => ({
+        version: 1,
+        masterVolume,
+        isMasterMuted,
+        stemSource,
+        channels: { [stemSource]: stemChannels },
+        loopStart,
+        loopEnd,
+        tempoMap,
+        metronomeEnabled,
+        countInBars,
+    }), [masterVolume, isMasterMuted, stemSource, stemChannels, loopStart, loopEnd,
+         tempoMap, metronomeEnabled, countInBars]);
 
     useEffect(() => {
         const t = window.setTimeout(() => {
             try {
-                localStorage.setItem(wsKey, JSON.stringify({
-                    masterVolume,
-                    isMasterMuted,
-                    stemSource,
-                    channels: { [stemSource]: stemChannels },
-                    loopStart,
-                    loopEnd
-                }));
+                localStorage.setItem(wsKey, JSON.stringify(sessionState));
             } catch { /* storage quota — non-fatal */ }
-        }, 400);
+            workspaceApi.saveWorkspaceSession(job.id, sessionState).catch(() => {
+                /* offline: the local mirror still has it */
+            });
+        }, 600);
         return () => window.clearTimeout(t);
-    }, [masterVolume, isMasterMuted, stemSource, stemChannels, loopStart, loopEnd, wsKey]);
+    }, [sessionState, wsKey, job.id]);
 
     const hasDualSources = partChannels.length > 0 && (parsedStems.vocals || parsedStems.drums || parsedStems.bass || parsedStems.other);
 
@@ -1013,6 +1036,128 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
         };
     }, []); // eslint-disable-line react-hooks/exhaustive-deps
 
+    // ── Tempo map + metronome (plan 3.3) ────────────────────────────────────
+    // A DAW without a click is not a DAW. The map defaults to the transcribed
+    // beat grid and can hold multiple tempo/meter sections; the click is
+    // scheduled on the SAME AudioContext clock as the stems, so it never drifts.
+    const defaultTempo = useMemo(() => {
+        let bpm = 120;
+        let sig = 4;
+        try {
+            const bg = job.beat_grid_json ? JSON.parse(job.beat_grid_json) : null;
+            if (bg && typeof bg.bpm === 'number' && bg.bpm > 0) bpm = bg.bpm;
+            if (bg && typeof bg.beats_per_bar === 'number' && bg.beats_per_bar > 0) sig = bg.beats_per_bar;
+        } catch { /* malformed grid: fall back to 120/4 */ }
+        return { bpm, sig };
+    }, [job.beat_grid_json]);
+
+    const effectiveTempoMap = tempoMap.length ? tempoMap : [{ t: 0, bpm: defaultTempo.bpm, sig: defaultTempo.sig }];
+    const metronomeGainRef = useRef<GainNode | null>(null);
+    const metronomeSourcesRef = useRef<AudioBufferSourceNode[]>([]);
+
+    /** Seconds per beat at position `t`, honouring the tempo map. */
+    const tempoAt = (t: number) => {
+        let bpm = effectiveTempoMap[0].bpm;
+        let sig = effectiveTempoMap[0].sig;
+        for (const seg of effectiveTempoMap) {
+            if (seg.t <= t + 1e-6) { bpm = seg.bpm; sig = seg.sig; }
+        }
+        return { bpm, sig, spb: 60 / Math.max(1, bpm) };
+    };
+
+    const stopMetronome = () => {
+        metronomeSourcesRef.current.forEach(src => { try { src.stop(); } catch { /* already stopped */ } });
+        metronomeSourcesRef.current = [];
+    };
+
+    /**
+     * Schedule click transients from `fromSec` for the next `horizonSec`.
+     * Accent on beat 1 of each bar so the user can hear the downbeat.
+     */
+    const scheduleMetronome = (ctx: AudioContext, fromSec: number, horizonSec: number) => {
+        stopMetronome();
+        if (!metronomeEnabled) return;
+        if (!metronomeGainRef.current || metronomeGainRef.current.context !== ctx) {
+            const g = ctx.createGain();
+            g.gain.value = 0.35;
+            g.connect(ctx.destination);
+            metronomeGainRef.current = g;
+        }
+        const out = metronomeGainRef.current;
+
+        let t = Math.max(0, fromSec);
+        let beatIndex = 0;
+        // Count whole beats from the map start so the accent lands on bar 1.
+        const first = tempoAt(t);
+        const beatsBefore = Math.floor(t / first.spb);
+        beatIndex = beatsBefore;
+        let cursor = beatsBefore * first.spb;
+        while (cursor < t) cursor += first.spb;
+
+        const end = fromSec + horizonSec;
+        while (cursor < end) {
+            const { sig } = tempoAt(cursor);
+            const isDownbeat = beatIndex % sig === 0;
+            const when = ctx.currentTime + (cursor - fromSec);
+            if (when >= ctx.currentTime) {
+                const osc = ctx.createOscillator();
+                const env = ctx.createGain();
+                osc.type = 'square';
+                osc.frequency.value = isDownbeat ? 1600 : 1000;
+                env.gain.setValueAtTime(0.0001, when);
+                env.gain.exponentialRampToValueAtTime(isDownbeat ? 0.9 : 0.5, when + 0.002);
+                env.gain.exponentialRampToValueAtTime(0.0001, when + 0.045);
+                osc.connect(env);
+                env.connect(out);
+                osc.start(when);
+                osc.stop(when + 0.06);
+                metronomeSourcesRef.current.push(osc as unknown as AudioBufferSourceNode);
+            }
+            const step = tempoAt(cursor).spb;
+            cursor += step;
+            beatIndex += 1;
+        }
+    };
+
+    /** Click `countInBars` bars of count-in, then return when playback may start. */
+    const runCountIn = async (ctx: AudioContext): Promise<void> => {
+        if (countInBars <= 0) return;
+        const { sig } = tempoAt(0);
+        const spb = tempoAt(0).spb;
+        const beats = sig * countInBars;
+        // Restore the previous metronome setting afterwards.
+        const wasEnabled = metronomeEnabled;
+        if (!wasEnabled) {
+            // Count-in must always be audible.
+            const g = ctx.createGain();
+            g.gain.value = 0.35;
+            g.connect(ctx.destination);
+            metronomeGainRef.current = g;
+        }
+        for (let i = 0; i < beats; i++) {
+            const when = ctx.currentTime + 0.05 + i * spb;
+            const osc = ctx.createOscillator();
+            const env = ctx.createGain();
+            const down = i % sig === 0;
+            osc.type = 'square';
+            osc.frequency.value = down ? 1600 : 1000;
+            env.gain.setValueAtTime(0.0001, when);
+            env.gain.exponentialRampToValueAtTime(down ? 0.9 : 0.5, when + 0.002);
+            env.gain.exponentialRampToValueAtTime(0.0001, when + 0.045);
+            osc.connect(env);
+            const target = metronomeGainRef.current || ctx.destination;
+            env.connect(target);
+            osc.start(when);
+            osc.stop(when + 0.06);
+        }
+        await new Promise(r => window.setTimeout(r, beats * spb * 1000 + 60));
+        if (!wasEnabled) {
+            stopMetronome();
+            try { metronomeGainRef.current?.disconnect(); } catch { /* already gone */ }
+            metronomeGainRef.current = null;
+        }
+    };
+
     const togglePlay = () => {
         if (isPlaying) {
             pauseAll();
@@ -1095,15 +1240,28 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
             }
         }
 
-        // 5. Start multitrack playback with all active stem buffers sample-locked
+        // 5. Count-in (if requested) then start playback with all stems sample-locked
+        if (countInBars > 0) {
+            setIsCountingIn(true);
+            try {
+                await runCountIn(ctx);
+            } finally {
+                setIsCountingIn(false);
+            }
+        }
         await scheduleAll();
         isPlayingRef.current = true;
         setIsPlaying(true);
         lastUiTickRef.current = 0;
         startPlayheadLoop();
+        // 6. Click track, anchored to the same clock as the stems.
+        if (metronomeEnabled) {
+            scheduleMetronome(ctx, currentTimeRef.current, 30);
+        }
     };
 
     const pauseAll = () => {
+        stopMetronome();
         const finalPos = Math.max(0, Math.min(durationRef.current, getPosition()));
         currentTimeRef.current = finalPos;
         setCurrentTime(finalPos);
@@ -1812,6 +1970,48 @@ export const SessionWorkspace: React.FC<SessionWorkspaceProps> = ({
             <div className="px-6 py-3 border-t border-black/[0.06] dark:border-white/[0.08] bg-white/95 dark:bg-[#12141c]/95 flex flex-wrap items-center justify-between gap-4 z-20 shadow-apple-md">
                 {/* Transport Buttons */}
                 <div className="flex items-center space-x-1 sm:space-x-1.5 flex-shrink-0">
+                    {/* Metronome: click on the same AudioContext clock as the stems */}
+                    <button
+                        onClick={() => {
+                            const next = !metronomeEnabled;
+                            setMetronomeEnabled(next);
+                            const ctx = audioCtxRef.current;
+                            if (next && ctx && isPlayingRef.current) {
+                                scheduleMetronome(ctx, currentTimeRef.current, 30);
+                            } else if (!next) {
+                                stopMetronome();
+                            }
+                        }}
+                        aria-pressed={metronomeEnabled}
+                        className={`p-2 rounded-xl transition-colors ${
+                            metronomeEnabled
+                                ? 'bg-teal-500 text-slate-950 shadow-sm'
+                                : 'bg-black/[0.04] dark:bg-white/5 hover:bg-black/[0.08] dark:hover:bg-white/10 text-slate-700 dark:text-slate-300'
+                        }`}
+                        title={`Metronome ${metronomeEnabled ? 'on' : 'off'} (${effectiveTempoMap[0].bpm.toFixed(1)} BPM, ${effectiveTempoMap[0].sig}/4)`}
+                        aria-label="Toggle metronome"
+                    >
+                        <Music size={15} />
+                    </button>
+
+                    {/* Count-in: 0 / 1 / 2 bars before recording or playback */}
+                    <select
+                        value={countInBars}
+                        onChange={(e) => setCountInBars(Number(e.target.value))}
+                        title="Count-in bars before playback starts"
+                        aria-label="Count-in bars"
+                        className="px-1.5 py-1.5 rounded-xl bg-black/[0.04] dark:bg-white/5 text-[10px] font-bold text-slate-600 dark:text-slate-300 cursor-pointer"
+                    >
+                        <option value={0}>In 0</option>
+                        <option value={1}>In 1</option>
+                        <option value={2}>In 2</option>
+                    </select>
+                    {isCountingIn && (
+                        <span className="text-[10px] font-bold text-teal-600 dark:text-teal-400 animate-pulse" role="status">
+                            Count-in…
+                        </span>
+                    )}
+
                     {/* Return to Zero / Start */}
                     <button
                         onClick={() => handleSeek(0)}

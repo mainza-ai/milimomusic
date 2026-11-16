@@ -1618,7 +1618,7 @@ async def start_model_download(payload: ModelDownloadRequest, background_tasks: 
             "total_files": total_files, "files_done": 0, "current_file": "",
             "received_bytes": 0, "total_bytes": total_bytes,
             "local_dir": os.path.abspath(local_dir), "category": "audio",
-            "category_source": "catalog", "error": "",
+            "category_source": "catalog", "error": "", "speed_mbps": 0.0,
         }
         _model_downloads[download_id] = rec
         cancel_event = threading.Event()
@@ -1685,7 +1685,7 @@ async def start_model_download(payload: ModelDownloadRequest, background_tasks: 
         "total_files": len(files), "files_done": 0, "current_file": "",
         "received_bytes": 0, "total_bytes": total_bytes,
         "local_dir": os.path.abspath(local_dir), "category": category,
-        "category_source": category_source, "error": "",
+        "category_source": category_source, "error": "", "speed_mbps": 0.0,
     }
     cancel_event = threading.Event()
     _download_cancels[download_id] = cancel_event
@@ -1767,14 +1767,16 @@ def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files
     try:
         os.makedirs(local_dir, exist_ok=True)
         # Account for already-present complete shards (resume / retry of same repo).
+        completed_bytes = 0
         for fname, size in files:
             dest = os.path.join(local_dir, fname)
             try:
                 if os.path.isfile(dest) and os.path.getsize(dest) == size:
                     rec["files_done"] += 1
-                    rec["received_bytes"] += size
+                    completed_bytes += size
             except OSError:
                 pass
+        rec["received_bytes"] = completed_bytes
         for fname, size in files:
             if cancel_event.is_set():
                 rec["status"] = "cancelled"
@@ -1787,20 +1789,60 @@ def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files
                 pass
             rec["current_file"] = fname
             last_err: Optional[Exception] = None
-            for attempt in range(3):
-                try:
-                    hf_hub_download(repo_id=repo_id, filename=fname, local_dir=local_dir)
-                    last_err = None
-                    break
-                except Exception as e:
-                    last_err = e
-                    logger.warning(f"Download {download_id} {fname} attempt {attempt + 1}/3 failed: {e}")
-                    import time as _time
-                    _time.sleep(2 ** attempt)
+
+            # Byte-level progress while a single (possibly 28 GB) shard transfers.
+            # Without this, progress only moved between files, so a large model
+            # looked frozen — and a failure at 61% looked like a hang.
+            base_done_bytes = completed_bytes
+            stop_monitor = threading.Event()
+
+            def _monitor_progress():
+                last_bytes = 0
+                last_t = time.monotonic()
+                while not stop_monitor.is_set():
+                    time.sleep(0.5)
+                    current_bytes = 0
+                    dest = os.path.join(local_dir, fname)
+                    try:
+                        if os.path.isfile(dest):
+                            current_bytes = os.path.getsize(dest)
+                        else:
+                            for root_dir, _, walked in os.walk(local_dir):
+                                for candidate in walked:
+                                    if candidate.endswith(".incomplete"):
+                                        p_path = os.path.join(root_dir, candidate)
+                                        if os.path.isfile(p_path):
+                                            current_bytes += os.path.getsize(p_path)
+                    except OSError:
+                        pass
+                    now = time.monotonic()
+                    dt = max(0.1, now - last_t)
+                    if rec.get("total_bytes"):
+                        rec["received_bytes"] = min(rec["total_bytes"], base_done_bytes + current_bytes)
+                    rec["speed_mbps"] = round(((current_bytes - last_bytes) / dt) / (1024 * 1024), 2)
+                    last_bytes = current_bytes
+                    last_t = now
+
+            monitor = threading.Thread(target=_monitor_progress, daemon=True)
+            monitor.start()
+            try:
+                for attempt in range(3):
+                    try:
+                        hf_hub_download(repo_id=repo_id, filename=fname, local_dir=local_dir)
+                        last_err = None
+                        break
+                    except Exception as e:
+                        last_err = e
+                        logger.warning(f"Download {download_id} {fname} attempt {attempt + 1}/3 failed: {e}")
+                        time.sleep(2 ** attempt)
+            finally:
+                stop_monitor.set()
+                monitor.join(timeout=1.0)
             if last_err is not None:
                 raise last_err
             rec["files_done"] += 1
-            rec["received_bytes"] += size
+            completed_bytes += size
+            rec["received_bytes"] = completed_bytes
         rec["status"] = "completed"
         rec["current_file"] = ""
         try:

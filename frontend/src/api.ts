@@ -265,6 +265,10 @@ export interface ModelDownloadStatus {
     progress_percent: number | null;
     local_dir: string;
     error: string;
+    /** Category the server resolved (or the user chose) — needed for a retry. */
+    category?: 'audio' | 'image' | 'video' | null;
+    /** Live transfer rate, MB/s. */
+    speed_mbps?: number;
 }
 
 export interface ModelVariant {

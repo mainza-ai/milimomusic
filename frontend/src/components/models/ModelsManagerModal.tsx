@@ -787,10 +787,32 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
                                     </div>
                                 )}
                                 {download.status === 'downloading' && download.current_file && (
-                                    <p className="text-[10px] font-mono text-slate-400 truncate">{download.current_file} · file {download.files_done + 1}/{download.total_files}</p>
+                                    <p className="text-[10px] font-mono text-slate-400 truncate">
+                                        {download.current_file} · file {download.files_done + 1}/{download.total_files}
+                                        {typeof download.speed_mbps === 'number' && download.speed_mbps > 0
+                                            ? ` · ${download.speed_mbps.toFixed(1)} MB/s`
+                                            : ''}
+                                    </p>
                                 )}
                                 {(download.status === 'error' || downloadError) && (
-                                    <p className="text-[11px] text-rose-600 dark:text-rose-400">{download.error || downloadError}</p>
+                                    <div className="flex items-start justify-between gap-3">
+                                        <p className="text-[11px] text-rose-600 dark:text-rose-400 flex-1">
+                                            {download.error || downloadError}
+                                        </p>
+                                        {download.status === 'error' && (
+                                            <button
+                                                type="button"
+                                                onClick={() => handleDownload(
+                                                    download.repo_id,
+                                                    (download.category as 'audio' | 'image' | 'video' | undefined),
+                                                )}
+                                                title="Resume this download (finished files are skipped)"
+                                                className="shrink-0 px-2.5 py-1 rounded-lg bg-rose-500/15 hover:bg-rose-500/25 text-rose-600 dark:text-rose-400 text-[11px] font-bold transition-colors"
+                                            >
+                                                Retry
+                                            </button>
+                                        )}
+                                    </div>
                                 )}
                             </div>
                         )}

@@ -3,7 +3,8 @@
 FROM node:20-alpine AS frontend-builder
 WORKDIR /app/frontend
 COPY frontend/package*.json ./
-RUN npm install
+# `npm ci` respects package-lock.json, so the image matches the repo exactly.
+RUN npm ci
 COPY frontend/ ./
 RUN npm run build
 
@@ -30,9 +31,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
     && rm -rf /var/lib/apt/lists/*
 
 # Install Python dependencies
-COPY backend/requirements.txt /app/backend/requirements.txt
+COPY backend/requirements.txt backend/requirements.lock.txt /app/backend/
 RUN pip install --no-cache-dir --upgrade pip uv && \
-    uv pip install --system --no-cache -r /app/backend/requirements.txt
+    # Install the pinned lockfile (universal: same resolution on linux/arm64).
+    uv pip install --system --no-cache -r /app/backend/requirements.lock.txt
 
 # Copy backend, neural engines: muscriptor, heartlib, mulacover
 COPY backend /app/backend

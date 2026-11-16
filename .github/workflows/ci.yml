@@ -51,7 +51,9 @@ jobs:
       - name: Install Dependencies
         run: |
           python -m pip install --upgrade pip uv
-          uv pip install --system -r backend/requirements.txt
+          # The lockfile (universal, generated from requirements.txt) is what CI
+          # installs: the same commit must build the same environment.
+          uv pip install --system -r backend/requirements.lock.txt
 
       - name: Dependency Vulnerability Audit
         # Non-blocking: an advisory must not silently stop a release, but it must

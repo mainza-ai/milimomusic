@@ -213,7 +213,7 @@ cmd_install() {
 
     echo "2. Installing frontend npm dependencies..."
     cd "$DIR/frontend"
-    npm install
+    npm ci
 
     echo "3. Building production frontend..."
     npm run build

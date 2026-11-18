@@ -80,6 +80,50 @@ class VideoOrchestrator:
         self._local_ltx = DiffusersLTXGenerator()
         self._procedural = ProceduralVideoGenerator()
 
+    def begin_task(
+        self,
+        task_id: str,
+        job_id: str,
+        *,
+        step: str,
+        total_clips: int = 1,
+    ) -> None:
+        """Register a background task so `GET /videos/tasks/{id}` can report it.
+
+        Export and variant jobs returned a task id that no endpoint could resolve,
+        so the UI could not show progress or completion for them.
+        """
+        with self._lock:
+            self._tasks[task_id] = VideoTaskStatusInfo(
+                id=task_id,
+                job_id=str(job_id),
+                status="processing",
+                step=step,
+                progress=5,
+                total_clips=int(total_clips),
+                current_clip=0,
+            )
+
+    def end_task(
+        self,
+        task_id: str,
+        *,
+        status: str,
+        step: Optional[str] = None,
+        video_url: Optional[str] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        """Mark a `begin_task` task terminal (kept for the poller, not deleted)."""
+        payload: Dict[str, Any] = {
+            "status": status,
+            "step": step or ("Done" if status == "completed" else (error or status)),
+            "video_url": video_url,
+            "error": error,
+        }
+        if status == "completed":
+            payload["progress"] = 100
+        self.update_task(task_id, **payload)
+
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         with self._lock:
             t = self._tasks.get(task_id)
@@ -800,6 +844,15 @@ class VideoOrchestrator:
             burn_lyrics = config.get("burn_lyrics", True)
             subtitle_style = config.get("subtitle_style", "neon")
             transition_style = config.get("transition_style", "beat_cut")
+            from app.services.video.consistency import (
+                apply_character_bible,
+                character_bible,
+                extract_last_frame,
+                normalise_mode,
+                scene_seed,
+            )
+
+            consistency_mode = normalise_mode(config.get("consistency_mode"))
 
             if aspect_ratio == "9:16":
                 w, h = (1080, 1920) if resolution == "1080p" else (720, 1280)
@@ -852,6 +905,13 @@ class VideoOrchestrator:
                 user_scenes=config.get("scenes") or config.get("clips")
             )
             total_clips = plan.total_clips
+            # Audit E6: one character description, injected into every scene, so the
+            # text conditioning does not describe eight different people.
+            bible = character_bible(config, plan)
+            if bible and normalise_mode(config.get("consistency_mode")) != "off":
+                for clip in plan.clips:
+                    clip.prompt = apply_character_bible(clip.prompt, bible)
+                logger.info("Character bible applied to %d scenes (mode=%s)", len(plan.clips), consistency_mode)
             self.update_task(task_id, total_clips=total_clips, clips=[c.to_dict() for c in plan.clips])
 
             from app.services.video.generator_registry import VideoGeneratorRegistry
@@ -895,7 +955,10 @@ class VideoOrchestrator:
             try:
                 _is_cancelled = lambda: cancel_event.is_set()
 
+                previous_clip_file: Optional[str] = None
+
                 async def _render_all_scenes():
+                    nonlocal previous_clip_file
                     for idx, clip in enumerate(plan.clips):
                         if cancel_event.is_set():
                             logger.info(f"render_advanced_music_video: Cancelled before rendering scene {idx + 1}.")
@@ -968,7 +1031,20 @@ class VideoOrchestrator:
                             logger.info(f"Rendering visual scene {clip_idx} with {video_generator.name}...")
                             # Check if an approved pre-rendered keyframe exists on disk
                             pre_rendered_kf = os.path.join(KEYFRAMES_DIR, f"keyframe_{job.id}_{clip_idx:03d}.png")
-                            scene_bg = pre_rendered_kf if (os.path.isfile(pre_rendered_kf) and os.path.getsize(pre_rendered_kf) > 0) else face_image
+                            # Continuity: the previous clip's final frame carries the
+                            # grade and framing into this scene (mode="chain").
+                            chained_frame = None
+                            if consistency_mode == "chain" and previous_clip_file:
+                                chained_frame = extract_last_frame(
+                                    previous_clip_file,
+                                    os.path.join(TEMP_DIR, f"chain_{task_id}_{idx:03d}.png"),
+                                )
+                            scene_bg = scene_seed(
+                                approved_plate=pre_rendered_kf,
+                                chained_frame=chained_frame,
+                                face_image=face_image,
+                                mode=consistency_mode,
+                            )
 
                             fb_meta: Dict[str, Any] = {}
                             success = await video_generator.generate_clip(
@@ -1011,6 +1087,7 @@ class VideoOrchestrator:
                             rendered_clips.append(clip_file)
                             clip.rendered_clip_path = clip_file
                             clip.status = "completed"
+                            previous_clip_file = clip_file
 
                 if is_local:
                     async with GlobalHardwareCoordinator.scoped_device(

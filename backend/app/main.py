@@ -5802,11 +5802,15 @@ def _resolve_master_for_job(session, job, render_id: Optional[str]):
         if take and str(take.job_id) == str(job.id) and take.file_path:
             return take
         return None
-    for t in takes_service.list_takes(session, str(job.id)):
-        if t.get("is_selected") and t.get("file_path"):
-            take = takes_service.get_take(session, t["id"])
-            if take and take.file_path:
-                return take
+    rows = takes_service.list_takes(session, str(job.id))
+    # Prefer the selected take, then the newest completed one: exporting right after
+    # a render should not require an extra "select" round-trip.
+    for wanted in (lambda t: t.get("is_selected"), lambda t: t.get("status") == "completed"):
+        for t in rows:
+            if wanted(t) and t.get("file_path"):
+                take = takes_service.get_take(session, t["id"])
+                if take and take.file_path:
+                    return take
     # No take bookkeeping (older renders): fall back to the job pointer.
     if job.video_path:
         from app.core.paths import get_generated_audio_dir
@@ -5893,6 +5897,10 @@ async def export_video_for_preset(job_id: str, preset_id: str, req: VideoExportR
     out_name = f"{job_uuid}_{preset_id}_{uuid.uuid4().hex[:6]}.mp4"
     out_path = os.path.join(VIDEO_DIR, out_name)
 
+    from app.services.video.video_orchestrator import video_orchestrator as _orch
+
+    _orch.begin_task(task_id, str(job_uuid), step=f"Exporting {preset.label}")
+
     async def _run_bg():
         try:
             ok = await asyncio.to_thread(
@@ -5930,9 +5938,13 @@ async def export_video_for_preset(job_id: str, preset_id: str, req: VideoExportR
                 )
                 take_id = str(take_row.id)
             logger.info(f"Exported {job_title} as {preset_id}: {out_name}")
+            _orch.end_task(task_id, status="completed",
+                           step=f"Exported {preset.label}",
+                           video_url=f"/audio/videos/{out_name}")
             del take_id
         except Exception as exc:
             logger.error(f"Export failed for {job_id}: {exc}")
+            _orch.end_task(task_id, status="error", error=str(exc)[:300])
 
     bg_task = asyncio.create_task(_run_bg())
     video_service = __import__("app.services.video_service", fromlist=["video_service"]).video_service
@@ -5979,11 +5991,19 @@ async def render_aspect_variants(job_id: str, req: VideoVariantsRequest = Body(d
             "message": "None of the requested aspect ratios has a size for that resolution.",
         }})
 
+    from app.services.video.video_orchestrator import video_orchestrator as _orch
+
+    _orch.begin_task(task_id, str(job_uuid), step="Deriving aspect variants",
+                     total_clips=len(plan))
+
     async def _run_bg():
         from app.services.video.export_presets import probe_streams
         from app.services.video.qc import run_qc
 
-        for item in plan:
+        for done, item in enumerate(plan, 1):
+            _orch.update_task(task_id, step=f"Variant {item['aspect']} ({done}/{len(plan)})",
+                              progress=5 + int(90 * (done - 1) / max(1, len(plan))),
+                              current_clip=done)
             try:
                 ok = await asyncio.to_thread(
                     transcode, src_path, item["out_path"], preset,
@@ -6013,6 +6033,8 @@ async def render_aspect_variants(job_id: str, req: VideoVariantsRequest = Body(d
                     )
             except Exception as exc:
                 logger.error(f"Variant {item['aspect']} failed for {job_id}: {exc}")
+
+        _orch.end_task(task_id, status="completed", step="Variants ready")
 
     bg_task = asyncio.create_task(_run_bg())
     video_service = __import__("app.services.video_service", fromlist=["video_service"]).video_service

@@ -52,6 +52,7 @@ interface VideoCanvasPlayerProps {
     onOpenReport?: () => void;
     presets?: DeliveryPreset[];
     onExportPreset?: (presetId: string) => void;
+    onCreateVariants?: () => void;
 }
 
 const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
@@ -85,6 +86,7 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
     onOpenReport,
     presets = [],
     onExportPreset,
+    onCreateVariants,
 }) => {
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -268,6 +270,16 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                                 <option key={preset.id} value={preset.id}>{preset.label}</option>
                             ))}
                         </select>
+                    )}
+                    {onCreateVariants && (
+                        <button
+                            type="button"
+                            onClick={onCreateVariants}
+                            className="px-2 py-1 rounded-lg bg-black/40 border border-white/15 text-[10px] font-bold text-slate-300 hover:text-white"
+                            title="Derive 9:16 and 1:1 versions from this master (plan 7.17)"
+                        >
+                            Make variants
+                        </button>
                     )}
                     {onOpenReport && (
                         <button

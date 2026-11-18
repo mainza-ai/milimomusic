@@ -313,7 +313,7 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                         key={sec.id}
                                         style={{ width: `${widthPx}px` }}
                                         onClick={() => onSeekToTime?.(sec.start)}
-                                        className={`h-full border-r border-black/10 dark:border-white/10 flex items-center px-2 text-[9px] font-mono font-bold truncate cursor-pointer hover:opacity-80 transition-opacity ${sec.color}`}
+                                        className={`h-full border-r border-black/10 dark:border-white/10 flex items-center px-2 text-[10px] font-mono font-bold truncate cursor-pointer hover:opacity-80 transition-opacity ${sec.color}`}
                                         title={`${sec.name} (${sec.start.toFixed(1)}s - ${sec.end.toFixed(1)}s) - Click to seek`}
                                     >
                                         [{sec.name}]
@@ -364,7 +364,7 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                         )}
 
                                         {/* Floating Badge on Thumbnail */}
-                                        <div className="absolute top-1 left-1 bg-black/70 backdrop-blur-md px-1.5 py-0.5 rounded text-[8px] font-mono font-bold text-white flex items-center gap-1">
+                                        <div className="absolute top-1 left-1 bg-black/70 backdrop-blur-md px-1.5 py-0.5 rounded text-[10px] font-mono font-bold text-white flex items-center gap-1">
                                             <span>#{clip.clip_index}</span>
                                             {clip.section_label && (
                                                 <span className="text-teal-300 font-normal">· {clip.section_label}</span>
@@ -373,7 +373,7 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
 
                                         {/* Musical Energy Badge */}
                                         {energyDots && (
-                                            <div className="absolute top-1 right-1 bg-black/70 backdrop-blur-md px-1 py-0.5 rounded text-[8px] text-amber-300" title={`Musical Energy: ${clip.musical_energy}/5`}>
+                                            <div className="absolute top-1 right-1 bg-black/70 backdrop-blur-md px-1 py-0.5 rounded text-[10px] text-amber-300" title={`Musical Energy: ${clip.musical_energy}/5`}>
                                                 {energyDots}
                                             </div>
                                         )}
@@ -402,7 +402,7 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                                     {clip.time_str} ({clip.duration.toFixed(1)}s)
                                                 </span>
                                                 <span
-                                                    className={`px-1.5 py-0.5 rounded border font-bold uppercase tracking-wider text-[8px] ${badge.cls}`}
+                                                    className={`px-1.5 py-0.5 rounded border font-bold uppercase tracking-wider text-[10px] ${badge.cls}`}
                                                 >
                                                     {badge.label}
                                                 </span>
@@ -420,14 +420,14 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
 
                                             {/* Synced Lyrics Snippet */}
                                             {clip.lyrics && (
-                                                <p className="text-[9px] italic text-cyan-600 dark:text-cyan-400 truncate mt-0.5">
+                                                <p className="text-[10px] italic text-cyan-600 dark:text-cyan-400 truncate mt-0.5">
                                                     "{clip.lyrics}"
                                                 </p>
                                             )}
                                         </div>
 
                                         {/* Footer: Camera, Reorder & Retake */}
-                                        <div className="pt-1.5 border-t border-black/[0.04] dark:border-white/5 flex items-center justify-between text-[9px] font-mono text-slate-400">
+                                        <div className="pt-1.5 border-t border-black/[0.04] dark:border-white/5 flex items-center justify-between text-[10px] font-mono text-slate-400">
                                             {/* Shift / Reorder Arrows */}
                                             {onReorderClips && (
                                                 <div className="flex items-center gap-0.5" onClick={(e) => e.stopPropagation()}>
@@ -493,12 +493,12 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                 <Type size={12} className="text-cyan-400" />
                                 <span>Karaoke Lyrics Track</span>
                                 {timedLyrics.length > 0 && (
-                                    <span className="text-[9px] font-mono px-1.5 py-0.2 rounded-full bg-cyan-500/10 text-cyan-500 border border-cyan-500/20">
+                                    <span className="text-[10px] font-mono px-1.5 py-0.2 rounded-full bg-cyan-500/10 text-cyan-500 border border-cyan-500/20">
                                         {timedLyrics.length} lines
                                     </span>
                                 )}
                             </span>
-                            <span className="text-[9px] font-mono text-slate-400">
+                            <span className="text-[10px] font-mono text-slate-400">
                                 Click line to seek · Nudge [±0.1s] timing
                             </span>
                         </div>
@@ -537,7 +537,7 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                                     <button
                                                         type="button"
                                                         onClick={() => onNudgeLyric(lIdx, -0.1)}
-                                                        className="px-1 py-0.5 rounded text-[8px] font-mono font-bold bg-black/10 dark:bg-white/10 text-slate-400 hover:text-cyan-400 hover:bg-black/20"
+                                                        className="px-1 py-0.5 rounded text-[10px] font-mono font-bold bg-black/10 dark:bg-white/10 text-slate-400 hover:text-cyan-400 hover:bg-black/20"
                                                         title="Nudge line 0.1s earlier"
                                                     >
                                                         -0.1
@@ -545,7 +545,7 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                                     <button
                                                         type="button"
                                                         onClick={() => onNudgeLyric(lIdx, 0.1)}
-                                                        className="px-1 py-0.5 rounded text-[8px] font-mono font-bold bg-black/10 dark:bg-white/10 text-slate-400 hover:text-cyan-400 hover:bg-black/20"
+                                                        className="px-1 py-0.5 rounded text-[10px] font-mono font-bold bg-black/10 dark:bg-white/10 text-slate-400 hover:text-cyan-400 hover:bg-black/20"
                                                         title="Nudge line 0.1s later"
                                                     >
                                                         +0.1
@@ -592,7 +592,7 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                                 <Film size={16} />
                                             </div>
                                         )}
-                                        <span className="absolute bottom-1 right-1 text-[8px] bg-black/80 px-1 py-0.5 rounded font-mono font-bold text-teal-400">
+                                        <span className="absolute bottom-1 right-1 text-[10px] bg-black/80 px-1 py-0.5 rounded font-mono font-bold text-teal-400">
                                             #{clip.clip_index}
                                         </span>
                                     </div>
@@ -603,17 +603,17 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                                 {clip.time_str} ({clip.duration.toFixed(1)}s)
                                             </span>
                                             {clip.section_label && (
-                                                <span className="text-[9px] font-mono font-bold text-slate-400 bg-black/[0.04] dark:bg-white/[0.05] px-1.5 py-0.5 rounded">
+                                                <span className="text-[10px] font-mono font-bold text-slate-400 bg-black/[0.04] dark:bg-white/[0.05] px-1.5 py-0.5 rounded">
                                                     [{clip.section_label}]
                                                 </span>
                                             )}
                                             <span
-                                                className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full border ${badge.cls}`}
+                                                className={`text-[10px] font-bold px-1.5 py-0.5 rounded-full border ${badge.cls}`}
                                             >
                                                 {badge.label}
                                             </span>
                                             {energyDots && (
-                                                <span className="text-[9px] text-amber-300 font-mono ml-auto" title={`Energy: ${clip.musical_energy}/5`}>
+                                                <span className="text-[10px] text-amber-300 font-mono ml-auto" title={`Energy: ${clip.musical_energy}/5`}>
                                                     {energyDots}
                                                 </span>
                                             )}
@@ -631,7 +631,7 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                                 </div>
 
                                 {clip.directors_note && (
-                                    <div className="px-2 py-0.5 rounded bg-black/[0.03] dark:bg-white/[0.04] text-[9px] text-slate-500 italic truncate" title={clip.directors_note}>
+                                    <div className="px-2 py-0.5 rounded bg-black/[0.03] dark:bg-white/[0.04] text-[10px] text-slate-500 italic truncate" title={clip.directors_note}>
                                         🎬 Note: {clip.directors_note}
                                     </div>
                                 )}

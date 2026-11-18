@@ -83,3 +83,55 @@ def test_bounce_rejects_an_unknown_format(client):
     res = client.post("/api/editor/projects/whatever/bounce?format=ogg")
     assert res.status_code == 400
     assert res.json()["detail"]["error"]["code"] == "unsupported_format"
+
+
+def test_export_task_is_pollable(client, job_id, monkeypatch):
+    """Export used to return a task id that `GET /videos/tasks/{id}` could not resolve."""
+    from app.services.video import deliver
+
+    def fake_transcode(src, dest, preset, **kwargs):
+        with open(dest, "wb") as fh:
+            fh.write(b"fake-mp4")
+        return True
+
+    monkeypatch.setattr(deliver, "transcode", fake_transcode)
+    # Give the job a master so the endpoint does not refuse.
+    from app.services.video import takes as takes_service
+
+    with Session(engine) as session:
+        take = takes_service.create_take(session, job_id=job_id, task_id="t", kind="advanced", config={})
+        takes_service.finish_take(session, take, status="completed",
+                                  video_path="/audio/videos/x.mp4", file_path="/tmp/x.mp4")
+
+    res = client.post(f"/videos/{job_id}/export/default", json={})
+    assert res.status_code == 202, res.text
+    task_id = res.json()["task_id"]
+
+    # The task must be resolvable (it used to 404): the UI polls this id.
+    poll = client.get(f"/videos/tasks/{task_id}")
+    assert poll.status_code == 200, poll.text
+    body = poll.json()
+    assert body["id"] == task_id
+    assert body["status"] in ("processing", "completed", "error")
+    assert body["step"]
+
+
+def test_background_task_lifecycle_is_explicit():
+    """begin_task/end_task are the contract export and variant jobs rely on."""
+    from app.services.video.video_orchestrator import video_orchestrator as orch
+
+    orch.begin_task("lifecycle-probe", "job-1", step="Exporting", total_clips=3)
+    state = orch.get_task("lifecycle-probe")
+    assert state["status"] == "processing"
+    assert state["step"] == "Exporting"
+    assert state["total_clips"] == 3
+
+    orch.update_task("lifecycle-probe", progress=55, current_clip=2)
+    assert orch.get_task("lifecycle-probe")["progress"] == 55
+
+    orch.end_task("lifecycle-probe", status="completed", step="Done",
+                  video_url="/audio/videos/x.mp4")
+    final = orch.get_task("lifecycle-probe")
+    assert final["status"] == "completed"
+    assert final["progress"] == 100
+    assert final["video_url"].endswith(".mp4")

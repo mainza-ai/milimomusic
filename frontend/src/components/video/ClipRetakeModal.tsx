@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useEffect, useRef, useState } from 'react';
 import { X, RefreshCw, Sparkles, Camera, Sun, Loader2 } from 'lucide-react';
 import type { VideoClipSegment } from '../../api';
 
@@ -23,6 +23,13 @@ export const ClipRetakeModal: React.FC<ClipRetakeModalProps> = ({
     onReimagineScene,
     isReimagining = false,
 }) => {
+    const dialogRef = useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+        const previous = document.activeElement as HTMLElement | null;
+        dialogRef.current?.focus();
+        return () => { previous?.focus?.(); };
+    }, []);
+
     const [prompt, setPrompt] = useState('');
     const [camera, setCamera] = useState('Medium cinematic focus');
     const [lighting, setLighting] = useState('Atmospheric rim light');
@@ -67,6 +74,8 @@ export const ClipRetakeModal: React.FC<ClipRetakeModalProps> = ({
             onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
         >
             <div
+                ref={dialogRef}
+                tabIndex={-1}
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="retake-dialog-title"
@@ -155,6 +164,7 @@ export const ClipRetakeModal: React.FC<ClipRetakeModalProps> = ({
                                 <span>Camera Motion</span>
                             </label>
                             <select
+                                aria-label="Camera move for this retake"
                                 value={camera}
                                 onChange={(e) => setCamera(e.target.value)}
                                 className="w-full apple-input text-xs"
@@ -173,6 +183,7 @@ export const ClipRetakeModal: React.FC<ClipRetakeModalProps> = ({
                                 <span>Lighting & Tone</span>
                             </label>
                             <select
+                                aria-label="Lighting for this retake"
                                 value={lighting}
                                 onChange={(e) => setLighting(e.target.value)}
                                 className="w-full apple-input text-xs"

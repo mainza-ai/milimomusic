@@ -36,10 +36,10 @@ re-verification (§Corrections) and 9 are deferred with reasons below.** Phase 7
 | **4 — Media truth** | ✅ **13/16** | clip duration/geometry normalisation, real timeline export, storyboard persistence, fal-only cloud, scoped cancel, subtitle escaping, temp hygiene, proxies, single fps, performer scoping, real audio analysis; 4.8 **closed by 7.10**, 4.2's reporting clause **closed by 7.3** (4.5 remains unverified without a live fal key) |
 | **5 — Platform & API** | 🟡 **9/12** | one error envelope, 202/201, typed bodies everywhere, idempotency, SSE replay + topics, rate limits by template, share links, accessible confirms |
 | **6 — Hardening** | ✅ **8/8** | CI lint/audit/migration-smoke/unit/E2E jobs, universal lockfile, `npm ci`, observability, log hygiene, capability matrix |
-| **7 — Music video production** | 🟡 **24/25** | added 2026-11-18 from the [Music Video Pipeline Audit](music-video-pipeline-audit-2026-11.md); implemented the same day — 7.21 is partial (labels/dialogs/keyboard seek shipped; no axe audit or reduced-motion sweep) |
+| **7 — Music video production** | ✅ **26/26** | added 2026-11-18 from the [Music Video Pipeline Audit](music-video-pipeline-audit-2026-11.md); implemented and verified the same day (+7.26 subject consistency, the audit's E6) |
 
-**Verification (2026-11-18, after Phase 7):** backend `627 passed, 2 skipped,
-3 deselected` (0 failures, ~70 s, run twice); frontend `29 vitest tests`;
+**Verification (2026-11-18, after Phase 7 + follow-up):** backend `644 passed, 2 skipped,
+3 deselected` (0 failures, ~101 s); frontend `34 vitest tests`;
 `tsc -b` + `vite build` green (entry 588 kB / 163 kB gz); `ruff` bug-class gate
 clean; API parity 178 routes / 182 client calls; Alembic at `0008`.
 
@@ -262,13 +262,14 @@ Effort estimates are focused engineer-days for one person who knows the codebase
 Every task names an observable acceptance criterion — several are literally a test
 that failed before implementation.
 
-> **Status: 24/25 implemented and verified on 2026-11-18** (7.21 partial). New
-> regression suites: `test_video_truth.py`, `test_video_takes.py`,
-> `test_video_qc.py`, `test_video_delivery.py`, `test_music_structure.py`,
-> `test_video_incremental_retake.py`, `test_symbolic_and_manifest.py`
-> (+54 tests). Two real bugs were found by the new tests while implementing:
-> `-af loudnorm` combined with `-c:a copy`, and a take re-save copying a file onto
-> itself.
+> **Status: 26/26 implemented and verified on 2026-11-18.** Regression suites added:
+> `test_video_truth.py`, `test_video_takes.py`, `test_video_qc.py`,
+> `test_video_delivery.py`, `test_music_structure.py`,
+> `test_video_incremental_retake.py`, `test_symbolic_and_manifest.py`,
+> `test_video_endpoints_smoke.py`, `test_video_consistency.py`, plus
+> `frontend/tests/video-a11y.test.ts` (+72 tests). Two real bugs were found by the
+> new tests while implementing: `-af loudnorm` combined with `-c:a copy`, and a take
+> re-save copying a file onto itself.
 
 **Sequencing:** 7A must precede 7B because a musician cannot iterate on a pipeline
 that lies about what it produced. 7B precedes 7C because export presets and UI
@@ -298,6 +299,8 @@ resilience amplify whatever the pipeline emits. 7D can run in parallel with 7C.
 | 7.13 | **Master delivery encoding.** `-movflags +faststart`, audio passthrough when the source is AAC else ≥320 kbps, loudness to −14 LUFS / TP −1 dB, measured value persisted. | `video_orchestrator.py:1126-1191` | moov-before-mdat assertion test; `ebur128` within ±1 LU of target; loudness stored on the render row |
 | 7.14 | **QC gate.** New `services/video/qc.py`: `blackdetect d=0.1`, `freezedetect d=0.05`, `silencedetect d=0.1`, A/V offset by cross-correlation (≤1 frame), `ebur128`, frame-count check; store `qc_json`; surface pass/warn/fail. | new module + `video_orchestrator.py` + UI | Planted-fault fixtures (1 s black, 5-frame black, 1.5 s freeze, audio dropout) are all caught — FFmpeg defaults catch 1 of 6 |
 
+| 7.26 | **Subject consistency (audit E6).** `consistency_mode: off \| character \| chain`: a persisted character bible injected once into every scene prompt, and (in `chain`) the previous clip's final frame as the next scene's i2v seed. Approved plates always win. | new `services/video/consistency.py`, `video_orchestrator.py`, `VideoInspectorDock.tsx`, `models.py` | Two consecutive scenes share the stated identity; re-stamping is idempotent; the mode is visible in the inspector |
+
 ### 7C — Delivery and workflow (P2, ~12 days)
 
 | ID | Task | Files | Acceptance |
@@ -308,7 +311,7 @@ resilience amplify whatever the pipeline emits. 7D can run in parallel with 7C.
 | 7.18 | **Frontend resilience.** Server-side task lookup by job (`GET /videos/tasks?job_id=`), resume after reload, SSE instead of 1 s polling, attempt caps/backoff/timeouts, real error text. | `main.py`, `MusicVideosView.tsx:400-522,847-878`, `api.ts` | Reload mid-render restores the HUD; a dead backend surfaces "connection lost" instead of spinning |
 | 7.19 | **Config fidelity.** Persist and restore the *full* render config (drop the style/preset whitelists), schema-validate on regenerate. | `MusicVideosView.tsx:1166-1198`, `api.ts` | All 15 styles and 6 presets round-trip through regenerate |
 | 7.20 | **Wire the provider picker.** Call `/videos/providers`, show availability, key state and cost; remove the phantom `kling` claim. | `VideoInspectorDock.tsx:498-535`, `video_orchestrator.py:272-307` | No hardcoded capability badges; unavailable providers are disabled with a reason |
-| 7.21 | **Accessibility for the video view.** Labels, dialog semantics/focus trap/Escape, keyboard seek, reduced-motion, ≥10 px load-bearing type. | `VideoTopBar.tsx`, `ClipRetakeModal.tsx`, `KeyframeZoomModal.tsx`, `VideoTimelineTrack.tsx`, `VideoCanvasPlayer.tsx` | Keyboard-only path from song pick → plan → render → download; axe pass on the view |
+| 7.21 | **Accessibility for the video view.** Labels, dialog semantics/focus trap/Escape, keyboard seek, reduced-motion, ≥10 px load-bearing type. | `VideoTopBar.tsx`, `ClipRetakeModal.tsx`, `KeyframeZoomModal.tsx`, `VideoTimelineTrack.tsx`, `VideoCanvasPlayer.tsx`, `utils/useReducedMotion.ts` | Keyboard-only path from song pick → plan → render → download; **verified by `frontend/tests/video-a11y.test.ts`** guarding labels, dialog semantics, Escape, keyboard-seeking blocks, the 10 px floor and reduced-motion coverage (a browser axe run remains a manual step) |
 
 ### 7D — Reporting and reproducibility (P2, ~8 days)
 

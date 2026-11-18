@@ -106,6 +106,19 @@ To eliminate unnatural mouth twitching and deliver consistent vocal performances
      pulse on each clip. Note (audit M4): `camera_zoom` and `vocal_envelope` are computed
      but read by nothing, and the module has no test.
 
+## 4b. Subject consistency (2026-11-18, audit E6)
+
+`consistency_mode` on the render config (`off` | `character` | `chain`, default
+`character`) bounds identity drift without a bigger model:
+
+- **character** — one persisted physical description (explicit config → director's
+  `character_profile`) is appended to every scene prompt exactly once.
+- **chain** — additionally seeds each b-roll scene with the previous clip's final
+  frame, so grade, lighting and framing carry across the cut.
+- A plate the user approved always wins over chaining.
+- Implemented in `services/video/consistency.py`, selectable in the inspector's
+  *Character Consistency* control; covered by `tests/test_video_consistency.py`.
+
 ## 5. Local-First MiniMax H3 33B Execution
 
 The platform supports local MiniMax Hailuo H3 weights (`pipenetwork__MiniMax-H3-MLX-8bit`, 35.3 GB):

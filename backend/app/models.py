@@ -394,6 +394,9 @@ class VideoRenderRequest(SQLModel):
     visible_cast: Optional[List[str]] = None
     character_desc: Optional[str] = None
     characterPromptNote: Optional[str] = None
+    # Subject continuity across scenes (audit E6): "off" | "character" | "chain".
+    consistency_mode: Optional[str] = "character"
+    confirm_cost: Optional[bool] = False
     scenes: Optional[List[Dict[str, Any]]] = None
     clips: Optional[List[Dict[str, Any]]] = None
 

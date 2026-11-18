@@ -1597,6 +1597,8 @@ export interface VideoPlanParams {
 
 export interface VideoRenderParams {
     model_name?: string;
+    consistency_mode?: 'off' | 'character' | 'chain';
+    confirm_cost?: boolean;
     visual_style?: string;
     custom_style_prompt?: string;
     character_desc?: string;

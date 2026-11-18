@@ -308,6 +308,8 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const [autoContinue, setAutoContinue] = useState<boolean>(false);
     const [visibleCast, setVisibleCast] = useState<string[]>(['Lead Vocalist']);
     const [characterPromptNote, setCharacterPromptNote] = useState<string>('');
+    // Audit E6: keeps the performer consistent across scenes.
+    const [consistencyMode, setConsistencyMode] = useState<'off' | 'character' | 'chain'>('character');
 
     // Planning & Task Tracking
     const [isPlanning, setIsPlanning] = useState(false);
@@ -1048,6 +1050,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 visual_style: videoStyle,
                 custom_style_prompt: customStylePrompt,
                 character_desc: characterPromptNote,
+                consistency_mode: consistencyMode,
                 resolution,
                 aspect_ratio: aspectRatio,
                 provider: videoProvider,
@@ -1276,6 +1279,26 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             toast(err?.response?.data?.detail?.error?.message || 'Export failed to start.', 'error');
         }
     }, [activeSong, aspectRatio]);
+
+    const handleCreateVariants = useCallback(async () => {
+        if (!activeSong) return;
+        try {
+            const started = await videoApi.variants(activeSong.id, {
+                aspects: ['9:16', '1:1'],
+                resolution: resolution === '1080p' ? '1080p' : '720p',
+            });
+            toast(`Deriving ${started.variants.length} aspect variant(s)…`, 'success');
+            // Variant jobs are registered as video tasks, so the normal poller can
+            // follow them and refresh the take list on completion (plan 7.17).
+            startRenderPoll(started.task_id, activeSong.id);
+        } catch (err: any) {
+            toast(
+                err?.response?.data?.detail?.error?.message
+                || 'Could not start variants.',
+                'error',
+            );
+        }
+    }, [activeSong, resolution, startRenderPoll]);
 
     const handleOpenReport = useCallback(async () => {
         if (!activeSong) return;
@@ -1581,6 +1604,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             onOpenReport={handleOpenReport}
                             presets={presets}
                             onExportPreset={handleExportPreset}
+                            onCreateVariants={handleCreateVariants}
                         />
                     </div>
 
@@ -1646,6 +1670,8 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             visibleCast={visibleCast}
                             onToggleCastMember={handleToggleCastMember}
                             characterPromptNote={characterPromptNote}
+                            consistencyMode={consistencyMode}
+                            onChangeConsistencyMode={setConsistencyMode}
                             onChangeCharacterPromptNote={setCharacterPromptNote}
                         />
                     </div>

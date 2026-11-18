@@ -39,6 +39,9 @@ export interface VideoInspectorProps {
     activeVideoEngine: VideoModelKey | null;
     videoProvider: 'local' | 'cloud_fal' | 'cloud_replicate';
     onSelectProvider: (p: 'local' | 'cloud_fal' | 'cloud_replicate') => void;
+    /** Subject continuity across scenes (audit E6). */
+    consistencyMode?: 'off' | 'character' | 'chain';
+    onChangeConsistencyMode?: (mode: 'off' | 'character' | 'chain') => void;
     /** What the backend says can actually run right now (plan 7.20). */
     availableProviders?: Array<{ id: string; provider_type?: string; is_available: boolean; has_api_key?: boolean; requires_api_key?: boolean; description?: string }>;
     clipDuration: number;
@@ -147,6 +150,8 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
     videoProvider,
     onSelectProvider,
     availableProviders,
+    consistencyMode = 'character',
+    onChangeConsistencyMode,
     clipDuration,
     onChangeClipDuration,
     onResetClipDuration,
@@ -370,7 +375,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                             onChange={(e) => onChangePacingBias(parseInt(e.target.value, 10))}
                             className="w-full accent-indigo-500 h-1.5 bg-black/[0.06] dark:bg-white/10 rounded-lg cursor-pointer"
                         />
-                        <div className="flex justify-between text-[9px] font-mono text-slate-400">
+                        <div className="flex justify-between text-[10px] font-mono text-slate-400">
                             <span>-2 Sweeping Takes</span>
                             <span>0 Downbeats</span>
                             <span>+2 Fast Cuts</span>
@@ -522,7 +527,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                             >
                                 <div className="text-xs font-bold flex items-center justify-between">
                                     <span>🖥️ Local M3 Max</span>
-                                    <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-teal-500/20 text-teal-700 dark:text-teal-300 font-bold">
+                                    <span className="text-[10px] font-mono px-1 py-0.5 rounded bg-teal-500/20 text-teal-700 dark:text-teal-300 font-bold">
                                         {localOk ? 'Free' : 'No weights'}
                                     </span>
                                 </div>
@@ -544,7 +549,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                             >
                                 <div className="text-xs font-bold flex items-center justify-between">
                                     <span>⚡ Cloud GPU</span>
-                                    <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 font-bold">
+                                    <span className="text-[10px] font-mono px-1 py-0.5 rounded bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 font-bold">
                                         {cloudOk ? 'Paid' : 'No key'}
                                     </span>
                                 </div>
@@ -555,6 +560,43 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                         </div>
                             );
                         })()}
+                    </div>
+
+                    {/* Subject continuity (audit E6) — cheap, deterministic bounds
+                        on identity drift across scenes. */}
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
+                            Character Consistency
+                        </label>
+                        <div className="grid grid-cols-3 gap-1.5" role="group" aria-label="Character consistency mode">
+                            {([
+                                { id: 'off', label: 'Off', hint: 'Each scene is independent' },
+                                { id: 'character', label: 'Character', hint: 'One description in every prompt' },
+                                { id: 'chain', label: 'Chained', hint: 'Previous frame seeds the next scene' },
+                            ] as const).map((mode) => (
+                                <button
+                                    key={mode.id}
+                                    type="button"
+                                    aria-pressed={consistencyMode === mode.id}
+                                    onClick={() => onChangeConsistencyMode?.(mode.id)}
+                                    title={mode.hint}
+                                    className={`px-2 py-1.5 rounded-lg border text-[10px] font-bold transition-all ${
+                                        consistencyMode === mode.id
+                                            ? 'bg-teal-500/10 border-teal-500/40 text-teal-700 dark:text-teal-300'
+                                            : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-500'
+                                    }`}
+                                >
+                                    {mode.label}
+                                </button>
+                            ))}
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                            {consistencyMode === 'chain'
+                                ? 'Each scene starts from the previous clip’s final frame — strongest continuity, less shot variety.'
+                                : consistencyMode === 'character'
+                                    ? 'One persisted physical description is injected into every scene prompt.'
+                                    : 'Scenes are generated independently; expect visible identity drift.'}
+                        </p>
                     </div>
 
                     {/* Deduplicated Video Engines List */}
@@ -584,12 +626,12 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                                                 <div className="flex items-center gap-1.5">
                                                     <span className="text-xs font-bold">{conf.label}</span>
                                                     {isAct && (
-                                                        <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-teal-500/15 text-teal-700 dark:text-teal-300 font-bold border border-teal-500/20">
+                                                        <span className="text-[10px] font-mono px-1 py-0.5 rounded bg-teal-500/15 text-teal-700 dark:text-teal-300 font-bold border border-teal-500/20">
                                                             ● Active
                                                         </span>
                                                     )}
                                                     {isLocal && (
-                                                        <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold">
+                                                        <span className="text-[10px] font-mono px-1 py-0.5 rounded bg-amber-500/10 text-amber-600 dark:text-amber-400 font-bold">
                                                             ⚡ Ready
                                                         </span>
                                                     )}
@@ -678,7 +720,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                                 <Zap size={13} className="text-cyan-400" />
                                 <span>Fast-Path Video Engine</span>
                             </span>
-                            <span className="text-[9px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-600 dark:text-cyan-300 font-bold border border-cyan-500/30">
+                            <span className="text-[10px] font-mono px-2 py-0.5 rounded-full bg-cyan-500/20 text-cyan-600 dark:text-cyan-300 font-bold border border-cyan-500/30">
                                 &lt; 45s Render
                             </span>
                         </div>
@@ -760,7 +802,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                                 >
                                     <div className="flex items-center justify-between mb-0.5">
                                         <span className="text-xs font-bold leading-tight">{preset.name}</span>
-                                        <span className="text-[8px] font-mono font-bold px-1 py-0.2 rounded bg-black/10 dark:bg-white/10 text-slate-400">
+                                        <span className="text-[10px] font-mono font-bold px-1 py-0.2 rounded bg-black/10 dark:bg-white/10 text-slate-400">
                                             {preset.badge}
                                         </span>
                                     </div>
@@ -774,6 +816,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                             <div className="flex items-center justify-between text-xs">
                                 <span className="text-slate-500 font-medium">Font Family</span>
                                 <select
+                                    aria-label="Karaoke font family"
                                     value={fontFamily || ''}
                                     onChange={(e) => onChangeFontFamily?.(e.target.value)}
                                     className="text-xs apple-input rounded-lg px-2 py-1 max-w-[160px] bg-white dark:bg-black/30 border border-black/10 dark:border-white/10"
@@ -839,7 +882,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                                     }`}
                                 >
                                     <div className="text-[11px] font-bold">{mode.label}</div>
-                                    <div className="text-[8px] text-slate-400 truncate">{mode.desc}</div>
+                                    <div className="text-[10px] text-slate-400 truncate">{mode.desc}</div>
                                 </button>
                             ))}
                         </div>
@@ -915,7 +958,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                                 <Sparkles size={14} className="text-amber-400" />
                                 <span>Acoustic Word Alignment</span>
                             </label>
-                            <span className="text-[9px] font-mono text-slate-400">TorchAudio MMS_FA</span>
+                            <span className="text-[10px] font-mono text-slate-400">TorchAudio MMS_FA</span>
                         </div>
                         <p className="text-[10px] text-slate-400 leading-relaxed">
                             Resynchronize word-level timestamps to vocal audio stems using local wav2vec2 forced alignment.
@@ -972,7 +1015,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                                         }`}
                                     >
                                         <div className="text-xs font-bold">LivePortrait</div>
-                                        <div className="text-[9px] text-slate-400">Neural avatar with natural eye blinks</div>
+                                        <div className="text-[10px] text-slate-400">Neural avatar with natural eye blinks</div>
                                     </button>
                                     <button
                                         type="button"
@@ -984,7 +1027,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                                         }`}
                                     >
                                         <div className="text-xs font-bold">Viseme Mesh</div>
-                                        <div className="text-[9px] text-slate-400">Fast volume-reactive mouth motion</div>
+                                        <div className="text-[10px] text-slate-400">Fast volume-reactive mouth motion</div>
                                     </button>
                                 </div>
                             </div>

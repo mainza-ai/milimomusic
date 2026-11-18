@@ -3141,3 +3141,24 @@ Verification: **627 backend tests passed** (twice), 29 frontend tests, `tsc`/`vi
 green, ruff clean, API parity 178 routes / 182 calls, Alembic `0008`.
 Two real bugs were caught by the new tests: `-af loudnorm` combined with `-c:a copy`
 (one encode must re-encode audio), and `save_clip_plan` copying a take's clip onto itself.
+
+## [2026-11-18] implement | Phase 7 follow-up — subject consistency, a11y, pollable delivery
+Continuation of the Phase 7 pass, closing the three items left open:
+- **7.26 Subject consistency (audit E6).** New `services/video/consistency.py`: a
+  persisted character bible is appended to every scene prompt exactly once
+  (idempotent), and `consistency_mode=chain` seeds each b-roll scene with the
+  previous clip's final frame; an approved plate always wins. Selectable in the
+  inspector, carried on `VideoRenderRequest`, covered by 15 tests.
+- **7.21 Accessibility — complete.** Modal focus in/out, `aria-modal`/Escape on both
+  dialogs, labelled selects (track, font family, retake camera/lighting), all
+  sub-10px load-bearing labels raised to 10px, and the JS-driven karaoke backdrop
+  now honours `prefers-reduced-motion` through a `useReducedMotion` hook (CSS
+  already covered the rest). Guarded by `frontend/tests/video-a11y.test.ts`.
+- **Pollable delivery.** `begin_task`/`end_task` in the orchestrator: export and
+  variant jobs used to return a task id that `GET /videos/tasks/{id}` could not
+  resolve, so the UI could not show progress. They now register, report per-item
+  progress and finish terminal; the export endpoint also falls back to the newest
+  completed take so "export" works without an extra select round-trip. The player
+  gained *Make variants* (9:16 + 1:1) wired to that poller.
+Verification: **644 backend tests passed**, 34 frontend tests (5 new a11y guards),
+`tsc`/`vite build` green, ruff clean, API parity 178 routes / 182 calls.

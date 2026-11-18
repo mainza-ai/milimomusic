@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect, useRef } from 'react';
 import { X, Download, Sparkles } from 'lucide-react';
 import { api, type VideoClipSegment } from '../../api';
 
@@ -17,6 +17,13 @@ export const KeyframeZoomModal: React.FC<KeyframeZoomModalProps> = ({
     keyframeUrl,
     clipSegment,
 }) => {
+    const dialogRef = useRef<HTMLDivElement | null>(null);
+    useEffect(() => {
+        const previous = document.activeElement as HTMLElement | null;
+        dialogRef.current?.focus();
+        return () => { previous?.focus?.(); };
+    }, []);
+
     if (!isOpen || !keyframeUrl) return null;
 
     const fullUrl = api.getAudioUrl(keyframeUrl);
@@ -28,6 +35,8 @@ export const KeyframeZoomModal: React.FC<KeyframeZoomModalProps> = ({
             onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
         >
             <div
+                ref={dialogRef}
+                tabIndex={-1}
                 role="dialog"
                 aria-modal="true"
                 aria-label={`Keyframe still for scene ${clipIndex}`}

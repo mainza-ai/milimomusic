@@ -2,6 +2,7 @@ import React, { useMemo } from 'react';
 import type { Job } from '../../api';
 import { coverApi } from '../../api';
 import type { AspectRatioType } from './VideoTopBar';
+import { useReducedMotion } from '../../utils/useReducedMotion';
 
 export interface TimedWord {
     word: string;
@@ -110,6 +111,8 @@ export const LyricCanvasOverlay: React.FC<LyricCanvasOverlayProps> = ({
     isOverVideo = false,
     onSeek,
 }) => {
+    const reducedMotion = useReducedMotion();
+
     // 1. Parse Timed Lines
     const timedLines = useMemo<TimedLine[]>(() => {
         if (!activeSong) return [];
@@ -243,7 +246,9 @@ export const LyricCanvasOverlay: React.FC<LyricCanvasOverlayProps> = ({
                                         key={i}
                                         className="w-1 bg-gradient-to-t from-teal-400 to-cyan-300 rounded-full transition-all duration-150"
                                         style={{
-                                            height: isPlaying
+                                            // Respect reduced motion: the backdrop stops
+                                            // pulsing instead of animating at 60 fps (7.21).
+                                            height: isPlaying && !reducedMotion
                                                 ? `${Math.max(12, Math.sin(currentTime * 4 + i * 0.4) * 48 + 36)}px`
                                                 : '16px',
                                         }}

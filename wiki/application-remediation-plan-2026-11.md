@@ -3,8 +3,8 @@ title: Application Remediation Plan 2026-11
 type: overview
 tags: [plan, remediation, security, honesty, lifecycle, migrations, daw, video, ci]
 created: 2026-11-16
-updated: 2026-11-16
-sources: [application-audit-2026-11.md, decisions-2026-11.md]
+updated: 2026-11-18
+sources: [application-audit-2026-11.md, decisions-2026-11.md, music-video-pipeline-audit-2026-11.md]
 aliases: [remediation plan nov 2026, audit plan, fix plan v3]
 ---
 
@@ -12,31 +12,36 @@ aliases: [remediation plan nov 2026, audit plan, fix plan v3]
 
 Implementation plan for the findings in
 [Full Application Audit 2026-11](application-audit-2026-11.md), with scope fixed by
-[Decision Record 2026-11](decisions-2026-11.md). Ordered by **value ÷ risk**, with a hard
-dependency spine so each phase leaves the app shippable.
+[Decision Record 2026-11](decisions-2026-11.md), plus **Phase 7** from the
+[Music Video Pipeline Audit 2026-11](music-video-pipeline-audit-2026-11.md) (added
+2026-11-18; 110 tasks total, 81 of the original 85 verified or deliberately deferred).
+Ordered by **value ÷ risk**, with a hard dependency spine so each phase leaves the app
+shippable.
 
 Every task names the files to touch and an observable acceptance criterion. Effort is in
 focused engineer-days.
 
-## Implementation status (2026-11-16)
+## Implementation status (2026-11-18)
 
-**76 of 85 plan tasks are implemented and verified; 9 are deferred with reasons
-below.** Every phase is shippable at its current state.
+**76 of 85 original plan tasks are implemented; 4 of those were reopened after
+re-verification (§Corrections) and 9 are deferred with reasons below.** Phase 7 adds
+25 tasks from the music-video audit. Every phase is shippable at its current state.
 
 | Phase | Status | Evidence |
 |---|---|---|
 | **0 — Stop the bleeding** | ✅ **16/16** | exploit chain closed; YuE2 + Training Studio deleted; suite runs in 50 s |
-| **1 — Provenance contract** | ✅ **18/18** | `quality`/`provenance` on every job; transcription, voice, separation, image and video all honest |
+| **1 — Provenance contract** | 🟡 **17/18** | `quality`/`provenance` on every job; **1.14 reopened** — lip sync still reports success while running the jaw-warp fallback |
 | **2 — Spine** | ✅ **14/15** | durable queue for generation, bounded retries, one recovery policy, stall sweeper, **Alembic 0001–0007 + backups**, one UUID encoding, real FKs, soft delete, retention, lock ownership |
 | **3 — DAW core** | ✅ **16/17** | clip editing with trim/split/fades, workspace undo, tempo map + metronome, sample-accurate loop, clipboard, quantize strength, velocity lane, MIDI import, automation lanes, server-side session recall |
-| **4 — Media truth** | 🟡 **13/16** | clip duration/geometry normalisation, real timeline export, storyboard persistence, fal-only cloud, scoped cancel, subtitle escaping, temp hygiene, proxies, single fps, performer scoping, real audio analysis |
+| **4 — Media truth** | 🟡 **12/16** | clip duration/geometry normalisation, real timeline export, storyboard persistence, fal-only cloud, scoped cancel, subtitle escaping, temp hygiene, proxies, single fps, performer scoping, real audio analysis — **4.8 reopened** (`camera_zoom` is dead code), **4.2 partial** (delivered resolution never reported) |
 | **5 — Platform & API** | 🟡 **9/12** | one error envelope, 202/201, typed bodies everywhere, idempotency, SSE replay + topics, rate limits by template, share links, accessible confirms |
 | **6 — Hardening** | ✅ **8/8** | CI lint/audit/migration-smoke/unit/E2E jobs, universal lockfile, `npm ci`, observability, log hygiene, capability matrix |
+| **7 — Music video production** | 🆕 **0/25** | added 2026-11-18 from the [Music Video Pipeline Audit](music-video-pipeline-audit-2026-11.md) |
 
-**Verification:** backend `530 passed, 2 skipped, 3 deselected` (0 failures, ~50 s);
-frontend `29 vitest tests`; `tsc -b` + `vite build` green (entry 587 kB / 162 kB gz);
-`ruff` bug-class gate clean; API parity 168 routes / 172 client calls; Alembic at
-`0007` with a pre-migration backup on every upgrade.
+**Verification (2026-11-18):** backend `565 passed, 2 skipped, 3 deselected`
+(0 failures, ~62 s); frontend `29 vitest tests`; `tsc -b` + `vite build` green
+(entry 587 kB / 163 kB gz); `ruff` bug-class gate clean; API parity 168 routes /
+172 client calls; Alembic at `0007` with a pre-migration backup on every upgrade.
 
 ### Deferred — with reasons, not silently dropped
 
@@ -50,6 +55,24 @@ frontend `29 vitest tests`; `tsc -b` + `vite build` green (entry 587 kB / 162 kB
 | 5.9 frontend data layer (TanStack Query) | Cross-cutting rewiring of ~180 call sites; the highest-value remaining frontend work |
 | 5.11 full WCAG 2.2 AA programme | Dialog semantics, assertive errors, reduced motion and the `xs` breakpoint shipped; the full audit (hotkey scoping, i18n) remains |
 | 4.5 fal end-to-end | Implemented (upload-then-URL); **unverified** without a key — see the decision record |
+
+### Corrections from the music-video audit (2026-11-18)
+
+Four tasks were marked done that the code does not support. They are reopened with
+new IDs rather than silently re-opened in place, because the fix is larger than the
+original task text. Full evidence:
+[Music Video Pipeline Audit §8](music-video-pipeline-audit-2026-11.md#8-audit-deltas--claimed-done-not-actually-done).
+
+| Task | Original acceptance | What is actually true | Now tracked as |
+|---|---|---|---|
+| 1.14 | UI banners the jaw-warp fallback | `is_available` still checks only torch+MPS/CUDA; the *internal* fallback returns `True`, so `fallback_used` is never set | **7.1** |
+| 4.8 | `camera_zoom` feeds the Ken Burns branch | `camera_zoom` and `vocal_envelope` are computed song-wide and read by nothing | **7.10** |
+| 4.2 | Delivered resolution reported | never reported anywhere; the 1080p master is upscaled 480p on MPS | **7.3** |
+| 4.5 | Cloud UI gated on key **and** cost estimate | no cost estimate exists in `services/video/` | **7.7** |
+
+Phase 1 therefore reads **17/18**, Phase 4 **12/16**. Nothing else in the earlier
+phases was invalidated.
+
 
 ## Sequencing principle
 
@@ -177,7 +200,7 @@ real, and the app opens fast on a 4-minute 4-stem project.
 
 | ID | Task | Files | Acceptance |
 |---|---|---|---|
-| 4.1 | Frame-lattice correctness: render `model_render_duration`, trim/pad each clip to `target_duration`, assert `|Σ clips − song| < 0.05 s`, re-time otherwise | `director_music_timing.py:194-216`, `video_orchestrator.py:1071,1391-1400` | A 40-clip video ends exactly with the song |
+| 4.1 | Frame-lattice correctness: render `model_render_duration`, trim/pad each clip to `target_duration`, assert `\|Σ clips − song\| < 0.05 s`, re-time otherwise | `director_music_timing.py:194-216`, `video_orchestrator.py:1071,1391-1400` | A 40-clip video ends exactly with the song |
 | 4.2 | Normalise every clip before assembly (`scale`/`pad`/`fps`/`setsar`); report the delivered resolution | `video_orchestrator.py:1357-1400` | Mixed Wan(16 fps)/LTX(25 fps) concat is valid |
 | 4.3 | Persist the storyboard (`PATCH /videos/{job}/storyboard`); make reorder a real timeline move that recomputes windows and warns on desync | `main.py:5025`, `VideoTimelineTrack.tsx:196-206` | Reload keeps scene edits |
 | 4.4 | Real compile: enqueue an editor render, run FFmpeg in a worker, stream progress, return a URL; apply `clip.transform` + `transition_in/out` + `setpts` | `main.py:5918`, `editor_projects.py:222-232` | Export produces a playable MP4 with the configured transforms |
@@ -230,6 +253,70 @@ laptop sleep; one error path in the UI.
 | 6.7 | `./milimo stop` kills only recorded PIDs | No more SIGTERM to a stranger's dev server |
 | 6.8 | **D6 — capability matrix enforcement**: `hardware_autotune` emits the platform matrix; the engine picker disables unavailable engines with a stated reason; README headline claims match the matrix | On a CUDA box the UI says "MiniMax requires Apple Silicon MLX" and offers fal, instead of failing at runtime |
 
+## Phase 7 — Music video production (2026-11-18, added)
+
+Source: [Music Video Pipeline Audit 2026-11](music-video-pipeline-audit-2026-11.md).
+Effort estimates are focused engineer-days for one person who knows the codebase.
+Every task names an observable acceptance criterion — several are literally a test
+that fails today.
+
+**Sequencing:** 7A must precede 7B because a musician cannot iterate on a pipeline
+that lies about what it produced. 7B precedes 7C because export presets and UI
+resilience amplify whatever the pipeline emits. 7D can run in parallel with 7C.
+
+### 7A — Truth (P0, ~9 days)
+
+| ID | Task | Files | Acceptance |
+|---|---|---|---|
+| 7.1 | **Lip-sync honesty.** Return fallback metadata from the provider instead of a bare `True`; set `fallback_used`/`fallback_reason` from it; require a weight manifest *and* an audio-driven engine for `is_available`; stop shelling `--driving_audio` at LivePortrait (it is video-driven) — either wire Wan 2.2 S2V (Apache-2.0) / EchoMimicV3 (Apache-2.0) or declare the jaw-warp fallback the product and label it. | `lip_sync/live_portrait.py`, `lip_sync/fallback.py`, `video_orchestrator.py:914-946`, `VideoInspectorDock.tsx` | No live-sync weights → task status carries `fallback_reason="procedural jaw-warp"`; test asserts the banner state, not just the boolean |
+| 7.2 | **Render success verification.** `/videos/render/{job_id}` must check FFmpeg exit code and file existence before returning, emit the error envelope, and never write `video_path` on failure. | `video_service.py:951-1010`, `main.py:5498-5534` | A stubbed failing encoder produces HTTP 500 with the FFmpeg tail and leaves `video_path` unchanged |
+| 7.3 | **Retake honesty + delivered-resolution reporting.** Persist retake prompt/camera/lighting server-side; mark raster fallbacks `degraded` with a reason; report the resolution actually rendered (and the upscale factor) in task status and on the card. | `main.py:6095-6161`, `models.py:906-911`, `video_orchestrator.py` (`get_video_providers`/task status) | Reload keeps retake edits; a procedural plate is flagged in the status; the HUD says `832×480 upscaled to 1920×1080` when that is the truth |
+| 7.4 | **Takes and versioning.** New `VideoRender` row per render (config, status, artifacts, qc, seed, created_at) with `job.video_path` pointing at the selected take; cascade delete; UI take switcher. | `models.py`, `main.py` (`/videos/*`), `MusicVideosView.tsx` | Two renders coexist; switching takes changes the player; deleting a take removes its files |
+| 7.5 | **Replace the fake A/B compare** with a real two-source player (works on 7.4's takes) and make it keyboard-operable. | `VideoCanvasPlayer.tsx:324-355` | Two `<video>` sources, divider clips both, arrow-key control |
+| 7.6 | **Per-job render mutex.** 409 `render_in_progress` for a second render of the same job. | `main.py:5885-5923` | Second concurrent call returns 409; test mirrors the model-download guard |
+| 7.7 | **Cloud cost estimate and gate.** Price table → per-render estimate in the `/videos/render-advanced` response and UI; require confirmation above a threshold. | `cloud_video.py`, `main.py`, `VideoInspectorDock.tsx` | Estimate shown before spend; no more hardcoded "Free"/"Fast" badges |
+
+### 7B — Pipeline correctness (P1, ~14 days)
+
+| ID | Task | Files | Acceptance |
+|---|---|---|---|
+| 7.8 | **Real downbeats and metre.** Integrate `all-in-one` (MIT) or an equivalent beat/downbeat model; fall back to beat grid + lyric anchors, and record which was used. | `audio_analysis.py:106-128` | A 3/4 fixture yields bar-start downbeats; source recorded on the plan |
+| 7.9 | **Structure from the generation plan first.** Parse the tagged lyrics (`[Verse]`/`[Chorus]`/…)+ `timed_lyrics_json` into sections; librosa novelty only as fallback. | `audio_analysis.py:131-188`, `video_director.py:1021-1232` | Section labels match the generation tags; a test asserts the tag path is used when present |
+| 7.10 | **Consume or delete the dead curves.** Feed `camera_zoom` into the Ken Burns/procedural branch (and the beat pulse), and either wire `vocal_envelope` into the lip-sync amplitude or delete both passes. | `stem_audio_reactive.py`, `video_orchestrator.py:829-837,992-1003` | Grep test: every curve returned by the module is read; new unit tests for the module (currently zero) |
+| 7.11 | **Persist per-clip renders + incremental re-render.** Keep `clips/{task}/{idx}.mp4` and the plan JSON; retake re-renders one scene and re-stitches without touching the rest. | `video_orchestrator.py:903-1030,1219-1222`, `main.py:6095` | A one-scene retake renders ~1/N of the work; test asserts other clip mtimes are unchanged |
+| 7.12 | **One quality-targeted encode.** Lossless (or CRF ≤12) intermediates, then exactly one delivery encode; drop the `ultrafast` pulse pass into the normalise filter. | `clip_normalise.py:78-86`, `video_orchestrator.py:1566-1574`, `stem_audio_reactive.py:167-175` | `ffprobe` shows the preset's target bitrate; no more than two encode generations end-to-end |
+| 7.13 | **Master delivery encoding.** `-movflags +faststart`, audio passthrough when the source is AAC else ≥320 kbps, loudness to −14 LUFS / TP −1 dB, measured value persisted. | `video_orchestrator.py:1126-1191` | moov-before-mdat assertion test; `ebur128` within ±1 LU of target; loudness stored on the render row |
+| 7.14 | **QC gate.** New `services/video/qc.py`: `blackdetect d=0.1`, `freezedetect d=0.05`, `silencedetect d=0.1`, A/V offset by cross-correlation (≤1 frame), `ebur128`, frame-count check; store `qc_json`; surface pass/warn/fail. | new module + `video_orchestrator.py` + UI | Planted-fault fixtures (1 s black, 5-frame black, 1.5 s freeze, audio dropout) are all caught — FFmpeg defaults catch 1 of 6 |
+
+### 7C — Delivery and workflow (P2, ~12 days)
+
+| ID | Task | Files | Acceptance |
+|---|---|---|---|
+| 7.15 | **Export presets.** Table-driven: YouTube 1080p/2160p, Vevo HD (20 Mbps, no slate), Canvas (3–8 s, 9:16, silent), broadcast ProRes. | new `services/video/export_presets.py`, `video_orchestrator.py`, `VideoTopBar.tsx` | Each preset passes ffprobe assertions (codec, bitrate, resolution, duration, audio rate) |
+| 7.16 | **Caption sidecars.** Always write SRT/VTT (+ ASS for the advanced path) beside the render; burn-in becomes independent of sidecar emission. | `video_orchestrator.py:1076-1097`, `karaoke.py:620` | Sidecars exist for every render, parse, and match burned timings |
+| 7.17 | **Multi-aspect variants.** One plan → 16:9 + 9:16 + 1:1 masters. | `video_orchestrator.py:801-808`, `main.py` | Three masters, durations equal within 1 frame |
+| 7.18 | **Frontend resilience.** Server-side task lookup by job (`GET /videos/tasks?job_id=`), resume after reload, SSE instead of 1 s polling, attempt caps/backoff/timeouts, real error text. | `main.py`, `MusicVideosView.tsx:400-522,847-878`, `api.ts` | Reload mid-render restores the HUD; a dead backend surfaces "connection lost" instead of spinning |
+| 7.19 | **Config fidelity.** Persist and restore the *full* render config (drop the style/preset whitelists), schema-validate on regenerate. | `MusicVideosView.tsx:1166-1198`, `api.ts` | All 15 styles and 6 presets round-trip through regenerate |
+| 7.20 | **Wire the provider picker.** Call `/videos/providers`, show availability, key state and cost; remove the phantom `kling` claim. | `VideoInspectorDock.tsx:498-535`, `video_orchestrator.py:272-307` | No hardcoded capability badges; unavailable providers are disabled with a reason |
+| 7.21 | **Accessibility for the video view.** Labels, dialog semantics/focus trap/Escape, keyboard seek, reduced-motion, ≥10 px load-bearing type. | `VideoTopBar.tsx`, `ClipRetakeModal.tsx`, `KeyframeZoomModal.tsx`, `VideoTimelineTrack.tsx`, `VideoCanvasPlayer.tsx` | Keyboard-only path from song pick → plan → render → download; axe pass on the view |
+
+### 7D — Reporting and reproducibility (P2, ~8 days)
+
+| ID | Task | Files | Acceptance |
+|---|---|---|---|
+| 7.22 | **Artifact manifest.** One builder (`app/core/artifact_manifest.py`) → `GET /jobs/{id}/manifest.json`: seed, params, model id + version + git hash, verbatim prompt/lyrics, stage provenance, artifact SHA-256s, measured loudness. | new module, `main.py`, `models.py` | Manifest validates against its own schema; every field is populated for a neural and a degraded job |
+| 7.23 | **Provenance in packs.** Add `provenance_json`, `quality`, model version to `metadata.json`; ship `mastered_path` when present; add a stem manifest. | `main.py:4645-4727, 5305-5396, 1069-1124` | A pack opened by someone else states what produced each stem; mastered audio is the one inside the pack |
+| 7.24 | **MusicXML correctness.** Emit measured key/`fifths`, time signature, computed `divisions`, real encoding date. | `muscriptor_provider.py:445-620`, `minimax_provider.py:308-389` | Exported score round-trips key and metre through a validator |
+| 7.25 | **Video report + cut list, and audio-only bounce.** Storyboard JSON + per-scene table (prompt, duration, provider, seed, qc) exportable with the MP4; `POST /api/editor/projects/{id}/bounce` for a WAV/FLAC mixdown. | `main.py`, `services/timeline/render.py:144-193`, `editor_projects.py:160-310` | A video ships with a reproducible cut list; the NLE can produce a mixdown |
+
+### Phase 7 exit criteria
+
+- Nothing in the video path reports success while doing something else (7.1–7.6).
+- A single scene can be re-rendered and re-assembled without re-diffusing the film (7.11).
+- The delivered master is faststart, loudness-compliant, encoded at a targeted bitrate, and passes an automated QC gate that catches sub-second faults (7.12–7.14).
+- At least one DSP-shaped preset and a caption sidecar exist (7.15–7.17).
+- A finished session can be handed to someone else as a manifest + report + cut list (7.22–7.25).
+
 ## Decisions — closed (D1–D6)
 
 All six scope questions are resolved in [Decision Record 2026-11](decisions-2026-11.md).
@@ -257,7 +344,16 @@ Phase 0 (bleeding + D1/D3 deletions)
              ├── Phase 3 (DAW core + D5 automation) ─┤
              ├── Phase 4 (media truth + D4 fal) ─────┤
              └── Phase 5 (platform/API + D2 auth) ───┴── Phase 6 (continuous + D6 matrix)
+                                                            │
+                                     Phase 7A (truth: 7.1–7.7) ── Phase 7B (7.8–7.14)
+                                                            └── Phase 7C (7.15–7.21)
+                                                                Phase 7D (7.22–7.25)  ← independent
 ```
+
+Phase 7A depends on Phase 4 (it reopens 4.8 and extends the polyphony of the media
+pipeline); 7B assumes 7A's honesty so quality work is measurable; 7C amplifies
+whatever 7B emits; 7D only needs Phase 1's provenance records, so it can start
+immediately.
 
 Phase 5.1 (router split) is deliberately last-ish: doing it earlier would make every other
 phase a merge conflict. The exception is `app/db.py`, which is a 1-hour change and should
@@ -272,7 +368,12 @@ happen in Phase 0.
 - `alembic upgrade head` is the only way the schema changes.
 - The Arrange tab edits audio; undo covers the workspace; tempo and meter are real;
   automation curves are audible (D5).
-- Video duration equals song duration within 50 ms.
+- Video duration equals song duration within 50 ms **and** Σ clip frames equals the song's
+  frame count at delivery fps.
+- No video artifact reports success unless its file exists and its QC gate passed.
+- A single scene can be re-rendered and re-assembled without re-rendering the film.
+- Every delivered master is faststart, loudness-measured, caption-complete, and has a
+  reproducible manifest/cut list.
 - The published capability matrix matches what the app does on macOS, CUDA and CPU (D6).
 - CI blocks all of the above from regressing.
 
@@ -280,6 +381,7 @@ happen in Phase 0.
 
 [Decision Record 2026-11](decisions-2026-11.md) ·
 [Full Application Audit 2026-11](application-audit-2026-11.md) ·
+[Music Video Pipeline Audit 2026-11](music-video-pipeline-audit-2026-11.md) ·
 [Production Readiness Plan](production-readiness-plan.md) ·
 [UI/UX Plan](ui-ux-plan.md) ·
 [Roadmap](roadmap.md) · [Architecture](architecture.md) · [Index](index.md)

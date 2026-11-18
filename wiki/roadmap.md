@@ -84,9 +84,16 @@ Zero-config startup profiling:
 1. **Phase 1: Foundation (Active)**: MiniMax Music 3, MuScriptor transcription, dynamic per-instrument stems, Apple glass theme, DAW workspace.
 2. **Phase 2: Director Mode v2 & Video Studio (Next Up)**: Beat-grid accent scoring, cut-speed pacing, visible-cast performer scoping, music timeline vocal bypass, 0–5 repair retries, and discrete frame trimming.
 3. **Phase 3: Multitrack Timeline & Gallery Bridge**: Non-destructive multi-track editor, single-pass FFmpeg hardware rendering, 1-click media routing, before/after comparison, and video poster caching.
-4. **Phase 4: YuE2 48kHz Audio & My Music Studio**: 48 kHz stereo generation, ABC notation guidance, Mothersuperior instrumental LoRA auto-routing, and Auto/Guided My Music training.
+4. **Phase 4: YuE2 48kHz Audio & My Music Studio** — ~~superseded~~: YuE2 and Training Studio were **deleted** under decision D1 (see [Decision Record 2026-11](decisions-2026-11.md)); kept here only as history. 48 kHz stereo now ships through MiniMax Music 3 / MuLaCover.
 5. **Phase 5: Auto-Tune, Memory Bounding & Universal Queue**: Profiles 1–5, single-frame mask bounding, reference cache sizing, and persistent SQLite task queue.
 6. **Phase 6: Cross-Modal Model Lifecycle & Cross-Platform Audio (Planned)**: Immediate model eviction across Audio (MiniMax, Stable Audio Open, MusicGen), Image (FLUX.2 Klein, SDXL), and Video (Wan 2.1, LTX); phase-decoupled Director execution (Keyframes $\to$ Purge $\to$ Video Diffusion $\to$ Purge); native Stable Audio Open 1.0 (44.1 kHz stereo DiT) and Meta MusicGen (melody conditioning) to bridge the Apple Silicon MLX architecture gap.
+
+> **2026-11-18 — production-hardening track.** The feature rollout above is not the
+> whole story: the [Music Video Pipeline Audit](music-video-pipeline-audit-2026-11.md)
+> found 41 gaps in the video path (delivery encoding, QC, per-clip iteration,
+> lip-sync honesty, musical structure) and **reopened four tasks** the remediation
+> plan had marked done. Implementation is tracked as **Phase 7 (25 tasks)** in the
+> [Application Remediation Plan](application-remediation-plan-2026-11.md#phase-7--music-video-production-2026-11-18-added).
 
 ---
 

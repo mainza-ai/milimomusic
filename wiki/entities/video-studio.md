@@ -2,7 +2,7 @@
 title: AI Music Video Studio
 type: entity
 created: 2026-09-07
-updated: 2026-11-16
+updated: 2026-11-18
 tags: [video, studio, wan, liveportrait, ltx-video, minimax-h3, diffusers, lipsync, karaoke, ass, director, timeline, cancellation, attention-slicing, lyric-video, typography, videotoolbox]
 aliases: [VideoStudio, MusicVideosView, VideoService, VideoOrchestrator, VideoGeneratorRegistry]
 ---
@@ -19,8 +19,17 @@ aliases: [VideoStudio, MusicVideosView, VideoService, VideoOrchestrator, VideoGe
 > subtitle text is ASS-escaped with real bundled fonts; one fps flows through the
 > reactive chain.
 
+> [!WARNING]
+> **2026-11-18 — corrections from the [Music Video Pipeline Audit](../music-video-pipeline-audit-2026-11.md).**
+> This page previously described capabilities the code does not deliver. Corrected
+> here: the singing avatar is **not** neural in practice (§4), Replicate is **not**
+> supported (D4, §1), the output is not "broadcast-grade" (one hardcoded H.264
+> profile, no loudness or QC — audit §5), and the lyric path encodes AAC **256**
+> kbps, not 320 (§7). Widgets, planning depth, cancellation, plate caching and ASS
+> typography described below are real and verified.
 
-The **AI Music Video Studio** (`backend/app/services/video/` and frontend `MusicVideosView.tsx`) is Milimo Music's production-grade AI music video generation, neural singing avatar animation, and visual performance engine. It turns generated music tracks into broadcast-grade music videos with beat-matched scene cuts, neural facial lip-syncing driven by isolated vocal stems, pre-rendered scene keyframes, synchronized karaoke subtitles, cinematic video diffusion, and a non-destructive multi-track timeline editor.
+
+The **AI Music Video Studio** (`backend/app/services/video/` and frontend `MusicVideosView.tsx`) is Milimo Music's AI music video generation and visual performance engine. It turns generated tracks into multi-scene music videos with beat-snapped cuts, a performable singing-avatar path (see §4 for what actually runs), pre-rendered scene keyframes, synchronized karaoke subtitles, and a separate non-destructive multi-track timeline editor. Delivery quality is **not yet production-grade** — see [audit §5](../music-video-pipeline-audit-2026-11.md#5-delivery-and-qc-d).
 
 ## 1. Video Generator Registry & Engine Decoupling
 
@@ -33,7 +42,7 @@ Generation requests are resolved dynamically through the authoritative **Video G
 | `ltx_video` | Lightricks LTX-Video 0.9B | **10.0s** | 24 | Modulo 32 size | `LTXPipeline` | Real-time high-efficiency DiT capable of up to 10s continuous generation |
 | `hailuo_h3` | MiniMax Hailuo H3 33B | **15.0s** | 24 | $49 + 48k$ frames | Local MLX 8-bit / Cloud MiniMax API | SOTA 33B Omni-modal DiT with Context-IR prompt formatting |
 | `cloud_fal` | Fal.ai Cloud GPU | **5.0s - 15.0s** | Adaptive | Model-specific | Serverless REST API | Offloaded Wan 2.1 / LivePortrait generation without local GPU pressure |
-| `cloud_replicate`| Replicate Cloud GPU | **5.0s - 15.0s** | Adaptive | Model-specific | Replicate API Runner | Offloaded Wan 2.1 / LivePortrait execution via Replicate API token |
+| ~~`cloud_replicate`~~ | — | — | — | — | **Removed (D4)** | Replicate needs a per-version hash and was never wired; `cloud_video.py:33` refuses it. Any UI state that still offers it is a bug. |
 
 - **Director Mode v2 Musical Pacing**: Integrated with [Director Mode v2](../concepts/director-mode-v2.md) featuring hierarchical scored accent snapping (beats $+0.5$, downbeats $+1.8$, lyric boundaries $+2.5$), cut speed bias ($-2$ to $+2$), and model-native discrete frame increments ($F_{\text{min}} + k \cdot F_{\text{step}}$) with sub-second output trimming.
 - **Keyframe Pre-Rendering**: Users can pre-render visual keyframe stills (`POST /videos/keyframes/{job_id}`) across all planned scenes to inspect and approve directorial composition before triggering full video diffusion. Cinematic plates are diffused people-free and cached under a prompt+style fingerprint, so the approved still is the exact frame Wan seeds from later (see §6).
@@ -62,20 +71,36 @@ The video pipeline now guarantees instant cancellation across all execution laye
 4. **Subprocess Termination**: Wraps all procedural and lip-sync FFmpeg subprocesses with `proc.kill()` on `CancelledError`, preventing orphaned background processes.
 5. **Clean Exception Propagation**: `CancelledError` is caught without triggering procedural fallback cascades or registering false task errors.
 
-## 4. Neural Singing Avatar & Lip-Syncing (LivePortrait)
+## 4. Singing Avatar & Lip-Syncing — what actually runs
 
-To eliminate unnatural mouth twitching and deliver broadcast-quality vocal performances:
+> [!WARNING]
+> **Reality (audit 2026-11-18, finding E4):** `LivePortraitProvider.render_lip_sync`
+> delegates to `SmoothVisemeFallbackProvider` when weights are missing **or**
+> `is_available` is False — and `is_available` only checks `torch` + MPS/CUDA
+> (`lip_sync/live_portrait.py:41-48, 76-91`). The delegate's `True` is returned to the
+> orchestrator, so `fallback_used` is never set and no banner appears. Even with
+> weights, the code shells `inference.py --driving_audio`, a CLI contract LivePortrait
+> does not offer (it is **video**-driven). Treat the singing avatar as a **procedural
+> jaw-warp effect** until task 7.1 lands; a real audio-driven engine (Wan 2.2 S2V or
+> EchoMimicV3, both Apache-2.0) is required. LivePortrait's code is MIT but its bundled
+> InsightFace detectors are research-only.
+
+To eliminate unnatural mouth twitching and deliver consistent vocal performances:
 1. **Stem Isolation**: Routes only the isolated vocal track (`vocals.wav` / `vocals.mp3` from Demucs) to the lip-sync engine. Heavy kicks and 808 bass cannot distort lip movements.
 2. **Performer Role Ownership**: Conforms to [Director Mode v2](../concepts/director-mode-v2.md) performer rules: during instrumental solos or drum cutaways, the performer's mouth is strictly kept closed (`mouth_movement: closed`), reserving lip-sync solely for the assigned active singer.
-3. **LivePortrait Neural Avatar**:
-   - Uses implicit keypoint representations and landmark deformation driven by audio pitch and amplitude.
-   - Synthesizes organic eye blinks, micro-expressions, head nods, and realistic phonetic viseme transitions.
-   - Executed under [Global Hardware Coordinator](hardware-coordinator.md) device locks to prevent VRAM exhaustion with audio pipelines.
-   - Supports local Apple Silicon PyTorch MPS execution as well as cloud GPU offloading.
-4. **Smooth Viseme Mesh Fallback**:
-   - For low-resource environments without neural weights, a bilinear jaw mesh warp engine smoothly translates the mouth cavity and lips based on vocal power envelopes, avoiding static OpenCV overlays.
+3. **LivePortrait (intended neural path, currently inert)**:
+   - Designed as implicit-keypoint landmark deformation; requires weights under
+     `models/video/liveportrait` **and** an audio-driven inference entry point that does
+     not exist in the upstream project.
+   - Guarded by [Global Hardware Coordinator](hardware-coordinator.md) device locks.
+4. **Smooth Viseme Mesh Fallback (what runs today)**:
+   - A bilinear jaw mesh warp driven by the vocal power envelope, plus blink/sway —
+     an animatic effect, not a talking head.
 5. **Stem Audio-Reactive Modulation**:
-   - Powered by [Stem Audio-Reactive Video](../concepts/stem-audio-reactive-video.md) (`stem_audio_reactive.py`), extracting clean vocal envelopes for lip-sync and percussive downbeat transients from drums/bass to drive camera zooms, pulses, and shakes.
+   - Powered by [Stem Audio-Reactive Video](../concepts/stem-audio-reactive-video.md)
+     (`stem_audio_reactive.py`): percussive transients from drums/bass drive an exposure
+     pulse on each clip. Note (audit M4): `camera_zoom` and `vocal_envelope` are computed
+     but read by nothing, and the module has no test.
 
 ## 5. Local-First MiniMax H3 33B Execution
 
@@ -100,8 +125,9 @@ Pre-rendering visual scene keyframes (`POST /videos/keyframes/{job_id}`) provide
 
 ## 7. Fast-Path Lyric Music Video Studio (< 45s Hardware Encoded)
 
-For artists desiring instant, broadcast-ready lyric music videos without lengthy multi-scene diffusion passes, the platform incorporates a dedicated **Fast-Path Lyric Video Engine** (`POST /videos/render-lyric/{job_id}`):
-- **Hardware Acceleration Pipeline**: Employs macOS Apple Silicon `h264_videotoolbox` (or Linux `libx264` preset `fast`) to transcode full 3-minute tracks in under 45 seconds at high bitrate ($4.5$–$6.0$ Mbps) with AAC 320 kbps stereo audio.
+For artists wanting an instant lyric video without a multi-scene diffusion pass, the platform incorporates a dedicated **Fast-Path Lyric Video Engine** (`POST /videos/render-lyric/{job_id}`):
+- **Hardware Acceleration Pipeline**: Employs macOS Apple Silicon `h264_videotoolbox` (or a `libx264` fallback) to encode a 3-minute track in well under a minute at a high-bitrate video stream. Audio is **AAC 256 kbps** (not 320), and this path sets `+faststart` — unlike the advanced master (audit D2/D3).
+- **Delivery reality**: still one hardcoded profile with no loudness normalisation or QC; a "broadcast-ready" claim needs the export presets and QC gate in Phase 7.14–7.17.
 - **Visual Background Modes & Dynamic Drift**:
   - `cover_art`: Smooth cinematic Ken Burns camera drift (`zoompan=z='min(zoom+0.0003,1.15)':d=...`) applied to high-resolution album cover artwork or custom stills.
   - `spectrum`: Procedural audio-reactive frequency spectrum visualizer overlaid onto dark gradient canvases.

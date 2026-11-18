@@ -3068,3 +3068,45 @@ Posted two comments on [#5](https://github.com/mainza-ai/milimomusic/issues/5) a
 2. A P.S. on the Windows long-path guard (`d685db8`), naming `MODELS_DIRECTORY` as the remedy
    ([comment](https://github.com/mainza-ai/milimomusic/issues/5#issuecomment-6929941394)).
 Issue left **open** — the reporter should confirm the resumed download completes.
+
+## [2026-11-18] audit | Music video pipeline, delivery and reporting surfaces
+Full production audit of the music-video workflow commissioned against the existing
+2026-11 audit: code read end-to-end (`services/video/` ~7.2 k LOC, `video_service.py`,
+`services/timeline/`, the `/videos/*` routes, the video frontend), plus external
+research on late-2026 engines, delivery specs and standards, and an inventory of
+every reporting/export surface.
+**41 findings** across five groups plus **4 audit deltas**. The deltas matter most:
+four tasks the remediation plan counted as done are not — 1.14 (lip sync still
+*reports success* while running the jaw-warp fallback and never sets `fallback_used`),
+4.8 (`camera_zoom`/`vocal_envelope` computed song-wide and read by nothing), 4.2's
+reporting clause (delivered resolution never reported; 1080p is upscaled 480p on MPS),
+and 4.5's cost gate (no cost estimate exists). Phase 1 therefore reads **17/18**,
+Phase 4 **12/16**.
+Headline findings:
+- **Iteration is impossible.** Per-clip renders are deleted after assembly, so a
+  retake re-diffuses the whole film; "retake" only regenerates a still and can
+  silently fall back to a raster placeholder while returning `ok`; no render
+  versioning (one `video_path`), no per-job mutex, and a fake A/B compare widget.
+- **Musical analysis is the weak link.** Downbeats are "every 4th beat"; sections are
+  16 s RMS windows; and the platform's own generation tags + `timed_lyrics_json`
+  (exact section truth) are discarded — the cheapest high-value fix in the audit.
+- **Delivery is not production.** 2–3 lossy encodes of the master, no `+faststart`
+  (measured on a real render: `moov` after `mdat`), AAC 256k with no loudness stage
+  despite owning a −14 LUFS mastering path, no QC at all, one hardcoded profile, no
+  caption sidecars, and `/videos/render` reports success without checking FFmpeg.
+- **Reporting: storage is ahead of emission.** Provenance/quality/seeds are recorded
+  and never exported; MusicXML misstates key and metre with a hardcoded encoding
+  date; no report, CSV, credits, ISRC, manifest or `CITATION.cff` anywhere; the share
+  "page" returns JSON; packs ship the unmastered file.
+Deliverables: [Music Video Pipeline Audit 2026-11](music-video-pipeline-audit-2026-11.md),
+[Music Video Delivery & QC Specs](concepts/music-video-delivery-specs.md),
+[Session Reporting & Reproducibility](concepts/session-reporting-and-reproducibility.md);
+**Phase 7 (25 tasks, 7A–7D)** added to
+[Application Remediation Plan 2026-11](application-remediation-plan-2026-11.md);
+[AI Music Video Studio](entities/video-studio.md) corrected (it described neural lip
+sync, Replicate support, AAC 320k and "broadcast-grade" output that the code does not
+deliver); [Roadmap](roadmap.md) Phase 4 marked superseded by D1.
+Verification: code claims re-read at `d685db8`; frontend claims spot-checked (single
+`<video>` in the compare overlay, `getVideoProviders` never called, `_480p`/`_poster`
+never referenced, 4-of-15 style whitelist); delivery claims measured with `ffprobe`
+on real renders (0.80 Mbps video, moov after mdat); all wiki links resolve.

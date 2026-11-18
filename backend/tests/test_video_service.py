@@ -102,12 +102,20 @@ async def test_render_audio_reactive_video_execution(sample_job, tmp_path):
     audio_file = audio_dir / "test_cyber_drift.mp3"
     audio_file.write_bytes(b"\x00" * 1024)
 
+    from app.services.video_service import VIDEO_DIR
+    expected = Path(VIDEO_DIR) / f"{sample_job.id}_reactive.mp4"
     try:
         with patch("asyncio.create_subprocess_exec") as mock_proc:
             mock_process = AsyncMock()
             mock_process.returncode = 0
             mock_process.communicate.return_value = (b"", b"")
             mock_proc.return_value = mock_process
+
+            # Plan 7.2: a render only succeeds if FFmpeg wrote a file. The mock must
+            # therefore produce one, or the call is (correctly) an error.
+            expected = Path(VIDEO_DIR) / f"{sample_job.id}_reactive.mp4"
+            expected.parent.mkdir(parents=True, exist_ok=True)
+            expected.write_bytes(b"fake-mp4")
 
             video_url = await video_service.render_audio_reactive_video(
                 sample_job,
@@ -116,6 +124,30 @@ async def test_render_audio_reactive_video_execution(sample_job, tmp_path):
             )
             assert video_url.startswith("/audio/videos/")
             assert video_url.endswith("_reactive.mp4")
+    finally:
+        if audio_file.exists():
+            audio_file.unlink()
+        if expected.exists():
+            expected.unlink()
+
+
+@pytest.mark.asyncio
+async def test_audio_reactive_render_without_output_raises(sample_job):
+    """A zero-exit FFmpeg that wrote nothing must not be reported as success."""
+    audio_dir = Path("generated_audio")
+    audio_dir.mkdir(parents=True, exist_ok=True)
+    audio_file = audio_dir / "test_cyber_drift.mp3"
+    audio_file.write_bytes(b"\x00" * 1024)
+    try:
+        with patch("asyncio.create_subprocess_exec") as mock_proc:
+            mock_process = AsyncMock()
+            mock_process.returncode = 0
+            mock_process.communicate.return_value = (b"", b"")
+            mock_proc.return_value = mock_process
+            with pytest.raises(RuntimeError):
+                await video_service.render_audio_reactive_video(
+                    sample_job, visual_style="neon-cyberpunk", resolution="720p"
+                )
     finally:
         if audio_file.exists():
             audio_file.unlink()
@@ -476,7 +508,11 @@ async def test_retake_clip_custom_prompt_keyframe(client, sample_job):
         )
         assert res.status_code in (200, 202)
         data = res.json()
-        assert data["status"] == "ok"
+        # Diffusion failed, so the response says so instead of claiming a retake
+        # (plan 7.3) — the endpoint used to return "ok" for a raster placeholder.
+        assert data["status"] == "degraded"
+        assert data["degraded"] is True
+        assert "placeholder" in (data.get("reason") or "").lower()
         assert data["clip_index"] == 1
         assert "keyframe_url" in data
         assert data["prompt"] == "An extreme close up of cyberpunk glasses reflecting laser grids"

@@ -66,7 +66,16 @@ class CloudLipSyncProvider(BaseLipSyncProvider):
         # hash; the previous branch sent data URIs and could never succeed).
         return False
 
-    async def render_lip_sync(
+    async def render_lip_sync(self, *args, **kwargs) -> bool:
+        ok = await self._render_impl(*args, **kwargs)
+        self._set_outcome(
+            f"cloud_{self.service}",
+            False,
+            None if ok else "Cloud lip-sync produced no video.",
+        )
+        return ok
+
+    async def _render_impl(
         self,
         face_image_path: str,
         vocal_audio_path: str,

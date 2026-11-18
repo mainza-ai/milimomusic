@@ -11,6 +11,12 @@ class BaseLipSyncProvider(ABC):
     Abstract interface for driving facial singing performance from vocal audio.
     """
 
+    #: Filled in by every `render_lip_sync` call so callers never have to guess
+    #: what actually ran. Keys: ``engine`` (str), ``used_fallback`` (bool),
+    #: ``reason`` (str|None). A provider that silently delegates to another engine
+    #: must set ``used_fallback=True`` — that is the whole point (plan 7.1).
+    last_outcome: Dict[str, Any] = {}
+
     @property
     @abstractmethod
     def name(self) -> str:
@@ -38,5 +44,13 @@ class BaseLipSyncProvider(ABC):
         """
         Render an audio-driven singing vocal performance clip.
         Returns True on success, False on failure.
+        Must set ``self.last_outcome`` before returning.
         """
         pass
+
+    def _set_outcome(self, engine: str, used_fallback: bool, reason: Optional[str] = None) -> None:
+        self.last_outcome = {
+            "engine": engine,
+            "used_fallback": bool(used_fallback),
+            "reason": reason,
+        }

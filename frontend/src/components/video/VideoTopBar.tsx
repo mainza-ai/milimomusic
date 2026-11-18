@@ -79,6 +79,7 @@ const VideoTopBarComponent: React.FC<VideoTopBarProps> = ({
                 {/* Left: Track Picker */}
                 <div className="flex items-center gap-2 flex-1 min-w-[220px] max-w-md">
                     <select
+                        aria-label="Choose the track to make a music video for"
                         value={selectedSongId || ''}
                         onChange={(e) => onSelectSong(e.target.value)}
                         className="w-full text-xs font-semibold rounded-xl bg-black/[0.04] dark:bg-white/5 border border-black/[0.08] dark:border-white/10 px-3 py-2 text-slate-900 dark:text-slate-100 pr-8 truncate focus:outline-none focus:ring-2 focus:ring-teal-500/40 cursor-pointer shadow-sm"

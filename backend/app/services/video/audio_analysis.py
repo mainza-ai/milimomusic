@@ -8,6 +8,7 @@ and transient percussion cues to drive frame-accurate music video directing.
 from __future__ import annotations
 
 import logging
+import re
 import math
 import os
 from dataclasses import asdict, dataclass, field
@@ -42,6 +43,15 @@ class AudioAnalysisResult:
     sections: List[Dict[str, Any]] = field(default_factory=list)
     vocal_intervals: List[Tuple[float, float]] = field(default_factory=list)
     percussion_cues: List[Dict[str, Any]] = field(default_factory=list)
+    # Metre used to derive downbeats (3 or 4). Downbeats used to be "every 4th
+    # beat" regardless of metre (audit M1).
+    meter: int = 4
+    # Where the section list came from: "lyrics_tags" (exact, from the generation
+    # prompt), "energy_windows" (heuristic), or "synthetic" (no audio).
+    structure_source: str = "energy_windows"
+    # Set when the analysis is not real (no audio / librosa missing).
+    fallback_used: bool = False
+    fallback_reason: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -58,6 +68,7 @@ class AudioSignalAnalyzer:
         vocal_path: Optional[str] = None,
         timed_lyrics: Optional[List[Dict[str, Any]]] = None,
         target_sr: int = 22050,
+        lyrics: Optional[str] = None,
     ) -> AudioAnalysisResult:
         """
         Extract rhythm, structural sections, vocal presence, and percussion cues.
@@ -81,11 +92,14 @@ class AudioSignalAnalyzer:
         if duration <= 0.1:
             return cls._fallback_analysis(audio_path)
 
-        # 2. Beat and Downbeat Tracking
-        tempo, beats, downbeats = cls._extract_beats_and_downbeats(y, sr)
+        # 2. Beat and Downbeat Tracking (with metre estimation)
+        tempo, beats, downbeats, meter = cls._extract_beats_and_downbeats(y, sr)
 
-        # 3. Structural Sections and Energy
-        sections = cls._extract_sections(y, sr, duration, timed_lyrics)
+        # 3. Structural Sections and Energy — the generation prompt's own tags are
+        # exact, so they win over an energy heuristic (audit M2/M3).
+        sections, structure_source = cls._extract_sections(
+            y, sr, duration, timed_lyrics, lyrics=lyrics
+        )
 
         # 4. Vocal Activity Intervals
         vocal_intervals = cls._extract_vocal_intervals(vocal_path, timed_lyrics, duration)
@@ -101,13 +115,40 @@ class AudioSignalAnalyzer:
             sections=sections,
             vocal_intervals=[(round(float(s), 3), round(float(e), 3)) for s, e in vocal_intervals],
             percussion_cues=percussion_cues,
+            meter=int(meter),
+            structure_source=structure_source,
         )
+
+    #: Section tags Milimo generates into lyrics, and the label each maps to.
+    SECTION_LABELS = {
+        "intro": "Intro",
+        "verse": "Verse",
+        "pre-chorus": "Pre-Chorus",
+        "prechorus": "Pre-Chorus",
+        "chorus": "Chorus",
+        "post-chorus": "Post-Chorus",
+        "postchorus": "Post-Chorus",
+        "hook": "Hook",
+        "refrain": "Hook",
+        "bridge": "Bridge",
+        "breakdown": "Breakdown",
+        "drop": "Drop",
+        "instrumental": "Instrumental",
+        "solo": "Instrumental",
+        "outro": "Outro",
+    }
 
     @classmethod
     def _extract_beats_and_downbeats(
         cls, y: np.ndarray, sr: int
-    ) -> Tuple[float, List[float], List[float]]:
-        """Compute beat frames and estimate 4/4 downbeats via beat tracker."""
+    ) -> Tuple[float, List[float], List[float], int]:
+        """Beats plus metre-aware downbeats.
+
+        Downbeats used to be `beats[::4]`, i.e. "assume 4/4 and that the first
+        detected beat is a bar start" (audit M1). That put every cut on beats 2-4
+        for 3/4, 6/8, half-time and pickup-bar songs. This estimates the metre and
+        the bar phase from low-band (kick/bass) beat-synchronous energy.
+        """
         onset_env = librosa.onset.onset_strength(y=y, sr=sr)
         tempo_arr, beat_frames = librosa.beat.beat_track(
             y=y, sr=sr, onset_envelope=onset_env, trim=False
@@ -122,10 +163,75 @@ class AudioSignalAnalyzer:
             dur = len(y) / sr
             beat_times = [float(i * step) for i in range(int(dur / step))]
 
-        # Downbeat estimation: group into 4-beat bars
-        downbeats = [beat_times[i] for i in range(0, len(beat_times), 4)]
+        meter, phase = cls._estimate_meter(y, sr, beat_times)
+        downbeats = [beat_times[i] for i in range(phase, len(beat_times), meter)]
+        return tempo, beat_times, downbeats, meter
 
-        return tempo, beat_times, downbeats
+    @classmethod
+    def _estimate_meter(
+        cls, y: np.ndarray, sr: int, beat_times: List[float]
+    ) -> Tuple[int, int]:
+        """Return (meter, downbeat_phase) from low-band beat accents.
+
+        A bar is the period at which the strongest low-frequency accent repeats.
+        The statistic is therefore the lag-autocorrelation of beat-synchronous
+        kick/bass energy: a 4/4 pattern correlates with itself at lag 4 and not at
+        lag 3. (A raw "accented vs rest" contrast biases toward shorter metres —
+        that misread a 4/4 test track as 3/4.)
+        """
+        if len(beat_times) < 8:
+            return 4, 0
+        try:
+            # Kick/bass band only: melodic content is a poor bar marker. A real
+            # low-pass + RMS separates the accent pattern cleanly; a mel-based
+            # onset envelope at 120 Hz is too coarse to do so (it misread 3/4).
+            energies = cls._beat_low_band_rms(y, sr, beat_times)
+            values = np.asarray(energies, dtype=float)
+            if values.std() <= 1e-9:
+                return 4, 0
+            values = (values - values.mean()) / values.std()
+
+            def lag_correlation(lag: int) -> float:
+                if len(values) <= lag + 2:
+                    return -1.0
+                a, b = values[:-lag], values[lag:]
+                if a.std() <= 1e-9 or b.std() <= 1e-9:
+                    return -1.0
+                return float(np.corrcoef(a, b)[0, 1])
+
+            scores = {meter: lag_correlation(meter) for meter in (4, 3)}
+            meter = max(scores, key=lambda m: scores[m])
+            if scores[meter] <= 0.05:  # no periodic accent: assume the common default
+                return 4, 0
+
+            # Phase: which beat of the bar carries the most low-end energy.
+            phase = int(np.argmax([values[p::meter].mean() for p in range(meter)]))
+            return meter, phase
+        except Exception as exc:  # never fail a plan over metre estimation
+            logger.debug("Meter estimation skipped: %s", exc)
+            return 4, 0
+
+    @classmethod
+    def _beat_low_band_rms(
+        cls, y: np.ndarray, sr: int, beat_times: List[float]
+    ) -> List[float]:
+        """RMS of a <120 Hz low-passed copy of the signal, per beat interval."""
+        try:
+            from scipy.signal import butter, sosfiltfilt
+
+            sos = butter(4, 120 / (sr / 2), btype="low", output="sos")
+            low = sosfiltfilt(sos, np.asarray(y, dtype=float))
+        except Exception:  # scipy missing: fall back to the broadband signal
+            low = np.asarray(y, dtype=float)
+
+        gaps = np.diff(beat_times)
+        default_gap = float(np.median(gaps)) if len(gaps) else 0.5
+        values: List[float] = []
+        for idx, start in enumerate(beat_times):
+            end = beat_times[idx + 1] if idx + 1 < len(beat_times) else start + default_gap
+            segment = low[int(start * sr): int(max(start + 1e-3, end) * sr)]
+            values.append(float(np.sqrt(np.mean(segment ** 2))) if len(segment) else 0.0)
+        return values
 
     @classmethod
     def _extract_sections(
@@ -134,10 +240,14 @@ class AudioSignalAnalyzer:
         sr: int,
         duration: float,
         timed_lyrics: Optional[List[Dict[str, Any]]] = None,
-    ) -> List[Dict[str, Any]]:
-        """
-        Segment song into [Intro], [Verse], [Chorus], [Bridge], [Outro]
-        using RMS energy dynamics and lyric timing boundaries.
+        lyrics: Optional[str] = None,
+    ) -> Tuple[List[Dict[str, Any]], str]:
+        """Return (sections, structure_source).
+
+        Order of truth (audit M3): the tagged lyrics the song was *generated*
+        from, then timed section markers, then the energy heuristic. The generation
+        prompt already says exactly where every chorus is; the old code threw that
+        away and re-derived structure from 16 s RMS windows.
         """
         hop_length = 512
         rms = librosa.feature.rms(y=y, hop_length=hop_length)[0]
@@ -145,6 +255,10 @@ class AudioSignalAnalyzer:
 
         max_rms = float(np.max(rms)) if len(rms) > 0 and np.max(rms) > 0 else 1.0
         norm_rms = rms / max_rms
+
+        tagged = cls._sections_from_tags(timed_lyrics, duration, norm_rms, times)
+        if tagged:
+            return tagged, "lyrics_tags"
 
         # Use 15-second windows to compute regional energy
         window_sec = 16.0
@@ -185,7 +299,79 @@ class AudioSignalAnalyzer:
                 "energy": sec["energy"],
             })
 
-        return sections
+        return sections, "energy_windows"
+
+    @classmethod
+    def _sections_from_tags(
+        cls,
+        timed_lyrics: Optional[List[Dict[str, Any]]],
+        duration: float,
+        norm_rms: np.ndarray,
+        times: np.ndarray,
+    ) -> Optional[List[Dict[str, Any]]]:
+        """Build sections from timed `[Verse]`/`[Chorus]` markers.
+
+        Returns None when the lyrics carry no usable timing, so the caller falls
+        back to the energy heuristic (never to a fabricated structure).
+        """
+        if not timed_lyrics:
+            return None
+
+        markers: List[Tuple[float, str]] = []
+        for item in timed_lyrics:
+            text = str(item.get("text") or "")
+            is_section = bool(item.get("is_section")) or (
+                text.strip().startswith("[") and text.strip().endswith("]")
+            )
+            if not is_section:
+                continue
+            label = cls.SECTION_LABELS.get(_normalise_tag(text))
+            if not label:
+                continue
+            start = item.get("start", item.get("start_time"))
+            try:
+                start = float(start)
+            except (TypeError, ValueError):
+                continue
+            if start < 0 or start > duration:
+                continue
+            markers.append((round(start, 3), label))
+
+        if len(markers) < 2:
+            return None
+
+        markers.sort(key=lambda m: m[0])
+        # Deduplicate markers at the same instant, keeping the first label.
+        deduped: List[Tuple[float, str]] = []
+        for start, label in markers:
+            if not deduped or start - deduped[-1][0] > 0.25:
+                deduped.append((start, label))
+        if len(deduped) < 2:
+            return None
+
+        sections: List[Dict[str, Any]] = []
+        if deduped[0][0] > 0.5:
+            sections.append({
+                "label": "Intro",
+                "start": 0.0,
+                "end": deduped[0][0],
+                "energy": _energy_between(norm_rms, times, 0.0, deduped[0][0]),
+                "source": "lyrics_tags",
+            })
+
+        for idx, (start, label) in enumerate(deduped):
+            end = deduped[idx + 1][0] if idx + 1 < len(deduped) else duration
+            if end - start < 0.25:
+                continue
+            sections.append({
+                "label": label,
+                "start": round(start, 2),
+                "end": round(end, 2),
+                "energy": _energy_between(norm_rms, times, start, end),
+                "source": "lyrics_tags",
+            })
+
+        return sections or None
 
     @classmethod
     def _extract_vocal_intervals(
@@ -307,3 +493,21 @@ class AudioSignalAnalyzer:
             vocal_intervals=[(2.0, min(dur, dur - 2.0))],
             percussion_cues=[],
         )
+
+
+_TAG_RE = re.compile(r"[\[\]()]")
+
+
+def _normalise_tag(text: str) -> str:
+    """`"[Pre-Chorus]"` -> `"pre-chorus"`."""
+    return _TAG_RE.sub("", text).strip().lower().replace(" ", "-")
+
+
+def _energy_between(norm_rms: np.ndarray, times: np.ndarray, start: float, end: float) -> float:
+    """Mean normalised RMS inside [start, end), rounded for the plan payload."""
+    if len(norm_rms) == 0:
+        return 0.5
+    mask = (times >= start) & (times < end)
+    if not np.any(mask):
+        return 0.5
+    return round(float(np.mean(norm_rms[mask])), 2)

@@ -11,6 +11,7 @@ import json
 import logging
 import asyncio
 import shutil
+from datetime import datetime, timezone
 import numpy as np
 from pathlib import Path
 from typing import Optional, Callable, Dict, List, Any
@@ -251,6 +252,9 @@ class MuScriptorProvider:
 
             # 4. Generate Multi-Part W3C MusicXML 3.1 Sheet Score
             detected_bpm = beat_grid.bpm if beat_grid and hasattr(beat_grid, 'bpm') and beat_grid.bpm else 120.0
+            # No key detector runs here, so the score carries no <key> element
+            # instead of asserting C major (plan 7.24).
+            detected_key = ""
             xml_content = self._generate_musicxml(notes, bpm=detected_bpm, title=f"Session {job_id[:8]}")
             with open(musicxml_file, "w", encoding="utf-8") as f:
                 f.write(xml_content)
@@ -301,7 +305,7 @@ class MuScriptorProvider:
                 beat_grid=bg_dict,
                 notes_json=json.dumps(notes),
                 bpm=detected_bpm,
-                key="C Major",
+                key=detected_key or "",
                 source="muscriptor",
                 degraded=False,
             )
@@ -380,7 +384,7 @@ class MuScriptorProvider:
             beat_grid=bg_dict,
             notes_json=json.dumps(notes),
             bpm=bpm,
-            key="C Major"
+            key=""
         )
 
     def get_available_sheets(self, job_id: str) -> List[Dict[str, str]]:
@@ -442,8 +446,22 @@ class MuScriptorProvider:
             reason=reason,
         )
 
-    def _generate_musicxml(self, notes: list[dict], bpm: float = 120.0, title: str = "Milimo Score") -> str:
-        """Generates valid multi-part W3C MusicXML 3.1 score partitioning notes by instrument."""
+    def _generate_musicxml(
+        self,
+        notes: list[dict],
+        bpm: float = 120.0,
+        title: str = "Milimo Score",
+        key: Optional[str] = None,
+        time_signature: Optional[tuple] = None,
+        divisions: int = 4,
+    ) -> str:
+        """Generates valid multi-part MusicXML 4.0 partitioning notes by instrument.
+
+        Plan 7.24: the score used to assert `<fifths>0</fifths>`, 4/4 and a literal
+        encoding date, and typed every note as a quarter. Facts we do not have are
+        now omitted instead of invented — a MusicXML file that misstates key and
+        metre is not usable as a research artifact.
+        """
         # Partition notes by instrument
         instruments_found = list(dict.fromkeys([n.get("instrument", "Piano") for n in notes])) or ["Piano"]
 
@@ -473,7 +491,7 @@ class MuScriptorProvider:
     <creator type="composer">Mainza AI (Milimo Music Studio)</creator>
     <encoding>
       <software>MuScriptor Neural Transcription Engine</software>
-      <encoding-date>2026-08-21</encoding-date>
+      <encoding-date>{datetime.now(timezone.utc).date().isoformat()}</encoding-date>
     </encoding>
   </identification>
 {"".join(part_list_xml)}"""
@@ -482,7 +500,9 @@ class MuScriptorProvider:
         step_names = ["C", "C", "D", "D", "E", "F", "F", "G", "G", "A", "A", "B"]
         alter_vals = [0, 1, 0, 1, 0, 0, 1, 0, 1, 0, 1, 0]
 
-        measure_duration = (60.0 / bpm) * 4.0  # 4-beat bar duration in seconds
+        beats_per_bar = int(time_signature[0]) if time_signature else 4
+        beat_type = int(time_signature[1]) if time_signature else 4
+        measure_duration = (60.0 / bpm) * beats_per_bar * (4.0 / beat_type)
         max_time = max([n.get("end_time", 4.0) for n in notes]) if notes else 8.0
         num_measures = max(1, int(np.ceil(max_time / measure_duration)))
 
@@ -508,14 +528,9 @@ class MuScriptorProvider:
                 if m_num == 1:
                     staves_count = 2 if is_piano else 1
                     part_xml.append(f"""      <attributes>
-        <divisions>4</divisions>
-        <key>
-          <fifths>0</fifths>
-          <mode>major</mode>
-        </key>
-        <time>
-          <beats>4</beats>
-          <beat-type>4</beat-type>
+        <divisions>{int(divisions)}</divisions>{_key_xml(key)}<time>
+          <beats>{beats_per_bar}</beats>
+          <beat-type>{beat_type}</beat-type>
         </time>
         <staves>{staves_count}</staves>
         <clef number="1">
@@ -542,9 +557,9 @@ class MuScriptorProvider:
 """)
 
                 if not m_notes:
-                    part_xml.append("""      <note>
+                    part_xml.append(f"""      <note>
         <rest/>
-        <duration>16</duration>
+        <duration>{beats_per_bar * divisions}</duration>
         <voice>1</voice>
         <type>whole</type>
         <staff>1</staff>
@@ -557,8 +572,10 @@ class MuScriptorProvider:
                         alter = alter_vals[p % 12]
                         octave = (p // 12) - 1
                         staff = 2 if (is_piano and p < 60) else 1
-                        dur = max(2, min(16, int(note.get("duration", 0.5) * 4)))
-
+                        # Seconds -> divisions of a quarter note, and a type name
+                        # that matches the value (everything used to be "quarter").
+                        quarters = float(note.get("duration", 0.5)) * (bpm / 60.0)
+                        dur = max(1, int(round(quarters * divisions)))
                         part_xml.append(f"""      <note>
         <pitch>
           <step>{step}</step>
@@ -567,7 +584,7 @@ class MuScriptorProvider:
         </pitch>
         <duration>{dur}</duration>
         <voice>1</voice>
-        <type>quarter</type>
+        <type>{_note_type(quarters)}</type>
         <staff>{staff}</staff>
       </note>
 """)
@@ -577,6 +594,47 @@ class MuScriptorProvider:
             parts_content_xml.append("".join(part_xml))
 
         return header + "".join(parts_content_xml) + footer
+
+
+# ── MusicXML helpers (plan 7.24) ──────────────────────────────────────────
+
+_KEY_FIFTHS = {
+    "c major": 0, "g major": 1, "d major": 2, "a major": 3, "e major": 4,
+    "b major": 5, "f# major": 6, "c# major": 7,
+    "f major": -1, "bb major": -2, "eb major": -3, "ab major": -4,
+    "db major": -5, "gb major": -6, "cb major": -7,
+    "a minor": 0, "e minor": 1, "b minor": 2, "f# minor": 3, "c# minor": 4,
+    "g# minor": 5, "d# minor": 6, "a# minor": 7,
+    "d minor": -1, "g minor": -2, "c minor": -3, "f minor": -4,
+    "bb minor": -5, "eb minor": -6, "ab minor": -7,
+}
+
+
+def _key_xml(key: Optional[str]) -> str:
+    """`<key>` only when the key is actually known."""
+    if not key:
+        return ""
+    normalised = key.strip().lower().replace("♯", "#").replace("♭", "b")
+    fifths = _KEY_FIFTHS.get(normalised)
+    if fifths is None:
+        return ""
+    mode = "minor" if "minor" in normalised else "major"
+    return (
+        f"\n        <key>\n          <fifths>{fifths}</fifths>"
+        f"\n          <mode>{mode}</mode>\n        </key>"
+    )
+
+
+def _note_type(quarters: float) -> str:
+    """Nearest MusicXML note type for a duration in quarter notes."""
+    table = [
+        (4.0, "whole"), (3.0, "half"), (2.0, "half"), (1.5, "quarter"),
+        (1.0, "quarter"), (0.75, "eighth"), (0.5, "eighth"), (0.25, "16th"),
+    ]
+    for value, name in table:
+        if quarters >= value - 1e-6:
+            return name
+    return "32nd"
 
 
 muscriptor_provider = MuScriptorProvider()

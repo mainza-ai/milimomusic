@@ -315,7 +315,10 @@ class VideoDirector:
             analysis = AudioSignalAnalyzer.analyze_audio(
                 audio_path=audio_file,
                 vocal_path=vocal_stem_path,
-                timed_lyrics=timed_lines
+                timed_lyrics=timed_lines,
+                # The generation prompt's [Verse]/[Chorus] tags are exact structure
+                # (audit M3); pass them so section labels are not guessed from RMS.
+                lyrics=getattr(job, "lyrics", None),
             )
         else:
             analysis = AudioSignalAnalyzer._fallback_analysis(audio_file or "unknown.mp3", duration_sec=total_duration)
@@ -377,7 +380,8 @@ class VideoDirector:
         if not should_use_llm:
             if progress_callback:
                 progress_callback("Generating Intelligent Fallback Storyboard", 70)
-            return self._generate_intelligent_fallback_treatment(
+            return self._annotate_treatment(
+                self._generate_intelligent_fallback_treatment(
                 job=job,
                 analysis=analysis,
                 clips_meta=clip_metadata_list,
@@ -388,6 +392,8 @@ class VideoDirector:
                 visual_style=visual_style,
                 palette=palette,
                 fallback_reason="Fast test mode enabled or LLM explicitly disabled"
+                ),
+                analysis,
             )
 
         if progress_callback:
@@ -407,6 +413,21 @@ class VideoDirector:
             cancel_check=cancel_check
         )
 
+        return self._annotate_treatment(treatment, analysis)
+
+    @staticmethod
+    def _annotate_treatment(
+        treatment: "VideoDirectorTreatment", analysis: "AudioAnalysisResult"
+    ) -> "VideoDirectorTreatment":
+        """Carry analysis provenance onto the treatment (plans 7.8/7.9).
+
+        The treatment is built by helpers that never see the analysis object, so
+        the plan inherited no structure source and the UI could not tell a
+        tag-derived storyboard from an RMS guess.
+        """
+        treatment.structure_source = getattr(analysis, "structure_source", "energy_windows")
+        treatment.meter = int(getattr(analysis, "meter", 4) or 4)
+        treatment.tempo_bpm = float(getattr(analysis, "tempo_bpm", 0.0) or 0.0)
         return treatment
 
     def _call_llm_visual_director(
@@ -1120,7 +1141,10 @@ class VideoDirector:
                                 directors_note=s.get("directors_note", "")
                             ))
                         vocal_count = sum(1 for c in clips if c.is_vocal)
-                        resolved_bpm = float(bpm) if bpm and bpm > 0 else self.detect_bpm(job.audio_path, default_bpm=120.0)
+                        resolved_bpm = float(bpm) if bpm and bpm > 0 else (
+                            float(saved_treatment.get("tempo_bpm") or 0.0)
+                            or self.detect_bpm(job.audio_path, default_bpm=120.0)
+                        )
                         return VideoPlan(
                             job_id=str(job.id),
                             total_clips=len(clips),
@@ -1136,7 +1160,9 @@ class VideoDirector:
                             visual_metaphor=saved_treatment.get("visual_metaphor"),
                             character_profile=saved_treatment.get("character_profile"),
                             treatment=saved_treatment,
-                            clips=clips
+                            clips=clips,
+                            structure_source=saved_treatment.get("structure_source", "energy_windows"),
+                            meter=int(saved_treatment.get("meter", 4) or 4),
                         )
             except Exception as e:
                 logger.debug(f"Could not reuse saved director treatment from video_config_json: {e}")
@@ -1189,7 +1215,10 @@ class VideoDirector:
             ))
 
         vocal_count = sum(1 for c in clips if c.is_vocal)
-        resolved_bpm = float(bpm) if bpm and bpm > 0 else self.detect_bpm(job.audio_path, default_bpm=120.0)
+        resolved_bpm = float(bpm) if bpm and bpm > 0 else (
+            float(getattr(treatment, "tempo_bpm", 0.0) or 0.0)
+            or self.detect_bpm(job.audio_path, default_bpm=120.0)
+        )
 
         plan = VideoPlan(
             job_id=str(job.id),
@@ -1208,7 +1237,9 @@ class VideoDirector:
             treatment=treatment.to_dict(),
             clips=clips,
             fallback_used=not treatment.llm_used,
-            fallback_reason=treatment.fallback_reason
+            fallback_reason=treatment.fallback_reason,
+            structure_source=getattr(treatment, "structure_source", "energy_windows"),
+            meter=int(getattr(treatment, "meter", 4) or 4),
         )
 
         # Update in-memory job.video_config_json if job is present

@@ -1,4 +1,4 @@
-import React, { useRef, useState, useEffect } from 'react';
+import React, { useRef, useState, useEffect, useMemo } from 'react';
 import {
     Film,
     RefreshCw,
@@ -14,7 +14,7 @@ import {
     Mic,
     Play
 } from 'lucide-react';
-import { api, galleryApi, type Job, type VideoTaskStatus } from '../../api';
+import { api, galleryApi, type Job, type VideoTaskStatus, type VideoTake, type DeliveryPreset } from '../../api';
 import { useAudioTime } from '../../context/AudioEngineContext';
 import { LyricCanvasOverlay } from './LyricCanvasOverlay';
 import type { AspectRatioType } from './VideoTopBar';
@@ -45,6 +45,13 @@ interface VideoCanvasPlayerProps {
     onSeek?: (timeSec: number) => void;
     onRenderLyricVideo?: () => void;
     isRenderingLyricVideo?: boolean;
+    // Render takes (plan 7.4) and delivery (plans 7.5 / 7.15 / 7.25).
+    takes?: VideoTake[];
+    onSelectTake?: (takeId: string) => void;
+    onDeleteTake?: (takeId: string) => void;
+    onOpenReport?: () => void;
+    presets?: DeliveryPreset[];
+    onExportPreset?: (presetId: string) => void;
 }
 
 const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
@@ -72,6 +79,12 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
     onSeek,
     onRenderLyricVideo,
     isRenderingLyricVideo = false,
+    takes = [],
+    onSelectTake,
+    onDeleteTake,
+    onOpenReport,
+    presets = [],
+    onExportPreset,
 }) => {
     const videoRef = useRef<HTMLVideoElement | null>(null);
     const containerRef = useRef<HTMLDivElement | null>(null);
@@ -82,6 +95,23 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
     const [showLyricOverlay, setShowLyricOverlay] = useState(false);
 
     const effectiveTime = renderedVideoUrl ? videoCurrentTime : audioCurrentTime;
+
+    const [compareTakeId, setCompareTakeId] = useState<string | null>(null);
+    const compareVideoRef = useRef<HTMLVideoElement | null>(null);
+
+    const completedTakes = useMemo(
+        () => (takes || []).filter((t) => t.status === 'completed' && t.video_path),
+        [takes],
+    );
+    const selectedTake = useMemo(
+        () => completedTakes.find((t) => t.is_selected) || null,
+        [completedTakes],
+    );
+    const compareTake = useMemo(() => {
+        const explicit = completedTakes.find((t) => t.id === compareTakeId);
+        if (explicit && explicit.id !== selectedTake?.id) return explicit;
+        return completedTakes.find((t) => t.id !== selectedTake?.id) || null;
+    }, [completedTakes, compareTakeId, selectedTake?.id]);
 
     // split comparison state
     const [splitCompareActive, setSplitCompareActive] = useState(false);
@@ -178,6 +208,90 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
 
     return (
         <div className="space-y-3">
+            {/* Render takes + delivery (plans 7.4 / 7.15 / 7.25). Every re-render is
+                kept, so a musician can switch between takes instead of losing them. */}
+            {(completedTakes.length > 0 || presets.length > 0) && renderedVideoUrl && (
+                <div className="flex flex-wrap items-center gap-2 px-1">
+                    {completedTakes.length > 0 && (
+                        <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400">
+                            <span>Take</span>
+                            <select
+                                aria-label="Rendered take"
+                                value={selectedTake?.id || ''}
+                                onChange={(e) => e.target.value && onSelectTake?.(e.target.value)}
+                                className="bg-black/40 border border-white/15 rounded-lg text-[10px] font-semibold text-slate-200 px-2 py-1"
+                            >
+                                {completedTakes.map((take) => (
+                                    <option key={take.id || take.task_id} value={take.id || ''}>
+                                        {take.kind}
+                                        {take.created_at ? ` · ${new Date(take.created_at).toLocaleTimeString()}` : ''}
+                                        {take.qc && take.qc.ok === false ? ' · QC failed' : ''}
+                                    </option>
+                                ))}
+                            </select>
+                        </label>
+                    )}
+                    {completedTakes.length > 1 && (
+                        <label className="flex items-center gap-1.5 text-[10px] font-bold text-slate-400">
+                            <span>Compare</span>
+                            <select
+                                aria-label="Take to compare against"
+                                value={compareTake?.id || ''}
+                                onChange={(e) => setCompareTakeId(e.target.value || null)}
+                                className="bg-black/40 border border-white/15 rounded-lg text-[10px] font-semibold text-slate-200 px-2 py-1"
+                            >
+                                {completedTakes
+                                    .filter((t) => t.id !== selectedTake?.id)
+                                    .map((take) => (
+                                        <option key={take.id || take.task_id} value={take.id || ''}>
+                                            {take.kind}
+                                            {take.created_at ? ` · ${new Date(take.created_at).toLocaleTimeString()}` : ''}
+                                        </option>
+                                    ))}
+                            </select>
+                        </label>
+                    )}
+                    {presets.length > 0 && onExportPreset && (
+                        <select
+                            aria-label="Delivery preset"
+                            defaultValue=""
+                            onChange={(e) => {
+                                if (e.target.value) {
+                                    onExportPreset(e.target.value);
+                                    e.currentTarget.value = '';
+                                }
+                            }}
+                            className="bg-black/40 border border-white/15 rounded-lg text-[10px] font-semibold text-slate-200 px-2 py-1"
+                        >
+                            <option value="">Export for…</option>
+                            {presets.map((preset) => (
+                                <option key={preset.id} value={preset.id}>{preset.label}</option>
+                            ))}
+                        </select>
+                    )}
+                    {onOpenReport && (
+                        <button
+                            type="button"
+                            onClick={onOpenReport}
+                            className="px-2 py-1 rounded-lg bg-black/40 border border-white/15 text-[10px] font-bold text-slate-300 hover:text-white"
+                            title="Cut list, QC and delivery for this take"
+                        >
+                            Report
+                        </button>
+                    )}
+                    {selectedTake?.id && onDeleteTake && (
+                        <button
+                            type="button"
+                            onClick={() => onDeleteTake(selectedTake.id as string)}
+                            className="px-2 py-1 rounded-lg bg-black/40 border border-white/15 text-[10px] font-bold text-rose-300 hover:text-rose-200"
+                            title="Delete this take (other takes are kept)"
+                        >
+                            Delete take
+                        </button>
+                    )}
+                </div>
+            )}
+
             {/* Main Video Viewport Canvas */}
             <div
                 ref={containerRef}
@@ -196,9 +310,22 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                             // frame; the orchestrator now also writes a 480p proxy
                             // and a first-frame poster.
                             preload="metadata"
-                            onTimeUpdate={(e) => setVideoCurrentTime(e.currentTarget.currentTime)}
-                            onPlay={() => setIsVideoPlaying(true)}
-                            onPause={() => setIsVideoPlaying(false)}
+                            onTimeUpdate={(e) => {
+                                const t = e.currentTarget.currentTime;
+                                setVideoCurrentTime(t);
+                                const other = compareVideoRef.current;
+                                if (other && Math.abs(other.currentTime - t) > 0.12) {
+                                    other.currentTime = t;
+                                }
+                            }}
+                            onPlay={() => {
+                                setIsVideoPlaying(true);
+                                void compareVideoRef.current?.play().catch(() => undefined);
+                            }}
+                            onPause={() => {
+                                setIsVideoPlaying(false);
+                                compareVideoRef.current?.pause();
+                            }}
                             onError={() => {
                                 const err = videoRef.current?.error;
                                 console.warn('Video playback element error:', err?.code, err?.message);
@@ -226,6 +353,20 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                                     <Play size={36} className="fill-current text-slate-950" />
                                 </button>
                             </div>
+                        )}
+
+                        {/* Plan 7.5: a real second source. This overlay used to sit on
+                            a single <video>, so "compare" compared a video with itself. */}
+                        {splitCompareActive && compareTake?.video_path && (
+                            <video
+                                ref={compareVideoRef}
+                                src={api.getAudioUrl(compareTake.video_path)}
+                                muted
+                                playsInline
+                                preload="metadata"
+                                className="absolute inset-0 w-full h-full object-cover rounded-xl pointer-events-none"
+                                style={{ clipPath: `inset(0 0 0 ${splitRatio * 100}%)` }}
+                            />
                         )}
 
                         {/* Live Subtitle Overlay Preview over rendered video */}
@@ -308,12 +449,17 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                                 <button
                                     type="button"
                                     onClick={() => setSplitCompareActive(!splitCompareActive)}
-                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold backdrop-blur-md border transition-all ${
+                                    disabled={!compareTake}
+                                    className={`px-2.5 py-1 rounded-lg text-[10px] font-bold backdrop-blur-md border transition-all disabled:opacity-40 ${
                                         splitCompareActive
                                             ? 'bg-indigo-500 text-white border-indigo-400 shadow-md'
                                             : 'bg-black/60 text-slate-300 border-white/20 hover:text-white'
                                     }`}
-                                    title="Toggle Split A/B Comparison View"
+                                    title={
+                                        compareTake
+                                            ? 'Compare the selected take with another render'
+                                            : 'Render the video twice to compare takes'
+                                    }
                                 >
                                     {splitCompareActive ? '✕ Close Split' : '↔ Split Compare'}
                                 </button>
@@ -328,6 +474,17 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                                     className="absolute top-0 bottom-0 z-20 cursor-ew-resize flex items-center justify-center"
                                     style={{ left: `${splitRatio * 100}%` }}
                                     onMouseDown={handleSplitMouseDown}
+                                    onTouchStart={handleSplitMouseDown as unknown as React.TouchEventHandler<HTMLDivElement>}
+                                    role="slider"
+                                    tabIndex={0}
+                                    aria-label="Comparison split position"
+                                    aria-valuemin={0}
+                                    aria-valuemax={100}
+                                    aria-valuenow={Math.round(splitRatio * 100)}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'ArrowLeft') setSplitRatio((r) => Math.max(0, r - 0.02));
+                                        if (e.key === 'ArrowRight') setSplitRatio((r) => Math.min(1, r + 0.02));
+                                    }}
                                 >
                                     <div className="w-0.5 h-full bg-indigo-400 shadow-[0_0_10px_rgba(129,140,248,0.8)]" />
                                     <div className="absolute w-6 h-6 rounded-full bg-indigo-500 border-2 border-white flex items-center justify-center text-[10px] text-white font-bold shadow-lg pointer-events-none">
@@ -337,7 +494,9 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
 
                                 {/* Floating Split Ratio Controls */}
                                 <div className="absolute bottom-16 left-4 right-4 bg-black/80 backdrop-blur-md rounded-xl p-2.5 border border-indigo-500/30 flex items-center gap-3 z-30">
-                                    <span className="text-[10px] font-bold text-slate-300">Take A (Original)</span>
+                                    <span className="text-[10px] font-bold text-slate-300">
+                                        {selectedTake?.kind ? `${selectedTake.kind} take` : 'Selected take'}
+                                    </span>
                                     <input
                                         type="range"
                                         min={0}
@@ -348,7 +507,7 @@ const VideoCanvasPlayerComponent: React.FC<VideoCanvasPlayerProps> = ({
                                         className="flex-1 accent-indigo-500 h-1.5 bg-white/20 rounded cursor-pointer"
                                     />
                                     <span className="text-[10px] font-bold text-indigo-400">
-                                        Take B / Retake ({Math.round(splitRatio * 100)}%)
+                                        {compareTake?.kind ? `${compareTake.kind} take` : 'Compare'} ({Math.round(splitRatio * 100)}%)
                                     </span>
                                 </div>
                             </>

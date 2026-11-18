@@ -45,6 +45,11 @@ def probe_duration(path: str) -> Optional[float]:
         return None
 
 
+#: Intermediate quality. These clips are stitched and then encoded once more for
+#: delivery, so the intermediate must not be the lossy step (audit D1).
+INTERMEDIATE_CRF = 12
+
+
 def normalise_clip(
     src: str,
     dest: str,
@@ -53,6 +58,7 @@ def normalise_clip(
     width: int,
     height: int,
     fps: int,
+    extra_vf: Optional[str] = None,
 ) -> bool:
     """Rewrite `src` as `dest` with an exact duration and uniform geometry.
 
@@ -74,14 +80,17 @@ def normalise_clip(
         f"tpad=stop_mode=clone:stop_duration={duration_s:.3f},"
         f"trim=duration={duration_s:.3f},setpts=PTS-STARTPTS"
     )
+    if extra_vf:
+        # Beat-synced exposure pulse, applied here instead of in a second encode.
+        vf = f"{vf},{extra_vf}"
 
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-i", src,
         "-an",
         "-vf", vf,
-        "-c:v", "libx264", "-preset", "veryfast", "-pix_fmt", "yuv420p",
-        "-r", str(fps),
+        "-c:v", "libx264", "-preset", "veryfast", "-crf", str(INTERMEDIATE_CRF),
+        "-pix_fmt", "yuv420p", "-r", str(fps),
         str(dest),
     ]
     try:

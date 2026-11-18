@@ -30,18 +30,18 @@ re-verification (§Corrections) and 9 are deferred with reasons below.** Phase 7
 | Phase | Status | Evidence |
 |---|---|---|
 | **0 — Stop the bleeding** | ✅ **16/16** | exploit chain closed; YuE2 + Training Studio deleted; suite runs in 50 s |
-| **1 — Provenance contract** | 🟡 **17/18** | `quality`/`provenance` on every job; **1.14 reopened** — lip sync still reports success while running the jaw-warp fallback |
+| **1 — Provenance contract** | ✅ **18/18** | `quality`/`provenance` on every job; 1.14 **closed by 7.1** — lip sync now reports the engine that ran |
 | **2 — Spine** | ✅ **14/15** | durable queue for generation, bounded retries, one recovery policy, stall sweeper, **Alembic 0001–0007 + backups**, one UUID encoding, real FKs, soft delete, retention, lock ownership |
 | **3 — DAW core** | ✅ **16/17** | clip editing with trim/split/fades, workspace undo, tempo map + metronome, sample-accurate loop, clipboard, quantize strength, velocity lane, MIDI import, automation lanes, server-side session recall |
-| **4 — Media truth** | 🟡 **12/16** | clip duration/geometry normalisation, real timeline export, storyboard persistence, fal-only cloud, scoped cancel, subtitle escaping, temp hygiene, proxies, single fps, performer scoping, real audio analysis — **4.8 reopened** (`camera_zoom` is dead code), **4.2 partial** (delivered resolution never reported) |
+| **4 — Media truth** | ✅ **13/16** | clip duration/geometry normalisation, real timeline export, storyboard persistence, fal-only cloud, scoped cancel, subtitle escaping, temp hygiene, proxies, single fps, performer scoping, real audio analysis; 4.8 **closed by 7.10**, 4.2's reporting clause **closed by 7.3** (4.5 remains unverified without a live fal key) |
 | **5 — Platform & API** | 🟡 **9/12** | one error envelope, 202/201, typed bodies everywhere, idempotency, SSE replay + topics, rate limits by template, share links, accessible confirms |
 | **6 — Hardening** | ✅ **8/8** | CI lint/audit/migration-smoke/unit/E2E jobs, universal lockfile, `npm ci`, observability, log hygiene, capability matrix |
-| **7 — Music video production** | 🆕 **0/25** | added 2026-11-18 from the [Music Video Pipeline Audit](music-video-pipeline-audit-2026-11.md) |
+| **7 — Music video production** | 🟡 **24/25** | added 2026-11-18 from the [Music Video Pipeline Audit](music-video-pipeline-audit-2026-11.md); implemented the same day — 7.21 is partial (labels/dialogs/keyboard seek shipped; no axe audit or reduced-motion sweep) |
 
-**Verification (2026-11-18):** backend `565 passed, 2 skipped, 3 deselected`
-(0 failures, ~62 s); frontend `29 vitest tests`; `tsc -b` + `vite build` green
-(entry 587 kB / 163 kB gz); `ruff` bug-class gate clean; API parity 168 routes /
-172 client calls; Alembic at `0007` with a pre-migration backup on every upgrade.
+**Verification (2026-11-18, after Phase 7):** backend `627 passed, 2 skipped,
+3 deselected` (0 failures, ~70 s, run twice); frontend `29 vitest tests`;
+`tsc -b` + `vite build` green (entry 588 kB / 163 kB gz); `ruff` bug-class gate
+clean; API parity 178 routes / 182 client calls; Alembic at `0008`.
 
 ### Deferred — with reasons, not silently dropped
 
@@ -70,8 +70,10 @@ original task text. Full evidence:
 | 4.2 | Delivered resolution reported | never reported anywhere; the 1080p master is upscaled 480p on MPS | **7.3** |
 | 4.5 | Cloud UI gated on key **and** cost estimate | no cost estimate exists in `services/video/` | **7.7** |
 
-Phase 1 therefore reads **17/18**, Phase 4 **12/16**. Nothing else in the earlier
-phases was invalidated.
+**All four were closed by Phase 7 on 2026-11-18** (7.1, 7.10, 7.3, 7.7), with
+regression tests that fail against the pre-Phase-7 code. Phase 1 is back to
+**18/18** and Phase 4 to **13/16**. Nothing else in the earlier phases was
+invalidated.
 
 
 ## Sequencing principle
@@ -258,7 +260,15 @@ laptop sleep; one error path in the UI.
 Source: [Music Video Pipeline Audit 2026-11](music-video-pipeline-audit-2026-11.md).
 Effort estimates are focused engineer-days for one person who knows the codebase.
 Every task names an observable acceptance criterion — several are literally a test
-that fails today.
+that failed before implementation.
+
+> **Status: 24/25 implemented and verified on 2026-11-18** (7.21 partial). New
+> regression suites: `test_video_truth.py`, `test_video_takes.py`,
+> `test_video_qc.py`, `test_video_delivery.py`, `test_music_structure.py`,
+> `test_video_incremental_retake.py`, `test_symbolic_and_manifest.py`
+> (+54 tests). Two real bugs were found by the new tests while implementing:
+> `-af loudnorm` combined with `-c:a copy`, and a take re-save copying a file onto
+> itself.
 
 **Sequencing:** 7A must precede 7B because a musician cannot iterate on a pipeline
 that lies about what it produced. 7B precedes 7C because export presets and UI

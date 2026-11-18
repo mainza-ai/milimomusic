@@ -81,6 +81,11 @@ class VideoDirectorTreatment:
     provider: Optional[str] = None
     model: Optional[str] = None
     fallback_reason: Optional[str] = None
+    # Analysis provenance carried with the treatment so the plan can state it
+    # without re-analysing the audio (plans 7.8/7.9).
+    structure_source: str = "energy_windows"
+    meter: int = 4
+    tempo_bpm: Optional[float] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -105,6 +110,10 @@ class VideoPlan:
     clips: List[SceneClip] = field(default_factory=list)
     fallback_used: bool = False
     fallback_reason: Optional[str] = None
+    # Where the section list came from: "lyrics_tags" | "energy_windows" | "synthetic".
+    structure_source: str = "energy_windows"
+    # Estimated metre used for downbeats (3 or 4).
+    meter: int = 4
 
     def to_dict(self) -> Dict[str, Any]:
         d = asdict(self)
@@ -128,6 +137,17 @@ class VideoTaskStatusInfo:
     treatment: Optional[Dict[str, Any]] = None
     fallback_used: Optional[bool] = False
     fallback_reason: Optional[str] = None
+    # What actually rendered the singing shots — "live_portrait", "jaw_warp",
+    # "cloud_fal"… Never inferred by the UI (plan 7.1).
+    lip_sync_engine: Optional[str] = None
+    # Resolution the generator really produced vs the delivered frame size.
+    # On MPS a 1080p request renders 832x480 and is upscaled (plan 7.3).
+    source_resolution: Optional[str] = None
+    delivered_resolution: Optional[str] = None
+    # Automated QC verdict for the delivered master (plan 7.14).
+    qc: Optional[Dict[str, Any]] = None
+    # Take id this task produced (plan 7.4).
+    render_id: Optional[str] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)

@@ -4652,14 +4652,24 @@ def export_studio_pack(job_id: str):
             
         zip_buffer = io.BytesIO()
         with zipfile.ZipFile(zip_buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-            # 1. Master Audio
-            if job.audio_path:
-                local_path = job.audio_path.lstrip("/")
-                possible_paths = [local_path, f"generated_audio/{os.path.basename(local_path)}", f"data/{local_path}"]
-                for p in possible_paths:
+            # 1. Master Audio — the mastered file when it exists (plan 7.23).
+            # The pack used to ship the *unmastered* master even after mastering.
+            pack_master = None
+            for candidate in (getattr(job, "mastered_path", None), job.audio_path):
+                if not candidate:
+                    continue
+                local_path = candidate.lstrip("/")
+                for p in (local_path,
+                          f"generated_audio/{os.path.basename(local_path)}",
+                          f"data/{local_path}"):
                     if os.path.exists(p):
-                        zf.write(p, arcname="master_audio.wav")
+                        pack_master = p
                         break
+                if pack_master:
+                    break
+            if pack_master:
+                arc = "master_audio_mastered.wav" if getattr(job, "mastered_path", None) else "master_audio.wav"
+                zf.write(pack_master, arcname=arc)
             
             # 2. Stems
             if job.stems_json:
@@ -4676,6 +4686,33 @@ def export_studio_pack(job_id: str):
                             zf.write(part_path.lstrip("/"), arcname=f"stems/instruments/{clean_part}.wav")
                 except Exception as e:
                     logger.warning(f"Stem packing error: {e}")
+                # A stem package without a manifest is four anonymous WAVs (plan 7.23).
+                try:
+                    from app.services.video.export_presets import probe_streams as _probe
+
+                    stem_manifest = {
+                        "source": json.loads(job.stems_json).get("stems_source") if job.stems_json else None,
+                        "stems": [],
+                    }
+                    for stem_name in ["vocals", "drums", "bass", "other"]:
+                        stem_path = (json.loads(job.stems_json) or {}).get(stem_name)
+                        if not stem_path:
+                            continue
+                        resolved = stem_path.lstrip("/")
+                        if not os.path.isfile(resolved):
+                            continue
+                        streams = _probe(resolved) or {}
+                        stem_manifest["stems"].append({
+                            "name": stem_name,
+                            "file": f"stems/{stem_name}.wav",
+                            "bytes": streams.get("size"),
+                            "sample_rate": streams.get("audio_sample_rate"),
+                            "channels": streams.get("audio_channels"),
+                            "duration_s": streams.get("duration"),
+                        })
+                    zf.writestr("stems/manifest.json", json.dumps(stem_manifest, indent=2))
+                except Exception as _stem_err:
+                    logger.debug(f"Stem manifest skipped: {_stem_err}")
             # 3. Transcription & Scores
             if job.midi_path and os.path.exists(job.midi_path.lstrip("/")):
                 zf.write(job.midi_path.lstrip("/"), arcname="transcription/score.mid")
@@ -4714,9 +4751,27 @@ def export_studio_pack(job_id: str):
                 "duration_ms": job.duration_ms,
                 "created_at": job.created_at.isoformat() if job.created_at else None,
                 "structured_caption": json.loads(job.structured_caption_json) if job.structured_caption_json else None,
-                "beat_grid": json.loads(job.beat_grid_json) if job.beat_grid_json else None
+                "beat_grid": json.loads(job.beat_grid_json) if job.beat_grid_json else None,
+                # Provenance travels with the audio it describes (plan 7.23).
+                "quality": getattr(job, "quality", None),
+                "provenance": json.loads(job.provenance_json) if getattr(job, "provenance_json", None) else None,
+                "used_fallback_synth": getattr(job, "used_fallback_synth", None),
+                "fallback_reason": getattr(job, "fallback_reason", None),
+                "mastered_path_included": bool(getattr(job, "mastered_path", None)),
             }
             zf.writestr("metadata.json", json.dumps(metadata, indent=2))
+
+            # The portable, hashed record of the whole session (plan 7.22).
+            try:
+                from app.core.artifact_manifest import build_manifest
+                from app.services.video import takes as takes_service
+
+                manifest = build_manifest(
+                    job, takes=takes_service.list_takes(session, str(job.id))
+                )
+                zf.writestr("manifest.json", json.dumps(manifest, indent=2))
+            except Exception as _manifest_err:
+                logger.debug(f"Manifest in pack skipped: {_manifest_err}")
             
         zip_buffer.seek(0)
         safe_title = re.sub(r'[^a-zA-Z0-9_-]', '_', job.title or "milimo_track")
@@ -5637,6 +5692,381 @@ async def delete_music_video(job_id: str):
     return {"status": "deleted", "job_id": job_id_str, "removed_files": removed}
 
 
+class SceneRetakeRequest(SQLModel):
+    render_id: Optional[str] = None
+    prompt: Optional[str] = None
+    visual_style: Optional[str] = None
+    transition_style: Optional[str] = None
+    subtitle_style: Optional[str] = None
+    export_preset: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    resolution: Optional[str] = None
+    enable_lip_sync: Optional[bool] = True
+    burn_lyrics: Optional[bool] = True
+    width: Optional[int] = None
+    height: Optional[int] = None
+
+
+@app.post("/videos/scenes/{job_id}/{clip_index}/rerender", status_code=202)
+async def rerender_video_scene(job_id: str, clip_index: int, req: SceneRetakeRequest = Body(default=SceneRetakeRequest())):
+    """Re-render ONE scene and re-assemble from the kept clips (plan 7.11).
+
+    The whole-film re-render used to be the only way to fix one shot. This reuses
+    every other scene from the take's workspace, then produces a *new* take so the
+    previous master survives.
+    """
+    from app.services.video import takes as takes_service
+    from app.services.video_service import video_service
+
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        if not job.audio_path:
+            raise HTTPException(status_code=400, detail="Job has no completed audio to render.")
+
+        render_id = req.render_id
+        if render_id:
+            take = takes_service.get_take(session, render_id)
+            if not take or str(take.job_id) != str(job.id):
+                raise HTTPException(status_code=404, detail="Render take not found for this track.")
+        else:
+            completed = [t for t in takes_service.list_takes(session, str(job.id)) if t["status"] == "completed"]
+            if not completed:
+                raise HTTPException(status_code=409, detail={"error": {
+                    "code": "no_take_to_retake",
+                    "message": "Render the full video once before retaking a scene.",
+                }})
+            render_id = completed[0]["id"]
+
+    active = video_service.active_render_for_job(str(job.id))
+    if active:
+        raise HTTPException(status_code=409, detail={"error": {
+            "code": "render_in_progress",
+            "message": f"This track is already rendering (task {active}).",
+        }})
+
+    task_id = str(uuid.uuid4())
+    config = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+    config["mode"] = "scene_retake"
+
+    async def _run_bg():
+        try:
+            await video_service.render_scene_retake(
+                job=job, task_id=task_id, render_id=render_id,
+                clip_index=clip_index, config=config,
+            )
+        except asyncio.CancelledError:
+            logger.info(f"Scene retake {task_id} cancelled.")
+        except Exception as e:
+            logger.error(f"Scene retake failed for {job_id}: {e}")
+        finally:
+            video_service.unregister_render_task(task_id)
+            video_service.release_job_render(str(job_id), task_id)
+
+    video_service.claim_job_render(str(job.id), task_id)
+    bg_task = asyncio.create_task(_run_bg())
+    video_service.register_render_task(task_id, bg_task)
+    return {
+        "status": "queued",
+        "task_id": task_id,
+        "job_id": job_id,
+        "clip_index": clip_index,
+        "render_id": render_id,
+        "message": "Scene retake started; other scenes are reused from the take.",
+    }
+
+
+class VideoExportRequest(SQLModel):
+    render_id: Optional[str] = None
+    aspect_ratio: Optional[str] = None
+    resolution: Optional[str] = None
+    mode: Optional[str] = "crop"          # crop | pad
+    start: Optional[float] = None
+    duration: Optional[float] = None
+
+
+class VideoVariantsRequest(SQLModel):
+    render_id: Optional[str] = None
+    aspects: List[str] = ["16:9", "9:16", "1:1"]
+    resolution: Optional[str] = "1080p"
+    mode: Optional[str] = "crop"
+
+
+def _resolve_master_for_job(session, job, render_id: Optional[str]):
+    """Pick the take to deliver from: explicit id, the selected take, or the job."""
+    from app.services.video import takes as takes_service
+
+    if render_id:
+        take = takes_service.get_take(session, render_id)
+        if take and str(take.job_id) == str(job.id) and take.file_path:
+            return take
+        return None
+    for t in takes_service.list_takes(session, str(job.id)):
+        if t.get("is_selected") and t.get("file_path"):
+            take = takes_service.get_take(session, t["id"])
+            if take and take.file_path:
+                return take
+    # No take bookkeeping (older renders): fall back to the job pointer.
+    if job.video_path:
+        from app.core.paths import get_generated_audio_dir
+
+        candidate = get_generated_audio_dir() / "videos" / os.path.basename(job.video_path.split("?")[0])
+        if candidate.is_file():
+            return type("Take", (), {"id": None, "file_path": str(candidate),
+                                     "config_json": job.video_config_json,
+                                     "job_id": job.id})()
+    return None
+
+
+@app.get("/jobs/{job_id}/manifest.json")
+def get_job_artifact_manifest(job_id: str):
+    """Reproducible manifest for this session (plan 7.22).
+
+    Seeds, sampling parameters, verbatim prompt/lyrics, per-stage provenance,
+    artifact hashes, app version + git commit and the video takes — the artifact
+    a paper, an archive or a bug report can cite.
+    """
+    from fastapi.responses import JSONResponse
+
+    from app.core.artifact_manifest import build_manifest
+    from app.services.video import takes as takes_service
+
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        take_rows = takes_service.list_takes(session, str(job.id))
+        manifest = build_manifest(job, takes=take_rows)
+        title = (job.title or "milimo_session").replace(" ", "_").replace("/", "-")
+
+    return JSONResponse(
+        content=manifest,
+        headers={"Content-Disposition": f'attachment; filename="{title}_manifest.json"'},
+    )
+
+
+@app.get("/videos/presets")
+def list_video_presets():
+    """Delivery presets a render can target (plan 7.15)."""
+    from app.services.video.export_presets import list_presets
+
+    return {"status": "ok", "presets": list_presets()}
+
+
+@app.post("/videos/{job_id}/export/{preset_id}", status_code=202)
+async def export_video_for_preset(job_id: str, preset_id: str, req: VideoExportRequest = Body(default=VideoExportRequest())):
+    """Re-deliver the current master for a destination preset (plan 7.15)."""
+    from app.services.video import takes as takes_service
+    from app.services.video.deliver import size_for, transcode
+    from app.services.video.export_presets import PRESETS, get_preset
+    from app.services.video_service import VIDEO_DIR
+
+    if preset_id not in PRESETS:
+        raise HTTPException(status_code=404, detail={"error": {
+            "code": "unknown_preset",
+            "message": f"Unknown preset '{preset_id}'. Try one of: {', '.join(PRESETS)}",
+        }})
+
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        take = _resolve_master_for_job(session, job, req.render_id)
+        if not take:
+            raise HTTPException(status_code=409, detail={"error": {
+                "code": "no_master",
+                "message": "This track has no rendered video to export.",
+            }})
+        src_path = take.file_path
+        job_uuid = job.id
+        job_title = job.title or job_id
+
+    preset = get_preset(preset_id)
+    width = height = None
+    if req.aspect_ratio:
+        pixels = size_for(req.aspect_ratio, req.resolution or "1080p")
+        if pixels:
+            width, height = pixels
+
+    task_id = str(uuid.uuid4())
+    out_name = f"{job_uuid}_{preset_id}_{uuid.uuid4().hex[:6]}.mp4"
+    out_path = os.path.join(VIDEO_DIR, out_name)
+
+    async def _run_bg():
+        try:
+            ok = await asyncio.to_thread(
+                transcode, src_path, out_path, preset,
+                width=width, height=height,
+                mode=req.mode or "crop",
+                start=req.start, duration=req.duration,
+            )
+            if not ok:
+                raise RuntimeError("Export encode failed")
+            from app.services.video.export_presets import probe_streams
+            from app.services.video.qc import run_qc
+
+            streams = await asyncio.to_thread(probe_streams, out_path)
+            qc = await asyncio.to_thread(
+                run_qc, out_path,
+                expected_width=width or streams.get("width"),
+                expected_height=height or streams.get("height"),
+                target_lufs=preset.loudness_lufs,
+            )
+            with Session(engine) as session:
+                take_row = takes_service.create_take(
+                    session, job_id=str(job_uuid), task_id=task_id, kind="export",
+                    config={"preset": preset_id, "source_render": getattr(take, "id", None),
+                            "aspect_ratio": req.aspect_ratio, "mode": req.mode},
+                )
+                takes_service.finish_take(
+                    session, take_row, status="completed",
+                    video_path=f"/audio/videos/{out_name}",
+                    file_path=out_path,
+                    qc=qc,
+                    duration_ms=int((streams.get("duration") or 0) * 1000) or None,
+                    width=streams.get("width"), height=streams.get("height"),
+                    fps=streams.get("fps"),
+                )
+                take_id = str(take_row.id)
+            logger.info(f"Exported {job_title} as {preset_id}: {out_name}")
+            del take_id
+        except Exception as exc:
+            logger.error(f"Export failed for {job_id}: {exc}")
+
+    bg_task = asyncio.create_task(_run_bg())
+    video_service = __import__("app.services.video_service", fromlist=["video_service"]).video_service
+    video_service.register_render_task(task_id, bg_task)
+    return {"status": "queued", "task_id": task_id, "job_id": job_id,
+            "preset": preset.to_dict(), "output": out_name}
+
+
+@app.post("/videos/{job_id}/variants", status_code=202)
+async def render_aspect_variants(job_id: str, req: VideoVariantsRequest = Body(default=VideoVariantsRequest())):
+    """Derive other aspect ratios from one master (plan 7.17)."""
+    from app.services.video import takes as takes_service
+    from app.services.video.deliver import size_for, transcode
+    from app.services.video.export_presets import get_preset
+    from app.services.video_service import VIDEO_DIR
+
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        take = _resolve_master_for_job(session, job, req.render_id)
+        if not take:
+            raise HTTPException(status_code=409, detail={"error": {
+                "code": "no_master",
+                "message": "This track has no rendered video to derive variants from.",
+            }})
+        src_path = take.file_path
+        job_uuid = job.id
+
+    task_id = str(uuid.uuid4())
+    preset = get_preset("default")
+    plan = []
+    for aspect in req.aspects:
+        pixels = size_for(aspect, req.resolution or "1080p")
+        if not pixels:
+            continue
+        out_name = f"{job_uuid}_variant_{aspect.replace(':', 'x')}_{uuid.uuid4().hex[:6]}.mp4"
+        plan.append({"aspect": aspect, "width": pixels[0], "height": pixels[1],
+                     "out_name": out_name, "out_path": os.path.join(VIDEO_DIR, out_name)})
+
+    if not plan:
+        raise HTTPException(status_code=400, detail={"error": {
+            "code": "no_supported_aspect",
+            "message": "None of the requested aspect ratios has a size for that resolution.",
+        }})
+
+    async def _run_bg():
+        from app.services.video.export_presets import probe_streams
+        from app.services.video.qc import run_qc
+
+        for item in plan:
+            try:
+                ok = await asyncio.to_thread(
+                    transcode, src_path, item["out_path"], preset,
+                    width=item["width"], height=item["height"], mode=req.mode or "crop",
+                )
+                if not ok:
+                    logger.warning(f"Variant {item['aspect']} failed for {job_id}")
+                    continue
+                streams = await asyncio.to_thread(probe_streams, item["out_path"])
+                qc = await asyncio.to_thread(
+                    run_qc, item["out_path"],
+                    expected_width=item["width"], expected_height=item["height"],
+                    target_lufs=preset.loudness_lufs,
+                )
+                with Session(engine) as session:
+                    row = takes_service.create_take(
+                        session, job_id=str(job_uuid), task_id=task_id, kind="variant",
+                        config={"aspect_ratio": item["aspect"], "source_render": getattr(take, "id", None)},
+                    )
+                    takes_service.finish_take(
+                        session, row, status="completed",
+                        video_path=f"/audio/videos/{item['out_name']}",
+                        file_path=item["out_path"], qc=qc,
+                        duration_ms=int((streams.get("duration") or 0) * 1000) or None,
+                        width=streams.get("width"), height=streams.get("height"),
+                        fps=streams.get("fps"),
+                    )
+            except Exception as exc:
+                logger.error(f"Variant {item['aspect']} failed for {job_id}: {exc}")
+
+    bg_task = asyncio.create_task(_run_bg())
+    video_service = __import__("app.services.video_service", fromlist=["video_service"]).video_service
+    video_service.register_render_task(task_id, bg_task)
+    return {"status": "queued", "task_id": task_id, "job_id": job_id,
+            "variants": [{k: v for k, v in item.items() if k != "out_path"} for item in plan]}
+
+
+@app.get("/videos/{job_id}/renders")
+def list_video_takes(job_id: str):
+    """Every render take for a track, newest first (plan 7.4)."""
+    from app.services.video import takes as takes_service
+
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        takes = takes_service.list_takes(session, str(job.id))
+    return {"status": "ok", "job_id": job_id, "takes": takes, "count": len(takes)}
+
+
+@app.post("/videos/renders/{render_id}/select")
+def select_video_take(render_id: str):
+    """Make this take the track's current video (and its config)."""
+    from app.services.video import takes as takes_service
+
+    with Session(engine) as session:
+        take = takes_service.get_take(session, render_id)
+        if not take:
+            raise HTTPException(status_code=404, detail="Render take not found")
+        selected = takes_service.select_take(session, str(take.job_id), render_id)
+        if not selected:
+            raise HTTPException(status_code=409, detail={"error": {
+                "code": "take_not_selectable",
+                "message": "Only a completed take can be selected.",
+            }})
+        return {"status": "ok", "take": selected.to_dict()}
+
+
+@app.delete("/videos/renders/{render_id}")
+def delete_video_take(render_id: str):
+    """Delete one take and its artifacts (never the track)."""
+    from app.services.video import takes as takes_service
+
+    with Session(engine) as session:
+        take = takes_service.get_take(session, render_id)
+        if not take:
+            raise HTTPException(status_code=404, detail="Render take not found")
+        result = takes_service.delete_take(session, str(take.job_id), render_id)
+    if not result.get("deleted"):
+        raise HTTPException(status_code=404, detail="Render take not found")
+    return {"status": "deleted", "render_id": render_id, **result}
+
+
 @app.get("/videos/active-engine")
 def get_active_video_engine():
     """Resolve the video engine the Music Videos page should use.
@@ -5882,6 +6312,62 @@ async def reimagine_scene_endpoint(
         }
 
 
+def _create_render_take(job_id: str, task_id: str, kind: str, config: Dict[str, Any]) -> Optional[str]:
+    """Insert a take row for this render (plan 7.4). Returns its id or None."""
+    try:
+        from app.services.video import takes as takes_service
+
+        with Session(engine) as session:
+            take = takes_service.create_take(
+                session, job_id=job_id, task_id=task_id, kind=kind, config=config
+            )
+            return str(take.id)
+    except Exception as exc:
+        logger.warning(f"Could not open a render take for {job_id}: {exc}")
+        return None
+
+
+def _fail_render_take(render_id: Optional[str], error: Exception) -> None:
+    if not render_id:
+        return
+    try:
+        from app.services.video import takes as takes_service
+
+        with Session(engine) as session:
+            take = takes_service.get_take(session, render_id)
+            if take:
+                takes_service.finish_take(session, take, status="failed", error=str(error)[:500])
+    except Exception as exc:
+        logger.debug(f"Could not mark take {render_id} failed: {exc}")
+
+
+def _estimate_render_cost(config: Dict[str, Any], job: Any) -> Dict[str, Any]:
+    """Cost estimate for a cloud render; local renders cost nothing."""
+    from app.services.video.pricing import estimate_cloud_cost
+
+    provider = str(config.get("provider") or "local")
+    if provider not in ("cloud_fal", "cloud_minimax"):
+        return {"service": "local", "usd": 0.0, "currency": "USD",
+                "seconds": 0.0, "note": "Local render — no per-second charge."}
+
+    scenes = config.get("scenes") or config.get("clips") or []
+    clip_seconds = float(config.get("max_clip_duration") or 5.0)
+    service = "minimax" if provider == "cloud_minimax" else "fal"
+    if scenes:
+        seconds = 0.0
+        for sc in scenes:
+            try:
+                seconds += float(sc.get("duration") or clip_seconds)
+            except (TypeError, ValueError):
+                seconds += clip_seconds
+        est = estimate_cloud_cost(service, 1.0, seconds, config.get("model_name"))
+    else:
+        duration = float(getattr(job, "duration_ms", 0) or 0) / 1000.0 or 180.0
+        clip_count = max(1.0, duration / max(1.0, clip_seconds))
+        est = estimate_cloud_cost(service, clip_count, clip_seconds, config.get("model_name"))
+    return est
+
+
 @app.post("/videos/render-advanced/{job_id}", status_code=202)
 async def render_advanced_music_video_endpoint(job_id: str, req: VideoRenderRequest = Body(default=VideoRenderRequest())):
     """Start production multi-clip video pipeline with lip-sync, karaoke lyric burning, and scene stitching."""
@@ -5893,8 +6379,37 @@ async def render_advanced_music_video_endpoint(job_id: str, req: VideoRenderRequ
         if not job.audio_path:
             raise HTTPException(status_code=400, detail="Job has no completed audio to render.")
 
+        active = video_service.active_render_for_job(str(job.id))
+        if active:
+            raise HTTPException(status_code=409, detail={"error": {
+                "code": "render_in_progress",
+                "message": f"'{job.title or job_id}' is already rendering (task {active}). "
+                           f"Cancel it or wait for it to finish.",
+            }})
+
         task_id = str(uuid.uuid4())
         config = req.model_dump() if hasattr(req, "model_dump") else req.dict()
+        # Plan 7.7: a cloud render costs real money per generated second. Above the
+        # threshold the caller must confirm explicitly instead of discovering the bill.
+        estimate = _estimate_render_cost(config, job)
+        config["cost_estimate"] = estimate
+        from app.services.video.pricing import CONFIRMATION_THRESHOLD_USD, requires_confirmation
+
+        if requires_confirmation(estimate, CONFIRMATION_THRESHOLD_USD) and not config.get("confirm_cost"):
+            raise HTTPException(status_code=409, detail={"error": {
+                "code": "cost_confirmation_required",
+                "message": (
+                    f"This cloud render is estimated at ${estimate.get('usd'):.2f} "
+                    f"({estimate.get('seconds')}s of generated video). "
+                    f"Re-send with confirm_cost=true to proceed."
+                ),
+                "estimate": estimate,
+                "threshold_usd": CONFIRMATION_THRESHOLD_USD,
+            }})
+        # Plan 7.4: every render is a take, so a re-render never destroys the last one.
+        render_id = _create_render_take(str(job.id), task_id, "advanced", config)
+        if render_id:
+            config["render_id"] = render_id
 
         async def _run_bg():
             try:
@@ -5910,15 +6425,19 @@ async def render_advanced_music_video_endpoint(job_id: str, req: VideoRenderRequ
                 logger.info(f"Background video render task {task_id} successfully cancelled.")
             except Exception as e:
                 logger.error(f"Background advanced video render failed for {job_id}: {e}")
+                _fail_render_take(render_id, e)
             finally:
                 video_service.unregister_render_task(task_id)
+                video_service.release_job_render(str(job_id), task_id)
 
+        video_service.claim_job_render(str(job.id), task_id)
         bg_task = asyncio.create_task(_run_bg())
         video_service.register_render_task(task_id, bg_task)
         return {
             "status": "queued",
             "task_id": task_id,
             "job_id": job_id,
+            "cost_estimate": config["cost_estimate"],
             "message": "Production music video rendering started in background."
         }
 
@@ -5934,11 +6453,22 @@ async def render_lyric_video_endpoint(job_id: str, req: LyricVideoRequest = Body
         if not job.audio_path:
             raise HTTPException(status_code=400, detail="Job has no completed audio to render.")
 
+        active = video_service.active_render_for_job(str(job.id))
+        if active:
+            raise HTTPException(status_code=409, detail={"error": {
+                "code": "render_in_progress",
+                "message": f"'{job.title or job_id}' is already rendering (task {active}). "
+                           f"Cancel it or wait for it to finish.",
+            }})
+
         task_id = str(uuid.uuid4())
         config = req.model_dump() if hasattr(req, "model_dump") else req.dict()
         config["mode"] = "lyric_studio"
         if not config.get("cover_image_path") and getattr(job, "cover_image_path", None):
             config["cover_image_path"] = job.cover_image_path
+        render_id = _create_render_take(str(job.id), task_id, "lyric", config)
+        if render_id:
+            config["render_id"] = render_id
 
         async def _run_bg():
             try:
@@ -5960,9 +6490,12 @@ async def render_lyric_video_endpoint(job_id: str, req: LyricVideoRequest = Body
                 logger.info(f"Background lyric video render task {task_id} successfully cancelled.")
             except Exception as e:
                 logger.error(f"Background lyric video render failed for {job_id}: {e}")
+                _fail_render_take(render_id, e)
             finally:
                 video_service.unregister_render_task(task_id)
+                video_service.release_job_render(str(job_id), task_id)
 
+        video_service.claim_job_render(str(job.id), task_id)
         bg_task = asyncio.create_task(_run_bg())
         video_service.register_render_task(task_id, bg_task)
         return {
@@ -6119,11 +6652,20 @@ async def retake_video_clip_endpoint(job_id: str, clip_index: int, payload: Opti
         kf_path = os.path.join(KEYFRAMES_DIR, kf_filename)
         os.makedirs(KEYFRAMES_DIR, exist_ok=True)
 
-        if prompt and prompt.strip():
+        # Camera and lighting used to be accepted by the modal and dropped here.
+        camera = (payload.camera if payload else None) or ""
+        lighting = (payload.lighting if payload else None) or ""
+        prompt_parts = [p for p in ((prompt or "").strip(), camera.strip(), lighting.strip()) if p]
+        composed_prompt = ", ".join(prompt_parts) if prompt_parts else ""
+
+        degraded = False
+        degrade_reason = None
+
+        if composed_prompt:
             rendered_ok = False
             try:
                 gen = image_service.generate_scene_background(
-                    prompt=prompt.strip(),
+                    prompt=composed_prompt,
                     style=visual_style,
                     width=w,
                     height=h
@@ -6133,15 +6675,22 @@ async def retake_video_clip_endpoint(job_id: str, clip_index: int, payload: Opti
                     # Record what this frame was diffused from, and mark it user-approved:
                     # a retake is the shot the user picked, so the scene pre-build must
                     # never re-diffuse over it — even if the storyboard prompt differs.
-                    image_service.stamp_scene_plate(kf_path, prompt.strip(), visual_style, approved=True)
+                    image_service.stamp_scene_plate(kf_path, composed_prompt, visual_style, approved=True)
                     rendered_ok = True
             except Exception as e:
                 logger.warning(f"Could not generate retake keyframe: {e}")
 
             if not rendered_ok:
+                # A raster placeholder is NOT a retake. Say so on the response and
+                # never stamp it as approved diffusion output.
+                degraded = True
+                degrade_reason = (
+                    "Diffusion was unavailable; this is a procedural placeholder still, "
+                    "not a generated keyframe."
+                )
                 try:
                     image_service._generate_raster_cover(
-                        prompt=f"{prompt.strip()} (Retake #{clip_index})",
+                        prompt=f"{composed_prompt} (Retake #{clip_index})",
                         style=visual_style,
                         width=w,
                         height=h,
@@ -6153,11 +6702,15 @@ async def retake_video_clip_endpoint(job_id: str, clip_index: int, payload: Opti
         kf_url = f"/audio/videos/keyframes/{kf_filename}" if os.path.isfile(kf_path) else None
 
         return {
-            "status": "ok",
+            "status": "ok" if not degraded else "degraded",
             "job_id": job_id,
             "clip_index": clip_index,
             "keyframe_url": kf_url,
-            "prompt": prompt or "",
+            "prompt": composed_prompt,
+            "camera": camera,
+            "lighting": lighting,
+            "degraded": degraded,
+            "reason": degrade_reason,
         }
 
 
@@ -6630,6 +7183,115 @@ def compile_editor_render(project_id: str):
             "poll": f"/api/editor/renders/{task.task_id}",
         },
     )
+
+
+@app.post("/api/editor/projects/{project_id}/bounce")
+def bounce_editor_project(project_id: str, format: str = "wav"):
+    """Audio-only mixdown of the timeline (plan 7.25).
+
+    The DAW could store mix levels, automation and clip edits, but the only render
+    target was `.mp4` — so a musician could not get a mix out of it. Supports
+    wav (24-bit PCM), flac and mp3.
+    """
+    from app.core.win_safe_files import safe_load_json
+    from app.services.timeline.editor_projects import EditorProject
+    from app.services.timeline.render import _project_file, timeline_renderer
+
+    fmt = (format or "wav").lower()
+    if fmt not in ("wav", "flac", "mp3"):
+        raise HTTPException(status_code=400, detail={"error": {
+            "code": "unsupported_format",
+            "message": "format must be one of: wav, flac, mp3."}})
+
+    project_file = _project_file(project_id)
+    if project_file is None or not project_file.exists():
+        raise HTTPException(status_code=404, detail={"error": {
+            "code": "project_not_found", "message": "Editor project not found."}})
+    try:
+        project = EditorProject.from_dict(safe_load_json(project_file))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail={"error": {
+            "code": "invalid_project", "message": f"Could not read project: {exc}"}})
+
+    task = timeline_renderer.start_bounce(project, audio_format=fmt)
+    return JSONResponse(
+        status_code=202,
+        content={"status": "queued", "task_id": task.task_id, "project_id": project_id,
+                 "format": fmt, "poll": f"/api/editor/renders/{task.task_id}"},
+    )
+
+
+@app.get("/videos/{job_id}/report")
+def get_video_report(job_id: str):
+    """Cut list + delivery + QC for the selected take (plan 7.25).
+
+    A video without a report cannot be audited or re-cut elsewhere: this is the
+    per-scene table (prompt, timing, provider, seed) plus the QC verdict and the
+    caption sidecars. Written next to the master as `<stem>_report.json` too.
+    """
+    from app.services.video import takes as takes_service
+
+    with Session(engine) as session:
+        job = get_job_by_id(session, job_id)
+        if not job:
+            raise HTTPException(status_code=404, detail="Job not found")
+        take_rows = takes_service.list_takes(session, str(job.id))
+        selected = next((t for t in take_rows if t.get("is_selected")), None) or (take_rows[0] if take_rows else None)
+
+    scenes: List[Dict[str, Any]] = []
+    if selected:
+        plan = takes_service.load_clip_plan(selected["id"]) or {}
+        scenes = plan.get("scenes") or []
+
+    cut_list = [
+        {
+            "clip_index": s.get("clip_index"),
+            "start_time": s.get("start_time"),
+            "end_time": s.get("end_time"),
+            "duration": s.get("duration"),
+            "scene_type": s.get("scene_type"),
+            "is_vocal": s.get("is_vocal"),
+            "section": s.get("section_label"),
+            "prompt": s.get("prompt"),
+            "camera": s.get("camera"),
+            "lighting": s.get("lighting"),
+        }
+        for s in scenes
+    ]
+
+    report = {
+        "job_id": job_id,
+        "title": job.title,
+        "video_path": job.video_path,
+        "selected_take": selected,
+        "cut_list": cut_list,
+        "scene_count": len(cut_list),
+        "qc": (selected or {}).get("qc"),
+        "config": (selected or {}).get("config"),
+        "captions": {
+            suffix: True for suffix in ("srt", "vtt", "ass")
+            if job.video_path and os.path.isfile(
+                os.path.splitext(
+                    os.path.join(
+                        str(get_generated_audio_dir() / "videos"),
+                        os.path.basename(job.video_path.split("?")[0]),
+                    )
+                )[0] + f".{suffix}"
+            )
+        },
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+    }
+
+    # Persist beside the master so the pack/archive carries it too.
+    try:
+        if selected and selected.get("file_path"):
+            sidecar = os.path.splitext(selected["file_path"])[0] + "_report.json"
+            with open(sidecar, "w", encoding="utf-8") as fh:
+                json.dump(report, fh, indent=2, default=str)
+    except OSError as exc:
+        logger.debug(f"Could not write video report sidecar: {exc}")
+
+    return report
 
 
 @app.get("/api/editor/renders/{task_id}")

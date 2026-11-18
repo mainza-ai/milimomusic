@@ -11,6 +11,7 @@ from __future__ import annotations
 import os
 import shutil
 import subprocess
+import threading
 import time
 
 import pytest
@@ -128,18 +129,32 @@ def test_render_reports_missing_project(tmp_path, monkeypatch):
 
 
 def test_cancel_before_start_is_honest(tmp_path, monkeypatch):
+    """Cancelling a queued render must be immediate and must not run FFmpeg.
+
+    The blocker used to be a render of a missing project, which failed in
+    microseconds — so the worker was often free again before the second task was
+    cancelled and the assertion raced. Hold the worker deterministically instead.
+    """
     from app.services.timeline import render as render_mod
 
+    hold = threading.Event()
+    monkeypatch.setattr(render_mod.TimelineRenderer, "_render", lambda self, task: hold.wait(10))
+
     renderer = render_mod.TimelineRenderer()
-    # Occupy the worker so the second task stays queued.
     blocker = renderer.start_render(_project("/tmp/none.mp4"))
     second = renderer.start_render(_project("/tmp/none2.mp4"))
+
     assert renderer.cancel_render(second.task_id) is True
     assert second.status == "cancelled"
 
+    # Release the held worker so the thread can exit cleanly. The blocker's status is
+    # irrelevant here (its render was stubbed out); what matters is that the cancelled
+    # task never ran.
+    hold.set()
     deadline = time.time() + 30
-    while blocker.status in ("queued", "rendering") and time.time() < deadline:
-        time.sleep(0.1)
+    while renderer._active is not None and time.time() < deadline:
+        time.sleep(0.05)
+    assert second.status == "cancelled"
 
 
 def test_detected_encoder_can_actually_encode():

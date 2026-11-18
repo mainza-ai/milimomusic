@@ -96,6 +96,23 @@ class TimelineRenderer:
         logger.info("Timeline render %s queued for project %s", task.task_id, task.project_id)
         return task
 
+    def start_bounce(self, project, audio_format: str = "wav") -> RenderTask:
+        """Queue an audio-only mixdown of the project (plan 7.25)."""
+        task = RenderTask(
+            task_id=f"bounce_{uuid.uuid4().hex[:10]}",
+            project_id=str(getattr(project, "project_id", "") or ""),
+            status="queued",
+            message=f"Queued for {audio_format.upper()} bounce.",
+        )
+        task.audio_format = audio_format  # type: ignore[attr-defined]
+        with self._lock:
+            self._tasks[task.task_id] = task
+            self._queue.append(task.task_id)
+            if self._worker is None or not self._worker.is_alive():
+                self._worker = threading.Thread(target=self._run_loop, daemon=True)
+                self._worker.start()
+        return task
+
     def get_status(self, task_id: str) -> Optional[RenderTask]:
         with self._lock:
             return self._tasks.get(task_id)
@@ -130,7 +147,11 @@ class TimelineRenderer:
                 task = self._tasks[task_id]
                 self._active = task_id
             try:
-                self._render(task)
+                # Bounce tasks target an audio file; render tasks target an mp4.
+                if getattr(task, "audio_format", None):
+                    self._bounce(task)
+                else:
+                    self._render(task)
             except Exception as exc:  # pragma: no cover - defensive
                 logger.exception("Timeline render %s crashed", task_id)
                 task.status = "failed"
@@ -140,6 +161,42 @@ class TimelineRenderer:
                 with self._lock:
                     self._active = None
                 task.updated_at = datetime.now(timezone.utc).isoformat()
+
+    def _bounce(self, task: RenderTask) -> None:
+        """Render the timeline to an audio file instead of a video."""
+        from app.core.paths import get_generated_audio_dir
+        from app.services.timeline.editor_projects import (
+            EditorProject,
+            EditorProjectManager,
+            safe_load_json,
+        )
+
+        project_file = _project_file(task.project_id)
+        if project_file is None or not project_file.exists():
+            task.status = "failed"
+            task.error = "Editor project not found."
+            return
+
+        project = EditorProject.from_dict(safe_load_json(project_file))
+        fmt = getattr(task, "audio_format", "wav")
+        out_dir = get_generated_audio_dir() / "bounces"
+        out_dir.mkdir(parents=True, exist_ok=True)
+        out_name = f"{task.project_id}_{task.task_id}.{fmt}"
+        out_path = out_dir / out_name
+        cmd = EditorProjectManager.compile_audio_bounce_command(project, str(out_path), fmt)
+
+        task.status = "rendering"
+        task.message = "Bouncing mixdown…"
+        ok = self._run_ffmpeg(cmd, task, out_path, float(getattr(project, "duration", 0) or 0) or None)
+        if ok and out_path.is_file() and out_path.stat().st_size > 0:
+            task.status = "completed"
+            task.progress = 100
+            task.message = "Bounce complete."
+            task.output_path = str(out_path)
+            task.video_url = None
+        else:
+            task.status = "failed"
+            task.error = task.error or "FFmpeg produced no output."
 
     def _render(self, task: RenderTask) -> None:
         from app.core.paths import get_generated_audio_dir

@@ -13,7 +13,10 @@ import {
     type VideoRenderParams,
     type LyricVideoParams,
     type DirectorTreatment,
-    type VideoClipSegment
+    type VideoClipSegment,
+    type VideoTake,
+    type VideoProvider,
+    type DeliveryPreset
 } from '../../api';
 import { toast } from '../../utils/toast';
 import { AppFooter } from '../ui/AppFooter';
@@ -402,11 +405,85 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const kfPollRef = useRef<number | undefined>(undefined);
     const planPollRef = useRef<number | undefined>(undefined);
 
+    // Render takes (plan 7.4) and the live provider catalogue (plan 7.20).
+    const [takes, setTakes] = useState<VideoTake[]>([]);
+    const [providers, setProviders] = useState<VideoProvider[]>([]);
+    const [presets, setPresets] = useState<DeliveryPreset[]>([]);
+
     // Modal states
     const [retakeModalOpen, setRetakeModalOpen] = useState(false);
     const [retakeClipIndex, setRetakeClipIndex] = useState<number | null>(null);
     const [isRetaking, setIsRetaking] = useState(false);
     const [zoomKeyframe, setZoomKeyframe] = useState<{ clipIndex: number; url: string } | null>(null);
+
+    const loadTakes = useCallback(async (songId: string) => {
+        try {
+            const res = await videoApi.listTakes(songId);
+            setTakes(res.takes || []);
+        } catch { /* takes are optional context; never block the view */ }
+    }, []);
+
+    /** Poll a render task, surviving a reload and backing off when the API is down. */
+    const startRenderPoll = useCallback((taskId: string, songId: string) => {
+        if (pollRef.current) window.clearInterval(pollRef.current);
+        activeTaskIdRef.current = taskId;
+        sessionStorage.setItem(`milimo_active_render_${songId}`, taskId);
+        setIsRendering(true);
+
+        let attempts = 0;
+        let failures = 0;
+        let nextAllowedAt = 0;
+
+        const finish = (status: 'done' | 'cancelled' | 'error') => {
+            if (pollRef.current) window.clearInterval(pollRef.current);
+            pollRef.current = undefined;
+            activeTaskIdRef.current = null;
+            sessionStorage.removeItem(`milimo_active_render_${songId}`);
+            setIsRendering(false);
+            setIsRenderingLyricVideo(false);
+            if (status === 'done') void loadTakes(songId);
+        };
+
+        pollRef.current = window.setInterval(async () => {
+            // Back off (1s → 8s) while the backend is unreachable, but keep polling:
+            // a long render is one dropped request from looking hung (audit U7).
+            if (Date.now() < nextAllowedAt) return;
+            attempts += 1;
+            try {
+                const status = await videoApi.getVideoTaskStatus(taskId);
+                failures = 0;
+                setActiveTask(status);
+
+                if (status.status === 'completed') {
+                    finish('done');
+                    if (status.video_url) {
+                        setRenderedVideoUrl(status.video_url);
+                        const song = songs.find((s) => s.id === songId);
+                        if (song && onUpdateSong) {
+                            onUpdateSong({ ...song, video_path: status.video_url });
+                        }
+                    } else {
+                        // A completion with no URL used to end silently (audit U8).
+                        toast('Render finished but produced no video file.', 'error');
+                    }
+                } else if (status.status === 'cancelled') {
+                    finish('cancelled');
+                    toast('Video rendering cancelled.', 'info');
+                } else if (status.status === 'error' || (status as any).status === 'failed') {
+                    finish('error');
+                    toast(status.error || 'Video rendering encountered an error', 'error');
+                }
+            } catch {
+                failures += 1;
+                nextAllowedAt = Date.now() + Math.min(8000, 1000 * 2 ** Math.min(failures, 3));
+                if (failures >= 8) {
+                    finish('error');
+                    toast('Lost contact with the render service. Reopen the track to resume.', 'error');
+                }
+            }
+            if (attempts > 7200) finish('error');
+        }, 1000);
+    }, [songs, onUpdateSong, loadTakes]);
 
     // Planning Polling Engine
     const startPlanningPoll = useCallback((taskId: string, songId: string) => {
@@ -552,7 +629,27 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             }).catch(() => setRenderedVideoUrl(null));
         }
         setActiveTask(null);
-    }, [selectedSongId, activeSong?.video_path]);
+
+        // Pl_a.n 7.4: load the takes so the switcher is populated.
+        void loadTakes(selectedSongId);
+
+        // Plan 7.18: a reload during a render used to lose the HUD entirely while
+        // the server kept working. Resume from the stored task id.
+        const storedTask = sessionStorage.getItem(`milimo_active_render_${selectedSongId}`);
+        if (storedTask) {
+            startRenderPoll(storedTask, selectedSongId);
+        }
+    }, [selectedSongId, activeSong?.video_path, loadTakes, startRenderPoll]);
+
+    // Plan 7.20: ask the backend which providers can actually run.
+    useEffect(() => {
+        videoApi.getVideoProviders()
+            .then((list) => setProviders(list || []))
+            .catch(() => setProviders([]));
+        videoApi.listPresets()
+            .then((res) => setPresets(res.presets || []))
+            .catch(() => setPresets([]));
+    }, []);
 
     // Plan Scenes Breakdown
     const handlePlanScenes = useCallback(async () => {
@@ -970,7 +1067,23 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 clips: planResult?.clips,
             };
 
-            const taskInit = await videoApi.renderAdvancedVideo(activeSong.id, params);
+            let taskInit;
+            try {
+                taskInit = await videoApi.renderAdvancedVideo(activeSong.id, params);
+            } catch (costErr: any) {
+                const detail = costErr?.response?.data?.detail;
+                // Plan 7.7: never start a paid render without a number in front of the user.
+                if (detail?.error?.code === 'cost_confirmation_required') {
+                    const proceed = window.confirm(detail.error.message);
+                    if (!proceed) {
+                        setIsRendering(false);
+                        return;
+                    }
+                    taskInit = await videoApi.renderAdvancedVideo(activeSong.id, { ...params, confirm_cost: true } as any);
+                } else {
+                    throw costErr;
+                }
+            }
             activeTaskIdRef.current = taskInit.task_id;
             setActiveTask({
                 id: taskInit.task_id,
@@ -982,36 +1095,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 current_clip: 0
             });
 
-            // Poll task status
-            if (pollRef.current) window.clearInterval(pollRef.current);
-            pollRef.current = window.setInterval(async () => {
-                try {
-                    const status = await videoApi.getVideoTaskStatus(taskInit.task_id);
-                    setActiveTask(status);
-
-                    if (status.status === 'completed') {
-                        window.clearInterval(pollRef.current);
-                        activeTaskIdRef.current = null;
-                        setIsRendering(false);
-                        if (status.video_url) {
-                            setRenderedVideoUrl(status.video_url);
-                            if (activeSong && onUpdateSong) {
-                                onUpdateSong({ ...activeSong, video_path: status.video_url });
-                            }
-                        }
-                    } else if (status.status === 'cancelled') {
-                        window.clearInterval(pollRef.current);
-                        activeTaskIdRef.current = null;
-                        setIsRendering(false);
-                        toast('Video rendering cancelled.', 'info');
-                    } else if (status.status === 'error') {
-                        window.clearInterval(pollRef.current);
-                        activeTaskIdRef.current = null;
-                        setIsRendering(false);
-                        toast(status.error || 'Video rendering encountered an error', 'error');
-                    }
-                } catch { /* transient error */ }
-            }, 1000);
+            startRenderPoll(taskInit.task_id, activeSong.id);
         } catch (err) {
             console.error('Failed to start video rendering:', err);
             toast('Failed to start video rendering. Please check backend service.', 'error');
@@ -1048,40 +1132,8 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 current_clip: 0
             });
 
-            // Poll task status
-            if (pollRef.current) window.clearInterval(pollRef.current);
-            pollRef.current = window.setInterval(async () => {
-                try {
-                    const status = await videoApi.getVideoTaskStatus(taskInit.task_id);
-                    setActiveTask(status);
-
-                    if (status.status === 'completed') {
-                        window.clearInterval(pollRef.current);
-                        activeTaskIdRef.current = null;
-                        setIsRenderingLyricVideo(false);
-                        if (status.video_url) {
-                            const cacheBustedUrl = status.video_url.includes('?')
-                                ? `${status.video_url}&cb=${Date.now()}`
-                                : `${status.video_url}?cb=${Date.now()}`;
-                            setRenderedVideoUrl(cacheBustedUrl);
-                            if (activeSong && onUpdateSong) {
-                                onUpdateSong({ ...activeSong, video_path: status.video_url });
-                            }
-                            toast('Lyric music video rendered successfully!', 'success');
-                        }
-                    } else if (status.status === 'cancelled') {
-                        window.clearInterval(pollRef.current);
-                        activeTaskIdRef.current = null;
-                        setIsRenderingLyricVideo(false);
-                        toast('Lyric video rendering cancelled.', 'info');
-                    } else if (status.status === 'error') {
-                        window.clearInterval(pollRef.current);
-                        activeTaskIdRef.current = null;
-                        setIsRenderingLyricVideo(false);
-                        toast(status.error || 'Lyric video rendering failed.', 'error');
-                    }
-                } catch { /* transient error */ }
-            }, 1000);
+            // The lyric path shares the resumable poller (plan 7.18).
+            startRenderPoll(taskInit.task_id, activeSong.id);
         } catch (err: any) {
             console.error('Failed to start lyric video rendering:', err);
             toast(err?.response?.data?.detail || 'Failed to start lyric video rendering.', 'error');
@@ -1167,7 +1219,10 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 const clamped = Math.min(conf.maxSec, Math.max(conf.minSec, parseFloat(cfg.max_clip_duration)));
                 setClipDuration(clamped);
             }
-            if (cfg.visual_style && ['neon-cyberpunk', 'anime-cinematic', 'retro-vhs', 'minimal-lyrics'].includes(cfg.visual_style)) {
+            // Plan 7.19: restore whatever the render config holds. The old
+            // whitelist covered 4 of 15 aesthetics, so regenerating a film-noir
+            // video silently rendered neon-cyberpunk.
+            if (cfg.visual_style && typeof cfg.visual_style === 'string') {
                 setVideoStyle(cfg.visual_style);
             }
             if (cfg.aspect_ratio && ['16:9', '9:16', '1:1', '21:9'].includes(cfg.aspect_ratio)) {
@@ -1176,9 +1231,66 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             if (cfg.resolution === '1080p' || cfg.resolution === '720p') setResolution(cfg.resolution);
             if (typeof cfg.enable_lip_sync === 'boolean') setEnableLipSync(cfg.enable_lip_sync);
             if (typeof cfg.burn_lyrics === 'boolean') setBurnSubtitles(cfg.burn_lyrics);
-            if (cfg.subtitle_style && ['neon', 'cinematic', 'karaoke'].includes(cfg.subtitle_style)) setSubtitleStyle(cfg.subtitle_style);
+            if (cfg.subtitle_style && typeof cfg.subtitle_style === 'string') setSubtitleStyle(cfg.subtitle_style);
+            const TRANSITIONS = ['beat_cut', 'crossfade', 'flash', 'whip_pan', 'glitch'] as const;
+            if (cfg.transition_style && (TRANSITIONS as readonly string[]).includes(cfg.transition_style)) {
+                setTransitionStyle(cfg.transition_style as typeof TRANSITIONS[number]);
+            }
+            if (typeof cfg.pacing_bias === 'number') setPacingBias(cfg.pacing_bias);
         } catch { /* fallback to current state */ }
     }, [selectEngine, videoModel]);
+
+    const handleSelectTake = useCallback(async (takeId: string) => {
+        try {
+            const res = await videoApi.selectTake(takeId);
+            setRenderedVideoUrl(res.take?.video_path || null);
+            if (activeSong && onUpdateSong && res.take?.video_path) {
+                onUpdateSong({ ...activeSong, video_path: res.take.video_path });
+            }
+            await loadTakes(activeSong?.id || '');
+            toast('Take selected.', 'success');
+        } catch (err: any) {
+            toast(err?.response?.data?.detail?.error?.message || 'Could not select that take.', 'error');
+        }
+    }, [activeSong, onUpdateSong, loadTakes]);
+
+    const handleDeleteTake = useCallback(async (takeId: string) => {
+        if (!activeSong) return;
+        try {
+            await videoApi.deleteTake(takeId);
+            await loadTakes(activeSong.id);
+            toast('Take deleted.', 'info');
+        } catch (err: any) {
+            toast(err?.response?.data?.detail?.error?.message || 'Could not delete that take.', 'error');
+        }
+    }, [activeSong, loadTakes]);
+
+    const handleExportPreset = useCallback(async (presetId: string) => {
+        if (!activeSong) return;
+        try {
+            await videoApi.exportForPreset(activeSong.id, presetId, {
+                aspect_ratio: aspectRatio,
+            });
+            toast(`Export started (${presetId}). It will appear as a new take.`, 'success');
+        } catch (err: any) {
+            toast(err?.response?.data?.detail?.error?.message || 'Export failed to start.', 'error');
+        }
+    }, [activeSong, aspectRatio]);
+
+    const handleOpenReport = useCallback(async () => {
+        if (!activeSong) return;
+        try {
+            const report = await videoApi.getReport(activeSong.id);
+            const summary = [
+                `${report.scene_count || 0} scenes`,
+                report.qc?.ok === false ? 'QC FAILED' : 'QC ok',
+                ...(report.qc?.warnings || []).slice(0, 3),
+            ].join(' · ');
+            toast(summary || 'No report data yet.', report.qc?.ok === false ? 'error' : 'info');
+        } catch {
+            toast('No report available for this track yet.', 'error');
+        }
+    }, [activeSong]);
 
     const handleRegenerateVideo = useCallback(async () => {
         if (!activeSong) return;
@@ -1317,15 +1429,43 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                     return c;
                 });
                 setPlanResult({ ...planResult, clips: updatedClips });
+                // Persist the edit: retake prompts used to live only in memory and
+                // were lost on reload (plan 7.3).
+                try {
+                    await videoApi.saveStoryboard(activeSong.id, updatedClips);
+                } catch { /* the render still proceeds from the current plan */ }
             }
-            toast(`Retake generated for Scene #${clipIndex}!`, 'success');
+            // Plan 7.11: if this track has a completed take with per-scene clips,
+            // re-render just that scene and re-assemble; otherwise the new keyframe
+            // is used by the next full render.
+            const selected = takes.find((t) => t.is_selected && t.status === 'completed' && t.id);
+            if (selected?.id) {
+                try {
+                    const started = await videoApi.rerenderScene(activeSong.id, clipIndex, {
+                        render_id: selected.id,
+                        prompt: newPrompt,
+                        visual_style: videoStyle,
+                    });
+                    toast(`Re-rendering Scene #${clipIndex}; other scenes are reused.`, 'success');
+                    startRenderPoll(started.task_id, activeSong.id);
+                } catch (rerenderErr: any) {
+                    toast(
+                        rerenderErr?.response?.data?.detail?.message
+                        || rerenderErr?.response?.data?.detail?.error?.message
+                        || 'Keyframe updated; scene re-render could not start.',
+                        'error',
+                    );
+                }
+            } else {
+                toast(`Retake keyframe generated for Scene #${clipIndex}!`, 'success');
+            }
             setRetakeModalOpen(false);
         } catch (err: any) {
             toast(`Failed to generate retake: ${err.message}`, 'error');
         } finally {
             setIsRetaking(false);
         }
-    }, [activeSong, customStylePrompt, aspectRatio, planResult]);
+    }, [activeSong, customStylePrompt, aspectRatio, planResult, takes, videoStyle, startRenderPoll]);
 
     const handleReimagineScene = useCallback(async (clipIndex: number, instruction?: string) => {
         if (!activeSong) return undefined;
@@ -1435,12 +1575,19 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             onSeek={handleSeekTimeline}
                             onRenderLyricVideo={handleRenderLyricVideo}
                             isRenderingLyricVideo={isRenderingLyricVideo}
+                            takes={takes}
+                            onSelectTake={handleSelectTake}
+                            onDeleteTake={handleDeleteTake}
+                            onOpenReport={handleOpenReport}
+                            presets={presets}
+                            onExportPreset={handleExportPreset}
                         />
                     </div>
 
                     {/* Right Tabbed Inspector Dock */}
                     <div className="xl:col-span-5 2xl:col-span-5 min-h-[500px]">
                         <VideoInspectorDock
+                            availableProviders={providers}
                             activeSong={activeSong}
                             onTriggerCoverUpload={handleTriggerCoverUpload}
                             isUploadingCover={isUploadingCover}

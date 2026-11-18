@@ -636,6 +636,32 @@ class LyricSyncEngine:
                 srt_entries.append(f"{idx}\n{start_str} --> {end_str}\n{text}\n")
         return "\n".join(srt_entries)
 
+    @staticmethod
+    def generate_vtt(timed_lines: List[Dict[str, Any]]) -> str:
+        """Export timed lines to WebVTT (plan 7.16).
+
+        YouTube, Vimeo and every browser accept VTT; SRT is the compatibility
+        format. Neither can carry intra-line karaoke timing — that is what the ASS
+        sidecar is for.
+        """
+        def fmt_time(t: float) -> str:
+            t = max(0.0, float(t))
+            hours = int(t // 3600)
+            minutes = int((t % 3600) // 60)
+            seconds = int(t % 60)
+            millis = int((t - int(t)) * 1000)
+            return f"{hours:02d}:{minutes:02d}:{seconds:02d}.{millis:03d}"
+
+        entries: List[str] = ["WEBVTT", ""]
+        for line in timed_lines:
+            text = str(line.get("text", "")).strip()
+            if not text:
+                continue
+            entries.append(f"{fmt_time(line.get('start', 0.0))} --> {fmt_time(line.get('end', 0.0))}")
+            entries.append(text)
+            entries.append("")
+        return "\n".join(entries)
+
 
 lyric_sync_engine = LyricSyncEngine()
 

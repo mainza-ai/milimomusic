@@ -1633,6 +1633,38 @@ export interface LyricVideoParams {
     cover_image_path?: string;
 }
 
+export interface VideoTake {
+    id: string | null;
+    job_id?: string;
+    task_id?: string | null;
+    kind: string;
+    status: string;
+    config?: Record<string, any> | null;
+    video_path?: string | null;
+    file_path?: string | null;
+    poster_path?: string | null;
+    proxy_path?: string | null;
+    qc?: { ok?: boolean; warnings?: string[]; fatal?: string[] } | null;
+    error?: string | null;
+    duration_ms?: number | null;
+    width?: number | null;
+    height?: number | null;
+    fps?: number | null;
+    is_selected?: boolean;
+    created_at?: string | null;
+}
+
+export interface DeliveryPreset {
+    id: string;
+    label: string;
+    video_codec: string;
+    crf?: number | null;
+    video_bitrate?: string | null;
+    audio_codec: string;
+    audio_bitrate?: string;
+    loudness_lufs?: number | null;
+}
+
 export interface VideoProvider {
     id: string;
     name: string;
@@ -1715,6 +1747,53 @@ export const videoApi = {
         const res = await axios.get(`${API_BASE_URL}/videos/providers`);
         return res.data;
     },
+    /** Every render take for a track — newest first (plan 7.4). */
+    listTakes: async (jobId: string): Promise<{ takes: VideoTake[]; count: number }> => {
+        const res = await axios.get(`${API_BASE_URL}/videos/${jobId}/renders`);
+        return res.data;
+    },
+    selectTake: async (renderId: string): Promise<{ status: string; take: VideoTake }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/renders/${renderId}/select`);
+        return res.data;
+    },
+    deleteTake: async (renderId: string): Promise<{ status: string; removed_files: number }> => {
+        const res = await axios.delete(`${API_BASE_URL}/videos/renders/${renderId}`);
+        return res.data;
+    },
+    /** Re-render one scene and re-assemble from the kept clips (plan 7.11). */
+    rerenderScene: async (
+        jobId: string,
+        clipIndex: number,
+        params: { render_id?: string; prompt?: string; visual_style?: string; export_preset?: string } = {},
+    ): Promise<{ status: string; task_id: string; render_id: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/scenes/${jobId}/${clipIndex}/rerender`, params);
+        return res.data;
+    },
+    listPresets: async (): Promise<{ presets: DeliveryPreset[] }> => {
+        const res = await axios.get(`${API_BASE_URL}/videos/presets`);
+        return res.data;
+    },
+    exportForPreset: async (
+        jobId: string,
+        presetId: string,
+        params: { render_id?: string; aspect_ratio?: string; mode?: 'crop' | 'pad'; start?: number; duration?: number } = {},
+    ): Promise<{ status: string; task_id: string; output: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/${jobId}/export/${presetId}`, params);
+        return res.data;
+    },
+    variants: async (
+        jobId: string,
+        params: { render_id?: string; aspects?: string[]; resolution?: string; mode?: 'crop' | 'pad' } = {},
+    ): Promise<{ status: string; task_id: string; variants: Array<{ aspect: string; width: number; height: number }> }> => {
+        const res = await axios.post(`${API_BASE_URL}/videos/${jobId}/variants`, params);
+        return res.data;
+    },
+    /** Cut list + QC + delivery for the selected take (plan 7.25). */
+    getReport: async (jobId: string): Promise<any> => {
+        const res = await axios.get(`${API_BASE_URL}/videos/${jobId}/report`);
+        return res.data;
+    },
+    manifestUrl: (jobId: string): string => `${API_BASE_URL}/jobs/${jobId}/manifest.json`,
     generateKeyframes: async (
         jobId: string,
         visualStyle: string = 'neon-cyberpunk',
@@ -1889,6 +1968,17 @@ export const editorApi = {
         error?: string | null;
     }> => {
         const res = await axios.get(`${API_BASE_URL}/api/editor/renders/${taskId}`);
+        return res.data;
+    },
+    /**
+     * Audio-only mixdown of a saved project (plan 7.25).
+     *
+     * The DAW can store mix levels, automation and clip edits; before this the only
+     * render target was `.mp4`. Consumed by the NLE surface (see the audit's
+     * follow-up) — the endpoint and this client are production-ready today.
+     */
+    bounceProject: async (projectId: string, format: 'wav' | 'flac' | 'mp3' = 'wav'): Promise<{ status: string; task_id: string; format: string; poll: string }> => {
+        const res = await axios.post(`${API_BASE_URL}/api/editor/projects/${projectId}/bounce`, null, { params: { format } });
         return res.data;
     },
     cancelRender: async (taskId: string): Promise<{ status: string }> => {

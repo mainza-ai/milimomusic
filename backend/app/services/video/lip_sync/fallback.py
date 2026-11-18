@@ -43,7 +43,17 @@ class SmoothVisemeFallbackProvider(BaseLipSyncProvider):
     def is_available(self) -> bool:
         return True
 
-    async def render_lip_sync(
+    async def render_lip_sync(self, *args, **kwargs) -> bool:
+        """Procedural jaw-warp animatic — always the fallback, never neural."""
+        ok = await self._render_impl(*args, **kwargs)
+        self._set_outcome(
+            "jaw_warp",
+            True,
+            None if ok else "Jaw-warp animatic produced no output.",
+        )
+        return ok
+
+    async def _render_impl(
         self,
         face_image_path: str,
         vocal_audio_path: str,

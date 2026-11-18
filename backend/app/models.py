@@ -1,6 +1,7 @@
 from datetime import datetime, timezone
 from typing import Optional, Any, Dict, List
 from uuid import UUID, uuid4
+import json
 from sqlmodel import Field, SQLModel
 from pydantic import field_serializer, field_validator
 from enum import Enum
@@ -257,6 +258,70 @@ class SessionMessage(SQLModel, table=True):
     generated_job_id: Optional[str] = None
     preset_data_json: Optional[str] = None # JSON serialized preset parameters
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+
+class VideoRender(SQLModel, table=True):
+    """One video render attempt (take) for a job — plan 7.4.
+
+    `Job.video_path` used to be a single string, so every re-render silently
+    overwrote the previous master and A/B comparison was impossible. A take keeps
+    its config, artifacts, QC verdict and payload so the UI can switch between them.
+    """
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    job_id: UUID = Field(foreign_key="job.id", ondelete="CASCADE", index=True)
+    task_id: Optional[str] = Field(default=None, index=True)
+    kind: str = Field(default="advanced", index=True)  # advanced|lyric|reactive|variant|export
+    status: str = Field(default="rendering", index=True)  # rendering|completed|failed|cancelled
+    config_json: Optional[str] = Field(default=None)
+    video_path: Optional[str] = Field(default=None)   # public URL, as served
+    file_path: Optional[str] = Field(default=None)    # absolute path on disk
+    poster_path: Optional[str] = Field(default=None)
+    proxy_path: Optional[str] = Field(default=None)
+    qc_json: Optional[str] = Field(default=None)
+    error: Optional[str] = Field(default=None)
+    duration_ms: Optional[int] = Field(default=None)
+    width: Optional[int] = Field(default=None)
+    height: Optional[int] = Field(default=None)
+    fps: Optional[float] = Field(default=None)
+    is_selected: bool = Field(default=False, index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self) -> Dict[str, Any]:
+        qc = None
+        if self.qc_json:
+            try:
+                qc = json.loads(self.qc_json)
+            except (TypeError, json.JSONDecodeError):
+                qc = None
+        cfg = None
+        if self.config_json:
+            try:
+                cfg = json.loads(self.config_json)
+            except (TypeError, json.JSONDecodeError):
+                cfg = None
+        return {
+            "id": str(self.id) if self.id else None,
+            "job_id": str(self.job_id) if self.job_id else None,
+            "task_id": self.task_id,
+            "kind": self.kind,
+            "status": self.status,
+            "config": cfg,
+            "video_path": self.video_path,
+            "file_path": self.file_path,
+            "poster_path": self.poster_path,
+            "proxy_path": self.proxy_path,
+            "qc": qc,
+            "error": self.error,
+            "duration_ms": self.duration_ms,
+            "width": self.width,
+            "height": self.height,
+            "fps": self.fps,
+            "is_selected": self.is_selected,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
 
 
 class SessionMessageCreate(SQLModel):
@@ -909,6 +974,12 @@ class RetakeClipRequest(SQLModel):
     resolution: Optional[str] = None
     aspect_ratio: Optional[str] = None
     reference_image_path: Optional[str] = None
+    # The retake modal has always sent these; the API used to drop them silently
+    # (audit U3 / plan 7.3). They are composed into the still prompt.
+    camera: Optional[str] = None
+    lighting: Optional[str] = None
+    # Persist the edit on the server so a reload does not lose it (plan 7.3).
+    persist: bool = True
 
 
 class EditorRetakeRequest(SQLModel):

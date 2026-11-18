@@ -308,6 +308,63 @@ class EditorProjectManager:
         return cmd
 
     @classmethod
+    def compile_audio_bounce_command(
+        cls,
+        project: EditorProject,
+        output_file: str,
+        audio_format: str = "wav",
+    ) -> List[str]:
+        """Audio-only mixdown of the timeline (plan 7.25).
+
+        The NLE could store mix levels, automation and clip edits but its only
+        render target was `.mp4`, so a mixdown was impossible — the single largest
+        production gap after delivery.
+        """
+        fmt = (audio_format or "wav").lower()
+        inputs: List[str] = []
+        input_index: Dict[str, int] = {}
+
+        def input_id(path: str) -> int:
+            if path not in input_index:
+                input_index[path] = len(input_index)
+                inputs.extend(["-i", path])
+            return input_index[path]
+
+        filters: List[str] = []
+        labels: List[str] = []
+        audio_tracks = [t for t in project.tracks if t.track_type == "audio" and not t.muted]
+        for t_idx, track in enumerate(audio_tracks):
+            for c_idx, clip in enumerate(track.clips):
+                idx = input_id(clip.asset_path)
+                label = f"a_{t_idx}_{c_idx}"
+                delay_ms = int(round(clip.start_time * 1000))
+                vol = max(0.0, float(clip.volume)) * max(0.0, float(track.volume))
+                filters.append(
+                    f"[{idx}:a]atrim=start={clip.source_in}:duration={clip.duration},"
+                    f"asetpts=PTS-STARTPTS,volume={vol:.4f},"
+                    f"adelay={delay_ms}|{delay_ms}[{label}]"
+                )
+                labels.append(f"[{label}]")
+
+        if labels:
+            filters.append(
+                f"{''.join(labels)}amix=inputs={len(labels)}:duration=longest:dropout_transition=0[outa]"
+            )
+        else:
+            filters.append(f"anullsrc=r=44100:cl=stereo:d={project.duration}[outa]")
+
+        cmd = ["ffmpeg", "-y", *inputs, "-filter_complex", ";".join(filters),
+               "-map", "[outa]", "-vn"]
+        if fmt == "flac":
+            cmd += ["-c:a", "flac"]
+        elif fmt == "mp3":
+            cmd += ["-c:a", "libmp3lame", "-b:a", "320k"]
+        else:
+            cmd += ["-c:a", "pcm_s16le"]
+        cmd += ["-t", str(project.duration), output_file]
+        return cmd
+
+    @classmethod
     def apply_retake_to_clip(
         cls,
         project: EditorProject,

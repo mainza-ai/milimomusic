@@ -39,6 +39,8 @@ export interface VideoInspectorProps {
     activeVideoEngine: VideoModelKey | null;
     videoProvider: 'local' | 'cloud_fal' | 'cloud_replicate';
     onSelectProvider: (p: 'local' | 'cloud_fal' | 'cloud_replicate') => void;
+    /** What the backend says can actually run right now (plan 7.20). */
+    availableProviders?: Array<{ id: string; provider_type?: string; is_available: boolean; has_api_key?: boolean; requires_api_key?: boolean; description?: string }>;
     clipDuration: number;
     onChangeClipDuration: (dur: number) => void;
     onResetClipDuration: () => void;
@@ -144,6 +146,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
     activeVideoEngine,
     videoProvider,
     onSelectProvider,
+    availableProviders,
     clipDuration,
     onChangeClipDuration,
     onResetClipDuration,
@@ -499,39 +502,59 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                         <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
                             Execution Provider
                         </label>
+                        {(() => {
+                            const localProv = (availableProviders || []).find((p) => p.id?.startsWith('local_') && p.is_available);
+                            const cloudProv = (availableProviders || []).find((p) => p.id === 'cloud_fal');
+                            const localOk = availableProviders === undefined || Boolean(localProv);
+                            const cloudOk = availableProviders === undefined || Boolean(cloudProv?.is_available);
+                            return (
                         <div className="grid grid-cols-2 gap-2">
                             <button
                                 type="button"
+                                disabled={!localOk}
+                                title={localOk ? 'Runs on this machine' : 'No local video weights are installed'}
                                 onClick={() => onSelectProvider('local')}
                                 className={`p-2.5 rounded-xl border text-left transition-all ${
                                     videoProvider === 'local'
                                         ? 'bg-teal-500/10 border-teal-500/40 text-teal-700 dark:text-teal-300 font-bold shadow-sm'
                                         : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-600 dark:text-slate-400'
-                                }`}
+                                } disabled:opacity-40 disabled:cursor-not-allowed`}
                             >
                                 <div className="text-xs font-bold flex items-center justify-between">
                                     <span>🖥️ Local M3 Max</span>
-                                    <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-teal-500/20 text-teal-700 dark:text-teal-300 font-bold">Free</span>
+                                    <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-teal-500/20 text-teal-700 dark:text-teal-300 font-bold">
+                                        {localOk ? 'Free' : 'No weights'}
+                                    </span>
                                 </div>
-                                <div className="text-[10px] text-slate-400 font-normal mt-0.5">PyTorch MPS Engine</div>
+                                <div className="text-[10px] text-slate-400 font-normal mt-0.5">
+                                    {localOk ? 'PyTorch MPS Engine' : 'Install video weights first'}
+                                </div>
                             </button>
 
                             <button
                                 type="button"
+                                disabled={!cloudOk}
+                                title={cloudOk ? 'Renders on fal.ai (billed per second)' : 'Set FAL_KEY to enable cloud rendering'}
                                 onClick={() => onSelectProvider('cloud_fal')}
                                 className={`p-2.5 rounded-xl border text-left transition-all ${
                                     videoProvider === 'cloud_fal'
                                         ? 'bg-cyan-500/10 border-cyan-500/40 text-cyan-700 dark:text-cyan-300 font-bold shadow-sm'
                                         : 'bg-black/[0.02] dark:bg-white/[0.02] border-transparent text-slate-600 dark:text-slate-400'
-                                }`}
+                                } disabled:opacity-40 disabled:cursor-not-allowed`}
                             >
                                 <div className="text-xs font-bold flex items-center justify-between">
                                     <span>⚡ Cloud GPU</span>
-                                    <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 font-bold">Fast</span>
+                                    <span className="text-[9px] font-mono px-1 py-0.5 rounded bg-cyan-500/20 text-cyan-700 dark:text-cyan-300 font-bold">
+                                        {cloudOk ? 'Paid' : 'No key'}
+                                    </span>
                                 </div>
-                                <div className="text-[10px] text-slate-400 font-normal mt-0.5">Parallel H100 Cluster</div>
+                                <div className="text-[10px] text-slate-400 font-normal mt-0.5">
+                                    {cloudOk ? 'fal.ai — billed per second' : 'Set FAL_KEY to enable'}
+                                </div>
                             </button>
                         </div>
+                            );
+                        })()}
                     </div>
 
                     {/* Deduplicated Video Engines List */}

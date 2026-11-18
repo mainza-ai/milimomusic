@@ -37,12 +37,41 @@ class LivePortraitProvider(BaseLipSyncProvider):
 
     @property
     def is_available(self) -> bool:
-        # Check if PyTorch with MPS or CUDA is available
+        """True only when a real audio-driven LivePortrait run is possible.
+
+        Upstream LivePortrait is *video*-driven: it has no `--driving_audio`
+        entry point. Claiming availability on `torch+device` alone is what made
+        the studio advertise a neural singing avatar while every clip was the
+        procedural jaw-warp (audit finding E4 / plan 7.1).
+        """
+        if self._get_weights_path() is None or self._audio_entry_point() is None:
+            return False
         try:
             import torch
-            return torch.cuda.is_available() or (hasattr(torch.backends, "mps") and torch.backends.mps.is_available())
+            return torch.cuda.is_available() or (
+                hasattr(torch.backends, "mps") and torch.backends.mps.is_available()
+            )
         except ImportError:
             return False
+
+    def _audio_entry_point(self) -> Optional[str]:
+        """Locate an audio-driven inference script for this weights bundle.
+
+        We only run what exists: a custom audio-driven wrapper (`inference_audio.py`
+        or `MILIMO_LIVEPORTRAIT_AUDIO_SCRIPT`) is required. The upstream
+        `inference.py` takes a driving *video*, so it is not used for singing.
+        """
+        override = os.environ.get("MILIMO_LIVEPORTRAIT_AUDIO_SCRIPT")
+        if override:
+            return override if os.path.isfile(override) else None
+        weights = self._get_weights_path()
+        if not weights:
+            return None
+        for candidate in ("inference_audio.py", "audio2video.py"):
+            path = os.path.join(weights, candidate)
+            if os.path.isfile(path):
+                return path
+        return None
 
     def _get_weights_path(self) -> Optional[str]:
         candidates = [
@@ -73,13 +102,19 @@ class LivePortraitProvider(BaseLipSyncProvider):
         If local neural weights are missing, seamlessly executes smooth fallback.
         """
         weights_path = self._get_weights_path()
-        if not weights_path or not self.is_available:
-            logger.info(
-                f"LivePortrait local weights not found in models/video/liveportrait. "
-                f"Using high-fidelity smooth mesh deformation fallback. "
-                f"To enable full LivePortrait neural pipeline, download weights into models/video/liveportrait."
+        audio_script = self._audio_entry_point()
+        if not weights_path or not audio_script or not self.is_available:
+            missing = (
+                "weights" if not weights_path
+                else "an audio-driven entry point (inference_audio.py)"
+                if not audio_script
+                else "an MPS/CUDA device"
             )
-            return await self._fallback.render_lip_sync(
+            logger.info(
+                f"LivePortrait unavailable ({missing}); rendering the procedural "
+                f"jaw-warp animatic instead."
+            )
+            ok = await self._fallback.render_lip_sync(
                 face_image_path=face_image_path,
                 vocal_audio_path=vocal_audio_path,
                 start_time=start_time,
@@ -89,15 +124,20 @@ class LivePortraitProvider(BaseLipSyncProvider):
                 height=height,
                 **kwargs
             )
+            self._set_outcome(
+                "jaw_warp",
+                True,
+                f"LivePortrait neural lip sync unavailable: missing {missing}. "
+                f"Rendered the procedural jaw-warp animatic.",
+            )
+            return ok
 
         try:
             import torch
             device = "mps" if (hasattr(torch.backends, "mps") and torch.backends.mps.is_available()) else ("cuda" if torch.cuda.is_available() else "cpu")
             logger.info(f"Executing LivePortrait inference on device: {device} with weights from {weights_path}")
 
-            # Execute LivePortrait inference script or in-process pipeline
-            # If a custom python script or pipeline exists in the directory, invoke it
-            liveportrait_script = os.path.join(weights_path, "inference.py")
+            liveportrait_script = audio_script
             if os.path.isfile(liveportrait_script):
                 slice_audio = os.path.join(TEMP_DIR, f"live_slice_{uuid.uuid4().hex[:8]}.wav")
                 cmd_cut = [
@@ -121,12 +161,16 @@ class LivePortraitProvider(BaseLipSyncProvider):
                     os.remove(slice_audio)
 
                 if proc.returncode == 0 and os.path.isfile(out_path):
+                    self._set_outcome("live_portrait", False)
                     return True
-                else:
-                    logger.warning(f"LivePortrait script exited with {proc.returncode}: {stderr.decode('utf-8', errors='ignore')}")
+                logger.warning(
+                    f"LivePortrait script exited with {proc.returncode}: "
+                    f"{stderr.decode('utf-8', errors='ignore')[:200]}"
+                )
+                script_error = f"LivePortrait exited with {proc.returncode}"
 
-            # Fallback to smooth provider if script not present
-            return await self._fallback.render_lip_sync(
+            # Fallback to smooth provider if the script produced nothing
+            ok = await self._fallback.render_lip_sync(
                 face_image_path=face_image_path,
                 vocal_audio_path=vocal_audio_path,
                 start_time=start_time,
@@ -136,6 +180,13 @@ class LivePortraitProvider(BaseLipSyncProvider):
                 height=height,
                 **kwargs
             )
+            self._set_outcome(
+                "jaw_warp",
+                True,
+                locals().get("script_error", "LivePortrait produced no output")
+                + "; rendered the procedural jaw-warp animatic.",
+            )
+            return ok
 
         except asyncio.CancelledError:
             raise
@@ -145,7 +196,7 @@ class LivePortraitProvider(BaseLipSyncProvider):
             if (cancel_event and cancel_event.is_set()) or (cancel_check and cancel_check()):
                 raise asyncio.CancelledError("LivePortrait execution cancelled by user.")
             logger.error(f"LivePortrait execution error: {e}", exc_info=True)
-            return await self._fallback.render_lip_sync(
+            ok = await self._fallback.render_lip_sync(
                 face_image_path=face_image_path,
                 vocal_audio_path=vocal_audio_path,
                 start_time=start_time,
@@ -155,3 +206,9 @@ class LivePortraitProvider(BaseLipSyncProvider):
                 height=height,
                 **kwargs
             )
+            self._set_outcome(
+                "jaw_warp",
+                True,
+                f"LivePortrait failed ({e}); rendered the procedural jaw-warp animatic.",
+            )
+            return ok

@@ -42,7 +42,10 @@ from app.services.video.generators.cloud_video import CloudVideoGenerator
 from app.services.video.generators.procedural import ProceduralVideoGenerator
 from app.core.hardware_lock import GlobalHardwareCoordinator
 from app.core.task_queue import task_queue
-from app.services.video.stem_audio_reactive import extract_stem_reactive_modulation, apply_stem_reactive_fx
+from app.services.video.stem_audio_reactive import (
+    build_stem_reactive_filter,
+    extract_stem_reactive_modulation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -827,7 +830,6 @@ class VideoOrchestrator:
                 drums_stem = self.resolve_stem(job, "drums")
                 bass_stem = self.resolve_stem(job, "bass")
                 stem_reactivity = extract_stem_reactive_modulation(
-                    vocal_stem_path=vocal_stem or resolved_master,
                     drums_stem_path=drums_stem,
                     bass_stem_path=bass_stem,
                     fps=project_fps,
@@ -923,6 +925,7 @@ class VideoOrchestrator:
                                 cancel_event=cancel_event,
                                 cancel_check=_is_cancelled
                             )
+                            clip_outcome = dict(getattr(lipsync_provider, "last_outcome", {}) or {})
                             if not success or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
                                 if cancel_event.is_set():
                                     raise asyncio.CancelledError("Video rendering cancelled by user.")
@@ -931,8 +934,9 @@ class VideoOrchestrator:
                                 # diffusion path records its fallback.
                                 task_info.fallback_used = True
                                 task_info.fallback_reason = (
-                                    f"Neural lip sync unavailable for clip {idx + 1}; "
-                                    "used the procedural jaw-warp animator."
+                                    clip_outcome.get("reason")
+                                    or f"Neural lip sync unavailable for clip {idx + 1}; "
+                                       "used the procedural jaw-warp animator."
                                 )
                                 await self._fallback_lipsync.render_lip_sync(
                                     face_image_path=face_image,
@@ -944,6 +948,19 @@ class VideoOrchestrator:
                                     cancel_event=cancel_event,
                                     cancel_check=_is_cancelled
                                 )
+                                task_info.lip_sync_engine = "jaw_warp"
+                            elif clip_outcome.get("used_fallback"):
+                                # The provider succeeded, but by delegating to a
+                                # different engine. That is still a fallback and the
+                                # user must be told (audit E4).
+                                task_info.fallback_used = True
+                                task_info.fallback_reason = (
+                                    clip_outcome.get("reason")
+                                    or "Neural lip sync unavailable; used the procedural animatic."
+                                )
+                                task_info.lip_sync_engine = clip_outcome.get("engine")
+                            else:
+                                task_info.lip_sync_engine = clip_outcome.get("engine") or lipsync_provider.name
 
                         # Cinematic Scene
                         else:
@@ -989,19 +1006,8 @@ class VideoOrchestrator:
                                 )
 
                         if os.path.isfile(clip_file) and os.path.getsize(clip_file) > 0:
-                            if stem_reactivity and config.get("enable_audio_reactive", True):
-                                rx_file = os.path.join(TEMP_DIR, f"reactive_{task_id}_{idx:03d}.mp4")
-                                rx_ok = await apply_stem_reactive_fx(
-                                    clip_path=clip_file,
-                                    out_path=rx_file,
-                                    start_time=clip.start_time,
-                                    duration=clip.duration,
-                                    stem_reactivity=stem_reactivity,
-                                    fps=model_spec.fps
-                                )
-                                if rx_ok and os.path.isfile(rx_file) and os.path.getsize(rx_file) > 0:
-                                    clip_file = rx_file
-
+                            # The beat pulse is applied inside the normalise pass
+                            # below, not as a separate `ultrafast` re-encode (audit M5).
                             rendered_clips.append(clip_file)
                             clip.rendered_clip_path = clip_file
                             clip.status = "completed"
@@ -1042,6 +1048,28 @@ class VideoOrchestrator:
             # down (a 3.7 s plan renders 3.56 s); nothing consumed the trim the
             # planner computed, so a 40-clip video finished seconds before the song
             # and every later cut drifted off its beat.
+            # Plan 7.3: report the resolution the generator really produced. On MPS
+            # Wan clamps to 832x480, and the "1080p" master is an upscale — the user
+            # must be able to see that.
+            try:
+                from app.services.video.export_presets import probe_streams as _probe_streams
+
+                first = _probe_streams(rendered_clips[0]) if rendered_clips else {}
+                if first.get("width") and first.get("height"):
+                    self.update_task(
+                        task_id,
+                        source_resolution=f"{first['width']}x{first['height']}",
+                        delivered_resolution=f"{w}x{h}",
+                    )
+                    if (first["width"], first["height"]) != (w, h):
+                        logger.info(
+                            "Delivered %sx%s from %sx%s source (upscale %.2fx)",
+                            w, h, first["width"], first["height"],
+                            w / max(1, first["width"]),
+                        )
+            except Exception as _res_err:
+                logger.debug("Could not probe source resolution: %s", _res_err)
+
             self.update_task(task_id, step="Normalising scene durations & geometry", progress=78)
             # A crossfade overlaps neighbours, so the stitched video would be
             # (n-1)*trans_dur shorter than the sum of its clips even with perfect
@@ -1054,6 +1082,7 @@ class VideoOrchestrator:
                 task_id=task_id,
                 cancel_event=cancel_event,
                 transition_overlap=self._transition_overlap(transition_style, plan.clips),
+                stem_reactivity=stem_reactivity if config.get("enable_audio_reactive", True) else None,
             )
 
             # Step 3: Scene Assembly & Concat
@@ -1112,83 +1141,57 @@ class VideoOrchestrator:
                     assembly_report["drift_s"],
                 )
 
-            def _duration_flags() -> List[str]:
-                if song_duration and song_duration > 0:
-                    return ["-t", f"{song_duration:.3f}", "-af", "apad"]
-                return []
+            delivery = await self._finalise_master(
+                stitched_video=stitched_video,
+                audio_path=resolved_master,
+                out_path=out_path,
+                width=w,
+                height=h,
+                song_duration=song_duration,
+                ass_path=ass_path,
+                timed_lines=timed_lines if burn_lyrics and job.lyrics else [],
+                preset_id=config.get("export_preset") or "default",
+            )
+            qc_report = delivery["qc"]
+            self.update_task(task_id, qc=qc_report)
 
-            # Execute master remux with burned subtitles if available
-            if ass_path and os.path.isfile(ass_path):
-                # Escape path for FFmpeg filter
-                escaped_ass = ass_path.replace("\\", "/").replace(":", "\\:")
-                fonts_dir = get_fonts_dir()
-                fonts_opt = f":fontsdir='{fonts_dir.replace('\\', '/').replace(':', '\\:')}'" if fonts_dir else ""
-                cmd_final = [
-                    "ffmpeg", "-y",
-                    "-i", stitched_video,
-                    "-i", resolved_master,
-                    "-filter_complex", f"[0:v]subtitles='{escaped_ass}'{fonts_opt}[v]",
-                    "-map", "[v]", "-map", "1:a:0",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
-                    "-c:a", "aac", "-b:a", "256k",
-                    *_duration_flags(),
-                    out_path
-                ]
-            else:
-                cmd_final = [
-                    "ffmpeg", "-y",
-                    "-i", stitched_video,
-                    "-i", resolved_master,
-                    "-map", "0:v:0", "-map", "1:a:0",
-                    "-c:v", "copy",
-                    "-c:a", "aac", "-b:a", "256k",
-                    *_duration_flags(),
-                    out_path
-                ]
+            # Per-scene clips and the plan stay on disk for incremental retakes
+            # (plan 7.11) instead of being deleted after assembly.
+            render_id = config.get("render_id")
+            if render_id:
+                try:
+                    from app.services.video import takes as takes_service
 
-            proc_final = await asyncio.create_subprocess_exec(*cmd_final, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-            _, err_final = await proc_final.communicate()
-
-            # If stream copy or filter failed, try safe re-encode fallback
-            if proc_final.returncode != 0 or not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
-                logger.warning("Stream mux failed, trying safe re-encode fallback...")
-                cmd_fb = [
-                    "ffmpeg", "-y",
-                    "-i", stitched_video,
-                    "-i", resolved_master,
-                    "-map", "0:v:0", "-map", "1:a:0",
-                    "-c:v", "libx264", "-pix_fmt", "yuv420p", "-preset", "veryfast",
-                    "-c:a", "aac", "-b:a", "256k",
-                    *_duration_flags(),
-                    out_path
-                ]
-                proc_fb = await asyncio.create_subprocess_exec(*cmd_fb, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-                await proc_fb.communicate()
-
-            if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
-                raise RuntimeError("Failed to generate master music video output file.")
-
-            # Preview proxy + first-frame poster (plan 4.15): the editor streamed
-            # the full 1080p master and used the album cover as a poster.
-            try:
-                from app.services.video.clip_normalise import (
-                    first_frame_poster,
-                    make_preview_proxy,
-                )
-
-                proxy_name = out_filename.replace(".mp4", "_480p.mp4")
-                poster_name = out_filename.replace(".mp4", "_poster.jpg")
-                preview_dir = os.path.join(VIDEO_DIR, "previews")
-                os.makedirs(preview_dir, exist_ok=True)
-                if await asyncio.to_thread(make_preview_proxy, out_path,
-                                           os.path.join(preview_dir, proxy_name)):
-                    logger.info("Preview proxy ready: %s", proxy_name)
-                await asyncio.to_thread(first_frame_poster, out_path,
-                                        os.path.join(preview_dir, poster_name))
-            except Exception as _proxy_err:
-                logger.debug("Preview proxy/poster skipped: %s", _proxy_err)
+                    takes_service.save_clip_plan(
+                        render_id,
+                        {
+                            "task_id": task_id,
+                            "job_id": str(job.id),
+                            "model_name": model_name,
+                            "bpm": getattr(plan, "bpm", None),
+                            "meter": getattr(plan, "meter", 4),
+                            "structure_source": getattr(plan, "structure_source", "energy_windows"),
+                            "scenes": [c.to_dict() for c in plan.clips],
+                            "config": config,
+                        },
+                        rendered_clips,
+                    )
+                except Exception as _persist_err:
+                    logger.debug("Could not persist clips for take %s: %s", render_id, _persist_err)
 
             video_url = f"/audio/videos/{out_filename}"
+            if render_id:
+                self._record_take(
+                    render_id=render_id,
+                    kind="advanced",
+                    video_url=video_url,
+                    file_path=out_path,
+                    poster_path=os.path.join(VIDEO_DIR, "previews", out_filename.replace(".mp4", "_poster.jpg")),
+                    proxy_path=os.path.join(VIDEO_DIR, "previews", out_filename.replace(".mp4", "_480p.mp4")),
+                    qc=locals().get("qc_report"),
+                )
+                self.update_task(task_id, render_id=render_id)
+
             self.update_task(
                 task_id,
                 status="completed",
@@ -1220,6 +1223,237 @@ class VideoOrchestrator:
                 if os.path.isfile(cf):
                     try: os.remove(cf)
                     except: pass
+
+    async def render_scene_retake(
+        self,
+        *,
+        job: Job,
+        task_id: str,
+        render_id: str,
+        clip_index: int,
+        config: Dict[str, Any],
+    ) -> str:
+        """Re-render ONE scene from a completed take and re-assemble (plan 7.11).
+
+        Every other scene is reused from the take's persisted clips, so a retake
+        costs one diffusion (or lip-sync) pass instead of the whole film. The result
+        is a *new* take: the previous master is never overwritten (plan 7.4).
+        """
+        from app.services.video import takes as takes_service
+        from app.services.video.clip_normalise import probe_duration, verify_assembly
+
+        plan = await asyncio.to_thread(takes_service.load_clip_plan, render_id)
+        if not plan or not plan.get("clips"):
+            raise ValueError(
+                "This take has no per-scene clips on disk; render the full video once "
+                "before retaking a scene."
+            )
+
+        scenes: List[Dict[str, Any]] = list(plan.get("scenes") or [])
+        target_idx = None
+        for idx, scene in enumerate(scenes):
+            if int(scene.get("clip_index") or idx + 1) == int(clip_index):
+                target_idx = idx
+                break
+        if target_idx is None:
+            raise ValueError(f"Scene {clip_index} is not in this take's plan.")
+
+        scene = dict(scenes[target_idx])
+        if config.get("prompt"):
+            scene["prompt"] = str(config["prompt"])
+        style = config.get("visual_style") or plan.get("config", {}).get("visual_style") or "neon-cyberpunk"
+        model_name = plan.get("config", {}).get("model_name") or plan.get("model_name") or "wan_14b"
+        provider_type = plan.get("config", {}).get("provider") or "local"
+        transition_style = config.get("transition_style") or plan.get("config", {}).get("transition_style") or "beat_cut"
+        burn_lyrics = bool(config.get("burn_lyrics", plan.get("config", {}).get("burn_lyrics", True)))
+
+        width = int(config.get("width") or plan.get("config", {}).get("width") or 1280)
+        height = int(config.get("height") or plan.get("config", {}).get("height") or 720)
+        from app.services.video.model_specs import get_model_spec
+
+        spec = get_model_spec(model_name)
+        fps = int(getattr(spec, "fps", 24) or 24)
+
+        self.update_task(task_id, step=f"Re-rendering scene {clip_index}", progress=10)
+        cancel_event = asyncio.Event()
+        with self._lock:
+            self._video_cancels[task_id] = cancel_event
+
+        clip_file = os.path.join(TEMP_DIR, f"retake_{task_id}_{clip_index:03d}.mp4")
+        rendered = False
+        try:
+            if scene.get("is_vocal") and config.get("enable_lip_sync", True):
+                face = self.resolve_face_image(job)
+                vocal = self.resolve_vocals_stem(job) or self.resolve_audio_path(job.audio_path)
+                if face and vocal:
+                    from app.services.video.lip_sync.live_portrait import LivePortraitProvider
+
+                    provider = LivePortraitProvider()
+                    rendered = await provider.render_lip_sync(
+                        face_image_path=face,
+                        vocal_audio_path=vocal,
+                        start_time=float(scene.get("start_time") or 0.0),
+                        duration=float(scene.get("duration") or 0.0),
+                        out_path=clip_file,
+                        width=width, height=height,
+                        cancel_event=cancel_event,
+                        cancel_check=lambda: cancel_event.is_set(),
+                    )
+                    outcome = dict(getattr(provider, "last_outcome", {}) or {})
+                    if outcome.get("used_fallback"):
+                        self.update_task(
+                            task_id,
+                            fallback_used=True,
+                            fallback_reason=outcome.get("reason"),
+                            lip_sync_engine=outcome.get("engine"),
+                        )
+
+            if not rendered:
+                from app.services.video.generator_registry import VideoGeneratorRegistry
+
+                generator = VideoGeneratorRegistry.resolve(model_name, provider_type)
+                kf_path = os.path.join(KEYFRAMES_DIR, f"keyframe_{job.id}_{clip_index:03d}.png")
+                rendered = await generator.generate_clip(
+                    prompt=str(scene.get("prompt") or ""),
+                    duration=float(scene.get("duration") or spec.default_duration),
+                    out_path=clip_file,
+                    width=width, height=height,
+                    image_path=kf_path if os.path.isfile(kf_path) else self.resolve_face_image(job),
+                    negative_prompt=str(scene.get("negative_prompt") or ""),
+                    visual_style=style,
+                    provider=provider_type,
+                    cancel_event=cancel_event,
+                    cancel_check=lambda: cancel_event.is_set(),
+                )
+
+            if not rendered or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
+                raise RuntimeError(f"Scene {clip_index} produced no output.")
+
+            # Normalise the new clip to the plan's duration and the take's geometry.
+            from app.services.video.clip_normalise import normalise_clip
+
+            normalised = os.path.join(TEMP_DIR, f"retake_norm_{task_id}_{clip_index:03d}.mp4")
+            target_duration = float(scene.get("duration") or 0.0)
+            self.update_task(task_id, step=f"Normalising scene {clip_index}", progress=45)
+            ok = await asyncio.to_thread(
+                normalise_clip, clip_file, normalised,
+                duration_s=target_duration, width=width, height=height, fps=fps,
+            )
+            if not ok:
+                raise RuntimeError(f"Scene {clip_index} could not be normalised.")
+
+            clip_paths = list(plan["clips"])
+            clip_paths[target_idx] = normalised
+            scenes[target_idx] = scene
+
+            # Re-assemble from the persisted clips (no re-diffusion of other scenes).
+            self.update_task(task_id, step="Re-assembling timeline", progress=60)
+            stitched = os.path.join(TEMP_DIR, f"retake_stitch_{task_id}.mp4")
+            stitched_ok = await self._stitch_video_segments_with_transitions(
+                rendered_clips=clip_paths,
+                transition_style=transition_style,
+                stitched_video=stitched,
+                task_id=task_id,
+            )
+            if not stitched_ok:
+                raise RuntimeError("Re-assembly failed.")
+
+            audio_path = self.resolve_audio_path(job.audio_path)
+            song_duration = probe_duration(audio_path) if audio_path else None
+            verify_assembly(probe_duration(stitched), song_duration)
+
+            # Subtitles for the re-assembled master.
+            ass_path = None
+            timed_lines: List[Dict[str, Any]] = []
+            if burn_lyrics and job.lyrics:
+                try:
+                    timed_lines = lyric_sync_engine.align_lyrics(
+                        lyrics=job.lyrics,
+                        duration_sec=float(song_duration or (job.duration_ms or 180000) / 1000.0),
+                        vocal_stem_path=self.resolve_vocals_stem(job) or audio_path,
+                    )
+                    ass_content = self.generate_karaoke_ass(
+                        timed_lines=timed_lines, width=width, height=height,
+                        style=style,
+                        subtitle_style=config.get("subtitle_style") or "neon",
+                        aspect_ratio=config.get("aspect_ratio") or "16:9",
+                    )
+                    ass_path = os.path.join(TEMP_DIR, f"retake_{task_id}.ass")
+                    with open(ass_path, "w", encoding="utf-8") as fh:
+                        fh.write(ass_content)
+                except Exception as exc:
+                    logger.warning("Retake subtitle generation skipped: %s", exc)
+
+            tag = uuid.uuid4().hex[:8]
+            out_filename = f"{job.id}_master_mv_{tag}.mp4"
+            out_path = os.path.join(VIDEO_DIR, out_filename)
+            self.update_task(task_id, step="Encoding retake master", progress=80)
+            delivery = await self._finalise_master(
+                stitched_video=stitched,
+                audio_path=audio_path,
+                out_path=out_path,
+                width=width, height=height,
+                song_duration=song_duration,
+                ass_path=ass_path,
+                timed_lines=timed_lines,
+                preset_id=config.get("export_preset") or plan.get("config", {}).get("export_preset") or "default",
+            )
+
+            # New take row, selected; the previous master stays on disk.
+            new_render_id = None
+            try:
+                from sqlmodel import Session
+
+                from app.main import engine
+
+                with Session(engine) as session:
+                    take = takes_service.create_take(
+                        session,
+                        job_id=str(job.id),
+                        task_id=task_id,
+                        kind="retake",
+                        config={**plan.get("config", {}), "retake_clip": clip_index,
+                                "source_render": render_id},
+                    )
+                    new_render_id = str(take.id)
+                    takes_service.finish_take(
+                        session, take, status="completed",
+                        video_path=f"/audio/videos/{out_filename}",
+                        file_path=out_path,
+                        qc=delivery["qc"],
+                    )
+                    takes_service.select_take(session, str(job.id), new_render_id)
+                    takes_service.save_clip_plan(
+                        new_render_id,
+                        {**plan, "scenes": scenes, "retake_clip": clip_index},
+                        clip_paths,
+                    )
+            except Exception as exc:
+                logger.warning("Could not record the retake as a take: %s", exc)
+
+            video_url = f"/audio/videos/{out_filename}"
+            self.update_task(
+                task_id, status="completed", progress=100,
+                step=f"Scene {clip_index} re-rendered", video_url=video_url,
+                qc=delivery["qc"], render_id=new_render_id,
+            )
+            return video_url
+        except asyncio.CancelledError:
+            self.update_task(task_id, status="cancelled", step="Retake cancelled.", progress=0)
+            return ""
+        except Exception as exc:
+            logger.error("Scene retake failed: %s", exc, exc_info=True)
+            self.update_task(task_id, status="error", error=str(exc)[:300])
+            raise
+        finally:
+            with self._lock:
+                self._video_cancels.pop(task_id, None)
+            for path in (clip_file,):
+                try:
+                    if os.path.isfile(path):
+                        os.remove(path)
+                except OSError:
+                    pass
 
     async def plan_music_video_async(
         self,
@@ -1402,7 +1636,197 @@ class VideoOrchestrator:
         except Exception:
             return 3.0
 
+    async def _finalise_master(
+        self,
+        *,
+        stitched_video: str,
+        audio_path: str,
+        out_path: str,
+        width: int,
+        height: int,
+        song_duration: Optional[float],
+        ass_path: Optional[str],
+        timed_lines: List[Dict[str, Any]],
+        preset_id: str = "default",
+    ) -> Dict[str, Any]:
+        """Encode the delivered master: one preset-targeted pass, QC, sidecars.
+
+        Shared by the full render and the single-scene retake (plan 7.11) so both
+        produce identical delivery characteristics (plans 7.12-7.16).
+        """
+        from app.services.video.export_presets import (
+            audio_args,
+            container_args,
+            get_preset,
+            loudnorm_filter,
+            probe_streams,
+            video_args,
+        )
+        from app.services.video.qc import run_qc
+
+        preset = get_preset(preset_id)
+        master_streams = probe_streams(audio_path) or {}
+        source_is_aac = (master_streams.get("audio_codec") or "").lower() == "aac"
+        has_audio = bool(master_streams.get("audio_codec"))
+
+        video_chain: List[str] = []
+        if ass_path and os.path.isfile(ass_path):
+            escaped_ass = ass_path.replace("\\", "/").replace(":", "\\:")
+            fonts_dir = get_fonts_dir()
+            fonts_opt = ""
+            if fonts_dir:
+                fonts_safe = fonts_dir.replace("\\", "/").replace(":", "\\:")
+                fonts_opt = f":fontsdir='{fonts_safe}'"
+            video_chain.append(f"subtitles='{escaped_ass}'{fonts_opt}")
+        if song_duration:
+            # Clone the final frame so the picture never ends before the song.
+            video_chain.append(f"tpad=stop_mode=clone:stop_duration={song_duration:.3f}")
+
+        filters: List[str] = []
+        audio_map = "1:a:0"
+        if video_chain:
+            filters.append("[0:v]" + ",".join(video_chain) + "[vout]")
+        loudness = loudnorm_filter(preset)
+        if loudness and has_audio:
+            filters.append(f"[1:a]{loudness}[aout]")
+            audio_map = "[aout]"
+
+        cmd = ["ffmpeg", "-y", "-i", stitched_video, "-i", audio_path]
+        if filters:
+            cmd += ["-filter_complex", ";".join(filters)]
+        cmd += ["-map", "[vout]" if video_chain else "0:v:0"]
+        if has_audio:
+            cmd += ["-map", audio_map]
+        cmd += video_args(preset)
+        if has_audio:
+            # `-filter_complex ... [aout]` re-encodes audio, so passthrough is off
+            # whenever loudness normalisation is in the graph.
+            cmd += audio_args(preset, source_is_aac=source_is_aac and not (loudness and has_audio))
+        cmd += container_args(preset)
+        if song_duration:
+            cmd += ["-t", f"{song_duration:.3f}"]
+        cmd += [out_path]
+
+        proc = await asyncio.create_subprocess_exec(
+            *cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+        )
+        _, err = await proc.communicate()
+
+        if proc.returncode != 0 or not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
+            logger.warning(
+                "Delivery encode failed (%s): %s",
+                proc.returncode, (err or b"").decode("utf-8", errors="ignore")[-300:],
+            )
+            fallback = ["ffmpeg", "-y", "-i", stitched_video, "-i", audio_path, "-map", "0:v:0"]
+            if has_audio:
+                fallback += ["-map", "1:a:0"]
+            fallback += ["-c:v", "libx264", "-preset", "veryfast", "-crf", "20",
+                         "-pix_fmt", "yuv420p"]
+            if has_audio:
+                fallback += ["-c:a", "aac", "-b:a", "320k"]
+            fallback += ["-movflags", "+faststart"]
+            if song_duration:
+                fallback += ["-t", f"{song_duration:.3f}"]
+            fallback += [out_path]
+            proc_fb = await asyncio.create_subprocess_exec(
+                *fallback, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE
+            )
+            await proc_fb.communicate()
+
+        if not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
+            raise RuntimeError("Failed to generate master music video output file.")
+
+        captions = self._write_caption_sidecars(
+            out_path, timed_lines,
+            ass_path=ass_path if ass_path and os.path.isfile(ass_path) else None,
+        )
+        qc_report = await asyncio.to_thread(
+            run_qc,
+            out_path,
+            expected_duration=song_duration,
+            expected_width=width,
+            expected_height=height,
+            target_lufs=preset.loudness_lufs,
+        )
+        if not qc_report.get("ok"):
+            raise RuntimeError("QC failed: " + ", ".join(qc_report.get("fatal") or ["unknown"]))
+
+        return {"qc": qc_report, "captions": captions, "preset": preset.id}
+
     @staticmethod
+    def _write_caption_sidecars(
+        master_path: str,
+        timed_lines: List[Dict[str, Any]],
+        ass_path: Optional[str] = None,
+    ) -> Dict[str, str]:
+        """Write SRT/VTT (and the ASS when available) beside the master (plan 7.16).
+
+        Burned pixels cannot be reused: a caption file is a deliverable in its own
+        right (YouTube sidecar, TTML conversion, translation).
+        """
+        written: Dict[str, str] = {}
+        if not master_path or not timed_lines:
+            return written
+        stem = os.path.splitext(master_path)[0]
+        try:
+            from app.transcription.karaoke import lyric_sync_engine
+
+            srt = lyric_sync_engine.generate_srt(timed_lines)
+            vtt = lyric_sync_engine.generate_vtt(timed_lines)
+            for suffix, content in ((".srt", srt), (".vtt", vtt)):
+                if not content:
+                    continue
+                path = stem + suffix
+                with open(path, "w", encoding="utf-8") as fh:
+                    fh.write(content)
+                written[suffix.lstrip(".")] = path
+            if ass_path and os.path.isfile(ass_path):
+                dest = stem + ".ass"
+                if os.path.abspath(dest) != os.path.abspath(ass_path):
+                    import shutil
+
+                    shutil.copyfile(ass_path, dest)
+                written["ass"] = dest
+        except Exception as exc:
+            logger.warning("Could not write caption sidecars for %s: %s", master_path, exc)
+        return written
+
+    @staticmethod
+    def _record_take(
+        *,
+        render_id: str,
+        kind: str,
+        video_url: str,
+        file_path: str,
+        poster_path: Optional[str] = None,
+        proxy_path: Optional[str] = None,
+        qc: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """Mark a render take complete and select it (plan 7.4)."""
+        try:
+            from sqlmodel import Session
+
+            from app.main import engine
+            from app.services.video import takes as takes_service
+
+            with Session(engine) as session:
+                take = takes_service.get_take(session, render_id)
+                if not take:
+                    logger.warning("Render take %s vanished before completion", render_id)
+                    return
+                takes_service.finish_take(
+                    session, take,
+                    status="completed",
+                    video_path=video_url,
+                    file_path=file_path,
+                    qc=qc,
+                    poster_path=poster_path if poster_path and os.path.isfile(poster_path) else None,
+                    proxy_path=proxy_path if proxy_path and os.path.isfile(proxy_path) else None,
+                )
+                takes_service.select_take(session, str(take.job_id), render_id)
+        except Exception as exc:  # a take is bookkeeping; never fail a finished render
+            logger.warning("Could not record render take %s: %s", render_id, exc)
+
     def _cleanup_task_temp(task_id: str) -> int:
         """Delete every intermediate file this render created.
 
@@ -1457,6 +1881,7 @@ class VideoOrchestrator:
         task_id: str,
         cancel_event: Optional[asyncio.Event] = None,
         transition_overlap: float = 0.0,
+        stem_reactivity: Optional[Dict[str, Any]] = None,
     ) -> List[str]:
         """Rewrite each rendered clip to its planned duration and the project geometry.
 
@@ -1483,11 +1908,20 @@ class VideoOrchestrator:
 
             dest = os.path.join(TEMP_DIR, f"norm_{task_id}_{idx:03d}.mp4")
             before = probe_duration(clip_path)
+            extra_vf = None
+            if stem_reactivity is not None and target is not None:
+                extra_vf = build_stem_reactive_filter(
+                    start_time=float(getattr(target, "start_time", 0.0) or 0.0),
+                    duration=target_duration,
+                    stem_reactivity=stem_reactivity,
+                    fps=fps,
+                )
             ok = await asyncio.to_thread(
                 normalise_clip,
                 clip_path, dest,
                 duration_s=target_duration,
                 width=width, height=height, fps=fps,
+                extra_vf=extra_vf,
             )
             if ok:
                 normalised.append(dest)
@@ -1773,6 +2207,8 @@ class VideoOrchestrator:
                         )
                     else:
                         filter_complex += f";[bg]null{current_sub_filter},setsar=1,format=yuv420p[v_out]"
+                    # The song is the master: normalise once, here (plan 7.13).
+                    filter_complex += ";[1:a]loudnorm=I=-14:TP=-1:LRA=11[a_out]"
 
                     c = [
                         ffmpeg_bin, "-y",
@@ -1783,7 +2219,7 @@ class VideoOrchestrator:
                         c.extend(["-i", ass_path])
                     c.extend([
                         "-filter_complex", filter_complex,
-                        "-map", "[v_out]", "-map", "1:a:0"
+                        "-map", "[v_out]", "-map", "[a_out]"
                     ])
                     if has_soft_sub:
                         c.extend(["-map", "2:s:0", "-c:s", "mov_text"])
@@ -1804,6 +2240,7 @@ class VideoOrchestrator:
                         f"color=c=0x0b0f19:s={w}x{h}:d={total_duration:.3f}:r=30[bg];"
                         f"[0:a]showwaves=s={w}x{int(h * 0.35)}:mode=line:colors={colors}:scale=sqrt[waves];"
                         f"[bg][waves]overlay=(W-w)/2:(H-h)/2[comp]{current_sub_filter},setsar=1,format=yuv420p[v_out]"
+                        ";[0:a]loudnorm=I=-14:TP=-1:LRA=11[a_out]"
                     )
                     c = [
                         ffmpeg_bin, "-y",
@@ -1813,7 +2250,7 @@ class VideoOrchestrator:
                         c.extend(["-i", ass_path])
                     c.extend([
                         "-filter_complex", filter_complex,
-                        "-map", "[v_out]", "-map", "0:a:0"
+                        "-map", "[v_out]", "-map", "[a_out]"
                     ])
                     if has_soft_sub:
                         c.extend(["-map", "1:s:0", "-c:s", "mov_text"])
@@ -1906,6 +2343,33 @@ class VideoOrchestrator:
             # Atomic rename into final output path to avoid race conditions with browser stream
             import shutil
             shutil.move(tmp_out_path, out_path)
+
+            render_id = config.get("render_id")
+            if render_id:
+                self._record_take(
+                    render_id=render_id,
+                    kind="lyric",
+                    video_url=f"/audio/videos/{out_filename}",
+                    file_path=out_path,
+                    qc=locals().get("qc_report"),
+                )
+                self.update_task(task_id, render_id=render_id)
+
+            # Delivery gate for the lyric master too (plans 7.14/7.16).
+            from app.services.video.qc import run_qc
+
+            qc_report = await asyncio.to_thread(
+                run_qc, out_path, expected_duration=total_duration,
+                expected_width=w, expected_height=h, target_lufs=-14.0,
+            )
+            self.update_task(task_id, qc=qc_report)
+            if not qc_report.get("ok"):
+                raise RuntimeError("QC failed: " + ", ".join(qc_report.get("fatal") or ["unknown"]))
+            self._write_caption_sidecars(
+                out_path, timed_lines,
+                ass_path=os.path.join(VIDEO_DIR, f"{job.id}_lyric.ass")
+                if os.path.isfile(os.path.join(VIDEO_DIR, f"{job.id}_lyric.ass")) else None,
+            )
 
             import time
             timestamp = int(time.time())

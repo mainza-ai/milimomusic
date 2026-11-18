@@ -3110,3 +3110,34 @@ Verification: code claims re-read at `d685db8`; frontend claims spot-checked (si
 `<video>` in the compare overlay, `getVideoProviders` never called, `_480p`/`_poster`
 never referenced, 4-of-15 style whitelist); delivery claims measured with `ffprobe`
 on real renders (0.80 Mbps video, moov after mdat); all wiki links resolve.
+
+## [2026-11-18] implement | Phase 7 — music video production (24/25 tasks)
+Implemented the entire [Phase 7](application-remediation-plan-2026-11.md#phase-7--music-video-production-2026-11-18-added)
+plan the audit produced the same day. Highlights by group:
+**7A truth** — lip-sync providers return `last_outcome` (engine + fallback reason) and
+`is_available` now requires weights *and* an audio-driven entry point, so the jaw-warp
+animatic is reported instead of disguised (closes 1.14/X1); `/videos/render` verifies
+FFmpeg output before reporting success; retake accepts camera/lighting, marks raster
+placeholders `degraded`, persists the edit, and reports the *delivered* resolution vs the
+source (closes 4.2's reporting clause/X3); render takes (`videorender` table, Alembic
+0008) with select/delete/new-take-on-retake; per-job render mutex (409); a real two-source
+A/B compare replacing the decorative one; cloud cost estimation with a confirmation gate
+(closes 4.5's cost clause/X4).
+**7B pipeline** — metre-aware downbeats via low-band lag autocorrelation (a 3/4 fixture no
+longer yields 4/4), structure taken from the generation's own `[Verse]`/`[Chorus]` tags
+with energy as fallback; dead `camera_zoom`/`vocal_envelope` passes deleted and the strike
+pulse folded into the normalise pass (closes 4.8/X2); per-scene clips + plan persisted, and
+a retake re-renders one scene and re-assembles from the rest; one preset-targeted delivery
+encode (CRF 12 intermediates), `+faststart`, −14 LUFS loudness with measurement, and a QC
+gate at sub-second thresholds (black 0.1 s, freeze 0.05 s, silence 0.1 s, A/V drift).
+**7C delivery/UI** — YouTube/Vevo/Canvas/ProRes presets, SRT/VTT/ASS sidecars, aspect
+variants; render polling with backoff and reload resume; full config restore; provider
+picker driven by `/videos/providers`; accessible select/dialogs/keyboard seek.
+**7D reporting** — `GET /jobs/{id}/manifest.json` (seeds, params, verbatim prompt, hashes,
+git commit), pack provenance + mastered audio + stem manifest, MusicXML that omits the key
+instead of asserting C major and types notes by duration, a video report/cut list, and an
+audio-only NLE bounce.
+Verification: **627 backend tests passed** (twice), 29 frontend tests, `tsc`/`vite build`
+green, ruff clean, API parity 178 routes / 182 calls, Alembic `0008`.
+Two real bugs were caught by the new tests: `-af loudnorm` combined with `-c:a copy`
+(one encode must re-encode audio), and `save_clip_plan` copying a take's clip onto itself.

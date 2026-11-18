@@ -334,7 +334,16 @@ const VideoTimelineTrackComponent: React.FC<VideoTimelineTrackProps> = ({
                             return (
                                 <div
                                     key={clip.clip_index}
+                                    role="button"
+                                    tabIndex={0}
+                                    aria-label={`Seek to scene ${clip.clip_index} at ${clip.time_str}`}
                                     style={{ width: `${clipWidthPx}px` }}
+                                    onKeyDown={(e) => {
+                                        if (e.key === 'Enter' || e.key === ' ') {
+                                            e.preventDefault();
+                                            onSeekToTime?.(clip.start_time);
+                                        }
+                                    }}
                                     onClick={() => onSeekToTime?.(clip.start_time)}
                                     className="flex-shrink-0 p-2 rounded-2xl border transition-all flex flex-col justify-between group relative overflow-hidden cursor-pointer select-none bg-black/[0.02] dark:bg-white/[0.03] border-black/[0.08] dark:border-white/10 hover:border-teal-500/50 hover:shadow-md"
                                     title={`Click to jump playhead to ${clip.time_str} (${clip.duration.toFixed(1)}s)`}

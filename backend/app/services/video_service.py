@@ -122,6 +122,36 @@ class VideoService:
     _instance = None
     _tasks: Dict[str, Dict[str, Any]] = {}
     _lock = threading.Lock()
+    # job_id -> task_id for renders that are currently running. Two renders for one
+    # job used to write the same output file and race (audit W5 / plan 7.6).
+    _job_renders: Dict[str, str] = {}
+    _job_render_lock = threading.Lock()
+
+    # ── per-job render mutex ──────────────────────────────────────────────
+    def claim_job_render(self, job_id: str, task_id: str) -> Optional[str]:
+        """Reserve `job_id` for `task_id`.
+
+        Returns the *existing* task id when the job is already rendering, or None
+        when the claim succeeded.
+        """
+        key = str(job_id)
+        with VideoService._job_render_lock:
+            existing = VideoService._job_renders.get(key)
+            if existing and existing != task_id:
+                return existing
+            VideoService._job_renders[key] = task_id
+            return None
+
+    def release_job_render(self, job_id: str, task_id: Optional[str] = None) -> None:
+        key = str(job_id)
+        with VideoService._job_render_lock:
+            current = VideoService._job_renders.get(key)
+            if current and (task_id is None or current == task_id):
+                VideoService._job_renders.pop(key, None)
+
+    def active_render_for_job(self, job_id: str) -> Optional[str]:
+        with VideoService._job_render_lock:
+            return VideoService._job_renders.get(str(job_id))
 
     def __new__(cls):
         if cls._instance is None:
@@ -1003,7 +1033,15 @@ class VideoService:
             ]
 
         proc = await asyncio.create_subprocess_exec(*cmd, stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE)
-        await proc.communicate()
+        _, err = await proc.communicate()
+
+        # Plan 7.2: never report a render that FFmpeg did not produce. This used to
+        # return a URL unconditionally, so the endpoint wrote `video_path` for a file
+        # that never existed and the UI showed a dead player.
+        if proc.returncode != 0 or not os.path.isfile(out_path) or os.path.getsize(out_path) == 0:
+            detail = err.decode("utf-8", errors="ignore").strip()[-400:] if err else ""
+            logger.error(f"Audio-reactive render failed (rc={proc.returncode}): {detail}")
+            raise RuntimeError(f"ffmpeg exited with {proc.returncode}: {detail or 'no output'}")
 
         video_url = f"/audio/videos/{out_filename}"
         return video_url
@@ -1028,6 +1066,24 @@ class VideoService:
             job=job,
             task_id=task_id,
             config=config
+        )
+
+    async def render_scene_retake(
+        self,
+        job: Job,
+        task_id: str,
+        render_id: str,
+        clip_index: int,
+        config: Dict[str, Any],
+    ) -> str:
+        """Re-render one scene from a completed take (plan 7.11)."""
+        from app.services.video.video_orchestrator import video_orchestrator
+        return await video_orchestrator.render_scene_retake(
+            job=job,
+            task_id=task_id,
+            render_id=render_id,
+            clip_index=clip_index,
+            config=config,
         )
 
     async def render_lyric_music_video(

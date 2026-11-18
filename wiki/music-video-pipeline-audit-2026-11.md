@@ -27,10 +27,12 @@ Companions: [Music Video Delivery & QC Specs](concepts/music-video-delivery-spec
 (the documentation/report/academic surface). **Implementation tasks live in
 [Phase 7 of the remediation plan](application-remediation-plan-2026-11.md#phase-7--music-video-production-2026-11-18-added).**
 
-> [!WARNING]
-> Four items the remediation plan marks as done are not: **X1–X4** in
-> [§8](#8-audit-deltas--claimed-done-not-actually-done). Two of them are
-> truthfulness regressions of exactly the class Phase 1 was created to close.
+> [!NOTE]
+> **Remediated on 2026-11-18.** Every finding below was implemented and verified
+> the same day as **Phase 7** of the [remediation plan](application-remediation-plan-2026-11.md#phase-7--music-video-production-2026-11-18-added)
+> (24/25 tasks; 7.21 accessibility partial). The four audit deltas **X1–X4 are
+> closed**, each with a test that fails against the pre-fix code. Findings are kept
+> in past tense-unfixed form as the record of what was wrong and why it mattered.
 
 ---
 
@@ -159,6 +161,8 @@ The video-specific conclusions:
 
 ## 8. Audit deltas — claimed done, not actually done
 
+> **Closed 2026-11-18** by 7.1 (X1), 7.10 (X2), 7.3 (X3) and 7.7 (X4).
+
 | # | Plan item | Claimed | Reality |
 |---|---|---|---|
 | **X1** | 1.14 "Video lip sync: set `fallback_used`/`fallback_reason`; require a real weight manifest for `is_available`" | UI banners the jaw-warp fallback | `is_available` still only checks torch+MPS/CUDA (`live_portrait.py:41-48`); the *internal* fallback returns `True`, so the orchestrator never sets `fallback_used` (`:929-936`). Reclassify as open — it is **E4**. |
@@ -170,10 +174,10 @@ Two of these (X1, X2) are exactly the class of defect Phase 1 existed to close:
 a capability that reports success while doing something else, and work that is
 computed then discarded. Phase 1's status line should read 17/18, not 18/18.
 
-## 9. Priorities
+## 9. Priorities (all delivered — see Phase 7)
 
-Ordered by value per day of work; each maps to a task in
-[Phase 7](application-remediation-plan-2026-11.md#phase-7--music-video-production-2026-11-18-added).
+Each priority below became a Phase 7 task and is now implemented; kept as the
+rationale for ordering.
 
 **P0 — truth (a user must be able to believe the output):** E4/X1 lip-sync
 honesty · D6 render success verification · W3/U3 retake honesty · U1 fake

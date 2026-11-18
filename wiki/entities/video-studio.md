@@ -74,7 +74,11 @@ The video pipeline now guarantees instant cancellation across all execution laye
 ## 4. Singing Avatar & Lip-Syncing — what actually runs
 
 > [!WARNING]
-> **Reality (audit 2026-11-18, finding E4):** `LivePortraitProvider.render_lip_sync`
+> **Reality (audit 2026-11-18, finding E4 — fixed in Phase 7.1):** the provider now
+> sets `last_outcome` on every call, `is_available` requires weights *and* an
+> audio-driven entry point, and the orchestrator reports the engine that ran
+> ("jaw_warp" vs "live_portrait") with a reason the UI can banner. What follows is
+> the pre-fix behaviour that made the claim false. `LivePortraitProvider.render_lip_sync`
 > delegates to `SmoothVisemeFallbackProvider` when weights are missing **or**
 > `is_available` is False — and `is_available` only checks `torch` + MPS/CUDA
 > (`lip_sync/live_portrait.py:41-48, 76-91`). The delegate's `True` is returned to the
@@ -127,7 +131,7 @@ Pre-rendering visual scene keyframes (`POST /videos/keyframes/{job_id}`) provide
 
 For artists wanting an instant lyric video without a multi-scene diffusion pass, the platform incorporates a dedicated **Fast-Path Lyric Video Engine** (`POST /videos/render-lyric/{job_id}`):
 - **Hardware Acceleration Pipeline**: Employs macOS Apple Silicon `h264_videotoolbox` (or a `libx264` fallback) to encode a 3-minute track in well under a minute at a high-bitrate video stream. Audio is **AAC 256 kbps** (not 320), and this path sets `+faststart` — unlike the advanced master (audit D2/D3).
-- **Delivery reality**: still one hardcoded profile with no loudness normalisation or QC; a "broadcast-ready" claim needs the export presets and QC gate in Phase 7.14–7.17.
+- **Delivery (Phase 7.12–7.17, landed 2026-11-18)**: one preset-targeted delivery encode with `+faststart`, loudness normalisation to −14 LUFS / −1 dBTP (measured and stored), audio passthrough when the master is already AAC, an automated QC gate at sub-second thresholds, and SRT/VTT/ASS sidecars beside every master. Delivery presets (YouTube 1080p/2160p, Vevo HD, Spotify Canvas, broadcast ProRes) and aspect variants are served by `GET /videos/presets`, `POST /videos/{job}/export/{preset}` and `POST /videos/{job}/variants`.
 - **Visual Background Modes & Dynamic Drift**:
   - `cover_art`: Smooth cinematic Ken Burns camera drift (`zoompan=z='min(zoom+0.0003,1.15)':d=...`) applied to high-resolution album cover artwork or custom stills.
   - `spectrum`: Procedural audio-reactive frequency spectrum visualizer overlaid onto dark gradient canvases.

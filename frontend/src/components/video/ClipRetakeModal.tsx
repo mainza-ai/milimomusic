@@ -61,8 +61,18 @@ export const ClipRetakeModal: React.FC<ClipRetakeModalProps> = ({
     };
 
     return (
-        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md">
-            <div className="w-full max-w-lg bg-white dark:bg-[#12141c] border border-black/[0.08] dark:border-white/10 rounded-3xl shadow-apple-2xl flex flex-col overflow-hidden">
+        <div
+            className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/60 backdrop-blur-md"
+            role="presentation"
+            onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}
+        >
+            <div
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="retake-dialog-title"
+                onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}
+                className="w-full max-w-lg bg-white dark:bg-[#12141c] border border-black/[0.08] dark:border-white/10 rounded-3xl shadow-apple-2xl flex flex-col overflow-hidden"
+            >
                 {/* Header */}
                 <div className="px-6 py-4 border-b border-black/[0.06] dark:border-white/10 flex items-center justify-between">
                     <div className="flex items-center space-x-2.5">
@@ -70,7 +80,7 @@ export const ClipRetakeModal: React.FC<ClipRetakeModalProps> = ({
                             <RefreshCw size={16} />
                         </div>
                         <div>
-                            <h3 className="text-sm font-bold text-slate-900 dark:text-white">
+                            <h3 id="retake-dialog-title" className="text-sm font-bold text-slate-900 dark:text-white">
                                 Retake Scene #{clipIndex}
                             </h3>
                             <p className="text-[11px] text-slate-500 font-mono">

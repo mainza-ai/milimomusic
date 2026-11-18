@@ -38,6 +38,8 @@ class LipSyncEngineInfo:
     requires: Optional[str] = None
     licence: Optional[str] = None
     neural: bool = False
+    #: Regions whose licence excludes the engine (from the provider spec).
+    territory_blocked: Optional[List[str]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         return asdict(self)
@@ -69,7 +71,7 @@ def engine_catalogue() -> List[LipSyncEngineInfo]:
     has_fal = bool(os.environ.get("FAL_KEY"))
     lp_reason = _live_portrait_reason()
 
-    return [
+    engines = [
         LipSyncEngineInfo(
             id=JAW_WARP,
             name="Procedural Jaw-Warp Animatic",
@@ -111,6 +113,32 @@ def engine_catalogue() -> List[LipSyncEngineInfo]:
             neural=True,
         ),
     ]
+
+    # Plan 8.4: the external tiers are real engines with a declared contract.
+    # Reporting them here is what makes "install the weights and it works" true.
+    try:
+        from app.services.video.lip_sync.cli_provider import (
+            AVATAR_CLI_SPECS,
+            spec_available,
+            spec_reason,
+        )
+
+        for spec in AVATAR_CLI_SPECS.values():
+            engines.append(LipSyncEngineInfo(
+                id=spec.id,
+                name=spec.name,
+                kind="local",
+                available=spec_available(spec),
+                reason=spec_reason(spec),
+                requires=f"{spec.env_var} → {spec.script}",
+                licence=spec.licence,
+                neural=True,
+                territory_blocked=list(spec.territory_blocked) or None,
+            ))
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.debug("External avatar engines not enumerated: %s", exc)
+
+    return engines
 
 
 def get_engine(engine_id: Optional[str]) -> Optional[LipSyncEngineInfo]:
@@ -154,6 +182,13 @@ def resolve_local_provider(preferred: Optional[str]) -> Tuple[Any, Optional[str]
             SmoothVisemeFallbackProvider(),
             f"{info.name} unavailable: {info.reason} Used the jaw-warp animatic.",
         )
+
+    # External tiers run through their own CLI contract (plan 8.4).
+    from app.services.video.lip_sync.cli_provider import provider_for
+
+    external = provider_for(wanted)
+    if external is not None:
+        return external, None
 
     from app.services.video.lip_sync.live_portrait import LivePortraitProvider
 

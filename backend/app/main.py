@@ -5869,6 +5869,72 @@ def get_job_artifact_manifest(job_id: str):
     )
 
 
+class CharacterCreateRequest(SQLModel):
+    name: str
+    description: Optional[str] = None
+    # A filesystem path to an upload/gallery image; validated when copied.
+    plate_source: Optional[str] = None
+
+
+class CharacterUpdateRequest(SQLModel):
+    name: Optional[str] = None
+    description: Optional[str] = None
+    plate_source: Optional[str] = None
+
+
+@app.get("/characters")
+def list_characters_endpoint():
+    """Reusable performer identities (plan 8.3)."""
+    from app.services.characters import list_characters
+
+    with Session(engine) as session:
+        return {"status": "ok", "characters": list_characters(session)}
+
+
+@app.post("/characters", status_code=201)
+def create_character_endpoint(req: CharacterCreateRequest):
+    from app.services.characters import create_character
+
+    with Session(engine) as session:
+        try:
+            character = create_character(
+                session, name=req.name, description=req.description,
+                plate_source=req.plate_source,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": {
+                "code": "invalid_character", "message": str(exc)}})
+        return {"status": "ok", "character": character.to_dict()}
+
+
+@app.patch("/characters/{character_id}")
+def update_character_endpoint(character_id: str, req: CharacterUpdateRequest):
+    from app.services.characters import update_character
+
+    with Session(engine) as session:
+        try:
+            character = update_character(
+                session, character_id, name=req.name,
+                description=req.description, plate_source=req.plate_source,
+            )
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail={"error": {
+                "code": "invalid_character", "message": str(exc)}})
+        if not character:
+            raise HTTPException(status_code=404, detail="Character not found")
+        return {"status": "ok", "character": character.to_dict()}
+
+
+@app.delete("/characters/{character_id}")
+def delete_character_endpoint(character_id: str):
+    from app.services.characters import delete_character
+
+    with Session(engine) as session:
+        if not delete_character(session, character_id):
+            raise HTTPException(status_code=404, detail="Character not found")
+    return {"status": "deleted", "character_id": character_id}
+
+
 @app.get("/system/licences")
 def get_licence_audit():
     """Which models this build may legally ship — and which defaults block that.
@@ -5895,6 +5961,18 @@ def list_lipsync_engines():
 
     engines = [e.to_dict() for e in engine_catalogue()]
     return {"status": "ok", "engines": engines}
+
+
+@app.get("/videos/capability-matrix")
+def get_video_capability_matrix():
+    """What this machine will actually render per engine (plan 8.10).
+
+    The clamp lives in the generator; this exposes it *before* a long render so the
+    picker can say "832×480 on this Mac" instead of letting the user discover it.
+    """
+    from app.services.video.capability import matrix
+
+    return {"status": "ok", **matrix()}
 
 
 @app.get("/videos/presets")

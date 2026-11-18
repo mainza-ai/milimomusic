@@ -705,6 +705,8 @@ class VideoOrchestrator:
         width: int,
         height: int,
         cancel_event: asyncio.Event,
+        reference_image: Optional[str] = None,
+        reshoot_threshold: Optional[float] = None,
     ) -> Dict[int, str]:
         """Diffuse every missing scene plate in ONE image-model load.
 
@@ -781,6 +783,54 @@ class VideoOrchestrator:
                 staged[clip_idx] = kf_path
             except OSError as exc:
                 logger.warning(f"Failed staging scene plate for scene {clip_idx}: {exc}")
+
+        # Plan 8.1: score the staged plates against the character reference and
+        # re-roll the losers once. AutoMV's ablation credits this loop with the
+        # largest consistency gain of anything they measured, and it costs no
+        # extra weights — only one extra diffusion per weak plate.
+        if reference_image and os.path.isfile(reference_image) and staged and not cancel_event.is_set():
+            try:
+                from app.services.video.verifier import (
+                    DEFAULT_RESHoot_THRESHOLD,
+                    needs_reshoot,
+                    score_candidate,
+                    select_best,
+                )
+
+                threshold = DEFAULT_RESHoot_THRESHOLD if reshoot_threshold is None else float(reshoot_threshold)
+                rerolled = 0
+                for clip_idx, clip in pending:
+                    kf_path = staged.get(clip_idx)
+                    if not kf_path or not os.path.isfile(kf_path):
+                        continue
+                    score = score_candidate(kf_path, reference_image)
+                    if not needs_reshoot(score, threshold):
+                        continue
+                    if cancel_event.is_set():
+                        break
+                    retry = await asyncio.to_thread(
+                        image_service.generate_scene_background,
+                        prompt=str(getattr(clip, "prompt", "") or ""),
+                        style=style, width=width, height=height,
+                        auto_unload=False,
+                        cancel_check=lambda: cancel_event.is_set(),
+                    )
+                    retry_path = retry.get("dest_path") if retry.get("ok") else None
+                    if not retry_path or not os.path.isfile(retry_path):
+                        continue
+                    best, _scores = select_best([kf_path, retry_path], reference_image)
+                    if best == retry_path:
+                        shutil.copy(retry_path, kf_path)
+                        image_service.stamp_scene_plate(kf_path, str(getattr(clip, "prompt", "") or ""), style)
+                        rerolled += 1
+                        logger.info(
+                            "Reshot scene %s: %.2f → better candidate kept",
+                            clip_idx, score.total,
+                        )
+                if rerolled:
+                    logger.info("Verifier re-rolled %d weak scene plate(s)", rerolled)
+            except Exception as _verify_err:
+                logger.warning("Plate verification skipped: %s", _verify_err)
 
         if batch.get("cancelled"):
             logger.info(f"Scene pre-build cancelled for job {job.id} after {len(staged)} plates")
@@ -874,6 +924,27 @@ class VideoOrchestrator:
             vocal_stem = self.resolve_vocals_stem(job)
             face_image = self.resolve_face_image(job, config.get("character_image_path") or config.get("face_image_path"))
 
+            # Plan 8.3: a character reference supplies the description and the plate,
+            # so the same performer can be reused across songs without re-entry.
+            character_id = config.get("character_id")
+            if character_id:
+                try:
+                    from sqlmodel import Session as _Session
+
+                    from app.main import engine as _engine
+                    from app.services.characters import resolve_for_render
+
+                    with _Session(_engine) as _cs:
+                        character = resolve_for_render(_cs, character_id)
+                    if character.get("description") and not config.get("character_desc"):
+                        config["character_desc"] = character["description"]
+                    if character.get("plate_path"):
+                        face_image = character["plate_path"]
+                    logger.info("Character %s resolved for render (plate=%s)",
+                                character_id, bool(character.get("plate_path")))
+                except Exception as _char_err:
+                    logger.warning("Could not resolve character %s: %s", character_id, _char_err)
+
             # Step 1: Song & Scene Planning
             self.update_task(task_id, step="Segmenting Song into Musical Scenes", progress=12)
 
@@ -955,9 +1026,30 @@ class VideoOrchestrator:
                     width=w,
                     height=h,
                     cancel_event=cancel_event,
+                    # Identity reference for the verifier (photo/plate the user chose).
+                    reference_image=config.get("character_image_path") or face_image,
+                    reshoot_threshold=config.get("plate_reshoot_threshold"),
                 )
                 if scene_plates:
                     self.update_task(task_id, step="Scene background plates ready", progress=20)
+
+            # Line/word timings are needed by BOTH the lip-sync pass (articulation
+            # gate, plan 8.13) and the karaoke burn-in, so they are computed once.
+            timed_lines_for_video: List[Dict[str, Any]] = []
+            if job.lyrics and (burn_lyrics or enable_lip_sync):
+                try:
+                    if getattr(job, "timed_lyrics_json", None):
+                        timed_lines_for_video = json.loads(job.timed_lyrics_json) or []
+                    elif enable_lip_sync or burn_lyrics:
+                        timed_lines_for_video = await asyncio.to_thread(
+                            lyric_sync_engine.align_lyrics,
+                            lyrics=job.lyrics,
+                            duration_sec=float((job.duration_ms or 180000) / 1000.0),
+                            vocal_stem_path=vocal_stem or resolved_master,
+                        )
+                    logger.info("Timed %d lyric line(s) for lip-sync and subtitles", len(timed_lines_for_video))
+                except Exception as _tl_err:
+                    logger.warning("Could not prepare lyric timings: %s", _tl_err)
 
             # Step 2: Render individual scene clips
             self.update_task(task_id, step="Rendering Video Scenes & Lip-Sync Performance", progress=20)
@@ -1001,7 +1093,10 @@ class VideoOrchestrator:
                                 out_path=clip_file,
                                 width=w, height=h,
                                 cancel_event=cancel_event,
-                                cancel_check=_is_cancelled
+                                cancel_check=_is_cancelled,
+                                # Articulation gate: open the mouth on sung words,
+                                # not on whatever the mix is loudest at (plan 8.13).
+                                word_timings=timed_lines_for_video or None,
                             )
                             clip_outcome = dict(getattr(lipsync_provider, "last_outcome", {}) or {})
                             if not success or not os.path.isfile(clip_file) or os.path.getsize(clip_file) == 0:
@@ -1203,7 +1298,7 @@ class VideoOrchestrator:
             ass_path = None
             if burn_lyrics and job.lyrics:
                 try:
-                    timed_lines = lyric_sync_engine.align_lyrics(
+                    timed_lines = timed_lines_for_video or lyric_sync_engine.align_lyrics(
                         lyrics=job.lyrics,
                         duration_sec=float((job.duration_ms or 180000) / 1000.0),
                         vocal_stem_path=vocal_stem or resolved_master

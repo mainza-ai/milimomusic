@@ -14,6 +14,7 @@ which non-permissive models are reachable as a default.
 from __future__ import annotations
 
 import logging
+import os
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
@@ -112,16 +113,22 @@ def audit_catalogue(
     for record in models:
         counts[record["class"]] = counts.get(record["class"], 0) + 1
 
+    # Milimo is a non-commercial, locally-run project, so a non-permissive default is
+    # a *notice*, not a failure — provided the deployment says so deliberately.
+    acknowledged = os.environ.get("MILIMO_NONCOMMERCIAL_OK") == "1"
+
     return {
         "models": models,
         "defaults": resolved,
         "blockers": blockers,
         "counts": counts,
-        "ok": not blockers,
+        "ok": (not blockers) or acknowledged,
+        "acknowledged": acknowledged,
         "note": (
             "A blocker is a model that is non-commercial or unclassified AND reachable "
-            "as a default. Replace it, or acknowledge the licence explicitly for your "
-            "deployment."
+            "as a default. Replace it, or set MILIMO_NONCOMMERCIAL_OK=1 for a "
+            "deliberately non-commercial deployment (which is this project's stated "
+            "purpose)."
         ),
     }
 

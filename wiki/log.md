@@ -3216,3 +3216,30 @@ Deliverables: [Video Capability Landscape 2026-11](video-capability-landscape-20
 [Phase 8](application-remediation-plan-2026-11.md#phase-8--capability-upgrades-2026-11-18-added).
 Verification: **681 backend tests**, 38 frontend tests, ruff clean, parity 180/184,
 `tsc` + `vite build` green.
+
+## [2026-11-18] implement | Phase 8 execution — verifier, characters, avatar tiers, viseme timing, capability matrix
+Executed the Phase 8 items that need no model downloads, so the pipeline is fully
+functional on this machine as-is:
+- **8.1 plate verifier + reshoot.** `services/video/verifier.py` scores staged plates
+  against the character reference with dependency-free statistics (dHash identity,
+  palette distance, Laplacian sharpness); weak plates are re-rolled once. Reshoot keys
+  on an identity floor, not the blended total — a sharp, colour-matched plate of the
+  wrong person still fails.
+- **8.3 character library.** `Character` table + Alembic 0009, CRUD endpoints,
+  content-addressed plates (shared plates survive deletion), `character_id` on the
+  render request, and an inspector selector + "Save" action.
+- **8.4 external avatar tiers.** `lip_sync/cli_provider.py` drives EchoMimicV3-Flash
+  and Wan 2.2 S2V through their real argv contracts; availability is the script being
+  present at the env-var path, and the registry reports licence, VRAM, fps and
+  territory blocks. Installing weights is now the only step to activate a tier.
+- **8.13 Tier-0 viseme timing.** `services/video/visemes.py` gates the jaw-warp on
+  forced-alignment word timings (open on syllables, shut between phrases) instead of
+  following loudness; timings are computed once and reused by the subtitle burn.
+- **8.10 capability matrix.** `/videos/capability-matrix` reports the real effective
+  resolution/fps per engine on this device (MPS clamps Wan to 832×480/33f); the
+  inspector shows it for the selected engine before a render.
+- **8.9b/c licence acknowledgement + territory.** `MILIMO_NONCOMMERCIAL_OK=1`
+  acknowledges a deliberately non-commercial deployment (this project's stance)
+  without hiding the finding; territory blocks are exposed per engine.
+Verification: **725 backend tests passed** (+44), 38 frontend tests, ruff clean,
+parity 185 routes / 189 calls, `tsc` + `vite build` green.

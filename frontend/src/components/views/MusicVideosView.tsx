@@ -3,6 +3,7 @@ import { confirmAction } from '../../utils/confirm';
 import {
     type Job,
     videoApi,
+    charactersApi,
     trackApi,
     api,
     galleryApi,
@@ -16,7 +17,8 @@ import {
     type VideoClipSegment,
     type VideoTake,
     type VideoProvider,
-    type DeliveryPreset
+    type DeliveryPreset,
+    type CharacterSummary
 } from '../../api';
 import { toast } from '../../utils/toast';
 import { AppFooter } from '../ui/AppFooter';
@@ -311,6 +313,10 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     // Audit E6: keeps the performer consistent across scenes.
     const [consistencyMode, setConsistencyMode] = useState<'off' | 'character' | 'chain'>('character');
     const [chainScope, setChainScope] = useState<'section' | 'all'>('section');
+    // Plan 8.3: reusable performer identities.
+    const [characters, setCharacters] = useState<CharacterSummary[]>([]);
+    const [characterId, setCharacterId] = useState<string | null>(null);
+    const [isSavingCharacter, setIsSavingCharacter] = useState(false);
 
     // Planning & Task Tracking
     const [isPlanning, setIsPlanning] = useState(false);
@@ -412,6 +418,11 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const [takes, setTakes] = useState<VideoTake[]>([]);
     const [providers, setProviders] = useState<VideoProvider[]>([]);
     const [presets, setPresets] = useState<DeliveryPreset[]>([]);
+    // What this machine actually renders (plan 8.10).
+    const [capability, setCapability] = useState<{
+        device: string;
+        engines: Array<{ engine: string; clamped: boolean; native: any; effective: any; notes: string[] }>;
+    } | null>(null);
     const [lipSyncEngines, setLipSyncEngines] = useState<Array<{
         id: string; name: string; kind: 'local' | 'cloud'; available: boolean;
         reason?: string | null; requires?: string | null; licence?: string | null; neural?: boolean;
@@ -670,6 +681,12 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         videoApi.getLipSyncEngines()
             .then((res) => setLipSyncEngines(res.engines || []))
             .catch(() => setLipSyncEngines([]));
+        videoApi.getCapabilityMatrix()
+            .then((matrix) => setCapability({ device: matrix.device, engines: matrix.engines || [] }))
+            .catch(() => setCapability(null));
+        charactersApi.list()
+            .then((res) => setCharacters(res.characters || []))
+            .catch(() => setCharacters([]));
     }, []);
 
     // Plan Scenes Breakdown
@@ -1071,6 +1088,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 character_desc: characterPromptNote,
                 consistency_mode: consistencyMode,
                 chain_scope: chainScope,
+                character_id: characterId,
                 resolution,
                 aspect_ratio: aspectRatio,
                 provider: videoProvider,
@@ -1299,6 +1317,32 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
             toast(err?.response?.data?.detail?.error?.message || 'Export failed to start.', 'error');
         }
     }, [activeSong, aspectRatio]);
+
+    const handleSaveCharacter = useCallback(async () => {
+        const description = characterPromptNote.trim();
+        if (!description) {
+            toast('Describe the character first.', 'error');
+            return;
+        }
+        setIsSavingCharacter(true);
+        try {
+            // Name defaults to the first few words of the description; it can be
+            // renamed later through the API.
+            const name = description.split(/[,.]/)[0].slice(0, 40) || 'Character';
+            const created = await charactersApi.create({ name, description });
+            setCharacters((prev) => [created.character, ...prev]);
+            setCharacterId(created.character.id);
+            toast(`Character "${created.character.name}" saved and selected.`, 'success');
+        } catch (err: any) {
+            toast(
+                err?.response?.data?.detail?.error?.message
+                || 'Could not save the character.',
+                'error',
+            );
+        } finally {
+            setIsSavingCharacter(false);
+        }
+    }, [characterPromptNote]);
 
     const handleCreateVariants = useCallback(async () => {
         if (!activeSong) return;
@@ -1695,6 +1739,12 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             onChangeConsistencyMode={setConsistencyMode}
                             chainScope={chainScope}
                             onChangeChainScope={setChainScope}
+                            capability={capability}
+                            characters={characters}
+                            characterId={characterId}
+                            onChangeCharacter={setCharacterId}
+                            onSaveCharacter={handleSaveCharacter}
+                            isSavingCharacter={isSavingCharacter}
                             onChangeCharacterPromptNote={setCharacterPromptNote}
                         />
                     </div>

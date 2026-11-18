@@ -36,10 +36,10 @@ re-verification (§Corrections) and 9 are deferred with reasons below.** Phase 7
 | **4 — Media truth** | ✅ **13/16** | clip duration/geometry normalisation, real timeline export, storyboard persistence, fal-only cloud, scoped cancel, subtitle escaping, temp hygiene, proxies, single fps, performer scoping, real audio analysis; 4.8 **closed by 7.10**, 4.2's reporting clause **closed by 7.3** (4.5 remains unverified without a live fal key) |
 | **5 — Platform & API** | 🟡 **9/12** | one error envelope, 202/201, typed bodies everywhere, idempotency, SSE replay + topics, rate limits by template, share links, accessible confirms |
 | **6 — Hardening** | ✅ **8/8** | CI lint/audit/migration-smoke/unit/E2E jobs, universal lockfile, `npm ci`, observability, log hygiene, capability matrix |
-| **8 — Capability upgrades** | 🟡 **3/14** | added 2026-11-18 from the [Video Capability Landscape](video-capability-landscape-2026-11.md); licence audit, minterpolate stopgap and render stall sweeper shipped, the model adoptions are planned with smoke-test gates |
+| **8 — Capability upgrades** | 🟡 **7/14** + 1 partial | added 2026-11-18 from the [Video Capability Landscape](video-capability-landscape-2026-11.md); verifier/reshoot, character library, external avatar tiers, licence gate, capability matrix, viseme timing, stall sweeper shipped — the weight-dependent adoptions are gated on smoke tests |
 | **7 — Music video production** | ✅ **29/29** | added 2026-11-18 from the [Music Video Pipeline Audit](music-video-pipeline-audit-2026-11.md); implemented and verified the same day, plus follow-ups 7.26–7.29 (consistency, lip-sync registry, render reconciliation, chain scope) |
 
-**Verification (2026-11-18, after Phase 8 groundwork):** backend `681 passed, 2 skipped,
+**Verification (2026-11-18, after Phase 8 implementation):** backend `725 passed, 2 skipped,
 3 deselected` (0 failures); frontend `38 vitest tests`;
 `tsc -b` + `vite build` green (entry 588 kB / 163 kB gz); `ruff` bug-class gate
 clean; API parity 178 routes / 182 client calls; Alembic at `0008`.
@@ -343,20 +343,22 @@ is gated on a **smoke test on target hardware** — vendor VRAM/timing claims ar
 not accepted as evidence, and a failure is recorded in the capability matrix rather
 than silently degrading.
 
-> **Status: 3/14.** Shipped this cycle: the licence audit (8.9a), the frame-rate
-> stopgap (8.6a) and the render stall sweeper (8.12). The model adoptions need
-> weights (tens of GB) and a hardware smoke test; the lip-sync ladder is ranked
-> per the [landscape research](video-capability-landscape-2026-11.md#5-singing-licences-decide-the-shortlist-vram-decides-the-tier).
+> **Status: 7/14 implemented, 8.6 partial.** Shipped: plate verifier + reshoot
+> (8.1), character library (8.3), external avatar tiers (8.4), licence gate with
+> explicit acknowledgement and territory reporting (8.9), capability matrix (8.10),
+> viseme-driven Tier 0 (8.13), render stall sweeper (8.12), and the frame-rate
+> stopgap (8.6a). Remaining work needs model weights (tens of GB) and a hardware
+> smoke test — each row states that gate rather than pretending otherwise.
 
 ### 8A — Identity and consistency (G3, G6, G7)
 
 | ID | Task | Files | Acceptance |
 |---|---|---|---|
-| 8.1 | **Verifier + reshoot loop.** Generate 2–3 candidate plates per scene, score identity/instruction adherence against the character bank, reshoot the loser. AutoMV's ablation credits this with the largest measured consistency gain — with no identity model. | new `services/video/verifier.py`, `image_service.pregenerate_scene_backgrounds`, `video_orchestrator._prebuild_scene_plates` | A deliberately off-character candidate is rejected and re-rolled; the accepted plate records its score |
+| ✅ 8.1 | **Verifier + reshoot loop.** Generate 2–3 candidate plates per scene, score identity/instruction adherence against the character bank, reshoot the loser. AutoMV's ablation credits this with the largest measured consistency gain — with no identity model. | new `services/video/verifier.py`, `image_service.pregenerate_scene_backgrounds`, `video_orchestrator._prebuild_scene_plates` | A deliberately off-character candidate is rejected and re-rolled; the accepted plate records its score |
 | 8.2 | **Reference → keyframe → I2V.** `generate_scene_background(reference_images=[...])` using **FLUX.2 klein 4B** (Apache-2.0, up to 4 refs); the character plate conditions every scene still. | `services/image_service.py`, `video_orchestrator.py` | Same character id ⇒ plates that pass 8.1 without prompt changes |
-| 8.3 | **Character library.** `Character` row (plate, description, optional LoRA), CRUD, `character_id` on render config, plate reused across songs. | `models.py` + Alembic, `main.py`, video UI | Two different songs using one character share the plate hash |
-| 8.4 | **Avatar provider interface + tier ladder.** One `generate(image, audio, prompt, duration, fps)` contract with per-provider metadata (`licence`, `territory_blocked[]`, `min_vram_gb`, `fps`), so routing is a check rather than a doc note: `procedural` (tier 0), **`echomimic_flash`** (tier 1, Apache-2.0, 12 GB, 25 fps, `infer_flash.py`), `infinitetalk` / `longcat_mlx` (tier 2), `wan_s2v` / `liveavatar` (tier 3, 80 GB). | new `lip_sync/providers/`, `lip_sync/registry.py`, `lip_sync/base.py` | An EU user on an 8 GB card can never be routed to Hunyuan-Avatar; each provider declares licence + VRAM + fps |
-| 8.13 | **Tier-0 viseme timing.** Drive the jaw-warp from the MMS forced-alignment word timings we already compute for subtitles, instead of an RMS envelope. | `lip_sync/fallback.py`, `transcription/karaoke.py` | The always-available path opens the mouth on syllables, not on loudness |
+| ✅ 8.3 | **Character library.** `Character` row (plate, description, optional LoRA), CRUD, `character_id` on render config, plate reused across songs. | `models.py` + Alembic, `main.py`, video UI | Two different songs using one character share the plate hash |
+| ✅ 8.4 | **Avatar provider interface + tier ladder.** One `generate(image, audio, prompt, duration, fps)` contract with per-provider metadata (`licence`, `territory_blocked[]`, `min_vram_gb`, `fps`), so routing is a check rather than a doc note: `procedural` (tier 0), **`echomimic_flash`** (tier 1, Apache-2.0, 12 GB, 25 fps, `infer_flash.py`), `infinitetalk` / `longcat_mlx` (tier 2), `wan_s2v` / `liveavatar` (tier 3, 80 GB). | new `lip_sync/providers/`, `lip_sync/registry.py`, `lip_sync/base.py` | An EU user on an 8 GB card can never be routed to Hunyuan-Avatar; each provider declares licence + VRAM + fps |
+| ✅ 8.13 | **Tier-0 viseme timing.** Drive the jaw-warp from the MMS forced-alignment word timings we already compute for subtitles, instead of an RMS envelope. | `lip_sync/fallback.py`, `transcription/karaoke.py` | The always-available path opens the mouth on syllables, not on loudness |
 | 8.14 | **Wan VACE reference conditioning** (14B tier). `WanVACEGenerator` passing `reference_images`; registry/model-spec entry. | new `generators/diffusers_vace.py`, `model_specs.py`, `model_manager.py` | Conditioned clip keeps identity where the text-only clip drifts; refuses honestly without weights |
 
 ### 8B — Resolution and timing (G2, G5)
@@ -364,7 +366,7 @@ than silently degrading.
 | ID | Task | Files | Acceptance |
 |---|---|---|---|
 | 8.5 | **FastMetal Wan 2.2 TI2V-5B** (Apache-2.0, 1280×704 @24 fps). New generator variant + catalogue entry; remove the 832×480 MPS clamp for this path. | `generators/diffusers_wan.py`, `model_specs.py`, `model_manager.py` | Smoke test measures wall-clock and peak memory on the target Mac; a failure is recorded, not hidden |
-| 8.6 | **RIFE interpolation** (MIT) replacing `minterpolate`. **8.6a shipped:** `minterpolate` blend keeps 16 fps Wan 2.1 out of the delivery path; it is a stopgap and is labelled as such. | `services/video/clip_normalise.py`, `video_orchestrator._finalise_master` | A 16→24 conversion shows no duplicated-frame runs; the master records which backend ran |
+| 🟡 8.6 | **RIFE interpolation** (MIT) replacing `minterpolate`. **8.6a shipped:** `minterpolate` blend keeps 16 fps Wan 2.1 out of the delivery path; it is a stopgap and is labelled as such. | `services/video/clip_normalise.py`, `video_orchestrator._finalise_master` | A 16→24 conversion shows no duplicated-frame runs; the master records which backend ran |
 | 8.7 | **1080p uplift stage**: FlashVSR+ (CUDA) / SeedVR2-3B via MLX (Mac) as an optional post-process with honest unavailability. | new `services/video/upscale.py`, delivery presets | A 720p master reaches 1080p with temporal consistency; unavailable hardware says so |
 
 ### 8C — Motion (G4)
@@ -377,8 +379,8 @@ than silently degrading.
 
 | ID | Task | Files | Acceptance |
 |---|---|---|---|
-| 8.9 | **Licence gate.** **8.9a shipped:** `core/licensing.py` + `GET /system/licences` classify every model and report blockers (currently `flux_2_klein_9b`, `flux-non-commercial-license`). **8.9b:** CI fails when a reachable default is non-commercial/unknown unless explicitly acknowledged; **8.9c:** territory blocks (`EU/UK/US/South Korea` exclusions) become route-level checks, not prose. | `core/licensing.py`, CI, `.env.example`, avatar registry | A non-commercial or territory-blocked default cannot ship unnoticed |
-| 8.10 | **Video capability matrix** endpoint + UI: per engine, required VRAM/resolution/fps and measured status, so the ceiling is visible *before* a render. | `model_specs.py`, `/videos/models`, `VideoInspectorDock.tsx` | The picker states "720p needs CUDA" instead of failing after 40 minutes |
+| ✅ 8.9 | **Licence gate.** **8.9a shipped:** `core/licensing.py` + `GET /system/licences` classify every model and report blockers (currently `flux_2_klein_9b`, `flux-non-commercial-license`). **8.9b:** CI fails when a reachable default is non-commercial/unknown unless explicitly acknowledged; **8.9c:** territory blocks (`EU/UK/US/South Korea` exclusions) become route-level checks, not prose. | `core/licensing.py`, CI, `.env.example`, avatar registry | A non-commercial or territory-blocked default cannot ship unnoticed |
+| ✅ 8.10 | **Video capability matrix** endpoint + UI: per engine, required VRAM/resolution/fps and measured status, so the ceiling is visible *before* a render. | `model_specs.py`, `/videos/models`, `VideoInspectorDock.tsx` | The picker states "720p needs CUDA" instead of failing after 40 minutes |
 | 8.11 | **Ground-truth the cloud path.** One real fal render with a key; refresh the price table from the provider's docs. | `pricing.py`, script | Estimate within 20% of the invoice; the path is no longer theoretical |
 | 8.12 | **Render stall sweeper.** ✅ shipped — `sweep_stalled_renders()` fails a take that has made no progress within `MILIMO_RENDER_STALL_SECONDS` (default 1 h), in the existing sweeper loop. | `services/video/takes.py`, `main.py` | A wedged render reaches a terminal state instead of showing progress forever |
 

@@ -45,6 +45,17 @@ export interface VideoInspectorProps {
     /** How far last-frame chaining reaches (plan 7.29). */
     chainScope?: 'section' | 'all';
     onChangeChainScope?: (scope: 'section' | 'all') => void;
+    /** What this machine will actually render (plan 8.10). */
+    capability?: {
+        device: string;
+        engines: Array<{ engine: string; clamped: boolean; native: any; effective: any; notes: string[] }>;
+    } | null;
+    /** Reusable performer identities (plan 8.3). */
+    characters?: Array<{ id: string; name: string; description?: string | null; has_plate: boolean }>;
+    characterId?: string | null;
+    onChangeCharacter?: (id: string | null) => void;
+    onSaveCharacter?: () => void;
+    isSavingCharacter?: boolean;
     /** What the backend says can actually run right now (plan 7.20). */
     availableProviders?: Array<{ id: string; provider_type?: string; is_available: boolean; has_api_key?: boolean; requires_api_key?: boolean; description?: string }>;
     clipDuration: number;
@@ -162,6 +173,12 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
     onChangeConsistencyMode,
     chainScope = 'section',
     onChangeChainScope,
+    capability = null,
+    characters = [],
+    characterId = null,
+    onChangeCharacter,
+    onSaveCharacter,
+    isSavingCharacter = false,
     clipDuration,
     onChangeClipDuration,
     onResetClipDuration,
@@ -572,6 +589,66 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                             );
                         })()}
                     </div>
+
+                    {/* Character library (plan 8.3): reuse one performer across songs. */}
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-bold uppercase tracking-wider text-slate-400 block">
+                            Character
+                        </label>
+                        <div className="flex items-center gap-1.5">
+                            <select
+                                aria-label="Character"
+                                value={characterId || ''}
+                                onChange={(e) => onChangeCharacter?.(e.target.value || null)}
+                                className="flex-1 text-xs apple-input rounded-lg px-2 py-1.5 bg-white dark:bg-black/30 border border-black/10 dark:border-white/10"
+                            >
+                                <option value="">No saved character</option>
+                                {characters.map((c) => (
+                                    <option key={c.id} value={c.id}>
+                                        {c.name}{c.has_plate ? ' · with plate' : ''}
+                                    </option>
+                                ))}
+                            </select>
+                            {onSaveCharacter && (
+                                <button
+                                    type="button"
+                                    onClick={onSaveCharacter}
+                                    disabled={isSavingCharacter || !characterPromptNote.trim()}
+                                    title={characterPromptNote.trim()
+                                        ? 'Save this description as a reusable character'
+                                        : 'Describe the character first'}
+                                    className="shrink-0 px-2 py-1.5 rounded-lg bg-teal-500/10 hover:bg-teal-500/20 border border-teal-500/30 text-[10px] font-bold text-teal-700 dark:text-teal-300 disabled:opacity-40 disabled:cursor-not-allowed"
+                                >
+                                    {isSavingCharacter ? 'Saving…' : 'Save'}
+                                </button>
+                            )}
+                        </div>
+                        <p className="text-[10px] text-slate-400 leading-relaxed">
+                            {characterId
+                                ? 'This character supplies the description and reference plate for every scene.'
+                                : 'Save a description once and reuse the same performer across songs.'}
+                        </p>
+                    </div>
+
+                    {/* Plan 8.10: state the machine's real ceiling before a long render. */}
+                    {capability && (() => {
+                        const entry = capability.engines.find((e) => e.engine === videoModel);
+                        if (!entry) return null;
+                        return (
+                            <div className="px-3 py-2 rounded-xl bg-black/[0.02] dark:bg-white/[0.03] border border-black/[0.06] dark:border-white/10">
+                                <p className="text-[10px] font-bold uppercase tracking-wider text-slate-400">
+                                    On this machine ({capability.device.toUpperCase()})
+                                </p>
+                                <p className={`text-[10px] font-mono mt-0.5 ${entry.clamped ? 'text-amber-600 dark:text-amber-400' : 'text-slate-500'}`}>
+                                    {entry.effective.width}×{entry.effective.height} · {entry.effective.fps} fps
+                                    {entry.clamped ? ' (clamped)' : ''}
+                                </p>
+                                {entry.notes.length > 0 && (
+                                    <p className="text-[10px] text-slate-400 mt-1 leading-relaxed">{entry.notes[0]}</p>
+                                )}
+                            </div>
+                        );
+                    })()}
 
                     {/* Subject continuity (audit E6) — cheap, deterministic bounds
                         on identity drift across scenes. */}

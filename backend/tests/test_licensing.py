@@ -93,3 +93,17 @@ def test_licence_endpoint_serves_the_audit(client):
     assert body["status"] == "ok"
     assert isinstance(body["models"], list)
     assert "ok" in body and "blockers" in body
+
+
+def test_a_deliberate_non_commercial_deployment_can_acknowledge(monkeypatch):
+    """Milimo is non-commercial by design; the gate is a notice, not a wall."""
+    catalogue = [{"id": "flux_9b", "category": "image", "license": "FLUX.2 Non-Commercial License"}]
+    monkeypatch.delenv("MILIMO_NONCOMMERCIAL_OK", raising=False)
+    assert lic.audit_catalogue(catalogue, defaults={"image": "flux_9b"})["ok"] is False
+
+    monkeypatch.setenv("MILIMO_NONCOMMERCIAL_OK", "1")
+    report = lic.audit_catalogue(catalogue, defaults={"image": "flux_9b"})
+    assert report["ok"] is True
+    assert report["acknowledged"] is True
+    # The finding itself is still reported — acknowledgement is not amnesia.
+    assert [b["id"] for b in report["blockers"]] == ["flux_9b"]

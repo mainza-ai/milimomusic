@@ -1,0 +1,220 @@
+{
+  "main": {
+    "id": "f686a63b7a7a4635",
+    "type": "split",
+    "children": [
+      {
+        "id": "daf13447633592e8",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "0f8853a3802e1cb6",
+            "type": "leaf",
+            "state": {
+              "type": "markdown",
+              "state": {
+                "file": "wiki/video-capability-landscape-2026-11.md",
+                "mode": "source",
+                "source": false
+              },
+              "icon": "lucide-file",
+              "title": "video-capability-landscape-2026-11"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "vertical"
+  },
+  "left": {
+    "id": "21f3bd2fdcfb07f9",
+    "type": "split",
+    "children": [
+      {
+        "id": "42f1eda50ad24bcb",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "7beb918c5d1b6a05",
+            "type": "leaf",
+            "state": {
+              "type": "file-explorer",
+              "state": {
+                "sortOrder": "alphabetical",
+                "autoReveal": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-folder-closed",
+              "title": "Files"
+            }
+          },
+          {
+            "id": "e4818c18e855bb8d",
+            "type": "leaf",
+            "state": {
+              "type": "search",
+              "state": {
+                "query": "application-remediation-plan-2026-11.md",
+                "matchingCase": false,
+                "explainSearch": false,
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical"
+              },
+              "icon": "lucide-search",
+              "title": "Search"
+            }
+          },
+          {
+            "id": "e7f732844127c0f1",
+            "type": "leaf",
+            "state": {
+              "type": "bookmarks",
+              "state": {
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-bookmark",
+              "title": "Bookmarks"
+            }
+          }
+        ],
+        "currentTab": 1
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300
+  },
+  "right": {
+    "id": "ce1976bc51c6b2d4",
+    "type": "split",
+    "children": [
+      {
+        "id": "79230c622bbadc6e",
+        "type": "tabs",
+        "children": [
+          {
+            "id": "4b0c6c2d7d70608a",
+            "type": "leaf",
+            "state": {
+              "type": "backlink",
+              "state": {
+                "file": "wiki/video-capability-landscape-2026-11.md",
+                "collapseAll": false,
+                "extraContext": false,
+                "sortOrder": "alphabetical",
+                "showSearch": false,
+                "searchQuery": "",
+                "backlinkCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-coming-in",
+              "title": "Backlinks"
+            }
+          },
+          {
+            "id": "766d9f7c700096d6",
+            "type": "leaf",
+            "state": {
+              "type": "outgoing-link",
+              "state": {
+                "file": "wiki/video-capability-landscape-2026-11.md",
+                "linksCollapsed": false,
+                "unlinkedCollapsed": true
+              },
+              "icon": "links-going-out",
+              "title": "Outgoing links"
+            }
+          },
+          {
+            "id": "1a5301d733cfd052",
+            "type": "leaf",
+            "state": {
+              "type": "tag",
+              "state": {
+                "sortOrder": "frequency",
+                "useHierarchy": true,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-tags",
+              "title": "Tags"
+            }
+          },
+          {
+            "id": "afbe75752690b5ac",
+            "type": "leaf",
+            "state": {
+              "type": "all-properties",
+              "state": {
+                "sortOrder": "frequency",
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-archive",
+              "title": "All properties"
+            }
+          },
+          {
+            "id": "b47cc2dc8bb3070f",
+            "type": "leaf",
+            "state": {
+              "type": "outline",
+              "state": {
+                "file": "wiki/video-capability-landscape-2026-11.md",
+                "followCursor": false,
+                "showSearch": false,
+                "searchQuery": ""
+              },
+              "icon": "lucide-list",
+              "title": "Outline"
+            }
+          }
+        ]
+      }
+    ],
+    "direction": "horizontal",
+    "width": 300,
+    "collapsed": true
+  },
+  "left-ribbon": {
+    "hiddenItems": {
+      "switcher:Open quick switcher": false,
+      "graph:Open graph view": false,
+      "canvas:Create new canvas": false,
+      "daily-notes:Open today's daily note": false,
+      "templates:Insert template": false,
+      "command-palette:Open command palette": false,
+      "bases:Create new base": false
+    }
+  },
+  "active": "0f8853a3802e1cb6",
+  "lastOpenFiles": [
+    "generated_audio/videos/keyframes/keyframe_af9b815c-4ae0-400d-8170-999713d09fb1_003.png",
+    "generated_audio/videos/keyframes/keyframe_af9b815c-4ae0-400d-8170-999713d09fb1_002.png",
+    "generated_audio/videos/keyframes/keyframe_af9b815c-4ae0-400d-8170-999713d09fb1_001.png",
+    "generated_audio/videos/keyframes/keyframe_c0f10548-51da-4d12-90c1-7aecf51961ef_015.png",
+    "generated_audio/videos/keyframes/keyframe_c0f10548-51da-4d12-90c1-7aecf51961ef_014.png",
+    "generated_audio/videos/keyframes/keyframe_c0f10548-51da-4d12-90c1-7aecf51961ef_013.png",
+    "generated_audio/videos/keyframes/keyframe_c0f10548-51da-4d12-90c1-7aecf51961ef_012.png",
+    "generated_audio/videos/keyframes/keyframe_c0f10548-51da-4d12-90c1-7aecf51961ef_011.png",
+    "generated_audio/videos/keyframes/keyframe_c0f10548-51da-4d12-90c1-7aecf51961ef_010.png",
+    "generated_audio/videos/keyframes/keyframe_c0f10548-51da-4d12-90c1-7aecf51961ef_009.png",
+    "generated_audio/videos/keyframes/keyframe_c0f10548-51da-4d12-90c1-7aecf51961ef_008.png",
+    "data/video_cache/frames_342c4959",
+    "data/video_cache/vocal_slice_c0746ade.wav",
+    "generated_audio/videos/03d59526-58c3-4b82-bda4-03d78ae6786f_master_mv_ba278af7.mp4",
+    "generated_audio/videos/95900e05-6dab-4bae-b4bc-fc1b33ff7108_default_d313a1.mp4",
+    "backend/db_backups/test_jobs_20261118T131550Z.db-shm",
+    "backend/db_backups/test_jobs_20261118T131550Z.db",
+    "generated_audio/converted_vocals/13200493-68ca-4abe-adf2-7bb613734662_761d_voice_voice_5a3ccd86.wav",
+    "generated_audio/voice_previews/voice_a333b5b2_preview.wav",
+    "data/voice_profiles/datasets/voice_a333b5b2/vocal_sample.wav",
+    "data/voice_profiles/datasets/voice_a333b5b2",
+    "wiki/music-video-pipeline-audit-2026-11.md",
+    "wiki/video-capability-landscape-2026-11.md",
+    "wiki/application-remediation-plan-2026-11.md",
+    "wiki/application-audit-2026-11.md"
+  ]
+}

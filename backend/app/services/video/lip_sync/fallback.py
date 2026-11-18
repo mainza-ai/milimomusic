@@ -149,6 +149,27 @@ class SmoothVisemeFallbackProvider(BaseLipSyncProvider):
                     c_val = c_val * 0.75 + val * 0.25
                 smoothed_env.append(c_val)
 
+            # Plan 8.13: gate articulation by the sung words, not by loudness alone.
+            # Without word timings this is a no-op and the envelope path is unchanged.
+            word_timings = kwargs.get("word_timings")
+            if word_timings:
+                from app.services.video.visemes import (
+                    articulation_weights,
+                    gate_speech,
+                    word_intervals,
+                )
+
+                intervals = word_intervals(
+                    word_timings, start_time=start_time, duration=duration
+                )
+                weights = articulation_weights(
+                    total_frames=total_frames,
+                    fps=fps,
+                    start_time=start_time,
+                    intervals=intervals,
+                )
+                smoothed_env = gate_speech(smoothed_env, weights)
+
             # 2. Facial detection and organic deformation
             if cv2 is not None and os.path.isfile(face_image_path):
                 base_bgr = cv2.imread(face_image_path)

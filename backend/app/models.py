@@ -260,6 +260,39 @@ class SessionMessage(SQLModel, table=True):
     created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
 
+class Character(SQLModel, table=True):
+    """A reusable performer identity (plan 8.3).
+
+    Consistency used to live in per-render config, so the same performer had to be
+    re-described for every song. A character is the description plus a reference
+    plate, referenced by id — and the same plate seeds keyframes and conditions the
+    verifier across sessions.
+    """
+
+    id: Optional[UUID] = Field(default_factory=uuid4, primary_key=True)
+    name: str = Field(index=True)
+    description: Optional[str] = Field(default=None)   # the "character bible"
+    plate_path: Optional[str] = Field(default=None)    # canonical file on disk
+    plate_sha256: Optional[str] = Field(default=None)  # dedup / provenance
+    lora_path: Optional[str] = Field(default=None)     # reserved for per-character LoRA
+    owner_id: str = Field(default="local", index=True)
+    created_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+    updated_at: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "id": str(self.id) if self.id else None,
+            "name": self.name,
+            "description": self.description,
+            "plate_path": self.plate_path,
+            "plate_sha256": self.plate_sha256,
+            "has_plate": bool(self.plate_path),
+            "lora_path": self.lora_path,
+            "created_at": self.created_at.isoformat() if self.created_at else None,
+            "updated_at": self.updated_at.isoformat() if self.updated_at else None,
+        }
+
+
 class VideoRender(SQLModel, table=True):
     """One video render attempt (take) for a job — plan 7.4.
 
@@ -396,6 +429,8 @@ class VideoRenderRequest(SQLModel):
     characterPromptNote: Optional[str] = None
     # Subject continuity across scenes (audit E6): "off" | "character" | "chain".
     consistency_mode: Optional[str] = "character"
+    # Reusable performer identity (plan 8.3): description + reference plate.
+    character_id: Optional[str] = None
     # How far chaining reaches: "section" (default) resets at a section change,
     # "all" chains across the whole song.
     chain_scope: Optional[str] = "section"

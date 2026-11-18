@@ -1598,6 +1598,7 @@ export interface VideoPlanParams {
 export interface VideoRenderParams {
     model_name?: string;
     consistency_mode?: 'off' | 'character' | 'chain';
+    character_id?: string | null;
     chain_scope?: 'section' | 'all';
     confirm_cost?: boolean;
     visual_style?: string;
@@ -1680,6 +1681,35 @@ export interface VideoProvider {
     default_for_tier?: boolean;
 }
 
+export interface CharacterSummary {
+    id: string;
+    name: string;
+    description?: string | null;
+    plate_path?: string | null;
+    has_plate: boolean;
+    plate_sha256?: string | null;
+    created_at?: string | null;
+}
+
+export const charactersApi = {
+    list: async (): Promise<{ characters: CharacterSummary[] }> => {
+        const res = await axios.get(`${API_BASE_URL}/characters`);
+        return res.data;
+    },
+    create: async (payload: { name: string; description?: string; plate_source?: string }): Promise<{ character: CharacterSummary }> => {
+        const res = await axios.post(`${API_BASE_URL}/characters`, payload);
+        return res.data;
+    },
+    update: async (id: string, payload: { name?: string; description?: string; plate_source?: string }): Promise<{ character: CharacterSummary }> => {
+        const res = await axios.patch(`${API_BASE_URL}/characters/${id}`, payload);
+        return res.data;
+    },
+    remove: async (id: string): Promise<{ status: string }> => {
+        const res = await axios.delete(`${API_BASE_URL}/characters/${id}`);
+        return res.data;
+    },
+};
+
 export const videoApi = {
     generateStoryboard: async (jobId: string, visualStyle: string = 'neon-cyberpunk', customStylePrompt?: string): Promise<StoryboardScene[]> => {
         const res = await axios.post(`${API_BASE_URL}/videos/storyboard/${jobId}`, { visual_style: visualStyle, custom_style_prompt: customStylePrompt });
@@ -1748,6 +1778,23 @@ export const videoApi = {
     },
     getVideoProviders: async (): Promise<VideoProvider[]> => {
         const res = await axios.get(`${API_BASE_URL}/videos/providers`);
+        return res.data;
+    },
+    /** What this machine will actually render per engine (plan 8.10). */
+    getCapabilityMatrix: async (): Promise<{
+        device: string;
+        interpolation: { active: string; rife_available: boolean; note: string };
+        engines: Array<{
+            engine: string;
+            native: { width: number; height: number; fps: number; max_seconds: number };
+            effective: { width: number; height: number; fps: number; max_frames: number };
+            clamped: boolean;
+            implemented: boolean;
+            notes: string[];
+        }>;
+        notes: string;
+    }> => {
+        const res = await axios.get(`${API_BASE_URL}/videos/capability-matrix`);
         return res.data;
     },
     /** Lip-sync engines and whether each can actually run here (plan 7.27). */

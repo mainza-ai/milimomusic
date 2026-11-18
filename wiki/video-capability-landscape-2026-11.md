@@ -190,6 +190,20 @@ Explicitly **not** next: per-character LoRA training (Wan on an M3 Max measured 
 stands), buying closed weights (Wan 2.5/3.0 have no weights; Sora's API retired),
 and admitting non-commercial models (Sonic, TalkVerse, OmniHuman) as defaults.
 
+## 6b. What has actually landed (2026-11-18)
+
+Implemented from the list above, all with tests: **verifier + reshoot** (8.1),
+**avatar provider interface with external tiers** (8.4 — EchoMimicV3-Flash and
+Wan 2.2 S2V have real argv contracts and report their own availability),
+**Tier-0 viseme timing** (8.13 — the jaw-warp now articulates on sung words from
+forced alignment), **licence gate with acknowledgement** (8.9), **capability
+matrix** (8.10 — the picker states the machine's real ceiling), and the frame-rate
+stopgap (8.6a). The character library (8.3) makes identity reusable across songs.
+
+Still gated on weights/hardware: reference-conditioned keyframes (8.2), FastMetal
+720p (8.5), RIFE (8.6b), 1080p uplift (8.7), motion transfer (8.8), a real fal
+render (8.11) and VACE (8.14). Each has a smoke-test gate in the plan.
+
 ## 7. Uncertainty — stated, not hidden
 
 - **FastMetal timings/peak memory are author-reported**, on M4 Max / M5 only. First task is a smoke test that either proves it or records the failure in the capability matrix.

@@ -1248,6 +1248,7 @@ class VideoOrchestrator:
                 ass_path=ass_path,
                 timed_lines=timed_lines if burn_lyrics and job.lyrics else [],
                 preset_id=config.get("export_preset") or "default",
+                delivery_fps=float(config["delivery_fps"]) if config.get("delivery_fps") else None,
             )
             qc_report = delivery["qc"]
             self.update_task(task_id, qc=qc_report)
@@ -1745,6 +1746,7 @@ class VideoOrchestrator:
         ass_path: Optional[str],
         timed_lines: List[Dict[str, Any]],
         preset_id: str = "default",
+        delivery_fps: Optional[float] = None,
     ) -> Dict[str, Any]:
         """Encode the delivered master: one preset-targeted pass, QC, sidecars.
 
@@ -1759,10 +1761,12 @@ class VideoOrchestrator:
             probe_streams,
             video_args,
         )
+        from app.services.video.clip_normalise import interpolation_filter
         from app.services.video.qc import run_qc
 
         preset = get_preset(preset_id)
         master_streams = probe_streams(audio_path) or {}
+        picture_streams = probe_streams(stitched_video) or {}
         source_is_aac = (master_streams.get("audio_codec") or "").lower() == "aac"
         has_audio = bool(master_streams.get("audio_codec"))
 
@@ -1775,6 +1779,16 @@ class VideoOrchestrator:
                 fonts_safe = fonts_dir.replace("\\", "/").replace(":", "\\:")
                 fonts_opt = f":fontsdir='{fonts_safe}'"
             video_chain.append(f"subtitles='{escaped_ass}'{fonts_opt}")
+        # Audit G5: 16 fps model output must reach a delivery frame rate with
+        # synthesised frames, not duplicates. Explicit request wins; otherwise only
+        # low-rate sources are lifted to 24.
+        source_fps = picture_streams.get("fps")
+        target_fps = delivery_fps
+        if target_fps is None and source_fps and source_fps <= 18:
+            target_fps = 24.0
+        interp = interpolation_filter(source_fps, target_fps)
+        if interp:
+            video_chain.append(interp)
         if song_duration:
             # Clone the final frame so the picture never ends before the song.
             video_chain.append(f"tpad=stop_mode=clone:stop_duration={song_duration:.3f}")

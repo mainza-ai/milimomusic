@@ -1598,6 +1598,7 @@ export interface VideoPlanParams {
 export interface VideoRenderParams {
     model_name?: string;
     consistency_mode?: 'off' | 'character' | 'chain';
+    chain_scope?: 'section' | 'all';
     confirm_cost?: boolean;
     visual_style?: string;
     custom_style_prompt?: string;
@@ -1902,6 +1903,15 @@ export const systemApi = {
     },
     setMemoryPolicy: async (policy: string, ttlSeconds?: number): Promise<{ policy: string; ttl_seconds?: number }> => {
         const res = await axios.post(`${API_BASE_URL}/system/memory-policy`, { policy, ttl_seconds: ttlSeconds });
+        return res.data;
+    },
+    /** Which models this build may legally ship, and which defaults block that (G8). */
+    getLicences: async (): Promise<{
+        ok: boolean;
+        blockers: Array<{ id: string; license: string; class: string; category?: string }>;
+        counts: Record<string, number>;
+    }> => {
+        const res = await axios.get(`${API_BASE_URL}/system/licences`);
         return res.data;
     },
 };

@@ -21,6 +21,10 @@ Scope: `backend/app/services/video/` (~7.2 k LOC), `services/video_service.py`
 [Full Application Audit 2026-11](application-audit-2026-11.md) — this page
 verifies its video claims and goes deeper; it does not repeat them.
 
+Follow-up: the [Video Capability Landscape 2026-11](video-capability-landscape-2026-11.md)
+turns these findings into a capability roadmap (Phase 8) and adds the licence audit
+that found the product's effective image default is non-commercial.
+
 Companions: [Music Video Delivery & QC Specs](concepts/music-video-delivery-specs.md)
 (external standards + 2026 engine landscape) and
 [Session Reporting & Reproducibility](concepts/session-reporting-and-reproducibility.md)

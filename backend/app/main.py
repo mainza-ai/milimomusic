@@ -429,6 +429,16 @@ async def lifespan(app: FastAPI):
             try:
                 await asyncio.sleep(max(30, interval))
                 await asyncio.to_thread(recovery_mod.sweep_stalled_jobs, engine, max_stall)
+                # Render takes have their own timeout: a wedged export would
+                # otherwise sit in `rendering` for the life of the process.
+                try:
+                    from app.services.video import takes as _takes
+
+                    render_stall = int(os.environ.get("MILIMO_RENDER_STALL_SECONDS", "3600"))
+                    with Session(engine) as _s:
+                        await asyncio.to_thread(_takes.sweep_stalled_renders, _s, render_stall)
+                except Exception as _render_sweep_err:  # pragma: no cover - defensive
+                    logger.debug(f"Render stall sweep skipped: {_render_sweep_err}")
             except asyncio.CancelledError:
                 raise
             except Exception as _sweep_err:  # pragma: no cover - defensive
@@ -5857,6 +5867,20 @@ def get_job_artifact_manifest(job_id: str):
         content=manifest,
         headers={"Content-Disposition": f'attachment; filename="{title}_manifest.json"'},
     )
+
+
+@app.get("/system/licences")
+def get_licence_audit():
+    """Which models this build may legally ship — and which defaults block that.
+
+    The catalogue has always recorded a licence per model and nothing read it. This
+    reports the classification plus every model that is non-commercial (or
+    unclassified) *and* reachable as a default (audit finding G8).
+    """
+    from app.core.licensing import audit_catalogue, collect_catalogue, resolve_effective_defaults
+
+    report = audit_catalogue(collect_catalogue(), defaults=resolve_effective_defaults())
+    return {"status": "ok", **report}
 
 
 @app.get("/videos/lipsync-engines")

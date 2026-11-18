@@ -150,3 +150,26 @@ def test_interrupted_renders_are_failed_on_boot(job_id):
         # Completed takes are untouched.
         assert done.status == "completed"
         assert done.error is None
+
+
+def test_stalled_renders_are_swept(job_id):
+    """A wedged render used to sit in `rendering` for the life of the process (8.12)."""
+    from datetime import datetime, timedelta, timezone
+
+    with Session(engine) as session:
+        stale = _take(session, job_id, "wedged", finished=False)
+        stale.updated_at = datetime.now(timezone.utc) - timedelta(hours=3)
+        session.add(stale)
+        session.commit()
+
+        fresh = _take(session, job_id, "active", finished=False)
+
+        swept = takes_service.sweep_stalled_renders(session, max_age_seconds=3600)
+        assert swept >= 1
+
+        session.refresh(stale)
+        session.refresh(fresh)
+        assert stale.status == "failed"
+        assert "no progress" in (stale.error or "").lower()
+        # A render inside the window keeps going.
+        assert fresh.status == "rendering"

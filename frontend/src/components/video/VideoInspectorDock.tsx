@@ -42,6 +42,9 @@ export interface VideoInspectorProps {
     /** Subject continuity across scenes (audit E6). */
     consistencyMode?: 'off' | 'character' | 'chain';
     onChangeConsistencyMode?: (mode: 'off' | 'character' | 'chain') => void;
+    /** How far last-frame chaining reaches (plan 7.29). */
+    chainScope?: 'section' | 'all';
+    onChangeChainScope?: (scope: 'section' | 'all') => void;
     /** What the backend says can actually run right now (plan 7.20). */
     availableProviders?: Array<{ id: string; provider_type?: string; is_available: boolean; has_api_key?: boolean; requires_api_key?: boolean; description?: string }>;
     clipDuration: number;
@@ -157,6 +160,8 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
     availableProviders,
     consistencyMode = 'character',
     onChangeConsistencyMode,
+    chainScope = 'section',
+    onChangeChainScope,
     clipDuration,
     onChangeClipDuration,
     onResetClipDuration,
@@ -603,6 +608,20 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
                                     ? 'One persisted physical description is injected into every scene prompt.'
                                     : 'Scenes are generated independently; expect visible identity drift.'}
                         </p>
+                        {consistencyMode === 'chain' && (
+                            <label className="flex items-center justify-between gap-2 text-[10px] text-slate-500">
+                                <span id="chain-scope-label">Chain across</span>
+                                <select
+                                    aria-labelledby="chain-scope-label"
+                                    value={chainScope}
+                                    onChange={(e) => onChangeChainScope?.(e.target.value as 'section' | 'all')}
+                                    className="text-xs apple-input rounded-lg px-2 py-1 bg-white dark:bg-black/30 border border-black/10 dark:border-white/10"
+                                >
+                                    <option value="section">Same section only</option>
+                                    <option value="all">Whole song</option>
+                                </select>
+                            </label>
+                        )}
                     </div>
 
                     {/* Deduplicated Video Engines List */}

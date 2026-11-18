@@ -112,6 +112,23 @@ def normalise_clip(
     return os.path.isfile(dest) and os.path.getsize(dest) > 0
 
 
+def interpolation_filter(src_fps: Optional[float], target_fps: Optional[float]) -> Optional[str]:
+    """Frame-rate conversion filter for delivery (audit G5).
+
+    Diffusion models emit 16 fps (Wan 2.1) or 24/25 fps; delivery is 24 or 30. The
+    old path forced the output rate with `fps=` — frame duplication, which reads as
+    judder on pans and on beat cuts. `minterpolate` synthesises intermediate frames
+    instead. Returns None when no conversion is needed.
+    """
+    if not src_fps or not target_fps:
+        return None
+    if abs(float(src_fps) - float(target_fps)) < 0.01:
+        return None
+    # `blend` is the conservative default: no warping artefacts on cuts, and it is
+    # dramatically faster than full motion-compensated interpolation at 1080p.
+    return f"minterpolate=fps={float(target_fps):.3f}:mi_mode=blend"
+
+
 def verify_assembly(total_video_s: Optional[float], song_s: Optional[float]) -> Optional[dict]:
     """Report whether the assembled picture matches the song length.
 

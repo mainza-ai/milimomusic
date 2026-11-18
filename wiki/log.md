@@ -3182,3 +3182,37 @@ Implemented the follow-ups listed after the previous delivery:
   dialog close buttons, now labelled with `aria-label`.
 Verification: **658 backend tests passed**, 38 frontend tests, `tsc`/`vite build` green,
 ruff clean, API parity 179 routes / 183 calls.
+
+## [2026-11-18] research | Video capability landscape + Phase 8 plan
+Researched the November-2026 open-source video landscape against what this build
+actually ships, then turned it into a ranked capability plan.
+**Grounding (local, verified):** `diffusers 0.39.0` already exposes
+`WanVACEPipeline` (`reference_images`), `WanAnimatePipeline` (video-driven motion
+transfer), `LTX2InContextPipeline` and `LTX2LatentUpsamplePipeline`; the HF
+`model_index.json` files confirm Wan 2.2 I2V A14B loads with our existing
+`WanImageToVideoPipeline` and TI2V-5B with `WanPipeline`. So several upgrades are
+**weights and wiring**, not ports.
+**Findings that change the plan:**
+- The 832×480 clamp is a *runtime* limit of the Wan 2.1 path: `FastVideo/FastMetal-5B-QAD`
+  (Apache-2.0, verified) runs Wan 2.2 TI2V-5B at **1280×704/24 fps, ~9.3 GiB** on Apple
+  Silicon — so native 720p replaces upscaling 480p, and the 16 fps problem largely
+  disappears.
+- No 2026-grade singing model runs on MPS. The tier ladder is: jaw-warp (0) →
+  **EchoMimicV3-Flash** (Apache-2.0, 12 GB, 25 fps, real CLI) → InfiniteTalk/LongCat
+  → Wan 2.2 S2V/LiveAvatar (80 GB); LatentSync only as a lips-repair pass and only
+  once its **OpenRAIL++ vs Apache** licence conflict is resolved.
+- AutoMV's ablation (Nov 2026) shows the **verifier/reshoot loop** — not an identity
+  adapter — gives the largest consistency gain; they also use last-frame chaining,
+  as we do.
+- **Licence finding:** the product's effective image default,
+  `flux_2_klein_9b`, is `flux-non-commercial-license` on HF, while the 4B sibling is
+  Apache-2.0. New `core/licensing.py` + `GET /system/licences` classify every model
+  and report blockers; the Models Manager now shows a banner instead of hiding it.
+**Shipped this cycle (Phase 8: 3/14):** the licence audit (8.9a), frame-rate
+interpolation at delivery (8.6a — `minterpolate` blend, labelled a stopgap pending
+RIFE), and a render stall sweeper (8.12). The model adoptions are planned with
+hardware smoke-test gates.
+Deliverables: [Video Capability Landscape 2026-11](video-capability-landscape-2026-11.md),
+[Phase 8](application-remediation-plan-2026-11.md#phase-8--capability-upgrades-2026-11-18-added).
+Verification: **681 backend tests**, 38 frontend tests, ruff clean, parity 180/184,
+`tsc` + `vite build` green.

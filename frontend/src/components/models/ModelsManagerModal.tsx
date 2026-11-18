@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Cpu, Download, CheckCircle2, X, Activity, AlertTriangle, Loader2, Search, Trash2, ExternalLink, Globe, Sparkles } from 'lucide-react';
-import { modelsApi, type ModelVariant, type HardwareProfile, type ModelDownloadStatus, type HuggingFaceSearchResult } from '../../api';
+import { modelsApi, systemApi, type ModelVariant, type HardwareProfile, type ModelDownloadStatus, type HuggingFaceSearchResult } from '../../api';
 import { toast } from '../../utils/toast';
 import { confirmAction } from '../../utils/confirm';
 
@@ -65,6 +65,9 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
     const [isSearching, setIsSearching] = useState(false);
     const [customRepoInput, setCustomRepoInput] = useState('');
     const [customCategory, setCustomCategory] = useState<'audio' | 'image' | 'video'>('audio');
+    // Licence blockers: non-commercial or unclassified models reachable as a
+    // default (audit G8). Shown here because this is where models are chosen.
+    const [licenceBlockers, setLicenceBlockers] = useState<Array<{ id: string; license: string }>>([]);
 
     const loadData = async () => {
         try {
@@ -94,6 +97,9 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
     useEffect(() => {
         if (isOpen) {
             loadData();
+            systemApi.getLicences()
+                .then((report) => setLicenceBlockers(report.blockers || []))
+                .catch(() => setLicenceBlockers([]));
         }
         return () => window.clearInterval(pollRef.current);
     }, [isOpen]);
@@ -229,6 +235,16 @@ export const ModelsManagerModal: React.FC<ModelsManagerModalProps> = ({ isOpen, 
     return (
         <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 dark:bg-black/85">
             <div className="bg-white dark:bg-[#14161f] border border-black/[0.08] dark:border-white/10 rounded-3xl w-full max-w-4xl overflow-hidden shadow-apple-2xl flex flex-col max-h-[85vh] transform-gpu">
+                {licenceBlockers.length > 0 && (
+                    <div className="px-6 py-2.5 bg-amber-500/10 border-b border-amber-500/25 text-[11px] leading-relaxed text-amber-700 dark:text-amber-300">
+                        <strong className="font-bold">Licence notice.</strong>{' '}
+                        {licenceBlockers.length === 1 ? 'A model in use is' : 'Models in use are'} not
+                        cleared for commercial use:{' '}
+                        {licenceBlockers.map((b) => `${b.id} (${b.license})`).join(', ')}. Fine for this
+                        project's non-commercial licence — replace it before any commercial deployment.
+                    </div>
+                )}
+
                 {/* Modal Header */}
                 <div className="flex items-center justify-between px-6 py-4 border-b border-black/[0.06] dark:border-white/10 bg-black/[0.02] dark:bg-[#181a24]">
                     <div className="flex items-center space-x-3">

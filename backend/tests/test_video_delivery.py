@@ -136,3 +136,49 @@ def test_finalise_master_is_faststart_loudness_normalised_and_qc_gated(tmp_path,
     # −14 LUFS is the delivery target; the measurement must be reported.
     loudness = result["qc"]["checks"].get("loudness") or {}
     assert loudness.get("integrated_lufs") is not None
+
+
+# ── frame-rate delivery (audit G5) ────────────────────────────────────────
+
+def test_interpolation_filter_only_fires_when_needed():
+    from app.services.video.clip_normalise import interpolation_filter
+
+    assert interpolation_filter(16, 24) == "minterpolate=fps=24.000:mi_mode=blend"
+    assert interpolation_filter(24, 24) is None
+    assert interpolation_filter(None, 24) is None
+    assert interpolation_filter(25, None) is None
+
+
+def test_a_16fps_master_is_delivered_at_24fps_with_new_frames(tmp_path):
+    """A Wan 2.1 render used to ship at 16 fps (duplicated frames on any conversion)."""
+    import asyncio
+    import subprocess
+
+    from app.services.video.video_orchestrator import video_orchestrator
+
+    src = tmp_path / "clip16.mp4"
+    subprocess.run(
+        ["ffmpeg", "-y", "-hide_banner", "-loglevel", "error",
+         "-f", "lavfi", "-i", "testsrc=size=320x180:rate=16:duration=2",
+         "-f", "lavfi", "-i", "sine=frequency=440:duration=2:sample_rate=44100",
+         "-c:v", "libx264", "-preset", "ultrafast", "-pix_fmt", "yuv420p",
+         "-c:a", "aac", str(src)],
+        check=True, capture_output=True, timeout=120,
+    )
+
+    out = tmp_path / "master24.mp4"
+    asyncio.run(video_orchestrator._finalise_master(
+        stitched_video=str(src), audio_path=str(src), out_path=str(out),
+        width=320, height=180, song_duration=2.0, ass_path=None,
+        timed_lines=[], preset_id="default",
+    ))
+
+    streams = probe_streams(str(out))
+    assert streams["fps"] == 24.0, f"expected 24 fps delivery, got {streams['fps']}"
+    # 2 s at 24 fps must contain more frames than the 32-frame source.
+    probe = subprocess.run(
+        ["ffprobe", "-v", "error", "-count_frames", "-select_streams", "v:0",
+         "-show_entries", "stream=nb_read_frames", "-of", "default=nw=1:nk=1", str(out)],
+        capture_output=True, text=True, check=True,
+    )
+    assert int(probe.stdout.strip()) > 32

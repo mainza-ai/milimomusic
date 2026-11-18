@@ -36,10 +36,11 @@ re-verification (§Corrections) and 9 are deferred with reasons below.** Phase 7
 | **4 — Media truth** | ✅ **13/16** | clip duration/geometry normalisation, real timeline export, storyboard persistence, fal-only cloud, scoped cancel, subtitle escaping, temp hygiene, proxies, single fps, performer scoping, real audio analysis; 4.8 **closed by 7.10**, 4.2's reporting clause **closed by 7.3** (4.5 remains unverified without a live fal key) |
 | **5 — Platform & API** | 🟡 **9/12** | one error envelope, 202/201, typed bodies everywhere, idempotency, SSE replay + topics, rate limits by template, share links, accessible confirms |
 | **6 — Hardening** | ✅ **8/8** | CI lint/audit/migration-smoke/unit/E2E jobs, universal lockfile, `npm ci`, observability, log hygiene, capability matrix |
+| **8 — Capability upgrades** | 🟡 **3/14** | added 2026-11-18 from the [Video Capability Landscape](video-capability-landscape-2026-11.md); licence audit, minterpolate stopgap and render stall sweeper shipped, the model adoptions are planned with smoke-test gates |
 | **7 — Music video production** | ✅ **29/29** | added 2026-11-18 from the [Music Video Pipeline Audit](music-video-pipeline-audit-2026-11.md); implemented and verified the same day, plus follow-ups 7.26–7.29 (consistency, lip-sync registry, render reconciliation, chain scope) |
 
-**Verification (2026-11-18, after Phase 7 + follow-ups):** backend `658 passed, 2 skipped,
-3 deselected` (0 failures, ~71 s); frontend `38 vitest tests`;
+**Verification (2026-11-18, after Phase 8 groundwork):** backend `681 passed, 2 skipped,
+3 deselected` (0 failures); frontend `38 vitest tests`;
 `tsc -b` + `vite build` green (entry 588 kB / 163 kB gz); `ruff` bug-class gate
 clean; API parity 178 routes / 182 client calls; Alembic at `0008`.
 
@@ -334,6 +335,61 @@ resilience amplify whatever the pipeline emits. 7D can run in parallel with 7C.
 - At least one DSP-shaped preset and a caption sidecar exist (7.15–7.17).
 - A finished session can be handed to someone else as a manifest + report + cut list (7.22–7.25).
 
+## Phase 8 — Capability upgrades (2026-11-18, added)
+
+Source: [Video Capability Landscape 2026-11](video-capability-landscape-2026-11.md).
+Phase 7 made the pipeline honest; this phase makes it capable. Every adoption task
+is gated on a **smoke test on target hardware** — vendor VRAM/timing claims are
+not accepted as evidence, and a failure is recorded in the capability matrix rather
+than silently degrading.
+
+> **Status: 3/14.** Shipped this cycle: the licence audit (8.9a), the frame-rate
+> stopgap (8.6a) and the render stall sweeper (8.12). The model adoptions need
+> weights (tens of GB) and a hardware smoke test; the lip-sync ladder is ranked
+> per the [landscape research](video-capability-landscape-2026-11.md#5-singing-licences-decide-the-shortlist-vram-decides-the-tier).
+
+### 8A — Identity and consistency (G3, G6, G7)
+
+| ID | Task | Files | Acceptance |
+|---|---|---|---|
+| 8.1 | **Verifier + reshoot loop.** Generate 2–3 candidate plates per scene, score identity/instruction adherence against the character bank, reshoot the loser. AutoMV's ablation credits this with the largest measured consistency gain — with no identity model. | new `services/video/verifier.py`, `image_service.pregenerate_scene_backgrounds`, `video_orchestrator._prebuild_scene_plates` | A deliberately off-character candidate is rejected and re-rolled; the accepted plate records its score |
+| 8.2 | **Reference → keyframe → I2V.** `generate_scene_background(reference_images=[...])` using **FLUX.2 klein 4B** (Apache-2.0, up to 4 refs); the character plate conditions every scene still. | `services/image_service.py`, `video_orchestrator.py` | Same character id ⇒ plates that pass 8.1 without prompt changes |
+| 8.3 | **Character library.** `Character` row (plate, description, optional LoRA), CRUD, `character_id` on render config, plate reused across songs. | `models.py` + Alembic, `main.py`, video UI | Two different songs using one character share the plate hash |
+| 8.4 | **Avatar provider interface + tier ladder.** One `generate(image, audio, prompt, duration, fps)` contract with per-provider metadata (`licence`, `territory_blocked[]`, `min_vram_gb`, `fps`), so routing is a check rather than a doc note: `procedural` (tier 0), **`echomimic_flash`** (tier 1, Apache-2.0, 12 GB, 25 fps, `infer_flash.py`), `infinitetalk` / `longcat_mlx` (tier 2), `wan_s2v` / `liveavatar` (tier 3, 80 GB). | new `lip_sync/providers/`, `lip_sync/registry.py`, `lip_sync/base.py` | An EU user on an 8 GB card can never be routed to Hunyuan-Avatar; each provider declares licence + VRAM + fps |
+| 8.13 | **Tier-0 viseme timing.** Drive the jaw-warp from the MMS forced-alignment word timings we already compute for subtitles, instead of an RMS envelope. | `lip_sync/fallback.py`, `transcription/karaoke.py` | The always-available path opens the mouth on syllables, not on loudness |
+| 8.14 | **Wan VACE reference conditioning** (14B tier). `WanVACEGenerator` passing `reference_images`; registry/model-spec entry. | new `generators/diffusers_vace.py`, `model_specs.py`, `model_manager.py` | Conditioned clip keeps identity where the text-only clip drifts; refuses honestly without weights |
+
+### 8B — Resolution and timing (G2, G5)
+
+| ID | Task | Files | Acceptance |
+|---|---|---|---|
+| 8.5 | **FastMetal Wan 2.2 TI2V-5B** (Apache-2.0, 1280×704 @24 fps). New generator variant + catalogue entry; remove the 832×480 MPS clamp for this path. | `generators/diffusers_wan.py`, `model_specs.py`, `model_manager.py` | Smoke test measures wall-clock and peak memory on the target Mac; a failure is recorded, not hidden |
+| 8.6 | **RIFE interpolation** (MIT) replacing `minterpolate`. **8.6a shipped:** `minterpolate` blend keeps 16 fps Wan 2.1 out of the delivery path; it is a stopgap and is labelled as such. | `services/video/clip_normalise.py`, `video_orchestrator._finalise_master` | A 16→24 conversion shows no duplicated-frame runs; the master records which backend ran |
+| 8.7 | **1080p uplift stage**: FlashVSR+ (CUDA) / SeedVR2-3B via MLX (Mac) as an optional post-process with honest unavailability. | new `services/video/upscale.py`, delivery presets | A 720p master reaches 1080p with temporal consistency; unavailable hardware says so |
+
+### 8C — Motion (G4)
+
+| ID | Task | Files | Acceptance |
+|---|---|---|---|
+| 8.8 | **Motion transfer** via `WanAnimatePipeline` from a user-supplied driving clip; registry entry labelled "motion transfer (video-driven)", never "singing". | new generator, `lip_sync/registry.py` naming, UI | A dance clip drives the character; the UI never conflates it with lip-sync |
+
+### 8D — Truth and operations (G8, G9, G10)
+
+| ID | Task | Files | Acceptance |
+|---|---|---|---|
+| 8.9 | **Licence gate.** **8.9a shipped:** `core/licensing.py` + `GET /system/licences` classify every model and report blockers (currently `flux_2_klein_9b`, `flux-non-commercial-license`). **8.9b:** CI fails when a reachable default is non-commercial/unknown unless explicitly acknowledged; **8.9c:** territory blocks (`EU/UK/US/South Korea` exclusions) become route-level checks, not prose. | `core/licensing.py`, CI, `.env.example`, avatar registry | A non-commercial or territory-blocked default cannot ship unnoticed |
+| 8.10 | **Video capability matrix** endpoint + UI: per engine, required VRAM/resolution/fps and measured status, so the ceiling is visible *before* a render. | `model_specs.py`, `/videos/models`, `VideoInspectorDock.tsx` | The picker states "720p needs CUDA" instead of failing after 40 minutes |
+| 8.11 | **Ground-truth the cloud path.** One real fal render with a key; refresh the price table from the provider's docs. | `pricing.py`, script | Estimate within 20% of the invoice; the path is no longer theoretical |
+| 8.12 | **Render stall sweeper.** ✅ shipped — `sweep_stalled_renders()` fails a take that has made no progress within `MILIMO_RENDER_STALL_SECONDS` (default 1 h), in the existing sweeper loop. | `services/video/takes.py`, `main.py` | A wedged render reaches a terminal state instead of showing progress forever |
+
+### Phase 8 exit criteria
+
+- A 720p/24 fps master is produced **natively** on the reference Mac, with measured time and memory.
+- Identity holds across a chorus without prompt-level tricks, and the mechanism is reusable across songs.
+- The singing avatar is a real model on at least one supported path, with `jaw_warp` as the stated floor.
+- No reachable default is non-commercial or unclassified without a written acknowledgement.
+- The capability matrix answers "can this machine do that?" before the render starts.
+
 ## Decisions — closed (D1–D6)
 
 All six scope questions are resolved in [Decision Record 2026-11](decisions-2026-11.md).
@@ -366,6 +422,11 @@ Phase 0 (bleeding + D1/D3 deletions)
                                                             └── Phase 7C (7.15–7.21)
                                                                 Phase 7D (7.22–7.25)  ← independent
 ```
+
+Phase 8 depends on Phase 7 (the delivery path and the truth layer it audits) and on
+hardware availability for its smoke tests. Inside Phase 8, 8.1 precedes 8.2 (the
+verifier scores what the reference conditioning produces), and 8.5 precedes 8.7
+(upscaling is only worth wiring once 720p is native).
 
 Phase 7A depends on Phase 4 (it reopens 4.8 and extends the polyphony of the media
 pipeline); 7B assumes 7A's honesty so quality work is measurable; 7C amplifies

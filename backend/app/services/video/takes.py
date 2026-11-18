@@ -125,6 +125,39 @@ def reconcile_stale_renders(session: Session, reason: Optional[str] = None) -> i
     return len(rows)
 
 
+def sweep_stalled_renders(session: Session, max_age_seconds: float) -> int:
+    """Fail renders that have been `rendering` longer than any real render takes.
+
+    Boot reconciliation (7.28) covers process death. This covers the other case: a
+    render that is still "running" but wedged — the UI would show it forever.
+    """
+    from datetime import timedelta
+
+    from app.models import VideoRender
+
+    cutoff = _now() - timedelta(seconds=max(60.0, float(max_age_seconds)))
+    rows = session.exec(select(VideoRender).where(VideoRender.status == "rendering")).all()
+    swept = 0
+    for row in rows:
+        started = row.updated_at or row.created_at
+        if started is None:
+            continue
+        started = started if started.tzinfo else started.replace(tzinfo=timezone.utc)
+        if started <= cutoff:
+            row.status = "failed"
+            row.error = (
+                f"Render made no progress for {int(max_age_seconds)}s and was stopped "
+                f"by the stall sweeper."
+            )
+            row.updated_at = _now()
+            session.add(row)
+            swept += 1
+    if swept:
+        session.commit()
+        logger.info("Swept %d stalled video render(s)", swept)
+    return swept
+
+
 def list_takes(session: Session, job_id: str) -> List[Dict[str, Any]]:
     from app.models import VideoRender
 

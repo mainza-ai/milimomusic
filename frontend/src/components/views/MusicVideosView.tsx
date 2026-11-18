@@ -310,6 +310,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const [characterPromptNote, setCharacterPromptNote] = useState<string>('');
     // Audit E6: keeps the performer consistent across scenes.
     const [consistencyMode, setConsistencyMode] = useState<'off' | 'character' | 'chain'>('character');
+    const [chainScope, setChainScope] = useState<'section' | 'all'>('section');
 
     // Planning & Task Tracking
     const [isPlanning, setIsPlanning] = useState(false);
@@ -1069,6 +1070,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                 custom_style_prompt: customStylePrompt,
                 character_desc: characterPromptNote,
                 consistency_mode: consistencyMode,
+                chain_scope: chainScope,
                 resolution,
                 aspect_ratio: aspectRatio,
                 provider: videoProvider,
@@ -1691,6 +1693,8 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             characterPromptNote={characterPromptNote}
                             consistencyMode={consistencyMode}
                             onChangeConsistencyMode={setConsistencyMode}
+                            chainScope={chainScope}
+                            onChangeChainScope={setChainScope}
                             onChangeCharacterPromptNote={setCharacterPromptNote}
                         />
                     </div>

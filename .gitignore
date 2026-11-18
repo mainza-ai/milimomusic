@@ -99,3 +99,6 @@ scratch/
 
 # SQLite migration backups
 backend/db_backups/
+
+# Editor / vault artifacts (Obsidian writes these; they are not project config)
+.obsidian/

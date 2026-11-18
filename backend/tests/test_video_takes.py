@@ -132,3 +132,21 @@ def test_clip_workspace_persists_plan_and_clips(tmp_path, job_id):
         assert loaded["clips"][0].endswith("clip_000.mp4")
     finally:
         t.clip_workspace = original
+
+
+def test_interrupted_renders_are_failed_on_boot(job_id):
+    """A killed server used to leave a permanent `rendering` row (7.28)."""
+    with Session(engine) as session:
+        stale = _take(session, job_id, "interrupted", finished=False)
+        done = _take(session, job_id, "finished")
+
+        marked = takes_service.reconcile_stale_renders(session)
+        assert marked >= 1
+
+        session.refresh(stale)
+        session.refresh(done)
+        assert stale.status == "failed"
+        assert "restarted" in (stale.error or "").lower()
+        # Completed takes are untouched.
+        assert done.status == "completed"
+        assert done.error is None

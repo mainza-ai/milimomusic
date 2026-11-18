@@ -30,10 +30,10 @@ Companions: [Music Video Delivery & QC Specs](concepts/music-video-delivery-spec
 > [!NOTE]
 > **Remediated on 2026-11-18.** Every finding below was implemented and verified
 > the same day as **Phase 7** of the [remediation plan](application-remediation-plan-2026-11.md#phase-7--music-video-production-2026-11-18-added)
-> — **26/26 tasks**, including a follow-up pass that closed the four audit deltas
-> (**X1–X4**), finished the accessibility work (7.21) and added subject
-> consistency (**E6**, 7.26). Each item has a test that fails against the pre-fix
-> code. Findings are kept in past-tense-unfixed form as the record of what was
+> — **29/29 tasks**, including follow-ups that closed the four audit deltas
+> (**X1–X4**), finished accessibility (7.21), added subject consistency (**E6**,
+> 7.26) and made the lip-sync engine choice real (**E4**, 7.27). Each item has a
+> test that fails against the pre-fix code. Findings are kept in past-tense-unfixed form as the record of what was
 > wrong and why it mattered.
 
 ---
@@ -103,7 +103,7 @@ poster.
 | **E1** | **Local Wan clamps to ≤832×480 and ≤33 frames on MPS** while the UI offers 720p/1080p. | `diffusers_wan.py:165-178` | The delivered 1080p file is upscaled 480p, and nothing reports it (plan 4.2 asked for exactly this — see **X3**). |
 | **E2** | **Cloud clips are hard-capped at 5 s** with one fixed model id. | `cloud_video.py:139, 170` | Planned 15 s scenes become 5 s clips that the stitcher stretches. |
 | **E3** | **No cost estimate or budget guard** for cloud renders. | no `cost`/`price`/estimate in `services/video/` | fal bills per generated second; a 40-scene render is unbounded spend the user cannot preview. Plan 4.5's acceptance required it. |
-| **E4** | **"LivePortrait neural lip sync" is in practice always the jaw-warp fallback — and reports success.** The provider delegates to `SmoothVisemeFallbackProvider` when weights are missing *or* `is_available` is False (which only checks torch+MPS/CUDA), returning its `True`. | `lip_sync/live_portrait.py:41-48, 76-91, 128-157` | `fallback_used` stays `False`, so no banner. Even with weights, the code shells `inference.py --driving_audio` — a CLI contract real LivePortrait does not offer (it is video-driven). |
+| **E4** | **"LivePortrait neural lip sync" is in practice always the jaw-warp fallback — and reports success.** **Follow-up (7.27):** the request's `lip_sync_engine` was also ignored; a registry now resolves it, reports per-engine availability with the blocking reason, and `GET /videos/lipsync-engines` drives the picker. The neural engine still requires weights + an audio entry point.  The provider delegates to `SmoothVisemeFallbackProvider` when weights are missing *or* `is_available` is False (which only checks torch+MPS/CUDA), returning its `True`. | `lip_sync/live_portrait.py:41-48, 76-91, 128-157` | `fallback_used` stays `False`, so no banner. Even with weights, the code shells `inference.py --driving_audio` — a CLI contract real LivePortrait does not offer (it is video-driven). |
 | **E5** | **No face extraction.** Lip sync needs an explicit portrait; keyframes are never face-detected. | `resolve_face_image:235-250` | Users with only album art silently get b-roll instead of a performer, with no prompt to add one. |
 | **E6** | **No subject consistency mechanism** beyond "I2V from the same portrait": no reference conditioning, IP-Adapter, LoRA, or last-frame chaining. **Fixed (7.26):** a character bible is injected once into every scene prompt, and `consistency_mode=chain` seeds each scene from the previous clip's final frame (approved plates still win). Reference-image conditioning (IP-Adapter / per-character LoRA) remains the longer-term upgrade. | `diffusers_wan.py:87-107`; `services/video/consistency.py` | Eight scenes looked like eight different people. This was the quality ceiling versus hosted tools. |
 

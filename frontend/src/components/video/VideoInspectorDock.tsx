@@ -69,8 +69,13 @@ export interface VideoInspectorProps {
     // Lip-Sync & FX
     enableLipSync: boolean;
     onChangeEnableLipSync: (val: boolean) => void;
-    lipSyncEngine: 'live_portrait' | 'fallback';
-    onChangeLipSyncEngine: (e: 'live_portrait' | 'fallback') => void;
+    lipSyncEngine: string;
+    onChangeLipSyncEngine: (e: string) => void;
+    /** Engines the backend can actually run, with the reason when it cannot (7.27). */
+    lipSyncEngines?: Array<{
+        id: string; name: string; kind: 'local' | 'cloud'; available: boolean;
+        reason?: string | null; requires?: string | null; licence?: string | null; neural?: boolean;
+    }>;
     burnSubtitles: boolean;
     onChangeBurnSubtitles: (val: boolean) => void;
     subtitleStyle: string;
@@ -174,6 +179,7 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
     enableLipSync,
     onChangeEnableLipSync,
     lipSyncEngine,
+    lipSyncEngines,
     onChangeLipSyncEngine,
     burnSubtitles,
     onChangeBurnSubtitles,
@@ -1004,31 +1010,48 @@ const VideoInspectorDockComponent: React.FC<VideoInspectorProps> = ({
 
                         {enableLipSync && (
                             <div className="space-y-2 pt-1 border-t border-black/[0.04] dark:border-white/5">
-                                <div className="grid grid-cols-2 gap-2">
-                                    <button
-                                        type="button"
-                                        onClick={() => onChangeLipSyncEngine('live_portrait')}
-                                        className={`p-2 rounded-xl text-left border transition-all ${
-                                            lipSyncEngine === 'live_portrait'
-                                                ? 'bg-teal-500/10 border-teal-500/40 text-teal-700 dark:text-teal-300 font-bold'
-                                                : 'border-transparent text-slate-500'
-                                        }`}
-                                    >
-                                        <div className="text-xs font-bold">LivePortrait</div>
-                                        <div className="text-[10px] text-slate-400">Neural avatar with natural eye blinks</div>
-                                    </button>
-                                    <button
-                                        type="button"
-                                        onClick={() => onChangeLipSyncEngine('fallback')}
-                                        className={`p-2 rounded-xl text-left border transition-all ${
-                                            lipSyncEngine === 'fallback'
-                                                ? 'bg-teal-500/10 border-teal-500/40 text-teal-700 dark:text-teal-300 font-bold'
-                                                : 'border-transparent text-slate-500'
-                                        }`}
-                                    >
-                                        <div className="text-xs font-bold">Viseme Mesh</div>
-                                        <div className="text-[10px] text-slate-400">Fast volume-reactive mouth motion</div>
-                                    </button>
+                                <div className="grid grid-cols-2 gap-2" role="group" aria-label="Lip-sync engine">
+                                    {(() => {
+                                        const engines = (lipSyncEngines && lipSyncEngines.length > 0)
+                                            ? lipSyncEngines.filter((e) => e.kind === 'local')
+                                            : [
+                                                { id: 'live_portrait', name: 'LivePortrait', kind: 'local' as const, available: true, reason: null, requires: null, licence: null, neural: true },
+                                                { id: 'jaw_warp', name: 'Viseme Mesh', kind: 'local' as const, available: true, reason: null, requires: null, licence: null, neural: false },
+                                            ];
+                                        const selected = lipSyncEngine === 'fallback' ? 'jaw_warp' : lipSyncEngine;
+                                        return engines.map((engine) => {
+                                            const active = selected === engine.id;
+                                            return (
+                                                <button
+                                                    key={engine.id}
+                                                    type="button"
+                                                    aria-pressed={active}
+                                                    disabled={!engine.available}
+                                                    title={engine.available ? (engine.licence || engine.name) : (engine.reason || 'Unavailable')}
+                                                    onClick={() => onChangeLipSyncEngine(engine.id)}
+                                                    className={`p-2 rounded-xl text-left border transition-all disabled:opacity-40 disabled:cursor-not-allowed ${
+                                                        active
+                                                            ? 'bg-teal-500/10 border-teal-500/40 text-teal-700 dark:text-teal-300 font-bold'
+                                                            : 'border-transparent text-slate-500'
+                                                    }`}
+                                                >
+                                                    <div className="text-xs font-bold flex items-center justify-between gap-1">
+                                                        <span>{engine.name}</span>
+                                                        {!engine.available && (
+                                                            <span className="text-[10px] font-mono px-1 py-0.5 rounded bg-amber-500/20 text-amber-600 dark:text-amber-400">
+                                                                unavailable
+                                                            </span>
+                                                        )}
+                                                    </div>
+                                                    <div className="text-[10px] text-slate-400">
+                                                        {engine.available
+                                                            ? (engine.neural ? 'Neural, audio-driven' : 'Fast volume-reactive mouth motion')
+                                                            : (engine.reason || 'Not installed')}
+                                                    </div>
+                                                </button>
+                                            );
+                                        });
+                                    })()}
                                 </div>
                             </div>
                         )}

@@ -167,7 +167,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         return saved ? normalizeVideoEngine(saved) : 'wan_14b';
     });
     const [videoProvider, setVideoProvider] = useState<'local' | 'cloud_fal' | 'cloud_replicate'>('local');
-    const [lipSyncEngine, setLipSyncEngine] = useState<'live_portrait' | 'fallback'>('live_portrait');
+    const [lipSyncEngine, setLipSyncEngine] = useState<string>('live_portrait');
     const [aspectRatio, setAspectRatio] = useState<AspectRatioType>('16:9');
     const [keyframes, setKeyframes] = useState<Record<number, string>>({});
     const [isGeneratingKeyframes, setIsGeneratingKeyframes] = useState(false);
@@ -411,6 +411,10 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
     const [takes, setTakes] = useState<VideoTake[]>([]);
     const [providers, setProviders] = useState<VideoProvider[]>([]);
     const [presets, setPresets] = useState<DeliveryPreset[]>([]);
+    const [lipSyncEngines, setLipSyncEngines] = useState<Array<{
+        id: string; name: string; kind: 'local' | 'cloud'; available: boolean;
+        reason?: string | null; requires?: string | null; licence?: string | null; neural?: boolean;
+    }>>([]);
 
     // Modal states
     const [retakeModalOpen, setRetakeModalOpen] = useState(false);
@@ -643,6 +647,17 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         }
     }, [selectedSongId, activeSong?.video_path, loadTakes, startRenderPoll]);
 
+    // Plan 7.27: never leave the picker on an engine that cannot run here.
+    useEffect(() => {
+        if (!lipSyncEngines.length) return;
+        const wanted = lipSyncEngine === 'fallback' ? 'jaw_warp' : lipSyncEngine;
+        const current = lipSyncEngines.find((e) => e.id === wanted);
+        if (!current || !current.available) {
+            const usable = lipSyncEngines.find((e) => e.kind === 'local' && e.available);
+            if (usable) setLipSyncEngine(usable.id);
+        }
+    }, [lipSyncEngines, lipSyncEngine]);
+
     // Plan 7.20: ask the backend which providers can actually run.
     useEffect(() => {
         videoApi.getVideoProviders()
@@ -651,6 +666,9 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
         videoApi.listPresets()
             .then((res) => setPresets(res.presets || []))
             .catch(() => setPresets([]));
+        videoApi.getLipSyncEngines()
+            .then((res) => setLipSyncEngines(res.engines || []))
+            .catch(() => setLipSyncEngines([]));
     }, []);
 
     // Plan Scenes Breakdown
@@ -1647,6 +1665,7 @@ export const MusicVideosView: React.FC<MusicVideosViewProps> = ({
                             enableLipSync={enableLipSync}
                             onChangeEnableLipSync={setEnableLipSync}
                             lipSyncEngine={lipSyncEngine}
+                            lipSyncEngines={lipSyncEngines}
                             onChangeLipSyncEngine={setLipSyncEngine}
                             burnSubtitles={burnSubtitles}
                             onChangeBurnSubtitles={setBurnSubtitles}

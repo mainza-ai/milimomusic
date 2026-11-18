@@ -103,6 +103,28 @@ def finish_take(
     return take
 
 
+def reconcile_stale_renders(session: Session, reason: Optional[str] = None) -> int:
+    """Fail renders that were in flight when the process died (plan 7.28).
+
+    A killed server left `videorender` rows in `rendering` forever: the UI showed a
+    take that never completed, and nothing ever moved it. On boot we mark them
+    failed with a stated reason — an honest terminal state instead of a ghost.
+    """
+    from app.models import VideoRender
+
+    message = reason or "The server restarted before this render finished."
+    rows = session.exec(select(VideoRender).where(VideoRender.status == "rendering")).all()
+    for row in rows:
+        row.status = "failed"
+        row.error = message
+        row.updated_at = _now()
+        session.add(row)
+    if rows:
+        session.commit()
+        logger.info("Marked %d interrupted video render(s) as failed", len(rows))
+    return len(rows)
+
+
 def list_takes(session: Session, job_id: str) -> List[Dict[str, Any]]:
     from app.models import VideoRender
 

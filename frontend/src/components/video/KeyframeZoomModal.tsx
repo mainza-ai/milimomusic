@@ -66,6 +66,7 @@ export const KeyframeZoomModal: React.FC<KeyframeZoomModalProps> = ({
                         </button>
                         <button
                             type="button"
+                            aria-label="Close the keyframe viewer"
                             onClick={onClose}
                             className="p-1.5 rounded-lg text-slate-400 hover:text-white transition-colors"
                         >

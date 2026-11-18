@@ -36,10 +36,10 @@ re-verification (§Corrections) and 9 are deferred with reasons below.** Phase 7
 | **4 — Media truth** | ✅ **13/16** | clip duration/geometry normalisation, real timeline export, storyboard persistence, fal-only cloud, scoped cancel, subtitle escaping, temp hygiene, proxies, single fps, performer scoping, real audio analysis; 4.8 **closed by 7.10**, 4.2's reporting clause **closed by 7.3** (4.5 remains unverified without a live fal key) |
 | **5 — Platform & API** | 🟡 **9/12** | one error envelope, 202/201, typed bodies everywhere, idempotency, SSE replay + topics, rate limits by template, share links, accessible confirms |
 | **6 — Hardening** | ✅ **8/8** | CI lint/audit/migration-smoke/unit/E2E jobs, universal lockfile, `npm ci`, observability, log hygiene, capability matrix |
-| **7 — Music video production** | ✅ **26/26** | added 2026-11-18 from the [Music Video Pipeline Audit](music-video-pipeline-audit-2026-11.md); implemented and verified the same day (+7.26 subject consistency, the audit's E6) |
+| **7 — Music video production** | ✅ **29/29** | added 2026-11-18 from the [Music Video Pipeline Audit](music-video-pipeline-audit-2026-11.md); implemented and verified the same day, plus follow-ups 7.26–7.29 (consistency, lip-sync registry, render reconciliation, chain scope) |
 
-**Verification (2026-11-18, after Phase 7 + follow-up):** backend `644 passed, 2 skipped,
-3 deselected` (0 failures, ~101 s); frontend `34 vitest tests`;
+**Verification (2026-11-18, after Phase 7 + follow-ups):** backend `658 passed, 2 skipped,
+3 deselected` (0 failures, ~71 s); frontend `38 vitest tests`;
 `tsc -b` + `vite build` green (entry 588 kB / 163 kB gz); `ruff` bug-class gate
 clean; API parity 178 routes / 182 client calls; Alembic at `0008`.
 
@@ -262,14 +262,15 @@ Effort estimates are focused engineer-days for one person who knows the codebase
 Every task names an observable acceptance criterion — several are literally a test
 that failed before implementation.
 
-> **Status: 26/26 implemented and verified on 2026-11-18.** Regression suites added:
+> **Status: 29/29 implemented and verified on 2026-11-18.** Regression suites added:
 > `test_video_truth.py`, `test_video_takes.py`, `test_video_qc.py`,
 > `test_video_delivery.py`, `test_music_structure.py`,
 > `test_video_incremental_retake.py`, `test_symbolic_and_manifest.py`,
-> `test_video_endpoints_smoke.py`, `test_video_consistency.py`, plus
-> `frontend/tests/video-a11y.test.ts` (+72 tests). Two real bugs were found by the
-> new tests while implementing: `-af loudnorm` combined with `-c:a copy`, and a take
-> re-save copying a file onto itself.
+> `test_video_endpoints_smoke.py`, `test_video_consistency.py`,
+> `test_lipsync_registry.py`, plus `frontend/tests/video-a11y.test.ts`
+> (+100 tests). Three real bugs were found by the new tests while implementing:
+> `-af loudnorm` combined with `-c:a copy`, a take re-save copying a file onto
+> itself, and two icon-only dialog buttons with no accessible name.
 
 **Sequencing:** 7A must precede 7B because a musician cannot iterate on a pipeline
 that lies about what it produced. 7B precedes 7C because export presets and UI
@@ -285,6 +286,7 @@ resilience amplify whatever the pipeline emits. 7D can run in parallel with 7C.
 | 7.4 | **Takes and versioning.** New `VideoRender` row per render (config, status, artifacts, qc, seed, created_at) with `job.video_path` pointing at the selected take; cascade delete; UI take switcher. | `models.py`, `main.py` (`/videos/*`), `MusicVideosView.tsx` | Two renders coexist; switching takes changes the player; deleting a take removes its files |
 | 7.5 | **Replace the fake A/B compare** with a real two-source player (works on 7.4's takes) and make it keyboard-operable. | `VideoCanvasPlayer.tsx:324-355` | Two `<video>` sources, divider clips both, arrow-key control |
 | 7.6 | **Per-job render mutex.** 409 `render_in_progress` for a second render of the same job. | `main.py:5885-5923` | Second concurrent call returns 409; test mirrors the model-download guard |
+| 7.27 | **Lip-sync engine registry.** The request's `lip_sync_engine` was ignored and LivePortrait was always instantiated. A registry now reports every engine with real availability, licence and the reason it cannot run; an unavailable choice falls back to the jaw-warp animatic *with a recorded reason*, and `GET /videos/lipsync-engines` feeds the inspector. | new `lip_sync/registry.py`, `video_orchestrator.py`, `main.py`, `VideoInspectorDock.tsx` | Choosing an engine changes what runs; the picker shows "unavailable" with the reason; tests cover the fallback contract |
 | 7.7 | **Cloud cost estimate and gate.** Price table → per-render estimate in the `/videos/render-advanced` response and UI; require confirmation above a threshold. | `cloud_video.py`, `main.py`, `VideoInspectorDock.tsx` | Estimate shown before spend; no more hardcoded "Free"/"Fast" badges |
 
 ### 7B — Pipeline correctness (P1, ~14 days)
@@ -299,6 +301,8 @@ resilience amplify whatever the pipeline emits. 7D can run in parallel with 7C.
 | 7.13 | **Master delivery encoding.** `-movflags +faststart`, audio passthrough when the source is AAC else ≥320 kbps, loudness to −14 LUFS / TP −1 dB, measured value persisted. | `video_orchestrator.py:1126-1191` | moov-before-mdat assertion test; `ebur128` within ±1 LU of target; loudness stored on the render row |
 | 7.14 | **QC gate.** New `services/video/qc.py`: `blackdetect d=0.1`, `freezedetect d=0.05`, `silencedetect d=0.1`, A/V offset by cross-correlation (≤1 frame), `ebur128`, frame-count check; store `qc_json`; surface pass/warn/fail. | new module + `video_orchestrator.py` + UI | Planted-fault fixtures (1 s black, 5-frame black, 1.5 s freeze, audio dropout) are all caught — FFmpeg defaults catch 1 of 6 |
 
+| 7.28 | **Render reconciliation at boot.** A killed server left `videorender` rows in `rendering` forever, so the UI showed a take that never completed. Boot now marks them failed with a stated reason. | `services/video/takes.py`, `main.py` (lifespan) | A crash mid-render yields a visible terminal state, not a ghost |
+| 7.29 | **Chain scope.** `chain_scope: section \| all` keeps continuity inside a verse/chorus and resets at a section change, so `chain` mode no longer makes the whole video feel like one shot. | `services/video/consistency.py`, `video_orchestrator.py`, `models.py` | Same-section cuts chain; a chorus does not inherit the verse frame |
 | 7.26 | **Subject consistency (audit E6).** `consistency_mode: off \| character \| chain`: a persisted character bible injected once into every scene prompt, and (in `chain`) the previous clip's final frame as the next scene's i2v seed. Approved plates always win. | new `services/video/consistency.py`, `video_orchestrator.py`, `VideoInspectorDock.tsx`, `models.py` | Two consecutive scenes share the stated identity; re-stamping is idempotent; the mode is visible in the inspector |
 
 ### 7C — Delivery and workflow (P2, ~12 days)

@@ -24,6 +24,10 @@ logger = logging.getLogger("milimo.video.consistency")
 
 CONSISTENCY_MODES = ("off", "character", "chain")
 DEFAULT_MODE = "character"
+#: How far chaining may reach. "section" keeps continuity inside a verse/chorus but
+#: lets a cut into a new section reset the frame; "all" chains across everything.
+CHAIN_SCOPES = ("section", "all")
+DEFAULT_CHAIN_SCOPE = "section"
 
 
 def normalise_mode(value: Optional[str]) -> str:
@@ -116,3 +120,24 @@ def scene_seed(
     if face_image and os.path.isfile(face_image):
         return face_image
     return None
+
+
+def normalise_chain_scope(value: Optional[str]) -> str:
+    scope = (value or DEFAULT_CHAIN_SCOPE).strip().lower()
+    return scope if scope in CHAIN_SCOPES else DEFAULT_CHAIN_SCOPE
+
+
+def chain_allowed(previous_section: Optional[str], current_section: Optional[str], scope: Optional[str]) -> bool:
+    """Whether the previous clip's last frame may seed this scene.
+
+    Chaining across a section change is what made `chain` mode feel monotonous: a
+    chorus inherited the verse's framing. Unknown sections never block the chain —
+    an unlabeled plan should not lose the feature.
+    """
+    if normalise_chain_scope(scope) == "all":
+        return True
+    before = str(previous_section or "").strip().lower()
+    after = str(current_section or "").strip().lower()
+    if not before or not after:
+        return True
+    return before == after

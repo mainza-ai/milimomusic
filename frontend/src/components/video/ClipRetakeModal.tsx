@@ -99,6 +99,7 @@ export const ClipRetakeModal: React.FC<ClipRetakeModalProps> = ({
                     </div>
                     <button
                         type="button"
+                        aria-label="Close the retake dialog"
                         onClick={onClose}
                         className="p-1.5 rounded-lg text-slate-400 hover:text-slate-200 transition-colors"
                     >

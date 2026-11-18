@@ -412,6 +412,15 @@ async def lifespan(app: FastAPI):
     from app.core import recovery as recovery_mod
     recovery_mod.recover_on_boot(engine)
 
+    # Render takes that were in flight when the process died (plan 7.28).
+    try:
+        from app.services.video import takes as _takes
+
+        with Session(engine) as _session:
+            _takes.reconcile_stale_renders(_session)
+    except Exception as _render_reconcile_err:  # pragma: no cover - defensive
+        logger.warning(f"Video render reconciliation skipped: {_render_reconcile_err}")
+
     # Stuck-job sweeper: a wedged model call must not hold the GPU lane forever.
     async def _stall_sweeper():
         interval = int(os.environ.get("MILIMO_STALL_SWEEP_SECONDS", "120"))
@@ -5848,6 +5857,20 @@ def get_job_artifact_manifest(job_id: str):
         content=manifest,
         headers={"Content-Disposition": f'attachment; filename="{title}_manifest.json"'},
     )
+
+
+@app.get("/videos/lipsync-engines")
+def list_lipsync_engines():
+    """Lip-sync engines with real availability and the reason each is unavailable.
+
+    The render request has always carried `lip_sync_engine`; this is the catalogue
+    the inspector renders so the choice is real and the alternatives are honest
+    about why they cannot run (plan 7.27).
+    """
+    from app.services.video.lip_sync.registry import engine_catalogue
+
+    engines = [e.to_dict() for e in engine_catalogue()]
+    return {"status": "ok", "engines": engines}
 
 
 @app.get("/videos/presets")

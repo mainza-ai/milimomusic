@@ -144,3 +144,25 @@ def test_render_stamps_the_bible_into_every_scene_prompt(tmp_path, monkeypatch):
             {"character_desc": bible}, plan))
     assert all(bible in clip.prompt for clip in plan.clips)
     assert plan.clips[0].prompt.endswith(".")
+
+
+# ── section-aware chaining (keeps `chain` from feeling monotonous) ────────
+
+def test_chaining_stays_inside_a_section_by_default():
+    assert c.chain_allowed("Verse", "Verse", None) is True
+    assert c.chain_allowed("Verse", "Chorus", None) is False
+    assert c.chain_allowed("Chorus", "Chorus", "section") is True
+
+
+def test_scope_all_chains_across_sections():
+    assert c.chain_allowed("Verse", "Chorus", "all") is True
+
+
+def test_unknown_sections_do_not_disable_the_feature():
+    assert c.chain_allowed(None, "Chorus", "section") is True
+    assert c.chain_allowed("Verse", "", "section") is True
+
+
+def test_unknown_scope_falls_back_to_section():
+    assert c.normalise_chain_scope("everything") == "section"
+    assert c.normalise_chain_scope("ALL") == "all"

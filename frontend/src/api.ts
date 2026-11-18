@@ -1605,7 +1605,7 @@ export interface VideoRenderParams {
     resolution?: '720p' | '1080p';
     aspect_ratio?: '16:9' | '9:16' | '1:1' | '21:9';
     provider?: 'local' | 'cloud_fal' | 'cloud_replicate';
-    lip_sync_engine?: 'live_portrait' | 'echomimic' | 'fallback';
+    lip_sync_engine?: string;
     enable_lip_sync?: boolean;
     burn_lyrics?: boolean;
     subtitle_style?: string;
@@ -1747,6 +1747,14 @@ export const videoApi = {
     },
     getVideoProviders: async (): Promise<VideoProvider[]> => {
         const res = await axios.get(`${API_BASE_URL}/videos/providers`);
+        return res.data;
+    },
+    /** Lip-sync engines and whether each can actually run here (plan 7.27). */
+    getLipSyncEngines: async (): Promise<{ engines: Array<{
+        id: string; name: string; kind: 'local' | 'cloud'; available: boolean;
+        reason?: string | null; requires?: string | null; licence?: string | null; neural?: boolean;
+    }> }> => {
+        const res = await axios.get(`${API_BASE_URL}/videos/lipsync-engines`);
         return res.data;
     },
     /** Every render take for a track — newest first (plan 7.4). */

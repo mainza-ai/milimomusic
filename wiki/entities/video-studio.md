@@ -115,9 +115,17 @@ To eliminate unnatural mouth twitching and deliver consistent vocal performances
   `character_profile`) is appended to every scene prompt exactly once.
 - **chain** — additionally seeds each b-roll scene with the previous clip's final
   frame, so grade, lighting and framing carry across the cut.
+- **chain_scope** (`section` by default) resets the chain at a section change, so a
+  chorus does not inherit the verse's framing; `all` chains across the whole song.
 - A plate the user approved always wins over chaining.
 - Implemented in `services/video/consistency.py`, selectable in the inspector's
   *Character Consistency* control; covered by `tests/test_video_consistency.py`.
+
+**Lip-sync engine selection** (`services/video/lip_sync/registry.py`,
+`GET /videos/lipsync-engines`): the picker lists every engine with real
+availability, licence and the reason it cannot run, and the render honours the
+choice. An unavailable engine falls back to the jaw-warp animatic **with the
+reason recorded on the task** — the request field used to be ignored entirely.
 
 ## 5. Local-First MiniMax H3 33B Execution
 

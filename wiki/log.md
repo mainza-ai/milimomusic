@@ -3162,3 +3162,23 @@ Continuation of the Phase 7 pass, closing the three items left open:
   gained *Make variants* (9:16 + 1:1) wired to that poller.
 Verification: **644 backend tests passed**, 34 frontend tests (5 new a11y guards),
 `tsc`/`vite build` green, ruff clean, API parity 178 routes / 182 calls.
+
+## [2026-11-18] implement | Phase 7 follow-ups — lip-sync registry, crash reconciliation, chain scope, icon-only a11y
+Implemented the follow-ups listed after the previous delivery:
+- **7.27 Lip-sync engine registry.** The render request carried `lip_sync_engine` and the
+  orchestrator ignored it (LivePortrait was always constructed). New
+  `lip_sync/registry.py` + `GET /videos/lipsync-engines` report every engine with real
+  availability, licence and the blocking reason; the orchestrator resolves the request,
+  records the reason when it falls back to the jaw-warp animatic, and the inspector
+  renders the live catalogue (disabled entries say why). The legacy `fallback` client
+  value is aliased to `jaw_warp`.
+- **7.28 Render reconciliation at boot.** A killed server left `videorender` rows in
+  `rendering` forever — a take the UI showed and nothing ever resolved. `lifespan` now
+  marks them failed with a stated reason.
+- **7.29 Chain scope.** `chain_scope: section | all` (default `section`) stops a chorus
+  inheriting the verse's frame, which is what made `chain` feel like one long shot.
+- **7.21 second pass.** The a11y guard gained an icon-only-button rule (brace-aware JSX
+  scanner with a documented conservative boundary); it immediately caught two unnamed
+  dialog close buttons, now labelled with `aria-label`.
+Verification: **658 backend tests passed**, 38 frontend tests, `tsc`/`vite build` green,
+ruff clean, API parity 179 routes / 183 calls.

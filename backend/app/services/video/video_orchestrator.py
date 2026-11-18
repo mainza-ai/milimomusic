@@ -33,7 +33,6 @@ from app.services.video.subtitle_styles import (
 )
 from app.services.video.lip_sync.base import BaseLipSyncProvider
 from app.services.video.lip_sync.live_portrait import LivePortraitProvider
-from app.services.video.lip_sync.cloud_lipsync import CloudLipSyncProvider
 from app.services.video.lip_sync.fallback import SmoothVisemeFallbackProvider
 from app.services.video.generators.base import BaseVideoGenerator
 from app.services.video.generators.diffusers_wan import DiffusersWanGenerator
@@ -73,7 +72,6 @@ class VideoOrchestrator:
         return cls._instance
 
     def __init__(self):
-        self._local_lipsync = LivePortraitProvider()
         self._fallback_lipsync = SmoothVisemeFallbackProvider()
         self._local_wan_14b = DiffusersWanGenerator(model_size="14b")
         self._local_wan_1_3b = DiffusersWanGenerator(model_size="1.3b")
@@ -847,12 +845,14 @@ class VideoOrchestrator:
             from app.services.video.consistency import (
                 apply_character_bible,
                 character_bible,
+                chain_allowed,
                 extract_last_frame,
                 normalise_mode,
                 scene_seed,
             )
 
             consistency_mode = normalise_mode(config.get("consistency_mode"))
+            chain_scope = config.get("chain_scope")
 
             if aspect_ratio == "9:16":
                 w, h = (1080, 1920) if resolution == "1080p" else (720, 1280)
@@ -920,12 +920,26 @@ class VideoOrchestrator:
             # through planning, extraction and rendering (plan 4.8).
             video_generator = VideoGeneratorRegistry.resolve(model_name, provider_type)
 
-            if provider_type == "cloud_fal":
-                lipsync_provider = CloudLipSyncProvider("fal")
-            elif provider_type == "cloud_replicate":
-                lipsync_provider = CloudLipSyncProvider("replicate")
+            # Plan 7.27: honour the engine the request asked for. It used to be
+            # ignored, so the UI offered a choice that changed nothing.
+            from app.services.video.lip_sync.registry import (
+                resolve_cloud_provider,
+                resolve_local_provider,
+            )
+
+            requested_engine = config.get("lip_sync_engine") or "live_portrait"
+            lipsync_fallback_reason: Optional[str] = None
+            cloud_provider = resolve_cloud_provider(provider_type)
+            if cloud_provider is not None:
+                lipsync_provider = cloud_provider
             else:
-                lipsync_provider = self._local_lipsync
+                lipsync_provider, lipsync_fallback_reason = resolve_local_provider(requested_engine)
+
+            if lipsync_fallback_reason:
+                task_info.fallback_used = True
+                task_info.fallback_reason = lipsync_fallback_reason
+                logger.info("Lip sync: %s", lipsync_fallback_reason)
+            task_info.lip_sync_engine = getattr(lipsync_provider, "name", requested_engine)
 
             is_local = (provider_type not in ("cloud_fal", "cloud_replicate", "cloud_minimax"))
 
@@ -956,9 +970,10 @@ class VideoOrchestrator:
                 _is_cancelled = lambda: cancel_event.is_set()
 
                 previous_clip_file: Optional[str] = None
+                previous_section: Optional[str] = None
 
                 async def _render_all_scenes():
-                    nonlocal previous_clip_file
+                    nonlocal previous_clip_file, previous_section
                     for idx, clip in enumerate(plan.clips):
                         if cancel_event.is_set():
                             logger.info(f"render_advanced_music_video: Cancelled before rendering scene {idx + 1}.")
@@ -1034,7 +1049,11 @@ class VideoOrchestrator:
                             # Continuity: the previous clip's final frame carries the
                             # grade and framing into this scene (mode="chain").
                             chained_frame = None
-                            if consistency_mode == "chain" and previous_clip_file:
+                            if (
+                                consistency_mode == "chain"
+                                and previous_clip_file
+                                and chain_allowed(previous_section, clip.section_label, chain_scope)
+                            ):
                                 chained_frame = extract_last_frame(
                                     previous_clip_file,
                                     os.path.join(TEMP_DIR, f"chain_{task_id}_{idx:03d}.png"),
@@ -1088,6 +1107,7 @@ class VideoOrchestrator:
                             clip.rendered_clip_path = clip_file
                             clip.status = "completed"
                             previous_clip_file = clip_file
+                            previous_section = clip.section_label
 
                 if is_local:
                     async with GlobalHardwareCoordinator.scoped_device(

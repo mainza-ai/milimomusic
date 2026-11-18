@@ -396,6 +396,9 @@ class VideoRenderRequest(SQLModel):
     characterPromptNote: Optional[str] = None
     # Subject continuity across scenes (audit E6): "off" | "character" | "chain".
     consistency_mode: Optional[str] = "character"
+    # How far chaining reaches: "section" (default) resets at a section change,
+    # "all" chains across the whole song.
+    chain_scope: Optional[str] = "section"
     confirm_cost: Optional[bool] = False
     scenes: Optional[List[Dict[str, Any]]] = None
     clips: Optional[List[Dict[str, Any]]] = None

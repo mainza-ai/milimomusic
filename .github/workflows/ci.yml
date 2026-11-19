@@ -54,7 +54,12 @@ jobs:
     name: Performance Smoke (report)
     runs-on: ubuntu-latest
     steps:
+      # `app.main` imports the MuScriptor provider, so the submodule must be
+      # present — without it the benchmark dies on `No module named 'muscriptor'`
+      # instead of measuring anything (the failure that opened this fix).
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-python@v5
         with:

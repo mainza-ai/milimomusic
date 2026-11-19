@@ -24,10 +24,15 @@ import json
 import os
 import sys
 import time
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-sys.path.insert(0, os.path.join(ROOT, "backend"))
+#: Repo-relative import roots, so the harness works from a plain checkout without
+#: the caller having to remember the PYTHONPATH the CI job exports.
+for _rel in ("backend", "muscriptor", os.path.join("mulacover", "src")):
+    _abs = os.path.join(ROOT, _rel)
+    if os.path.isdir(_abs):
+        sys.path.insert(0, _abs)
 
 BASELINE_PATH = os.path.join(ROOT, "scripts", "bench_baseline.json")
 
@@ -80,6 +85,23 @@ def _bundle_kb() -> float | None:
         if name.endswith(".js")
     )
     return round(total / 1024, 1)
+
+
+def _preflight() -> Optional[str]:
+    """The one failure here that is not a performance number: a missing submodule.
+
+    `app.main` imports the MuScriptor provider at module load, so an uninitialised
+    submodule surfaces as a bare `ModuleNotFoundError` that says nothing about the
+    fix. Name the cause and the command instead (CI failure 2026-11-19).
+    """
+    if not os.path.isfile(os.path.join(ROOT, "muscriptor", "muscriptor", "__init__.py")):
+        return (
+            "bench: the `muscriptor` submodule is not checked out, so `app.main` "
+            "cannot be imported.\n"
+            "  local: git submodule update --init --recursive\n"
+            "  CI:    actions/checkout with `submodules: recursive`"
+        )
+    return None
 
 
 def run() -> Dict[str, Any]:
@@ -141,6 +163,11 @@ def main() -> int:
     parser.add_argument("--compare", action="store_true")
     parser.add_argument("--max-regression", type=float, default=0.5)
     args = parser.parse_args()
+
+    problem = _preflight()
+    if problem:
+        print(problem, file=sys.stderr)
+        return 2
 
     report = run()
     _print(report)

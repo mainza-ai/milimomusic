@@ -11,21 +11,38 @@ import os
 from datetime import datetime
 from pydantic import BaseModel
 
-try:
-    from openai import OpenAI
-except ImportError:
-    OpenAI = None
+# Provider SDKs are imported where they are used, not at module import: they cost
+# roughly 2.5 s of interpreter start-up between them, and most boots never call an
+# LLM at all. Keeping this module light also keeps `app.main` light.
+def _import_openai():
+    try:
+        from openai import OpenAI
+    except ImportError as exc:  # pragma: no cover - depends on the environment
+        raise ImportError(
+            "OpenAI library is not installed. Please run `pip install openai`."
+        ) from exc
+    return OpenAI
 
-try:
-    from google import genai
-    from google.genai import types
-except ImportError:
-    genai = None
 
-try:
-    import anthropic as _anthropic
-except ImportError:
-    _anthropic = None
+def _import_genai():
+    try:
+        from google import genai
+        from google.genai import types
+    except ImportError as exc:  # pragma: no cover - depends on the environment
+        raise ImportError(
+            "Google GenAI library is not installed. Please run `pip install google-genai`."
+        ) from exc
+    return genai, types
+
+
+def _import_anthropic():
+    try:
+        import anthropic
+    except ImportError as exc:  # pragma: no cover - depends on the environment
+        raise ImportError(
+            "Anthropic library is not installed. Please run `pip install anthropic`."
+        ) from exc
+    return anthropic
 
 from .config_manager import ConfigManager
 from .lyrics_schemas import LyricsResponse
@@ -243,8 +260,7 @@ class OpenAIProvider(LLMProvider):
         timeout: float = 300.0,
         default_headers: Optional[Dict[str, str]] = None,
     ):
-        if OpenAI is None:
-            raise ImportError("OpenAI library is not installed. Please run `pip install openai`.")
+        OpenAI = _import_openai()
         self.client = OpenAI(
             api_key=api_key or "no-key",
             base_url=base_url,
@@ -430,8 +446,7 @@ class OpenAIProvider(LLMProvider):
 
 class GeminiProvider(LLMProvider):
     def __init__(self, api_key: str):
-        if genai is None:
-             raise ImportError("Google GenAI library is not installed. Please run `pip install google-genai`.")
+        genai, self._types = _import_genai()
         self.client = genai.Client(api_key=api_key)
 
     def get_models(self) -> List[str]:
@@ -449,7 +464,7 @@ class GeminiProvider(LLMProvider):
             response = self.client.models.generate_content(
                 model=model,
                 contents=prompt,
-                config=types.GenerateContentConfig(
+                config=self._types.GenerateContentConfig(
                     temperature=kwargs.get("options", {}).get("temperature", 0.7)
                 )
             )
@@ -463,7 +478,7 @@ class GeminiProvider(LLMProvider):
             response = self.client.models.generate_content(
                 model=model,
                 contents=prompt,
-                config=types.GenerateContentConfig(
+                config=self._types.GenerateContentConfig(
                     response_mime_type='application/json',
                     temperature=kwargs.get("options", {}).get("temperature", 0.7)
                 )
@@ -509,7 +524,7 @@ class GeminiProvider(LLMProvider):
             response = self.client.models.generate_content(
                 model=model,
                 contents=contents,
-                config=types.GenerateContentConfig(
+                config=self._types.GenerateContentConfig(
                     system_instruction="\n\n".join(system_parts) or None,
                     temperature=kwargs.get("options", {}).get("temperature", 0.7),
                     response_mime_type="application/json" if kwargs.get("force_json") else None,
@@ -544,12 +559,11 @@ class AnthropicProvider(LLMProvider):
     _DEFAULT_MODEL = "claude-sonnet-4-5"
 
     def __init__(self, api_key: str, base_url: Optional[str] = None):
-        if _anthropic is None:
-            raise ImportError("Anthropic library is not installed. Please run `pip install anthropic`.")
+        anthropic = _import_anthropic()
         kwargs = {"api_key": api_key or "no-key"}
         if base_url:
             kwargs["base_url"] = base_url
-        self.client = _anthropic.Anthropic(**kwargs)
+        self.client = anthropic.Anthropic(**kwargs)
 
     def get_models(self) -> List[str]:
         try:

@@ -115,6 +115,15 @@ The entry is 575 KB with lazy views and vendor chunks. Over loopback that arrive
 single-digit ms; the cost is ~50–100 ms of parse/execute. The real frontend risks are
 high-frequency React state (playhead/scrub) and long lists — not chunk size.
 
+## 2b. What the follow-up pass added (same day)
+
+| Change | Measured effect |
+|---|---|
+| **Lazy LLM SDK imports** (9.4) — `openai` / `google.genai` / `anthropic` load on first agent call, not at boot | cold import **4.64 s → 3.83 s** (−17 %); `llm_service` leaves the import profile entirely |
+| **Measured encoder policy** (9.5) — benchmark both encoders once per machine, cache with a fingerprint, `MILIMO_VIDEO_ENCODER` overrides | on this machine **x264 0.21 s vs VideoToolbox 0.31 s** per second of 1080p — the "hardware" default was 48 % slower |
+| **Benchmark harness** (9.9) — `scripts/bench_api.py`, `--write-baseline` / `--compare` (ratio-based, 50 % tolerance) + a report-only CI job | warm reads **1.1–1.4 ms**, 304s **1.0–1.2 ms**; JS bundle trackable alongside |
+| **Parallel clip normalisation** (9.10) — bounded pool (`MILIMO_NORMALISE_CONCURRENCY`, default 2), order preserved for the stitcher | 5 clips normalise in ~1/3 of serial wall time in the harness test |
+
 ## 3. What shipped in this pass
 
 | Change | Evidence |

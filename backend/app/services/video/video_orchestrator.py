@@ -2098,16 +2098,22 @@ class VideoOrchestrator:
         """
         from app.services.video.clip_normalise import normalise_clip, probe_duration
 
-        normalised: List[str] = []
-        for idx, clip_path in enumerate(rendered_clips):
-            if cancel_event is not None and cancel_event.is_set():
-                raise asyncio.CancelledError("Video rendering cancelled during normalisation")
+        # Clips are independent encodes, so they normalise concurrently. The pool is
+        # bounded (each encode already caps its own FFmpeg threads) to keep the editor
+        # responsive: total CPU is threads x concurrency.
+        try:
+            concurrency = int(os.environ.get("MILIMO_NORMALISE_CONCURRENCY", "2"))
+        except (TypeError, ValueError):
+            concurrency = 2
+        concurrency = max(1, min(6, concurrency))
 
+        semaphore = asyncio.Semaphore(concurrency)
+
+        async def _normalise_one(idx: int, clip_path: str) -> str:
             target = plan_clips[idx] if idx < len(plan_clips) else None
             target_duration = float(getattr(target, "duration", 0.0) or 0.0) if target else 0.0
             if target_duration <= 0:
-                normalised.append(clip_path)
-                continue
+                return clip_path
             # xfade eats `transition_overlap` from every non-final clip.
             if transition_overlap and idx < len(rendered_clips) - 1:
                 target_duration += transition_overlap
@@ -2122,28 +2128,33 @@ class VideoOrchestrator:
                     stem_reactivity=stem_reactivity,
                     fps=fps,
                 )
-            ok = await asyncio.to_thread(
-                normalise_clip,
-                clip_path, dest,
-                duration_s=target_duration,
-                width=width, height=height, fps=fps,
-                extra_vf=extra_vf,
-            )
+            async with semaphore:
+                if cancel_event is not None and cancel_event.is_set():
+                    raise asyncio.CancelledError("Video rendering cancelled during normalisation")
+                ok = await asyncio.to_thread(
+                    normalise_clip,
+                    clip_path, dest,
+                    duration_s=target_duration,
+                    width=width, height=height, fps=fps,
+                    extra_vf=extra_vf,
+                )
             if ok:
-                normalised.append(dest)
                 if before is not None and abs(before - target_duration) > 0.05:
                     logger.info(
                         "Clip %d: %.3fs rendered, trimmed/padded to %.3fs",
                         idx + 1, before, target_duration,
                     )
-            else:
-                logger.warning(
-                    "Clip %d could not be normalised; keeping the raw render "
-                    "(assembly may drift).", idx + 1,
-                )
-                normalised.append(clip_path)
+                return dest
+            logger.warning(
+                "Clip %d could not be normalised; keeping the raw render "
+                "(assembly may drift).", idx + 1,
+            )
+            return clip_path
 
-        return normalised
+        # `gather` preserves input order, which the stitcher depends on.
+        return list(await asyncio.gather(
+            *[_normalise_one(idx, clip_path) for idx, clip_path in enumerate(rendered_clips)]
+        ))
 
     async def _stitch_video_segments_with_transitions(
         self,

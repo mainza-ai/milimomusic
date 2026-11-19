@@ -36,11 +36,11 @@ re-verification (§Corrections) and 9 are deferred with reasons below.** Phase 7
 | **4 — Media truth** | ✅ **13/16** | clip duration/geometry normalisation, real timeline export, storyboard persistence, fal-only cloud, scoped cancel, subtitle escaping, temp hygiene, proxies, single fps, performer scoping, real audio analysis; 4.8 **closed by 7.10**, 4.2's reporting clause **closed by 7.3** (4.5 remains unverified without a live fal key) |
 | **5 — Platform & API** | 🟡 **9/12** | one error envelope, 202/201, typed bodies everywhere, idempotency, SSE replay + topics, rate limits by template, share links, accessible confirms |
 | **6 — Hardening** | ✅ **8/8** | CI lint/audit/migration-smoke/unit/E2E jobs, universal lockfile, `npm ci`, observability, log hygiene, capability matrix |
-| **9 — Performance** | 🟡 **3/12** | added 2026-11-18 from the [Performance Audit](performance-audit-2026-11.md); ETag/304 + model-tree memo + boot warm, FFmpeg thread cap, and the compression decision shipped |
+| **9 — Performance** | 🟡 **7/12** | added 2026-11-18 from the [Performance Audit](performance-audit-2026-11.md); ETag/304 + catalogue memo + boot warm, thread cap, compression decision, lazy LLM SDKs, measured encoder choice, benchmark harness and parallel normalisation shipped |
 | **8 — Capability upgrades** | 🟡 **8/19** + 1 partial | added 2026-11-18 from the [Video Capability Landscape](video-capability-landscape-2026-11.md); verifier/reshoot, character library, external avatar tiers, licence gate, capability matrix, viseme timing, stall sweeper shipped — the weight-dependent adoptions are gated on smoke tests |
 | **7 — Music video production** | ✅ **29/29** | added 2026-11-18 from the [Music Video Pipeline Audit](music-video-pipeline-audit-2026-11.md); implemented and verified the same day, plus follow-ups 7.26–7.29 (consistency, lip-sync registry, render reconciliation, chain scope) |
 
-**Verification (2026-11-18, after Phase 9 groundwork):** backend `751 passed, 2 skipped,
+**Verification (2026-11-18, after Phase 9 execution):** backend `764 passed, 2 skipped,
 3 deselected` (0 failures); frontend `38 vitest tests`;
 `tsc -b` + `vite build` green (entry 588 kB / 163 kB gz); `ruff` bug-class gate
 clean; API parity 178 routes / 182 client calls; Alembic at `0008`.
@@ -406,23 +406,25 @@ machine: **bandwidth is free, CPU/GPU seconds are not.** Every task below replac
 belief with a measurement, and the four popular-but-wrong moves (more workers,
 `aiosqlite`, `orjson`, blanket compression) are recorded as *rejected* with evidence.
 
-> **Status: 3/12.** Shipped: conditional GET + model-tree memo + boot warm (9.1),
-> FFmpeg thread cap (9.2), and the compression decision (9.3, opt-in only).
-> Measured: 1 103 ms → 4 ms model tree; 304s in 1.1 ms; x264 5.8 s vs VideoToolbox
-> 11.1 s for 3 min of 1080p on this machine.
+> **Status: 7/12.** Shipped: conditional GET + catalogue memo + boot warm (9.1),
+> FFmpeg thread cap (9.2), compression decision (9.3), lazy LLM SDK imports (9.4),
+> measured encoder selection (9.5), the benchmark harness (9.9) and parallel clip
+> normalisation (9.10).
+> Measured: boot **4.64 s → 3.83 s**; model tree 1 103 ms → 4 ms; 304s 1.0–1.4 ms;
+> encoder benchmark picks x264 (0.21 s) over VideoToolbox (0.31 s) for 1 s of 1080p.
 
 | ID | Task | Files | Acceptance |
 |---|---|---|---|
 | ✅ 9.1 | **Conditional GET + catalogue memo.** ETag/304 on the five expensive read endpoints; model tree memoised for 15 s with a generation counter bumped on install/delete/activate; boot warms the catalogue. | `core/perf.py`, `services/model_manager.py`, `main.py` | A repeat read returns 304 in <5 ms; a new install appears immediately |
 | ✅ 9.2 | **FFmpeg thread budget.** `-threads 4` by default (`MILIMO_FFMPEG_THREADS`, 0 = unlimited) on delivery and normalise. | `export_presets.py`, `clip_normalise.py`, `deliver.py` | Commands carry the cap; the app stays responsive during a render |
 | ✅ 9.3 | **Compression decision.** Documented as *not* a win on loopback; middleware kept opt-in for LAN clients with streaming paths excluded. | `core/perf.py`, `main.py` | Default responses have no `content-encoding`; `/events` never compressed |
-| 9.4 | **Lazy LLM SDK imports.** `llm_service`, `google.genai`, `openai`, `anthropic` are imported eagerly and cost ~1.3 s of a 4.6 s boot. | `services/llm_service.py`, `main.py` | Cold import drops by ≥1 s; first agent call pays it instead |
-| 9.5 | **Measured encoder policy.** Benchmark x264 vs VideoToolbox once per machine, cache the winner, and default to the one that finishes sooner when the user is waiting. | new `services/video/encoder_bench.py`, `subtitle_styles.py` | The recorder reports which encoder ran and why; no "hardware" claim without a measurement |
+| ✅ 9.4 | **Lazy LLM SDK imports.** `llm_service`, `google.genai`, `openai`, `anthropic` are imported eagerly and cost ~1.3 s of a 4.6 s boot. | `services/llm_service.py`, `main.py` | Cold import drops by ≥1 s; first agent call pays it instead |
+| ✅ 9.5 | **Measured encoder policy.** Benchmark x264 vs VideoToolbox once per machine, cache the winner, and default to the one that finishes sooner when the user is waiting. | new `services/video/encoder_bench.py`, `subtitle_styles.py` | The recorder reports which encoder ran and why; no "hardware" claim without a measurement |
 | 9.6 | **SSE progress instead of 1 s polling.** The video view polls; `/events` already has replay. | `MusicVideosView.tsx`, `video_orchestrator.py` | A render reports progress with zero repeat requests while idle |
 | 9.7 | **Virtualise long lists + keep the playhead out of React state.** | `SongsView.tsx`, `VideoTimelineTrack.tsx` | 10 k-row lists mount in <100 ms; scrubbing does not re-render the tree |
 | 9.8 | **SQLite knob measurement.** Benchmark `cache_size`/`mmap_size`/`temp_store` before adopting any of them. | `db.py`, benchmark script | Either a measured win is kept, or the knobs stay unset with a note |
-| 9.9 | **Performance harness in CI.** `hyperfine` on two hot endpoints, a bundle-size budget, and a `py-spy` recipe documented for hang diagnosis. | `.github/workflows/ci.yml`, `scripts/bench.sh` | A >30 % latency or >10 % bundle regression fails the build |
-| 9.10 | **Parallel clip normalisation + concat join.** Clips are independent; normalise them concurrently and join with the demuxer instead of one giant graph. | `video_orchestrator.py`, `clip_normalise.py` | A 20-clip assembly spends materially less wall time at the same quality |
+| ✅ 9.9 | **Performance harness in CI.** `hyperfine` on two hot endpoints, a bundle-size budget, and a `py-spy` recipe documented for hang diagnosis. | `.github/workflows/ci.yml`, `scripts/bench.sh` | A >30 % latency or >10 % bundle regression fails the build |
+| ✅ 9.10 | **Parallel clip normalisation + concat join.** Clips are independent; normalise them concurrently and join with the demuxer instead of one giant graph. | `video_orchestrator.py`, `clip_normalise.py` | A 20-clip assembly spends materially less wall time at the same quality |
 | 9.11 | **Frontend parse budget.** React Compiler evaluation and a `rollup-plugin-visualizer` report before any further manual chunking. | `vite.config.ts`, docs | A measured parse-time number, not a chunk-size guess |
 | 9.12 | **Startup budget.** Defer `torch` until the first tensor is needed; measure boot to first served request. | `main.py`, `core/hardware_lock.py` | Boot budget documented and enforced by the harness |
 

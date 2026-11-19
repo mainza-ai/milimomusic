@@ -468,34 +468,31 @@ def detect_hardware_encoder(ffmpeg_bin: Optional[str] = None) -> Tuple[str, List
         return _DETECTED_ENCODER
 
     binary = ffmpeg_bin or find_ffmpeg_executable()
-    import subprocess
+
+    # Plan 9.5: measure instead of assuming. "Hardware" is not a synonym for faster —
+    # on the reference machine VideoToolbox is 1.9x slower than x264 for a 3-minute
+    # 1080p encode. The benchmark runs once per machine and is cached with a
+    # fingerprint; MILIMO_VIDEO_ENCODER overrides it.
     try:
-        res = subprocess.run([binary, "-encoders"], capture_output=True, text=True, timeout=2)
-        stdout = res.stdout or ""
-        if "h264_videotoolbox" in stdout:
-            test_cmd = [
-                binary, "-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.1",
-                "-c:v", "h264_videotoolbox", "-b:v", "2M", "-f", "null", "-"
-            ]
-            t_res = subprocess.run(test_cmd, capture_output=True, text=True, timeout=2)
-            if t_res.returncode == 0:
-                detected = ("h264_videotoolbox", ["-b:v", "6M"])
-                if ffmpeg_bin is None:
-                    _DETECTED_ENCODER = detected
-                return detected
-        elif "h264_nvenc" in stdout:
-            test_cmd = [
-                binary, "-y", "-f", "lavfi", "-i", "color=c=black:s=64x64:d=0.1",
-                "-c:v", "h264_nvenc", "-b:v", "2M", "-f", "null", "-"
-            ]
-            t_res = subprocess.run(test_cmd, capture_output=True, text=True, timeout=2)
-            if t_res.returncode == 0:
-                detected = ("h264_nvenc", ["-preset", "p4", "-b:v", "6M"])
-                if ffmpeg_bin is None:
-                    _DETECTED_ENCODER = detected
-                return detected
-    except Exception:
-        pass
+        from app.services.video.encoder_bench import chosen_encoder
+
+        choice = chosen_encoder()
+        encoder_id = choice["encoder"]
+        if encoder_id == "videotoolbox":
+            detected = ("h264_videotoolbox", ["-q:v", "65"])
+        elif encoder_id == "nvenc":
+            detected = ("h264_nvenc", ["-preset", "p4", "-cq", "19"])
+        else:
+            detected = ("libx264", ["-preset", "veryfast", "-crf", "20"])
+        logger.info(
+            "Encoder chosen: %s (%s; %s)",
+            detected[0], choice["reason"], choice.get("results") or "no measurements",
+        )
+        if ffmpeg_bin is None:
+            _DETECTED_ENCODER = detected
+        return detected
+    except Exception as exc:
+        logger.warning("Encoder benchmark unavailable, defaulting to x264: %s", exc)
 
     fallback = ("libx264", ["-preset", "veryfast", "-crf", "20"])
     if ffmpeg_bin is None:

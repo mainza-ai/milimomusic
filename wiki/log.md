@@ -3302,3 +3302,22 @@ Deliverables: [Performance Audit 2026-11](performance-audit-2026-11.md) and
 intrinsic size.
 Verification: **751 backend tests** (+16 perf), 38 frontend tests, ruff clean, API parity
 green.
+
+## [2026-11-18] implement | Phase 9 performance — lazy SDKs, measured encoder, harness, parallel normalise
+Continued the performance phase with the four tasks that were implementable locally.
+- **9.4 Lazy LLM SDK imports.** `openai`, `google.genai` and `anthropic` are imported on
+  first use instead of at module import. Cold boot **4.64 s → 3.83 s** (−17 %), and
+  `llm_service` disappears from the import profile entirely.
+- **9.5 Measured encoder policy.** `services/video/encoder_bench.py` benchmarks x264 vs
+  VideoToolbox on a 1 s 1080p clip, caches the winner with a machine+build fingerprint
+  (30-day TTL) and honours `MILIMO_VIDEO_ENCODER`. Measured here: **x264 0.21 s vs
+  VideoToolbox 0.31 s** — the old "prefer hardware" default was 48 % slower. Detection
+  now logs which encoder ran and why.
+- **9.9 Benchmark harness.** `scripts/bench_api.py` reports median/p95/304 timings plus
+  the JS bundle size, can write a baseline and fail on a ratio regression; CI runs it
+  report-only so a missing ETag or a broken 304 path fails immediately.
+- **9.10 Parallel clip normalisation.** Independent encodes now run through a bounded
+  pool (`MILIMO_NORMALISE_CONCURRENCY`, default 2) with `asyncio.gather`, order
+  preserved for the stitcher; a failed clip still falls back to its raw render.
+Verification: **764 backend tests**, 38 frontend tests, ruff clean, parity green,
+licence gate OK. Benchmark table: warm reads 1.1–1.4 ms, 304s 1.0–1.2 ms, boots 3.83 s.

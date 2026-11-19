@@ -50,6 +50,31 @@ jobs:
           MILIMO_NONCOMMERCIAL_OK: "1"
         run: python scripts/check_licences.py
 
+  perf-smoke:
+    name: Performance Smoke (report)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install backend deps
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      # Report-only: absolute timings are not portable across runners, but a crash,
+      # a missing ETag or a vanished 304 path fails here immediately (plan 9.9).
+      - name: Endpoint benchmark (report)
+        env:
+          MILIMO_FAST_TEST_MODE: "1"
+          HF_HUB_OFFLINE: "1"
+        run: |
+          PYTHONPATH=backend:muscriptor:mulacover/src python scripts/bench_api.py
+
   backend-test:
     name: Backend Test Suite
     runs-on: ubuntu-latest

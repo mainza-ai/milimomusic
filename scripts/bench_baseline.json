@@ -1,0 +1,55 @@
+{
+  "routes": {
+    "/health": {
+      "status": 200,
+      "median_ms": 2.17,
+      "p95_ms": 8.48,
+      "304_ms": null,
+      "kb": 0.3
+    },
+    "/models/tree": {
+      "status": 200,
+      "median_ms": 1.39,
+      "p95_ms": 1.95,
+      "304_ms": 1.1,
+      "kb": 14.2
+    },
+    "/videos/models": {
+      "status": 200,
+      "median_ms": 1.4,
+      "p95_ms": 214.37,
+      "304_ms": 1.19,
+      "kb": 1.8
+    },
+    "/videos/presets": {
+      "status": 200,
+      "median_ms": 1.67,
+      "p95_ms": 3.3,
+      "304_ms": 1.37,
+      "kb": 2.2
+    },
+    "/videos/capability-matrix": {
+      "status": 200,
+      "median_ms": 1.4,
+      "p95_ms": 1.9,
+      "304_ms": 1.21,
+      "kb": 3.3
+    },
+    "/system/licences": {
+      "status": 200,
+      "median_ms": 1.52,
+      "p95_ms": 2.86,
+      "304_ms": 1.36,
+      "kb": 5.5
+    },
+    "/characters": {
+      "status": 200,
+      "median_ms": 1.45,
+      "p95_ms": 8.49,
+      "304_ms": null,
+      "kb": 0.0
+    }
+  },
+  "bundle_kb": 1274.6,
+  "at": 1795059024.2988749
+}

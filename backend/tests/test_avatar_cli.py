@@ -123,3 +123,69 @@ def test_a_missing_engine_reports_an_outcome_and_falls_back(fake_engine, monkeyp
     assert ok is False
     assert provider.last_outcome["used_fallback"] is True
     assert provider.last_outcome["reason"]
+
+
+# ── request-JSON launchers (InfiniteTalk, plan 8.4b) ──────────────────────
+
+def test_json_template_preserves_the_engine_schema_and_fills_placeholders(tmp_path):
+    template = {
+        "cond_image": "{{image}}",
+        "cond_audio": "{{audio}}",
+        "prompt": "{{prompt}}",
+        "n_sample_frames": "{{frames}}",
+        "size": "infinitetalk-480",
+        "mode": "streaming",
+    }
+    path = tmp_path / "template.json"
+    path.write_text(__import__("json").dumps(template))
+
+    payload = cli.render_json_request(
+        str(path), image_path="/tmp/face.png", audio_path="/tmp/voice.wav",
+        prompt="a singer on stage", duration=2.0, fps=25, out_path="/tmp/out.mp4",
+    )
+    data = __import__("json").loads(payload)
+    assert data["cond_image"] == "/tmp/face.png"
+    assert data["cond_audio"] == "/tmp/voice.wav"
+    assert data["prompt"] == "a singer on stage"
+    assert data["n_sample_frames"] == 50          # numeric, not a string
+    # Engine-owned keys survive untouched.
+    assert data["size"] == "infinitetalk-480"
+    assert data["mode"] == "streaming"
+
+
+def test_a_broken_template_returns_none_instead_of_crashing(tmp_path):
+    bad = tmp_path / "bad.json"
+    bad.write_text("{not json")
+    assert cli.render_json_request(
+        str(bad), image_path="a", audio_path="b", prompt="", duration=1.0,
+        fps=25, out_path="c",
+    ) is None
+
+
+def test_infinitetalk_needs_both_the_script_and_a_template(tmp_path, monkeypatch):
+    spec = cli.AVATAR_CLI_SPECS["infinitetalk"]
+    root = tmp_path / "infinitetalk"
+    root.mkdir()
+    (root / spec.script).write_text("")
+    monkeypatch.setenv(spec.env_var, str(root))
+    monkeypatch.delenv(spec.json_template_env, raising=False)
+
+    assert cli.spec_available(spec) is False
+    assert spec.json_template_env in (cli.spec_reason(spec) or "")
+
+    template = tmp_path / "req.json"
+    template.write_text("{}")
+    monkeypatch.setenv(spec.json_template_env, str(template))
+    assert cli.spec_available(spec) is True
+
+
+def test_infinitetalk_argv_uses_the_request_json(tmp_path, monkeypatch):
+    spec = cli.AVATAR_CLI_SPECS["infinitetalk"]
+    monkeypatch.setenv("MILIMO_AVATAR_REQUEST_JSON", "/tmp/req.json")
+    argv = cli.build_argv(
+        spec, script_path="/opt/infinitetalk/generate_infinitetalk.py",
+        image_path="/tmp/f.png", audio_path="/tmp/a.wav", out_path="/tmp/o.mp4",
+        prompt="x", duration=1.0, width=480, height=832,
+    )
+    assert argv[argv.index("--input_json") + 1] == "/tmp/req.json"
+    assert argv[argv.index("--mode") + 1] == "streaming"

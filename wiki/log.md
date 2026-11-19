@@ -3243,3 +3243,31 @@ functional on this machine as-is:
   without hiding the finding; territory blocks are exposed per engine.
 Verification: **725 backend tests passed** (+44), 38 frontend tests, ruff clean,
 parity 185 routes / 189 calls, `tsc` + `vite build` green.
+
+## [2026-11-18] investigate | Phase 8 caveats — weights vs code vs decision
+Investigated the five caveats recorded after Phase 8, classifying each as a weights
+gap, a code gap or an unmade decision — then fixed the code gaps.
+Findings:
+- **C1 mixed:** 8.2 (reference stills) is a **code** gap — `image_service` has no
+  reference-image parameter at all; 8.14 (VACE) is weights only, since the installed
+  diffusers already ships `WanVACEPipeline`.
+- **C2 fixed:** `minterpolate` was using `mi_mode=blend`, which dissolves neighbours.
+  Delivery now defaults to `mci:mc_mode=obmc:me_mode=bidir:vsbmc=1`; `blend` remains an
+  env opt-out. RIFE still needs a frame pipeline (8.6b).
+- **C3 partly fixed:** InfiniteTalk wired through a JSON-template launcher that
+  preserves the engine's own schema; LongCat stays deliberately unwired.
+- **C4 fixed with a gate:** the plate verifier now carries an optional CLIP similarity
+  that is `None` (never zero) when no embedding model is installed, and
+  `needs_reshoot` gained a semantic floor so "same composition, different subject" is
+  re-rolled.
+- **C5 fixed:** `scripts/check_licences.py` + a `licence-gate` CI job. Verified exit 1
+  without `MILIMO_NONCOMMERCIAL_OK=1` and 0 with it, printing the finding either way.
+New gaps found while verifying (G11–G16): the character plate never reaches
+generation; `/videos/plan` ignores character/consistency config; export cancellation
+is cosmetic (thread-bound FFmpeg); character plates are API-only from the UI;
+delivery ignores the capability matrix; the licence gate covers models but not Python
+dependencies.
+Deliverable: [Caveat Investigation 2026-11](caveat-investigation-2026-11.md);
+Phase 8 extended to 19 rows (8/19 shipped, 1 partial) with 8.15–8.19 as the code gaps.
+Verification: **735 backend tests**, 38 frontend tests, ruff clean, licence gate
+advises-then-fails correctly, API parity green.

@@ -27,6 +27,9 @@ the plate verifier, the character library, external avatar tiers with real CLI
 contracts, viseme-driven Tier 0, the licence gate and the capability matrix — so the
 remaining gaps are the weight-dependent adoptions, not unknowns.
 
+Caveat follow-up: [Caveat Investigation 2026-11](caveat-investigation-2026-11.md)
+separates the remaining work into weight-limited, code-limited and decision-limited.
+
 Companions: [Music Video Delivery & QC Specs](concepts/music-video-delivery-specs.md)
 (external standards + 2026 engine landscape) and
 [Session Reporting & Reproducibility](concepts/session-reporting-and-reproducibility.md)

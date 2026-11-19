@@ -91,3 +91,44 @@ def test_unreadable_paths_do_not_raise(tmp_path):
     assert verifier.difference_hash(missing) is None
     score = verifier.score_candidate(missing, missing)
     assert score.total == 0.0
+
+
+# ── semantic scoring (optional, gated) ────────────────────────────────────
+
+def test_without_an_embedding_model_the_score_is_perceptual_only(tmp_path, monkeypatch):
+    monkeypatch.setenv("MILIMO_VERIFIER_EMBEDDING", "off")
+    ref = _image(tmp_path / "ref.png")
+    score = verifier.score_candidate(_image(tmp_path / "c.png"), ref)
+    assert score.semantic is None, "an absent model must be reported, not faked"
+
+
+def test_with_an_embedding_model_semantic_similarity_drives_the_score(tmp_path, monkeypatch):
+    monkeypatch.delenv("MILIMO_VERIFIER_EMBEDDING", raising=False)
+    monkeypatch.setattr(verifier, "_clip_similarity", lambda a, b: 0.95)
+    ref = _image(tmp_path / "ref.png", pattern="stripes")
+    score = verifier.score_candidate(_image(tmp_path / "c.png", pattern="half"), ref)
+    assert score.semantic == 0.95
+    assert score.total > 0.4
+
+
+def test_a_semantically_different_plate_is_reshot_even_if_it_matches_the_hash(tmp_path, monkeypatch):
+    monkeypatch.setattr(verifier, "_clip_similarity", lambda a, b: 0.2)
+    ref = _image(tmp_path / "ref.png")
+    same = verifier.score_candidate(_image(tmp_path / "same.png"), ref)
+    assert same.identity > 0.99
+    assert verifier.needs_reshoot(same, 0.10) is True, "0.2 CLIP similarity is a different subject"
+
+
+def test_semantic_floor_can_be_cleared(tmp_path, monkeypatch):
+    monkeypatch.setattr(verifier, "_clip_similarity", lambda a, b: 0.9)
+    ref = _image(tmp_path / "ref.png")
+    same = verifier.score_candidate(_image(tmp_path / "same.png"), ref)
+    assert verifier.needs_reshoot(same, 0.10) is False
+
+
+def test_embedding_failures_degrade_instead_of_raising(tmp_path, monkeypatch):
+    monkeypatch.delenv("MILIMO_VERIFIER_EMBEDDING", raising=False)
+    # No model is installed here, so the real function must return None quietly.
+    assert verifier._clip_similarity(
+        _image(tmp_path / "a.png"), _image(tmp_path / "b.png")
+    ) is None

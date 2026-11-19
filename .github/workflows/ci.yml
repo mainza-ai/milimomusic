@@ -26,6 +26,30 @@ jobs:
         working-directory: backend
         run: ruff check app --select E9,F63,F7,F82,F811
 
+  licence-gate:
+    name: Licence Gate (model defaults)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      # Milimo is non-commercial by design, so the acknowledgement is set — but the
+      # gate still prints every non-commercial default and FAILS on an unclassified
+      # one. A new non-commercial default can never arrive unnoticed (plan 8.9b).
+      - name: Install backend deps
+        working-directory: backend
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -r requirements.txt
+
+      - name: Licence gate
+        env:
+          MILIMO_NONCOMMERCIAL_OK: "1"
+        run: python scripts/check_licences.py
+
   backend-test:
     name: Backend Test Suite
     runs-on: ubuntu-latest

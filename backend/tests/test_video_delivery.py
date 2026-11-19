@@ -143,10 +143,18 @@ def test_finalise_master_is_faststart_loudness_normalised_and_qc_gated(tmp_path,
 def test_interpolation_filter_only_fires_when_needed():
     from app.services.video.clip_normalise import interpolation_filter
 
-    assert interpolation_filter(16, 24) == "minterpolate=fps=24.000:mi_mode=blend"
+    got = interpolation_filter(16, 24)
+    assert got.startswith("minterpolate=fps=24.000:mi_mode=mci"), got
     assert interpolation_filter(24, 24) is None
     assert interpolation_filter(None, 24) is None
     assert interpolation_filter(25, None) is None
+
+
+def test_blend_mode_remains_available_as_a_fast_path(monkeypatch):
+    from app.services.video.clip_normalise import interpolation_filter
+
+    monkeypatch.setenv("MILIMO_INTERP_MODE", "blend")
+    assert interpolation_filter(16, 24) == "minterpolate=fps=24.000:mi_mode=blend"
 
 
 def test_a_16fps_master_is_delivered_at_24fps_with_new_frames(tmp_path):

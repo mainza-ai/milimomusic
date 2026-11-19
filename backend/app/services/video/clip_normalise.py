@@ -124,9 +124,18 @@ def interpolation_filter(src_fps: Optional[float], target_fps: Optional[float]) 
         return None
     if abs(float(src_fps) - float(target_fps)) < 0.01:
         return None
-    # `blend` is the conservative default: no warping artefacts on cuts, and it is
-    # dramatically faster than full motion-compensated interpolation at 1080p.
-    return f"minterpolate=fps={float(target_fps):.3f}:mi_mode=blend"
+    # Motion-compensated interpolation (mci) synthesises real intermediate frames;
+    # `blend` merely dissolves neighbours, which is what softened fast pans. mci is
+    # slower, so `MILIMO_INTERP_MODE=blend` remains available as the fast path.
+    import os as _os
+
+    mode = (_os.environ.get("MILIMO_INTERP_MODE") or "mci").strip().lower()
+    if mode == "blend":
+        return f"minterpolate=fps={float(target_fps):.3f}:mi_mode=blend"
+    return (
+        f"minterpolate=fps={float(target_fps):.3f}:mi_mode=mci:"
+        f"mc_mode=obmc:me_mode=bidir:vsbmc=1"
+    )
 
 
 def verify_assembly(total_video_s: Optional[float], song_s: Optional[float]) -> Optional[dict]:

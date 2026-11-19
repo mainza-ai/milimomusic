@@ -42,6 +42,11 @@ class AvatarCliSpec:
     territory_blocked: tuple = ()
     singing: bool = False
     args_template: tuple = ()    # (flag, placeholder) pairs, resolved below
+    #: Engines like InfiniteTalk take a JSON request file instead of flags. When
+    #: set, this names the env var holding a user-supplied template; we substitute
+    #: `{{image}}`, `{{audio}}`, `{{prompt}}` and `{{frames}}` and keep every other
+    #: key verbatim, so the engine's own schema stays the source of truth.
+    json_template_env: Optional[str] = None
     notes: str = ""
 
     def to_dict(self) -> Dict[str, Any]:
@@ -57,6 +62,7 @@ class AvatarCliSpec:
             "singing": self.singing,
             "env_var": self.env_var,
             "script": self.script,
+            "needs_json_template": self.json_template_env,
             "neural": True,
             "notes": self.notes,
         }
@@ -115,6 +121,30 @@ AVATAR_CLI_SPECS: Dict[str, AvatarCliSpec] = {
             "plus its checkpoints; 80 GB is the documented floor."
         ),
     ),
+    "infinitetalk": AvatarCliSpec(
+        id="infinitetalk",
+        name="InfiniteTalk (Apache-2.0, streaming, image or video)",
+        env_var="MILIMO_INFINITETALK_DIR",
+        script="generate_infinitetalk.py",
+        licence="Apache-2.0",
+        licence_class="permissive",
+        min_vram_gb=24.0,
+        fps=25,
+        singing=True,
+        json_template_env="MILIMO_INFINITETALK_TEMPLATE",
+        args_template=(
+            ("--input_json", "json"),
+            ("--size", "constant:infinitetalk-480"),
+            ("--mode", "constant:streaming"),
+            ("--num_persistent_param_in_dit", "constant:0"),
+            ("--sample_steps", "constant:40"),
+        ),
+        notes=(
+            "Streaming, unlimited length, ships a singing example. Its CLI is driven "
+            "by a request JSON, so point MILIMO_INFINITETALK_TEMPLATE at a copy of the "
+            "repo's example with the paths left as placeholders."
+        ),
+    ),
 }
 
 
@@ -138,7 +168,23 @@ def _script_path(spec: AvatarCliSpec) -> Optional[str]:
 
 
 def spec_available(spec: AvatarCliSpec) -> bool:
-    return _script_path(spec) is not None
+    """Available only when *everything* the engine needs is present.
+
+    Delegates to `spec_reason` so availability and the explanation can never
+    disagree — the class of bug that made LivePortrait claim a neural engine while
+    rendering a jaw-warp.
+    """
+    return spec_reason(spec) is None
+
+
+def _template_path(spec: AvatarCliSpec) -> Optional[str]:
+    if not spec.json_template_env:
+        return None
+    raw = os.environ.get(spec.json_template_env)
+    if not raw:
+        return None
+    path = os.path.expanduser(raw)
+    return path if os.path.isfile(path) else None
 
 
 def spec_reason(spec: AvatarCliSpec) -> Optional[str]:
@@ -148,9 +194,68 @@ def spec_reason(spec: AvatarCliSpec) -> Optional[str]:
         return f"Set {spec.env_var} to the cloned {spec.name.split(' (')[0]} directory."
     if _script_path(spec) is None:
         return f"{spec.env_var} is set but {spec.script} is not inside it."
+    if spec.json_template_env and _template_path(spec) is None:
+        return (
+            f"Set {spec.json_template_env} to a request-JSON template for "
+            f"{spec.name.split(' (')[0]}."
+        )
     if shutil.which("ffmpeg") is None:
         return "ffmpeg is not on PATH; audio slicing and clip assembly need it."
     return None
+
+
+def render_json_request(
+    template_path: str,
+    *,
+    image_path: str,
+    audio_path: str,
+    prompt: str,
+    duration: float,
+    fps: int,
+    out_path: str,
+) -> Optional[str]:
+    """Materialise an engine's request JSON from a template.
+
+    Unknown keys are preserved verbatim: the engine's schema wins, we only fill the
+    three placeholders. Returns the JSON text, or None when the template is invalid.
+    """
+    import json as _json
+
+    try:
+        with open(template_path, encoding="utf-8") as fh:
+            template = _json.load(fh)
+    except (OSError, ValueError) as exc:
+        logger.warning("Could not read avatar request template %s: %s", template_path, exc)
+        return None
+
+    frames = max(1, int(round(duration * fps)))
+    replacements = {
+        "{{image}}": image_path,
+        "{{audio}}": audio_path,
+        "{{prompt}}": prompt or "a person is singing",
+        "{{frames}}": frames,
+        "{{output}}": out_path,
+    }
+
+    def _substitute(value: Any) -> Any:
+        if isinstance(value, str):
+            for token, replacement in replacements.items():
+                value = value.replace(token, str(replacement))
+            # A whole-value frame placeholder should stay numeric.
+            if value.strip().isdigit():
+                return int(value)
+            return value
+        if isinstance(value, list):
+            return [_substitute(v) for v in value]
+        if isinstance(value, dict):
+            return {k: _substitute(v) for k, v in value.items()}
+        return value
+
+    try:
+        return _json.dumps(_substitute(template))
+    except (TypeError, ValueError) as exc:
+        logger.warning("Could not serialise avatar request template: %s", exc)
+        return None
 
 
 def build_argv(
@@ -172,6 +277,7 @@ def build_argv(
     """
     frames = max(1, int(round(duration * spec.fps)))
     values = {
+        "json": os.environ.get("MILIMO_AVATAR_REQUEST_JSON", ""),
         "image": image_path,
         "audio": audio_path,
         "output": out_path,
@@ -255,6 +361,22 @@ class CliAvatarProvider(BaseLipSyncProvider):
             self._set_outcome("jaw_warp", True, f"{self.spec.id}: could not slice source audio")
             return False
 
+        request_json = None
+        if self.spec.json_template_env:
+            template = _template_path(self.spec)
+            payload = render_json_request(
+                template, image_path=face_image_path, audio_path=slice_audio,
+                prompt=str(kwargs.get("prompt") or ""), duration=duration,
+                fps=self.spec.fps, out_path=out_path,
+            ) if template else None
+            if not payload:
+                self._set_outcome("jaw_warp", True, spec_reason(self.spec) or "request template invalid")
+                return False
+            request_json = os.path.join(tmp_dir, f"request_{uuid.uuid4().hex[:8]}.json")
+            with open(request_json, "w", encoding="utf-8") as fh:
+                fh.write(payload)
+            os.environ["MILIMO_AVATAR_REQUEST_JSON"] = request_json
+
         argv = build_argv(
             self.spec, script_path=script, image_path=face_image_path,
             audio_path=slice_audio, out_path=out_path,
@@ -280,6 +402,12 @@ class CliAvatarProvider(BaseLipSyncProvider):
             self._set_outcome("jaw_warp", True, f"{self.spec.id} could not start: {exc}")
             return False
         finally:
+            if request_json and os.path.isfile(request_json):
+                try:
+                    os.remove(request_json)
+                except OSError:
+                    pass
+            os.environ.pop("MILIMO_AVATAR_REQUEST_JSON", None)
             if os.path.isfile(slice_audio):
                 try:
                     os.remove(slice_audio)

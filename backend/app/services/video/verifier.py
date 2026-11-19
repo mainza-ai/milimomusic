@@ -17,7 +17,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass, asdict
-from typing import Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Any, Dict, Iterable, List, Optional, Sequence, Tuple
 
 logger = logging.getLogger("milimo.video.verifier")
 
@@ -26,6 +26,8 @@ DEFAULT_RESHoot_THRESHOLD = 0.55
 #: Identity is the point of the exercise, so it has its own floor: a plate can look
 #: sharp and colour-matched while depicting someone else.
 IDENTITY_FLOOR = 0.70
+#: CLIP cosine below which two frames are not even the same kind of subject.
+SEMANTIC_FLOOR = 0.60
 MAX_CANDIDATES = 3
 
 
@@ -36,6 +38,9 @@ class CandidateScore:
     palette: float      # brightness/contrast agreement with the reference, 0..1
     sharpness: float    # Laplacian variance, normalised 0..1
     total: float
+    #: Optional CLIP embedding agreement (same *kind* of subject/scene). None when
+    #: no embedding model is installed — never faked.
+    semantic: Optional[float] = None
 
     def to_dict(self) -> Dict[str, object]:
         return asdict(self)
@@ -103,6 +108,45 @@ def _sharpness(path: str) -> float:
     return max(0.0, min(1.0, variance / 800.0))
 
 
+_CLIP_CACHE: Dict[str, Any] = {}
+
+
+def _clip_similarity(a: str, b: str) -> Optional[float]:
+    """Cosine similarity of CLIP image embeddings, or None when unavailable.
+
+    This is the "semantic" half of identity: a difference hash cannot tell a
+    silver-haired singer from a same-shaped lamp, CLIP can tell that two frames
+    depict the same *kind* of subject. It is deliberately optional — the verifier
+    must work with zero downloads, so an absent model degrades rather than fails.
+    """
+    mode = (os.environ.get("MILIMO_VERIFIER_EMBEDDING") or "auto").strip().lower()
+    if mode in ("off", "0", "false"):
+        return None
+    try:
+        import torch
+        from PIL import Image
+        from transformers import CLIPModel, CLIPProcessor
+
+        if "model" not in _CLIP_CACHE:
+            name = os.environ.get("MILIMO_CLIP_MODEL", "openai/clip-vit-base-patch32")
+            model = CLIPModel.from_pretrained(name, local_files_only=True)
+            processor = CLIPProcessor.from_pretrained(name, local_files_only=True)
+            model.eval()
+            _CLIP_CACHE["model"] = model
+            _CLIP_CACHE["processor"] = processor
+        model = _CLIP_CACHE["model"]
+        processor = _CLIP_CACHE["processor"]
+        with Image.open(a) as ia, Image.open(b) as ib:
+            inputs = processor(images=[ia.convert("RGB"), ib.convert("RGB")], return_tensors="pt")
+        with torch.no_grad():
+            feats = model.get_image_features(**inputs)
+        feats = feats / feats.norm(dim=-1, keepdim=True)
+        return float(max(0.0, min(1.0, (feats[0] @ feats[1]).item())))
+    except Exception as exc:
+        logger.debug("CLIP verifier unavailable: %s", exc)
+        return None
+
+
 def _palette(path: str) -> Tuple[float, float]:
     gray = _load_gray(path)
     if gray is None:
@@ -140,9 +184,18 @@ def score_candidate(
     r_mean, r_std = _palette(reference_path)
     palette = 1.0 - min(1.0, (abs(c_mean - r_mean) / 128.0 + abs(c_std - r_std) / 128.0) / 2.0)
 
-    total = 0.55 * identity + 0.25 * palette + 0.20 * sharpness
-    return CandidateScore(candidate_path, round(identity, 4), round(palette, 4),
-                          round(sharpness, 4), round(total, 4))
+    semantic = _clip_similarity(candidate_path, reference_path)
+    if semantic is None:
+        total = 0.55 * identity + 0.25 * palette + 0.20 * sharpness
+    else:
+        # With a semantic signal, identity is judged by *both*: hash agreement says
+        # "same composition", CLIP says "same kind of subject".
+        total = 0.30 * identity + 0.15 * palette + 0.15 * sharpness + 0.40 * semantic
+    return CandidateScore(
+        candidate_path, round(identity, 4), round(palette, 4),
+        round(sharpness, 4), round(total, 4),
+        None if semantic is None else round(semantic, 4),
+    )
 
 
 def select_best(
@@ -165,6 +218,10 @@ def needs_reshoot(score: Optional[CandidateScore], threshold: float = DEFAULT_RE
     """
     if score is None:
         return False
-    if score.identity >= 0.999 and score.palette >= 0.999:
-        return False  # no reference was used
+    # No reference ⇒ identity/palette are the neutral 1.0 sentinels. With an
+    # embedding available, a reference *was* compared, so those values are real.
+    if score.identity >= 0.999 and score.palette >= 0.999 and score.semantic is None:
+        return False
+    if score.semantic is not None and score.semantic < SEMANTIC_FLOOR:
+        return True
     return score.identity < IDENTITY_FLOOR or score.total < threshold

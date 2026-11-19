@@ -247,13 +247,16 @@ class GlobalHardwareCoordinator:
         before_mb = 0.0
         after_mb = 0.0
 
+        # Order matters: callers have already dropped their references, so collect
+        # cycles *before* clearing framework pools — otherwise the collector finds
+        # arrays that are still referenced and the pools keep the buffers.
         gc.collect()
 
-        # 1. Apple Silicon MLX Metal Buffer Cache Purge
+        # 1. Apple Silicon MLX buffer cache purge (mx.metal.* is deprecated)
         try:
             import mlx.core as mx
-            if hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
-                mx.metal.clear_cache()
+            if hasattr(mx, "clear_cache"):
+                    mx.clear_cache()
         except Exception:
             pass
 

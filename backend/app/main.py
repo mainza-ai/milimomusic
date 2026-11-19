@@ -183,6 +183,9 @@ def set_sqlite_pragma(dbapi_connection, connection_record):
     cursor.execute("PRAGMA journal_mode=WAL")
     cursor.execute("PRAGMA synchronous=NORMAL")
     cursor.execute("PRAGMA busy_timeout=10000")
+    # A checkpoint makes WAL space reusable but does not shrink the file; this caps it
+    # at 64 MiB so one long-lived reader cannot grow it without bound.
+    cursor.execute("PRAGMA journal_size_limit=67108864")
     cursor.execute("PRAGMA foreign_keys=ON")
     cursor.close()
 
@@ -411,6 +414,15 @@ async def lifespan(app: FastAPI):
     # One recovery policy for jobs, durable tasks and agent runs.
     from app.core import recovery as recovery_mod
     recovery_mod.recover_on_boot(engine)
+
+    # Cap MLX's buffer pool once at boot (0 disables). Without a cap the pool grows to
+    # the machine's limit and RSS never falls after a model unload.
+    try:
+        from app.core.memory import configure_mlx_cache_limit
+
+        configure_mlx_cache_limit()
+    except Exception as _mem_err:  # pragma: no cover - best effort
+        logger.debug(f"MLX cache limit not applied: {_mem_err}")
 
     # Warm the model catalogue in the background: the first /models/tree or
     # /videos/models request otherwise pays a ~1.1 s filesystem scan (perf phase).
@@ -3643,15 +3655,24 @@ async def generate_lyrics(req: LyricsRequest):
 @app.post("/generate/lyrics-chat")
 async def chat_with_lyrics(req: LyricsChatRequest):
     try:
+        from app.core.agent_memory import capture_and_trim
         from app.services.lyrics_graph import sanitize_lyrics
+
+        # Conversation memory is budgeted, not unbounded: an eight-hour session must
+        # not grow the prompt until the provider silently drops the instructions at
+        # the top. The report travels back so the UI can say turns were dropped.
+        history, memory_report = capture_and_trim(req.chat_history)
+
         result = await LLMService.chat_with_lyrics_async(
-            req.current_lyrics, 
-            req.user_message, 
-            req.model_name, 
-            req.chat_history, 
-            req.topic, 
+            req.current_lyrics,
+            req.user_message,
+            req.model_name,
+            history,
+            req.topic,
             req.get_tags_string()
         )
+        if isinstance(result, dict):
+            result["memory"] = memory_report
         if result and "lyrics" in result:
             result["lyrics"] = sanitize_lyrics(result["lyrics"])
         return result
@@ -5982,6 +6003,26 @@ def delete_character_endpoint(character_id: str):
         if not delete_character(session, character_id):
             raise HTTPException(status_code=404, detail="Character not found")
     return {"status": "deleted", "character_id": character_id}
+
+
+@app.get("/system/memory")
+def get_memory_snapshot():
+    """Process + accelerator + system memory, as the app sees it (memory phase).
+
+    `/health` reports disk, DB and queue depth but not memory, so a leak was invisible
+    until the machine swapped. This is the missing half of that picture.
+    """
+    from app.core.memory import snapshot
+
+    return {"status": "ok", **snapshot()}
+
+
+@app.post("/system/memory/release")
+def release_memory_endpoint(reason: str = "manual"):
+    """Drop cached accelerator memory (MLX pool, MPS allocator) on demand."""
+    from app.core.memory import release
+
+    return {"status": "ok", **release(reason)}
 
 
 @app.get("/system/licences")

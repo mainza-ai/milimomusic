@@ -29,6 +29,50 @@ except ImportError:
 
 _WAN_PIPELINE_CACHE: Dict[str, Any] = {}
 
+#: How many Wan pipelines may stay resident. Each is multi-gigabyte, so the default is
+#: one: switching between 14B and 1.3B used to keep both alive until an explicit
+#: unload. `MILIMO_WAN_PIPELINE_CACHE=0` means unlimited (old behaviour).
+def _pipeline_cache_limit() -> int:
+    raw = os.environ.get("MILIMO_WAN_PIPELINE_CACHE", "1")
+    try:
+        return max(0, int(raw))
+    except (TypeError, ValueError):
+        return 1
+
+
+def _dispose_pipeline(pipe: Any) -> None:
+    """Release one cached pipeline: hooks, references, then framework pools."""
+    try:
+        if hasattr(pipe, "remove_all_hooks"):
+            pipe.remove_all_hooks()
+    except Exception:
+        pass
+    try:
+        if hasattr(pipe, "to"):
+            # Move off the accelerator before dropping the reference; on MPS this
+            # makes the allocator's job trivial.
+            pipe.to("cpu")
+    except Exception:
+        pass
+    try:
+        from app.core.memory import release
+
+        release("wan pipeline eviction", collect_cycles=False)
+    except Exception:
+        pass
+
+
+def _cache_pipeline(key: str, pipe: Any) -> None:
+    """Insert into the bounded pipeline cache, evicting the oldest entry."""
+    limit = _pipeline_cache_limit()
+    if limit:
+        while len(_WAN_PIPELINE_CACHE) >= limit:
+            old_key, old_pipe = next(iter(_WAN_PIPELINE_CACHE.items()))
+            _WAN_PIPELINE_CACHE.pop(old_key, None)
+            _dispose_pipeline(old_pipe)
+            logger.info("Evicted Wan pipeline %s from the cache (limit=%d)", old_key, limit)
+    _WAN_PIPELINE_CACHE[key] = pipe
+
 
 class DiffusersWanGenerator(BaseVideoGenerator):
     def __init__(self, model_size: str = "14b"):
@@ -210,7 +254,7 @@ class DiffusersWanGenerator(BaseVideoGenerator):
                     else:
                         pipe.to(device)
                     _configure_pipeline_memory(pipe)
-                    _WAN_PIPELINE_CACHE[cache_key] = pipe
+                    _cache_pipeline(cache_key, pipe)
 
                 ref_img = load_image(image_path)
                 ref_img = ref_img.resize((target_w, target_h))
@@ -256,7 +300,7 @@ class DiffusersWanGenerator(BaseVideoGenerator):
                     else:
                         pipe.to(device)
                     _configure_pipeline_memory(pipe)
-                    _WAN_PIPELINE_CACHE[cache_key] = pipe
+                    _cache_pipeline(cache_key, pipe)
 
                 logger.info(f"Diffusing T2V video: prompt='{prompt[:60]}...', frames={num_frames}, size={target_w}x{target_h}")
                 output = pipe(

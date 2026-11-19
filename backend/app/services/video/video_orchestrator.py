@@ -991,6 +991,16 @@ class VideoOrchestrator:
             # through planning, extraction and rendering (plan 4.8).
             video_generator = VideoGeneratorRegistry.resolve(model_name, provider_type)
 
+            # Cap PyTorch's MPS allocator before the first tensor: the default high
+            # watermark (1.7x recommended) exceeds this machine's RAM, so MPS would
+            # swap instead of raising OOM (memory phase).
+            try:
+                from app.core.memory import configure_mps_memory_fraction
+
+                configure_mps_memory_fraction()
+            except Exception as _mps_cap_err:
+                logger.debug("MPS memory cap skipped: %s", _mps_cap_err)
+
             # Plan 7.27: honour the engine the request asked for. It used to be
             # ignored, so the UI offered a choice that changed nothing.
             from app.services.video.lip_sync.registry import (

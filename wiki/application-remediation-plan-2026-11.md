@@ -36,11 +36,12 @@ re-verification (§Corrections) and 9 are deferred with reasons below.** Phase 7
 | **4 — Media truth** | ✅ **13/16** | clip duration/geometry normalisation, real timeline export, storyboard persistence, fal-only cloud, scoped cancel, subtitle escaping, temp hygiene, proxies, single fps, performer scoping, real audio analysis; 4.8 **closed by 7.10**, 4.2's reporting clause **closed by 7.3** (4.5 remains unverified without a live fal key) |
 | **5 — Platform & API** | 🟡 **9/12** | one error envelope, 202/201, typed bodies everywhere, idempotency, SSE replay + topics, rate limits by template, share links, accessible confirms |
 | **6 — Hardening** | ✅ **8/8** | CI lint/audit/migration-smoke/unit/E2E jobs, universal lockfile, `npm ci`, observability, log hygiene, capability matrix |
+| **10 — Memory** | 🟡 **6/12** | added 2026-11-18 from the [Memory Management Audit](memory-management-audit-2026-11.md); footprint telemetry, MLX/MPS caps, bounded pipeline cache, budgeted agent history, WAL limit and one release path shipped |
 | **9 — Performance** | 🟡 **7/12** | added 2026-11-18 from the [Performance Audit](performance-audit-2026-11.md); ETag/304 + catalogue memo + boot warm, thread cap, compression decision, lazy LLM SDKs, measured encoder choice, benchmark harness and parallel normalisation shipped |
 | **8 — Capability upgrades** | 🟡 **8/19** + 1 partial | added 2026-11-18 from the [Video Capability Landscape](video-capability-landscape-2026-11.md); verifier/reshoot, character library, external avatar tiers, licence gate, capability matrix, viseme timing, stall sweeper shipped — the weight-dependent adoptions are gated on smoke tests |
 | **7 — Music video production** | ✅ **29/29** | added 2026-11-18 from the [Music Video Pipeline Audit](music-video-pipeline-audit-2026-11.md); implemented and verified the same day, plus follow-ups 7.26–7.29 (consistency, lip-sync registry, render reconciliation, chain scope) |
 
-**Verification (2026-11-18, after Phase 9 execution):** backend `764 passed, 2 skipped,
+**Verification (2026-11-18, after Phase 10 groundwork):** backend `787 passed, 2 skipped,
 3 deselected` (0 failures); frontend `38 vitest tests`;
 `tsc -b` + `vite build` green (entry 588 kB / 163 kB gz); `ruff` bug-class gate
 clean; API parity 178 routes / 182 client calls; Alembic at `0008`.
@@ -434,6 +435,40 @@ belief with a measurement, and the four popular-but-wrong moves (more workers,
 - A regression in endpoint latency or bundle size fails CI.
 - Renders do not starve the editor (thread cap + a stated encoder policy).
 - Idle CPU is ~0 when nothing is rendering (no polling).
+
+## Phase 10 — Memory (2026-11-18, added)
+
+Source: [Memory Management Audit 2026-11](memory-management-audit-2026-11.md). The
+sibling of Phase 9: on a unified-memory machine, "how fast" and "what is resident" are
+the same question. Everything here was measured before it was changed; the largest
+finding (MLX's cache default exceeding physical RAM) came from reading the installed
+library rather than a blog.
+
+> **Status: 6/12.** Shipped: footprint telemetry + `/system/memory` (10.1), MLX/MPS
+> caps (10.2), bounded Wan pipeline cache (10.3), budgeted agent history (10.4), WAL
+> size limit (10.5), and the single release path with opt-in cycle collection (10.6).
+
+| ID | Task | Files | Acceptance |
+|---|---|---|---|
+| ✅ 10.1 | **Footprint telemetry.** Report `phys_footprint` (Metal-aware) beside RSS, plus MLX active/cache/live/peak and MPS allocated/driver. | `core/memory.py`, `main.py` | `/system/memory` shows a footprint that moves when accelerator memory is released (RSS does not) |
+| ✅ 10.2 | **Accelerator caps at boot.** MLX cache capped (`min(12 GiB, 10 % RAM)`), MPS fraction capped (0.6) before the first tensor. | `core/memory.py`, `main.py`, `video_orchestrator.py` | A model unload returns memory instead of parking it in a 161 GiB cache |
+| ✅ 10.3 | **Bounded pipeline cache.** Wan pipelines evicted oldest-first (default 1), hooks removed, moved off device. | `generators/diffusers_wan.py` | Rendering 14B then 1.3B does not keep both resident |
+| ✅ 10.4 | **Budgeted agent history.** Character + message budget, system turn preserved, truncation reported to the caller. | new `core/agent_memory.py`, `main.py` | A 200-turn session cannot exceed the prompt budget; the response says what was dropped |
+| ✅ 10.5 | **WAL size limit.** `journal_size_limit=64 MiB` on the engine and the task queue. | `main.py`, `core/task_queue.py` | A long reader cannot grow the `-wal` file without bound |
+| ✅ 10.6 | **One release path.** `release()` clears MLX + MPS pools, reports footprint before/after, and collects cycles only when asked. | `core/memory.py`, `core/hardware_lock.py` | `gc.collect()` is gone from hot paths; a deprecated `mx.metal` call stays gone (test) |
+| 10.7 | **WAL checkpoint job + session hygiene.** Periodic `wal_checkpoint(TRUNCATE)`; audit for `Session` objects held across LLM/FFmpeg calls. | `core/task_queue.py`, `main.py` | The `-wal` file returns to ~4 MiB after a burst |
+| 10.8 | **Memory ring buffer + slope alarm.** Sample footprint/MLX/MPS per minute; flag a positive slope *at idle*. | new `core/memory_guard.py` | `/system/memory/history` shows a trend; a synthetic leak trips it |
+| 10.9 | **Per-agent memory namespaces.** Separate the critic's context from the songwriter's; distill durable facts instead of replaying turns. | `agents/runtime/context.py`, `agents/*` | One agent's 200 turns do not enter another's prompt |
+| 10.10 | **Process hygiene in `/health`.** fds, threads, zombie children; `-nostdin` + `wait()` audit for every FFmpeg spawn. | `main.py`, `services/video/*`, `transcription/*` | A zombie or fd leak is visible in the health payload |
+| 10.11 | **Peak reset per model load.** `reset_peak_memory()` after a load so peak describes one job, not the lifetime. | `core/memory.py`, generators | Peak readings stay interpretable across model swaps |
+| 10.12 | **Model budget guard.** Compare requested size against `max_recommended_working_set_size` and refuse with a reason instead of swapping. | `services/model_manager.py`, registry | Loading an 80 GB model on a 32 GB box fails fast with a stated reason |
+
+### Phase 10 exit criteria
+
+- The app can state its own memory (footprint, accelerator split, swap) at any moment.
+- Nothing grows without a bound: caches, histories, WAL, task registries.
+- A leak is detectable as a slope, not as a crash.
+- An unload actually returns memory to the OS on both MLX and MPS paths.
 
 ## Decisions — closed (D1–D6)
 

@@ -1952,6 +1952,21 @@ export const systemApi = {
         const res = await axios.post(`${API_BASE_URL}/system/memory-policy`, { policy, ttl_seconds: ttlSeconds });
         return res.data;
     },
+    /** Process + accelerator + system memory (memory phase). */
+    getMemory: async (): Promise<{
+        process: { rss_mb: number; footprint_mb?: number; threads?: number };
+        system: { total_mb: number; available_mb: number; used_percent: number };
+        mlx: { active_mb?: number; cache_mb?: number; peak_mb?: number; cache_limit_mb?: number };
+        torch: { allocated_mb?: number; driver_allocated_mb?: number };
+    }> => {
+        const res = await axios.get(`${API_BASE_URL}/system/memory`);
+        return res.data;
+    },
+    /** Drop cached accelerator memory (MLX pool, MPS allocator). */
+    releaseMemory: async (): Promise<{ status: string; cleared: string[]; before?: number; after?: number }> => {
+        const res = await axios.post(`${API_BASE_URL}/system/memory/release`);
+        return res.data;
+    },
     /** Which models this build may legally ship, and which defaults block that (G8). */
     getLicences: async (): Promise<{
         ok: boolean;

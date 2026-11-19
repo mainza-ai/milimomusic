@@ -118,8 +118,8 @@ def unload_minimax_model():
             gc.collect()
             try:
                 import mlx.core as mx
-                if hasattr(mx, "metal") and hasattr(mx.metal, "clear_cache"):
-                    mx.metal.clear_cache()
+                if hasattr(mx, "clear_cache"):
+                        mx.clear_cache()
             except Exception:
                 pass
             logger.info("MiniMax Music 3 MLX model released and Metal cache cleared.")

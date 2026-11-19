@@ -79,6 +79,9 @@ class DurableTaskQueue:
         # Enable WAL mode for high concurrency
         conn.execute("PRAGMA journal_mode=WAL;")
         conn.execute("PRAGMA synchronous=NORMAL;")
+        # A checkpoint only makes WAL space reusable; cap the file so a long-lived
+        # reader cannot grow it without bound.
+        conn.execute("PRAGMA journal_size_limit=67108864;")
         return conn
 
     @contextlib.contextmanager

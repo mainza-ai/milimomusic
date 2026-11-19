@@ -3321,3 +3321,33 @@ Continued the performance phase with the four tasks that were implementable loca
   preserved for the stitcher; a failed clip still falls back to its raw render.
 Verification: **764 backend tests**, 38 frontend tests, ruff clean, parity green,
 licence gate OK. Benchmark table: warm reads 1.1–1.4 ms, 304s 1.0–1.2 ms, boots 3.83 s.
+
+## [2026-11-18] audit | Memory management — measured, then bounded
+Measured the process before changing anything: **288 MB peak RSS at import**, no endpoint
+able to report memory, 33 scattered cache-clearing calls, and an MLX cache limit left at
+MLX's default. Reading the installed MLX (0.32) and torch (2.13) rather than a blog
+turned up the two largest risks: MLX's cache cap defaults to **1.5x the recommended
+working set = 161 GiB on a 128 GiB box**, and PyTorch's MPS high watermark defaults to
+**1.7x = 182 GiB**, so MPS swaps instead of raising OOM.
+Findings and fixes:
+- **M1 RSS is the wrong metric.** With 8 GiB live in MLX, RSS reads 30 MB and the kernel
+  footprint reads 8 370 MB (Metal buffers never enter `resident_size`). The app now reads
+  `proc_pid_rusage` directly and reports both. A first attempt with a truncated
+  `ctypes.Structure` corrupted memory and hung a later torch call — the probe now uses an
+  oversized buffer and documented offsets.
+- **M2/M3 caps applied at boot**: MLX cache capped to `min(12 GiB, 10% RAM)` and the MPS
+  allocator fraction capped to 0.6 before the first tensor.
+- **M4 deprecated API**: `mx.metal.clear_cache` printed to stderr from C++ on every
+  flush; both sites use `mx.clear_cache` (a test greps for regressions).
+- **M6 bounded Wan pipeline cache**: rendering 14B then 1.3B kept both pipelines resident.
+- **M7 telemetry + one release path**: `GET /system/memory`, `POST /system/memory/release`
+  reporting footprint before/after.
+- **M8 agent history budget**: character + message caps, system turn preserved, truncation
+  reported to the caller (`core/agent_memory.py`).
+- **M9 WAL size limit**: `journal_size_limit=64 MiB` on the engine and the task queue.
+- **M10 `gc.collect()` off hot paths**: it made eight tests take 16 s and the suite 265 s;
+  cycle collection is now opt-in and used only on unload.
+Deliverables: [Memory Management Audit 2026-11](memory-management-audit-2026-11.md) and
+[Phase 10 — Memory](application-remediation-plan-2026-11.md#phase-10--memory-2026-11-18)
+(12 tasks, 6 shipped), cross-referenced with Phase 9.
+Verification: **787 backend tests**, 38 frontend tests, ruff clean, parity 187/191.

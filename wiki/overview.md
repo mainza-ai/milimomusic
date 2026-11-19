@@ -2,7 +2,7 @@
 title: Milimo Music — Overview
 type: overview
 created: 2026-08-19
-updated: 2026-09-09
+updated: 2026-11-18
 sources: [sources/readme.md, sources/v2-refactor-plan.md]
 tags: [milimo, product, music-generation, daw, transcription, performance-standards]
 aliases: [Milimo]
@@ -83,6 +83,8 @@ The platform is fully implemented at production grade with zero placeholder shor
 - **Cover Art Studio**: FLUX.2 / SDXL Turbo neural diffusion and high-res studio raster PNG synthesis.
 - **Audio Synthesis & Loudness Standards**: Physical procedural DSP (electric guitar pick transient, cylindrical stopped-pipe clarinet odd harmonics, 50Hz sub punch kick), Fletcher-Munson staged RMS (-13 to -18 dBFS), and 0.00ms clock-jitter Web Audio playback ([Audio Synthesis Standards](concepts/audio-synthesis-standards.md)).
 - **Database Integrity & Lifecycle**: Multi-format UUID resolution, boot-time self-healing migrations, relational cascade nullification, and atomic disk sweeps ([Database Integrity Lifecycle](concepts/database-integrity-lifecycle.md)).
+- **Video Delivery & QC**: Non-destructive takes, six delivery presets (YouTube/Vevo/Canvas/ProRes), aspect variants derived from one master, cancellable exports, an automated QC gate (black/freeze/silence/drift/loudness) and a portable hashed manifest — see [Music Video Delivery & QC Specs](concepts/music-video-delivery-specs.md) and [`docs/VIDEO_DELIVERY.md`](../docs/VIDEO_DELIVERY.md).
+- **Performance & Memory Discipline (measured, not assumed)**: ETag/304 with memoised catalogues (131 ms → 4 ms) and lazy LLM SDKs (boot 4.64 s → 3.83 s); `phys_footprint` telemetry, capped MLX/MPS caches, a leak verdict from sampled slopes and a model budget guard that refuses instead of swapping — see [`docs/OPERATIONS.md`](../docs/OPERATIONS.md).
 - **Deployment**: Single-process unified serving with React SPA fallback and multi-stage Docker packaging.
 
 The app is **cross-platform** (macOS Apple Silicon, Linux, Windows).

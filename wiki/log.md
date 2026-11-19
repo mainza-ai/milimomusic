@@ -3371,3 +3371,33 @@ Remaining and why: the weight-gated adoptions (8.2/8.5/8.7/8.8/8.11/8.14, 8.16) 
 tens of GB of checkpoints plus a hardware smoke test; SSE progress (9.6), list
 virtualisation (9.7) and the React Compiler (9.11) are product-surface work; per-agent
 memory namespaces (10.9) and the character-plate UI (8.15) are designed but not built.
+
+## [2026-11-18] docs | Operator guides, README refresh and schema update
+
+Brought the documentation level with the code after the Phase 8–10 execution pass.
+
+- **New `docs/OPERATIONS.md`** — measured performance knobs (compression off by
+  measurement, `-threads 4`, model-tree memo, encoder benchmarked at runtime), the
+  SQLite pragma table with its 0.93×/0.97× verdict, accelerator caps, `phys_footprint`
+  as the only truthful memory number, telemetry endpoints, the leak verdict, WAL
+  checkpoints, the budget guard and the licence gate.
+- **New `docs/VIDEO_DELIVERY.md`** — takes and lifecycle sweeps, the six delivery
+  presets, cancellable exports, aspect variants, QC thresholds and what QC deliberately
+  cannot judge, captions, the portable manifest, consistency modes with their real
+  mechanism, and the lip-sync engine ladder with requirements and licences.
+- **`docs/TRAINING_STUDIO.md`** — marked **SUPERSEDED** with the D1 reason and a link;
+  original text preserved below the banner.
+- **`README.md`** — new *Video Delivery, QC & Take Management* section, expanded video
+  feature list, an operations pointer with telemetry/benchmark subsections, three new
+  environment tables (performance/encoding, memory/telemetry, engines/characters/licences)
+  and an operator-guide table for `docs/`.
+- **Wiki** — [overview](overview.md) gains delivery and performance/memory status;
+  [architecture](architecture.md) gains a *Performance & Memory Discipline* section;
+  [video-studio](entities/video-studio.md) gains §4c (takes/delivery/QC/manifests) and
+  §4d (capability matrix, plan/render agreement); [index](index.md) counts and navigation
+  updated.
+- **`AGENTS.md`** — records the documentation exception: `README.md` and `docs/*.md` may
+  be maintained on explicit request, never by silently rewriting history.
+
+Verification: link check across every touched page (0 broken); no code changed, so the
+suite stands at 800 backend / 38 frontend tests, ruff clean, parity 188/192.

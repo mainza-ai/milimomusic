@@ -151,7 +151,7 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 
 ### 🎧 Generative Audio Engine & Pluggable Providers
 - **MiniMax Music 3 Default Engine**: Conditioned on structured multi-section captions (`[Intro]`, `[Verse]`, `[Chorus]`, `[Solo]`, `[Outro]`) and acoustic style descriptors. Runs native **Apple Silicon MLX weight inference** (`mlx-community/MiniMax-Music3-bf16`). Serves as the primary production engine, with HeartMuLa maintained as an isolated legacy fallback.
-- **Strict Production Inference**: Configured with `MILIMO_STRICT_INFERENCE=1` to guarantee authentic neural generation on local hardware, eliminating silent procedural fallbacks.
+- **Strict Production Inference**: Opt-in `MILIMO_STRICT_INFERENCE=1` to guarantee authentic neural generation on local hardware, failing loudly instead of silently falling back to procedural synthesis.
   > **Platform note:** Real neural generation runs natively on Apple Silicon (MLX). On Windows/Linux the studio (DAW, transcription, mastering, agents) operates fully — with generation utilizing clearly-labeled placeholder synthesis when MLX is absent.
 
 ### 🎚️ MuLaCover AI Cover & Remix Studio
@@ -217,8 +217,19 @@ Milimo routes raw creative intent through an interconnected neural pipeline, coo
 - **LivePortrait Neural Singing Avatar**: Vocal lip-syncing driven strictly by isolated vocal stems (`vocals.wav`), animating facial landmark deformation, expressive eye blinks, and pitch-synced micro-motion without audio-bleed distortions.
 - **Autonomous Musical Video Director**: Tempo estimation (`librosa` / `muscriptor`) and bar-aligned scene segmentation snapping cuts to musical bars (`(60/BPM) * 4`), with automated vocal vs. B-roll classification, cinematic camera dynamics (dolly zoom, orbital steadycam, crane tilt), and volumetric lighting designs.
 - **Pre-Rendered Keyframe Stills & Clip Retakes**: On-demand scene keyframe pre-rendering (`POST /videos/keyframes/{job_id}`) with fullscreen lightbox zoom and in-place per-scene retakes (`POST /videos/retake-clip/{job_id}/{clip_index}`) before launching full video diffusion.
-- **Hybrid Local & Cloud GPU Offloading**: Native Apple Silicon MPS / unified memory execution alongside turnkey cloud GPU offloading via Fal.ai and Replicate serverless endpoints.
+- **Hybrid Local & Cloud GPU Offloading**: Native Apple Silicon MPS / unified memory execution, plus turnkey cloud GPU offloading via Fal.ai (`FAL_KEY`) when local diffusion is too slow. Cloud is **fal only** by decision — the Replicate tier is reported as unwired rather than pretended.
 - **Burned Karaoke Subtitles & Master Remux**: Real-time Advanced SubStation Alpha (`.ass`) karaoke scripts burned directly into the video stream via FFmpeg `-filter_complex "[0:v]subtitles=..."` with zero A/V drift master remuxing.
+- **Character Consistency Across Scenes**: Three switchable modes — `off`, `character` (one persisted character bible injected into every scene prompt) and `chain` (bible **plus** last-frame chaining that carries lighting, grade and framing across a cut), with a `section`/`all` scope. A persistent **character library** stores the reference plate alongside the description, and planning accepts the same character config as the render so the approved storyboard describes the performer that is actually rendered.
+
+### 🎞️ Video Delivery, QC & Take Management
+- **Non-Destructive Takes**: Every render is kept as its own take with a clip workspace and plan snapshot. Select, compare, delete and re-export without ever overwriting the previous master; boot reconciliation fails renders that died with the process, and a stall sweeper fails any render that outlived a real one.
+- **Six Delivery Presets**: Standard MP4 (CRF 18, faststart, −14 LUFS), YouTube 1080p (8 Mbps), YouTube 2160p (40 Mbps), Vevo HD (20 Mbps + 320k audio, master loudness untouched), Spotify Canvas (silent 9:16) and Broadcast ProRes 422 HQ (−23 LUFS).
+- **Genuinely Cancellable Exports**: Transcodes run under `Popen` with a per-task cancellation event, so cancelling an export terminates FFmpeg and deletes the partial file instead of leaving a half-written take behind.
+- **Aspect Variants from One Master**: Derive `16:9`, `9:16`, `1:1` and `21:9` at 720p/1080p (plus 4K for `16:9`) from a single master by cropping — no second diffusion pass.
+- **Automated QC Gate**: Black (≥0.10 s), freeze (≥0.05 s), silence (≥0.10 s at −50 dB), duration (±0.10 s), per-stream A/V drift (≤0.05 s) and delivered loudness (±1.5 LU) are all checked with thresholds deliberately below FFmpeg's 2-second defaults, which miss exactly the faults a stitched render produces. Advisories are reported; only faults that make the file unusable fail the render.
+- **Per-Take Report & Portable Manifest**: `GET /videos/{job}/report` returns the cut list (prompt, timing, camera, lighting), delivery config, caption sidecars and QC verdict, and writes `<stem>_report.json` beside the master. `GET /jobs/{job}/manifest.json` adds seeds, sampling parameters, verbatim prompts, per-stage provenance and SHA-256 hashes for every artifact — the record a paper or bug report can cite.
+- **Lip-Sync Engine Ladder with Real Availability**: `GET /videos/lipsync-engines` reports each tier, why it cannot run, and its licence — procedural jaw-warp (always available), LivePortrait (needs weights + an audio entry point), fal (needs `FAL_KEY`), and the external CLI tiers EchoMimicV3 Flash (Apache-2.0, ~12 GB), Wan 2.2 S2V-14B (Apache-2.0, ~80 GB, singing-trained) and InfiniteTalk (Apache-2.0, ~24 GB, streaming). External engines run in a child process, so a crash in a research repo cannot take the API down.
+- **Capability Matrix & Licence Gate**: `GET /videos/capability-matrix` reports each engine's *effective* resolution/duration/fps after clamping to the current device (MPS/CUDA/CPU), and `scripts/check_licences.py` audits both the model catalogue and installed dependencies, failing CI when a non-commercial model is the reachable default.
 
 ### 📦 Multi-Modal Model Hub & Hugging Face Search
 - **23-Model Multi-Modal Catalog**: Comprehensive support across Audio (MiniMax Music 3 MLX/CUDA/GGUF as primary, HeartMuLa as legacy fallback), Image (Black Forest Labs FLUX.2 klein/dev, FLUX.1 schnell, SDXL Turbo), and Video (MiniMax Hailuo H3, Wan 2.1, CogVideoX 1.5, HunyuanVideo).
@@ -404,6 +415,26 @@ pip install mlx "mlx-audio @ git+https://github.com/Blaizzy/mlx-audio.git@784b29
 
 ## 🔧 Operations
 
+> **[`docs/OPERATIONS.md`](docs/OPERATIONS.md)** is the full operator guide — measured
+> performance knobs, accelerator memory caps, telemetry endpoints (`/health`,
+> `/system/memory`, `/system/memory/history`), benchmark harnesses and the licence gate.
+> Video delivery has its own guide: **[`docs/VIDEO_DELIVERY.md`](docs/VIDEO_DELIVERY.md)**.
+
+### Telemetry & Memory
+- `GET /health` — liveness plus DB, disk, queue depth, process hygiene (fds, threads, child/zombie count) and footprint.
+- `GET /system/memory` — full snapshot (process, system, MLX, torch, limits); `GET /system/memory/history` — sampled trend with a per-minute slope and leak verdict; `POST /system/memory/release` — drop cached accelerator memory through the single release path.
+- Memory is reported as macOS `phys_footprint` (via `proc_pid_rusage`), **not RSS** — RSS under-reports by two orders of magnitude once MLX holds a large allocation.
+- A download larger than the machine's recommended working set is refused with `507` and the real numbers, because exceeding it swaps rather than raising.
+
+### Performance & Memory Benchmarks
+```bash
+python3 scripts/bench_api.py        # request latency / throughput on the running app
+python3 scripts/bench_sqlite.py     # SQLite pragma comparison (WAL vs cache_size/mmap_size)
+```
+Both are measured, not assumed: compression is off by default (gzip loses on loopback),
+`cache_size`/`mmap_size` are **unset** (0.93×/0.97× vs WAL+NORMAL), and the video encoder is
+benchmarked at runtime rather than chosen by name.
+
 ### Unified CLI (`./milimo`)
 Milimo provides a root control utility for managing the entire production suite:
 - `./milimo start` — Launch production services in the background.
@@ -428,13 +459,47 @@ The backend enforces an instance lock to prevent GPU and database contention:
 | `MILIMO_AGENT_TIMEOUT` | `60` | Per-attempt ceiling (s) for agent LLM calls |
 | `MILIMO_RUN_RETENTION_DAYS` | `30` | Agent-ledger retention sweep at boot (`0` disables) |
 | `MILIMO_MAX_DURATION_S` | `240` | Hard cap on generated track duration (s) |
-| `MILIMO_STRICT_INFERENCE` | `1` | Enforces genuine neural inference (fails loudly if weights/snapshot missing) |
+| `MILIMO_STRICT_INFERENCE` | unset (`0`) | Set to `1` to fail loudly instead of degrading to synthesised audio when weights/snapshots are missing |
 | `FAL_KEY` | unset | Optional Fal.ai API key for cloud Wan 2.1 video & LivePortrait queue offloading |
-| `REPLICATE_API_TOKEN` | unset | Optional Replicate token for cloud Wan 2.1 14B generation |
-| `MILIMO_STORAGE_GC_MAX_AGE_S` | `86400` | Prunes intermediate video/audio caches older than 24 hours |
+| `MILIMO_MEDIA_RETENTION_DAYS` | `0` (keep forever) | Opt-in pruning of generated media older than N days |
+| `MILIMO_MIN_FREE_GB` | `2.0` | Free-disk floor below which new generation is refused with a reason |
 | `MILIMO_LOCK_FILE` | `.milimo.lock` | Instance-lock file path |
 | `MILIMO_ALLOW_MULTI_INSTANCE` | unset | Set to `1` to bypass the boot lock |
 | `MILIMO_DB_NAME` | `jobs.db` | SQLite database file name (or set `MILIMO_DATABASE_URL`) |
+
+#### Performance & video encoding
+| Variable | Default | Purpose |
+|---|---|---|
+| `MILIMO_COMPRESS` | unset (off) | Enables gzip. Measured as a **net loss** on loopback (break-even ~400–860 Mbit/s); set to `1` only for a LAN or remote client |
+| `MILIMO_FFMPEG_THREADS` | `4` | Thread cap for Milimo's own encodes (`0` disables); uncapped FFmpeg starves the API |
+| `MILIMO_MODEL_TREE_TTL_SECONDS` | `15` | Model-tree memo TTL (uncached scan 131 ms → 4 ms) |
+| `MILIMO_NORMALISE_CONCURRENCY` | `2` | Parallel clip normalisation |
+| `MILIMO_INTERP_MODE` | `mci` | Frame interpolation quality: `mci` (motion-compensated) or `blend` (fast) |
+| `MILIMO_RIFE_CMD` | unset | External RIFE binary for neural frame interpolation |
+| `MILIMO_VIDEO_ENCODER` | unset (measured) | Pin `x264`, `videotoolbox` or `nvenc`; unset benchmarks at runtime (x264 measured 0.21 s vs VideoToolbox 0.31 s per 1 s of 1080p) |
+
+#### Memory & telemetry
+| Variable | Default | Purpose |
+|---|---|---|
+| `MILIMO_MLX_CACHE_LIMIT_MB` | `min(12 GiB, 10 % RAM)` | MLX buffer cache ceiling (MLX's own default is unbounded); `0` disables the cache |
+| `MILIMO_MPS_MEMORY_FRACTION` | `0.6` | MPS allocator fraction (PyTorch's high watermark is 1.7× the recommendation, i.e. more than physical RAM) |
+| `MILIMO_WAN_PIPELINE_CACHE` | `1` | Resident Wan pipelines; `0` restores the old unlimited behaviour |
+| `MILIMO_AGENT_HISTORY_MAX_CHARS` | `24000` | Character budget for agent conversation history |
+| `MILIMO_AGENT_HISTORY_MAX_MESSAGES` | `24` | Turn budget for the same history |
+| `MILIMO_MEMORY_GC` | unset (off) | Opt-in `gc.collect()` on unload; measured cost was 8 tests at 16 s, suite at 265 s |
+| `MILIMO_MEMORY_LEAK_MB_PER_MIN` | `25` | Slope threshold for `GET /system/memory/history` to flag a leak |
+| `MILIMO_RENDER_STALL_SECONDS` | `3600` | Age at which a `rendering` take is failed by the sweeper |
+
+#### Video engines, characters & licences
+| Variable | Default | Purpose |
+|---|---|---|
+| `MILIMO_ECHOMIMIC_DIR` | unset | EchoMimicV3 checkout (Apache-2.0, ~12 GB VRAM) enabling the `echomimic_flash` lip-sync tier |
+| `MILIMO_WAN_S2V_DIR` | unset | Wan 2.2 S2V-14B checkout (Apache-2.0, ~80 GB VRAM, singing-trained) |
+| `MILIMO_INFINITETALK_DIR` | unset | InfiniteTalk checkout (Apache-2.0, ~24 GB VRAM, streaming) |
+| `MILIMO_INFINITETALK_TEMPLATE` | unset | Request JSON template for InfiniteTalk (upstream ships an example; do not edit its repo) |
+| `MILIMO_LIVEPORTRAIT_AUDIO_SCRIPT` | unset | Audio-driven entry point for LivePortrait (upstream is video-driven) |
+| `MILIMO_VERIFIER_EMBEDDING` | `auto` | Candidate/plate similarity: `auto`, `clip` or `off` |
+| `MILIMO_NONCOMMERCIAL_OK` | unset | Acknowledge a non-commercial default model so `scripts/check_licences.py` exits 0 |
 
 ### Backing Up the Database
 SQLite runs in WAL mode. Never copy active database files directly while the server is live. Take a consistent atomic snapshot with:
@@ -480,6 +545,15 @@ Milimo Music maintains a comprehensive, LLM-curated **Technical Encyclopedia and
 | 🤖 [**AI Co-Writer Engine (`wiki/entities/ai-cowriter.md`)**](wiki/entities/ai-cowriter.md) | Multi-agent lyric coordination graph (Lyricist, StructureGuard) |
 | 🐳 [**Docker Deployment (`wiki/entities/docker-deployment.md`)**](wiki/entities/docker-deployment.md) | Turnkey multi-stage container build, GPU/CPU compose profiles, and volume persistence |
 | 📋 [**Operations & Log (`wiki/log.md`)**](wiki/log.md) | Chronological append-only record of every architectural evolution |
+
+### Operator Guides (`docs/`)
+| Document | Description |
+|---|---|
+| ⚙️ [**Operations: Performance, Memory & Telemetry (`docs/OPERATIONS.md`)**](docs/OPERATIONS.md) | Measured tuning knobs, accelerator caps, memory truth (`phys_footprint`), leak verdict, benchmark harnesses and the licence gate |
+| 🎞️ [**Video Delivery, QC & Consistency (`docs/VIDEO_DELIVERY.md`)**](docs/VIDEO_DELIVERY.md) | Takes, six delivery presets, aspect variants, QC thresholds, captions, manifest, consistency modes and the lip-sync engine ladder |
+| 📚 [**Heartlib Bible (`docs/HEARTLIB_BIBLE.md`)**](docs/HEARTLIB_BIBLE.md) | Deep reference for the legacy HeartMuLa/HeartCodec stack |
+| 🎓 [**Training Studio Guide (`docs/TRAINING_STUDIO.md`)**](docs/TRAINING_STUDIO.md) | **Superseded** — historical record of the decommissioned fine-tuning studio |
+| 🩹 [**Inpainting Debug Log (`docs/INPAINTING_DEBUG.md`)**](docs/INPAINTING_DEBUG.md) | Impl-guided repair investigation notes |
 
 ### Additional Media & Specifications
 - [🎬 **Milimo Music v2 Video Explainer & Walkthrough (YouTube)**](https://youtu.be/Nsun12RGHi4)

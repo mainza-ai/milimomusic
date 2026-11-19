@@ -20,17 +20,29 @@ them to note-level MIDI + MusicXML, separates stems, and provides a web DAW work
 Beyond generation, it provides: a pluggable **generation-provider** layer (MiniMax Music 3
 default, HeartMuLa legacy), a 4-step orchestration pipeline (generate → stem separation →
 optional voice conversion → MuScriptor transcription + lyric sync), an AI Co-Writer
-(multi-agent lyrics engine), a Training Studio, Model Manager, Projects, and real-time
-SSE progress.
+(multi-agent lyrics engine), Model Manager, Projects, a full music-video studio, and
+progress reporting (polling today; SSE is a tracked plan item). Fine-tuning was
+decommissioned — see [`wiki/entities/training-studio.md`](wiki/entities/training-studio.md).
 
 The three-layer architecture making this a LLM-wiki (not just a doc dump):
 
-- **Raw sources** (`docs/`, `devs/`, README, backend code) — immutable input. Never edit these.
+- **Raw sources** (`docs/`, `devs/`, README, backend code) — immutable **as evidence**.
+  The wiki cites them; it does not rewrite what they say.
 - **The wiki** (`wiki/`) — LLM-owned markdown. Create, update, cross-reference, keep consistent.
 - **The schema** (this file) — governs how the LLM maintains the wiki.
 
-**Rule:** never modify `docs/`, `devs/`, `backend/`, `frontend/`, `heartlib/`,
-`muscriptor/`, or `README.md`. The wiki reads from them; it does not write to them.
+**Rule:** never modify `devs/`, `backend/`, `frontend/`, `heartlib/`, or `muscriptor/`.
+The wiki reads them; it does not write to them.
+
+**Documentation exception (2026-11-18):** `README.md` and `docs/*.md` may be maintained
+when the human explicitly asks for it (typically "update the docs / readme"). When doing
+so:
+
+- keep the wiki as the source of truth and update both sides in the same session;
+- **never** silently rewrite history — mark a stale document `SUPERSEDED` with the reason
+  and a link, and preserve the original text below the banner;
+- never claim a capability the code does not have; cite the measured number or omit it;
+- treat a doc edit as a normal change: verify links, then record it in `wiki/log.md`.
 
 ---
 

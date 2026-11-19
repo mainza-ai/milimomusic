@@ -2,7 +2,7 @@
 title: Milimo Music Wiki — Index
 type: index
 created: 2026-08-19
-updated: 2026-11-16
+updated: 2026-11-18
 ---
 
 # Milimo Music Wiki — Index
@@ -106,9 +106,9 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 
 - [Decision Record 2026-11](decisions-2026-11.md) — D1–D6 scope decisions with evidence: delete YuE2 + Training Studio, single-user/multi-tenant-ready, keep HeartMuLa (demoted) + MuLaCover, fal-only cloud, automation yes / time-stretch no, no CUDA generation + published capability matrix. `tags: [decisions, scope, yue2, providers, multi-user, cloud-video, dsp, cuda, hardware-matrix]`
 - [Full Application Audit 2026-11](application-audit-2026-11.md) — whole-app audit: 14 P0 / 46 P1 findings across honesty, security, lifecycle, schema, DAW, video, CI, with a remediation-status table per section. `tags: [audit, gaps, security, reliability, daw, honesty, video, image, ops, ci]`
-- [Application Remediation Plan 2026-11](application-remediation-plan-2026-11.md) — 8-phase implementation plan scoped by D1–D6; original 85 tasks closed or deferred, plus **Phase 7: 29/29 music-video production tasks implemented** **Phase 8: capability upgrades (8/19)**, **Phase 9: performance (7/12)** and **Phase 10: memory (6/12)** (truth, takes, delivery presets, QC, manifest, subject consistency, lip-sync registry, crash reconciliation). `tags: [plan, remediation, security, honesty, lifecycle, migrations, daw, video, ci]`
+- [Application Remediation Plan 2026-11](application-remediation-plan-2026-11.md) — 8-phase implementation plan scoped by D1–D6; original 85 tasks closed or deferred, plus **Phase 7: 29/29 music-video production tasks implemented** **Phase 8: capability upgrades (11/19 + 1 partial)**, **Phase 9: performance (8/12)** and **Phase 10: memory (11/12)** (truth, takes, delivery presets, QC, manifest, subject consistency, lip-sync registry, crash reconciliation, WAL checkpoint, leak verdict, budget guard). `tags: [plan, remediation, security, honesty, lifecycle, migrations, daw, video, ci]`
 - [Memory Management Audit 2026-11](memory-management-audit-2026-11.md) — measured memory baseline; ten findings (RSS vs footprint, 161 GiB MLX cache default, MPS watermark above RAM, unbounded pipeline cache, unbudgeted agent history, WAL growth); what shipped and Phase 10. `tags: [memory, audit, mlx, mps, unified-memory, agents, sqlite]`
-- [Performance Audit 2026-11](performance-audit-2026-11.md) — measured latency, boot, FFmpeg and bundle baseline; ten findings; what shipped (ETag/304, catalogue memo, thread cap); the popular-but-wrong moves rejected with evidence. `tags: [performance, audit, latency, sqlite, ffmpeg, fastapi, react, benchmarking]`
+- [Performance Audit 2026-11](performance-audit-2026-11.md) — measured latency, boot, FFmpeg and bundle baseline; ten findings; what shipped (ETag/304, catalogue memo, thread cap, lazy LLM SDKs); the popular-but-wrong moves rejected with evidence, plus the measured SQLite pragma table. `tags: [performance, audit, latency, sqlite, ffmpeg, fastapi, react, benchmarking]`
 - [Caveat Investigation 2026-11](caveat-investigation-2026-11.md) — what the Phase 8 caveats actually are: weights vs code vs decision, five verdicts with evidence, six new gaps (G11–G16), and the resulting order of work. `tags: [audit, caveats, video, lip-sync, licensing, ci, gaps]`
 - [Video Capability Landscape 2026-11](video-capability-landscape-2026-11.md) — what to adopt next: verified local `diffusers` 0.39 capabilities, 720p on Apple Silicon (Wan 2.2 5B), the singing-model tier ladder (EchoMimicV3-Flash first), upscaling/RIFE options, licence traps, and a 10-gap capability map. `tags: [video, research, models, lip-sync, upscaling, consistency, licensing]`
 - [Music Video Pipeline Audit 2026-11](music-video-pipeline-audit-2026-11.md) — video-specific audit: 41 findings across workflow, musical analysis, engines, delivery and UI, plus 4 tasks previously marked done that were not — **all remediated by Phase 7 on 2026-11-18**. `tags: [video, audit, music-video, pipeline, production, delivery, qc, reports]`
@@ -130,6 +130,8 @@ grouped by kind. Start at [overview](overview.md) for the synthesis, then drill 
 
 - [log](log.md) — chronological record of every ingest/query/lint operation.
 - [AGENTS.md](../AGENTS.md) — the schema governing this wiki.
+- [`docs/OPERATIONS.md`](../docs/OPERATIONS.md) — measured performance/memory knobs, telemetry and the licence gate.
+- [`docs/VIDEO_DELIVERY.md`](../docs/VIDEO_DELIVERY.md) — takes, presets, variants, QC, captions, manifest and the lip-sync ladder.
 
 ---
 

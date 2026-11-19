@@ -127,6 +127,48 @@ availability, licence and the reason it cannot run, and the render honours the
 choice. An unavailable engine falls back to the jaw-warp animatic **with the
 reason recorded on the task** — the request field used to be ignored entirely.
 
+### 4c. Takes, delivery, QC and manifests (2026-11-18)
+
+Everything after a master exists is non-destructive — see the operator guide
+[`docs/VIDEO_DELIVERY.md`](../../docs/VIDEO_DELIVERY.md).
+
+- **Takes** (`services/video/takes.py`) — each render is a row with its own master,
+  clip workspace and plan snapshot. `GET /videos/{job}/renders`,
+  `POST /videos/renders/{id}/select`, `DELETE /videos/renders/{id}`. Boot
+  reconciliation fails renders that died with the process; `sweep_stalled_renders`
+  fails any render older than `MILIMO_RENDER_STALL_SECONDS` (default 1 h).
+- **Delivery presets** (`services/video/export_presets.py`) — `default` (CRF 18,
+  −14 LUFS), `youtube_1080p` (8 Mbps), `youtube_2160p` (40 Mbps), `vevo_hd` (20 Mbps,
+  master loudness passed through), `canvas` (silent 9:16) and `broadcast_prores`
+  (ProRes 422 HQ, −23 LUFS). Served by `GET /videos/presets`.
+- **Cancellable exports** (`services/video/deliver.py`) — a worker-thread transcode
+  cannot see an asyncio cancel, so each export carries a `threading.Event`; cancelling
+  terminates FFmpeg (SIGKILL after 5 s) and removes the partial file.
+- **Aspect variants** — `POST /videos/{job}/variants` derives `16:9`, `9:16`, `1:1`,
+  `21:9` from one master by cropping, no second diffusion pass.
+- **QC gate** (`services/video/qc.py`) — black ≥0.10 s, freeze ≥0.05 s, silence
+  ≥0.10 s @ −50 dB, duration ±0.10 s, A/V start drift ≤0.05 s, loudness ±1.5 LU.
+  Thresholds are deliberately below FFmpeg's 2 s defaults, which miss the faults a
+  stitched render produces. Perceptual lip sync is explicitly **not** judged.
+- **Per-take report** (`GET /videos/{job}/report`) — cut list, delivery config,
+  caption sidecars and QC verdict, also written as `<stem>_report.json`.
+- **Portable manifest** (`core/artifact_manifest.py`, `GET /jobs/{job}/manifest.json`)
+  — seed, sampling parameters, verbatim prompt/lyrics, stage provenance, app version
+  and git commit, and every artifact with size + SHA-256. Missing facts are `null`,
+  never invented.
+
+### 4d. Capability matrix and plan/render agreement
+
+- `GET /videos/capability-matrix` (`services/video/capability.py`) reports the device
+  (`mps`/`cuda`/`cpu`), the usable interpolation backend and each engine's **effective**
+  resolution, duration and fps after clamping — what this machine will produce, not
+  what the model could do on a datacentre GPU.
+- Planning now accepts the same `character_id`, `consistency_mode` and `chain_scope` as
+  the render (plan 8.17), so the approved storyboard describes the performer that will
+  actually be rendered rather than a different person.
+- `GET /jobs/{job}/manifest.json` and the Studio Pack share one builder
+  (`build_manifest`), so the archive and the API never disagree.
+
 ## 5. Local-First MiniMax H3 33B Execution
 
 The platform supports local MiniMax Hailuo H3 weights (`pipenetwork__MiniMax-H3-MLX-8bit`, 35.3 GB):

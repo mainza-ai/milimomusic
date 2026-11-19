@@ -2,9 +2,9 @@
 title: Milimo Music — Architecture
 type: overview
 created: 2026-08-19
-updated: 2026-09-26
+updated: 2026-11-18
 sources: [sources/heartlib-bible.md, sources/readme.md, sources/v2-refactor-plan.md, sources/maestro-creative-studio.md]
-tags: [architecture, system, backend, frontend, minimax, yue2, mulacover, muscriptor, daw, director, timeline, autotune, queue]
+tags: [architecture, system, backend, frontend, minimax, yue2, mulacover, muscriptor, daw, director, timeline, autotune, queue, performance, memory, delivery]
 ---
 
 # Milimo Music — Architecture (v2 AI Production DAW)
@@ -90,6 +90,31 @@ Milimo Music orchestrates concurrent audio and video generative backbones using 
 - **OOM Interception & Self-Healing**: Catches allocation failures, flushes PyTorch caches, lowers safety coefficients by $0.10$, and emits self-healing telemetry.
 - **Sidecar Virtualenv Isolation**: [Sidecar Engine Manager](entities/sidecar-engine-manager.md) isolates conflicting neural dependencies under `backend/engines/<id>/.venv`.
 
+## Performance & Memory Discipline
+
+Tuning is **measured, not assumed**; full numbers live in
+[`docs/OPERATIONS.md`](../docs/OPERATIONS.md), the
+[Performance Audit](performance-audit-2026-11.md) and the
+[Memory Management Audit](memory-management-audit-2026-11.md).
+
+- **Request path**: static catalogues carry strong ETags (304 in 1.0–1.4 ms) and are
+  memoised (`/models/tree` 131 ms → 4 ms); the catalogue is warmed at boot.
+- **Boot**: lazy LLM SDK imports cut cold start 4.64 s → 3.83 s (2.46 s warm disk).
+- **Delivery encodes**: FFmpeg is thread-capped (`MILIMO_FFMPEG_THREADS`, default 4) and
+  the video encoder is picked by a runtime benchmark (x264 measured faster than
+  VideoToolbox per frame; VideoToolbox wins on core count).
+- **Memory truth**: macOS `phys_footprint` via `proc_pid_rusage`, never RSS — RSS read
+  30 MB where the footprint was 8 370 MB with 8 GiB of MLX live.
+- **Caps**: MLX cache `min(12 GiB, 10 % RAM)` (default was unbounded at 161 GiB) and MPS
+  fraction 0.6 (PyTorch's 1.7× high watermark exceeded physical RAM).
+- **One release path** (`memory.release()`): `del` alone never frees — MLX needs
+  `clear_cache`, `torch.mps` needs `empty_cache`.
+- **Growth detection**: the sweeper samples memory (~1/min), exposes a per-minute slope
+  and a leak verdict at `GET /system/memory/history`, and checkpoints the WAL with
+  `TRUNCATE` so the `-wal` file cannot grow without bound.
+- **Refusal over thrash**: a model larger than the recommended working set is rejected
+  with `507` and the real numbers instead of being loaded into swap.
+
 ## Durable Task Queue & Job Recovery
 - **Persistent SQLite Store**: Upgraded from transient memory dictionaries to [Durable Task Queue](entities/durable-task-queue.md).
 - **Asset Ownership Vault**: Copies input assets to dedicated job workspaces so external file moves cannot corrupt active jobs.
@@ -106,4 +131,6 @@ Milimo Music orchestrates concurrent audio and video generative backbones using 
 - [YuE2 48kHz Stereo](entities/yue2-music.md) | [Hardware Auto-Tune](concepts/hardware-autotune-memory-profiles.md)
 - [Durable Task Queue](entities/durable-task-queue.md) | [Global Hardware Coordinator](entities/hardware-coordinator.md)
 - [Audio Synthesis Standards](concepts/audio-synthesis-standards.md) | [Database Integrity Lifecycle](concepts/database-integrity-lifecycle.md)
+- [Music Video Delivery & QC Specs](concepts/music-video-delivery-specs.md) | [Session Reporting & Reproducibility](concepts/session-reporting-and-reproducibility.md)
+- [`docs/OPERATIONS.md`](../docs/OPERATIONS.md) | [`docs/VIDEO_DELIVERY.md`](../docs/VIDEO_DELIVERY.md)
 

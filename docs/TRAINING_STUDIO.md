@@ -1,6 +1,23 @@
-# Training Studio Guide
+# Training Studio Guide — SUPERSEDED
 
-The Training Studio allows you to fine-tune HeartMuLa music models with your own audio samples, creating custom styles that generate music reflecting your unique sound.
+> [!WARNING]
+> **This document describes a decommissioned feature.** The `/training/*` endpoints were
+> removed and the Training Studio UI is retired (decision **D1** in
+> [`wiki/decisions-2026-11.md`](../wiki/decisions-2026-11.md)). It is kept as a historical
+> record of the intended workflow, not as operating instructions.
+>
+> Why it went: MiniMax Music 3 is decoder-only, so the LoRA path HeartMuLa supported does
+> not apply to the default provider, and full fine-tuning did not fit in the available
+> memory. The architectural record lives in
+> [`wiki/entities/training-studio.md`](../wiki/entities/training-studio.md).
+>
+> Nothing below is reachable in the current UI or API. Installing a custom **style
+> adapter** that already exists is still supported through the Model Manager
+> (`wiki/entities/model-manager.md`).
+
+---
+
+The Training Studio allowed you to fine-tune HeartMuLa music models with your own audio samples, creating custom styles that generate music reflecting your unique sound.
 
 > [!NOTE]
 > The studio has been updated with a new **Glassmorphism** interface. It uses semi-transparent panels and vibrant cyan/purple gradients. If you see old white/solid styles, please refresh your browser.

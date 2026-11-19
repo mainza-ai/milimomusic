@@ -84,12 +84,15 @@ def normalise_clip(
         # Beat-synced exposure pulse, applied here instead of in a second encode.
         vf = f"{vf},{extra_vf}"
 
+    from app.services.video.export_presets import thread_args
+
     cmd = [
         "ffmpeg", "-y", "-loglevel", "error",
         "-i", src,
         "-an",
         "-vf", vf,
         "-c:v", "libx264", "-preset", "veryfast", "-crf", str(INTERMEDIATE_CRF),
+        *thread_args(),
         "-pix_fmt", "yuv420p", "-r", str(fps),
         str(dest),
     ]

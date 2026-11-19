@@ -13,7 +13,9 @@ import os
 import subprocess
 from typing import List, Optional, Tuple
 
-from app.services.video.export_presets import DeliveryPreset, video_args, audio_args, container_args, probe_streams
+from app.services.video.export_presets import (
+    DeliveryPreset, audio_args, container_args, probe_streams, thread_args, video_args,
+)
 
 logger = logging.getLogger("milimo.video.deliver")
 
@@ -90,6 +92,7 @@ def transcode(
     copy_aac = (src_streams.get("audio_codec") or "").lower() == "aac" and not apply_loudness
 
     cmd += video_args(preset)
+    cmd += thread_args()   # never saturate the machine during a background export
     cmd += audio_args(preset, source_is_aac=copy_aac)
     cmd += container_args(preset)
     if preset.id == "canvas":

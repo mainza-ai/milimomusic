@@ -3271,3 +3271,34 @@ Deliverable: [Caveat Investigation 2026-11](caveat-investigation-2026-11.md);
 Phase 8 extended to 19 rows (8/19 shipped, 1 partial) with 8.15–8.19 as the code gaps.
 Verification: **735 backend tests**, 38 frontend tests, ruff clean, licence gate
 advises-then-fails correctly, API parity green.
+
+## [2026-11-18] audit | Performance — measured baseline, then the wins that survive contact
+Measured before changing anything: cold import **4.64 s** (`app.main` 3.34 s, of which
+LLM SDK clients ~2.5 s and torch 0.81 s); `/models/tree` 131 ms and `/videos/models`
+**982 ms** cold (1.8 KB!); `get_model_tree()` **1 103 ms** on first filesystem touch;
+FFmpeg 180 s of 1080p24: **libx264 veryfast CRF 18 = 5.8 s / 5.7 MB** vs
+**h264_videotoolbox 8 Mbps = 11.1 s / 15 MB**; frontend entry 575 KB with views already
+lazy; 15 polling timers; 188 routes (167 sync).
+Findings and decisions:
+- **Compression is wrong on loopback.** gzip's break-even link speed (~400–860 Mbit/s)
+  is far below what the socket delivers, so it spends CPU to arrive later. The
+  middleware added earlier the same day is now **opt-in** (`MILIMO_COMPRESS=1`) with
+  streaming paths excluded — a plausible win reversed by evidence.
+- **Conditional GET matters for CPU, not bytes.** ETag/304 on the five expensive read
+  endpoints, keyed on *input state* (catalogue generation, device, env) rather than a
+  hash of the finished body.
+- **The catalogue scan was the real stall.** 15 s memo + generation counter + boot
+  warm-up: 1 103 ms → 4 ms warm, 304s in 1.1–1.4 ms.
+- **"Hardware encoder" was a misnomer here.** `detect_hardware_encoder` picked
+  VideoToolbox because it exists; measured, it is 1.9× slower and 2.6× larger than
+  x264 CRF 18. Its real win is cores (0.9 vs 6.0), so the policy belongs in Phase 9.5
+  rather than in an assumption.
+- **Encodes no longer saturate the machine**: `-threads 4` by default
+  (`MILIMO_FFMPEG_THREADS`).
+Deliverables: [Performance Audit 2026-11](performance-audit-2026-11.md) and
+[Phase 9 — Performance](application-remediation-plan-2026-11.md#phase-9--performance-2026-11-18)
+(12 tasks, 3 shipped). Rejected with evidence: more uvicorn workers, `aiosqlite`,
+`orjson`/`ORJSONResponse`, blanket compression, `content-visibility` without a measured
+intrinsic size.
+Verification: **751 backend tests** (+16 perf), 38 frontend tests, ruff clean, API parity
+green.

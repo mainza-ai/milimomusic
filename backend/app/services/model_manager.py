@@ -176,6 +176,34 @@ def resolve_hf_snapshot(repo_id: str, category: Optional[str] = None) -> Optiona
     return None
 
 
+#: `get_model_tree()` walks the models directory (~1.1 s cold on this machine) and is
+#: called by /models/tree, /videos/models and the licence audit. A short TTL removes
+#: the repeat scans; downloads and deletes bump the generation explicitly.
+_TREE_CACHE: Dict[str, Any] = {"at": 0.0, "data": None, "gen": 0}
+_TREE_TTL_ENV = "MILIMO_MODEL_TREE_TTL_SECONDS"
+_DEFAULT_TREE_TTL = 15.0
+
+
+def invalidate_model_tree() -> int:
+    """Drop the cached tree (call after a download, delete or activation)."""
+    _TREE_CACHE["data"] = None
+    _TREE_CACHE["at"] = 0.0
+    _TREE_CACHE["gen"] = int(_TREE_CACHE.get("gen", 0)) + 1
+    return _TREE_CACHE["gen"]
+
+
+def model_tree_generation() -> int:
+    """Cheap change token for ETags."""
+    return int(_TREE_CACHE.get("gen", 0))
+
+
+def _tree_ttl() -> float:
+    try:
+        return float(os.environ.get(_TREE_TTL_ENV, _DEFAULT_TREE_TTL))
+    except (TypeError, ValueError):
+        return _DEFAULT_TREE_TTL
+
+
 class ModelManager:
     _instance = None
     _active_model_id = "minimax_music3_bf16"
@@ -236,7 +264,26 @@ class ModelManager:
         )
 
     def get_model_tree(self) -> List[Dict[str, Any]]:
-        """Return full catalog of supported audio, image, and video models with local install state."""
+        """Return the catalogue with local install state, memoised for a few seconds.
+
+        The filesystem walk costs ~1.1 s cold and three read endpoints call it; a short
+        TTL removes the repeats. Anything that changes installations calls
+        `invalidate_model_tree()` so a download appears immediately.
+        """
+        import time as _time
+
+        now = _time.time()
+        cached = _TREE_CACHE.get("data")
+        if cached is not None and (now - float(_TREE_CACHE.get("at") or 0)) < _tree_ttl():
+            return cached
+
+        tree = self._build_model_tree()
+        _TREE_CACHE["data"] = tree
+        _TREE_CACHE["at"] = now
+        return tree
+
+    def _build_model_tree(self) -> List[Dict[str, Any]]:
+        """Uncached catalogue build (the expensive part)."""
         hw = self.detect_hardware()
         is_apple_silicon = (hw.os_name == "Darwin" and hw.architecture in ["arm64", "aarch64"])
 
@@ -733,6 +780,10 @@ class ModelManager:
         return active
 
     def set_active_model(self, model_id: str) -> Dict[str, Any]:
+        try:
+            invalidate_model_tree()
+        except Exception:
+            pass
         """Set the active model, persist selection to disk, and update runtime environment."""
         tree = self.get_model_tree()
         match = next((m for m in tree if m["id"] == model_id or m.get("repo_id") == model_id), None)
@@ -862,6 +913,10 @@ class ModelManager:
 
     def register_custom_model(self, repo_id: str, metadata: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Register a custom downloaded model from Hugging Face."""
+        try:
+            invalidate_model_tree()
+        except Exception:
+            pass
         custom_models = self._load_custom_models()
         existing = next((m for m in custom_models if m.get("repo_id") == repo_id), None)
         if existing:
@@ -991,6 +1046,10 @@ class ModelManager:
 
     def delete_custom_model(self, model_id_or_repo: str) -> bool:
         """Delete custom model from registry and disk (incl. models/<modality>/ roots)."""
+        try:
+            invalidate_model_tree()
+        except Exception:
+            pass
         custom_models = self._load_custom_models()
         target = next((m for m in custom_models if m["id"] == model_id_or_repo or m.get("repo_id") == model_id_or_repo), None)
         if not target:

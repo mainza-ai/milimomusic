@@ -137,11 +137,35 @@ def list_presets() -> list[Dict[str, Any]]:
     return [p.to_dict() for p in PRESETS.values()]
 
 
+#: x264 defaults to ~1.5× cores of threads and happily saturates the machine, which
+#: makes the editor unresponsive during a render. Measured: `-threads 4` keeps ~3
+#: cores busy and still encodes 1080p several times faster than realtime.
+FFMPEG_THREADS_ENV = "MILIMO_FFMPEG_THREADS"
+DEFAULT_FFMPEG_THREADS = 4
+
+
+def encoder_threads() -> int:
+    """Thread cap for our own encodes (0 disables the cap)."""
+    import os
+
+    try:
+        value = int(os.environ.get(FFMPEG_THREADS_ENV, DEFAULT_FFMPEG_THREADS))
+    except (TypeError, ValueError):
+        return DEFAULT_FFMPEG_THREADS
+    return max(0, min(32, value))
+
+
+def thread_args() -> list[str]:
+    threads = encoder_threads()
+    return ["-threads", str(threads)] if threads else []
+
+
 def video_args(preset: DeliveryPreset) -> list[str]:
     """Encoder arguments for the delivery encode."""
     args: list[str] = ["-c:v", preset.video_codec]
     if preset.video_codec == "libx264":
         args += ["-preset", preset.preset]
+        args += thread_args()
         if preset.video_bitrate:
             args += ["-b:v", preset.video_bitrate, "-maxrate", preset.video_bitrate,
                      "-bufsize", _double_bitrate(preset.video_bitrate)]

@@ -412,6 +412,19 @@ async def lifespan(app: FastAPI):
     from app.core import recovery as recovery_mod
     recovery_mod.recover_on_boot(engine)
 
+    # Warm the model catalogue in the background: the first /models/tree or
+    # /videos/models request otherwise pays a ~1.1 s filesystem scan (perf phase).
+    async def _warm_model_tree():
+        try:
+            from app.services.model_manager import model_manager as _mm
+
+            await asyncio.to_thread(_mm.get_model_tree)
+            logger.info("Model catalogue warmed")
+        except Exception as _warm_err:  # pragma: no cover - best effort
+            logger.debug(f"Model catalogue warm-up skipped: {_warm_err}")
+
+    asyncio.create_task(_warm_model_tree())
+
     # Render takes that were in flight when the process died (plan 7.28).
     try:
         from app.services.video import takes as _takes
@@ -525,6 +538,19 @@ app.add_middleware(SecurityGate)
 # Correlation id + one structured access line (added after SecurityGate so it runs
 # inside it: an unauthorised request is still logged with its id).
 app.add_middleware(RequestContextMiddleware)
+
+# Compression is OPT-IN: on loopback gzip's break-even link speed is far below what
+# the socket delivers, so it spends CPU to arrive later. Enable only for a LAN/remote
+# client (MILIMO_COMPRESS=1). Streaming paths are always excluded.
+from app.core.perf import (  # noqa: E402
+    SelectiveGZipMiddleware,
+    cached_json,
+    compression_enabled,
+    state_token,
+)
+
+if compression_enabled():
+    app.add_middleware(SelectiveGZipMiddleware, minimum_size=1024)
 
 app.add_middleware(
     CORSMiddleware,
@@ -739,9 +765,15 @@ def set_system_memory_policy(payload: Dict[str, Any] = Body(...)):
 # --- Model Management & Tree Endpoints ---
 
 @app.get("/models/tree")
-def get_model_tree():
-    """Return model tree with MiniMax Music 3, HeartMuLa, adapters, sizes and install states."""
-    return {"models": model_manager.get_model_tree()}
+def get_model_tree(request: Request):
+    """Return model tree with install states (memoised; ETag-friendly).
+
+    A 304 here saves both the 1 s scan and the client's parse + re-render.
+    """
+    from app.services.model_manager import model_tree_generation
+
+    payload = {"models": model_manager.get_model_tree()}
+    return cached_json(request, payload, token=state_token("tree", model_tree_generation()))
 
 
 @app.get("/models/capabilities")
@@ -783,12 +815,23 @@ def get_active_model_variant():
     }
 
 
+def _invalidate_model_tree() -> None:
+    """Installations changed: the cached catalogue and its ETag must follow."""
+    try:
+        from app.services.model_manager import invalidate_model_tree
+
+        invalidate_model_tree()
+    except Exception as _exc:  # pragma: no cover - defensive
+        logger.debug(f"Model tree invalidation skipped: {_exc}")
+
+
 @app.post("/models/select")
 def set_active_model_variant(body: ActiveModelRequest):
     """Set the active model variant (e.g., minimax_music3_bf16 vs mxfp4)."""
     model_id = body.model_id
     try:
         updated = model_manager.set_active_model(model_id)
+        _invalidate_model_tree()
         return {"status": "ok", "active_model": updated}
     except ValueError as e:
         raise HTTPException(status_code=400, detail=str(e))
@@ -1640,6 +1683,7 @@ async def start_model_download(payload: ModelDownloadRequest, background_tasks: 
             "local_dir": os.path.abspath(local_dir), "category": "audio",
             "category_source": "catalog", "error": "", "speed_mbps": 0.0,
         }
+        _invalidate_model_tree()
         _model_downloads[download_id] = rec
         cancel_event = threading.Event()
         _download_cancels[download_id] = cancel_event
@@ -1753,6 +1797,7 @@ def delete_custom_model(model_id: str):
     success = model_manager.delete_custom_model(model_id)
     if not success:
         raise HTTPException(status_code=404, detail=f"Custom model '{model_id}' not found.")
+    _invalidate_model_tree()
     return {"status": "deleted", "model_id": model_id}
 
 
@@ -1885,6 +1930,7 @@ def _model_download_worker(download_id: str, repo_id: str, local_dir: str, files
                     pass
         except Exception:
             pass
+        _invalidate_model_tree()
         try:
             meta = {"local_path": os.path.abspath(local_dir)}
             if category:
@@ -5609,10 +5655,13 @@ async def render_music_video(job_id: str, body: Optional[VideoRenderRequestModel
 
 
 @app.get("/videos/models")
-def get_video_models():
-    """Return catalog of available video models, physical duration limits, and local weights readiness."""
+def get_video_models(request: Request):
+    """Video model catalogue (derived from the model tree, so equally cacheable)."""
+    from app.services.model_manager import model_tree_generation
     from app.services.video_service import video_service
-    return video_service.get_available_video_models()
+
+    payload = video_service.get_available_video_models()
+    return cached_json(request, payload, token=state_token("video-models", model_tree_generation()))
 
 
 def _delete_video_side_artifacts(job_id: str) -> int:
@@ -5936,7 +5985,7 @@ def delete_character_endpoint(character_id: str):
 
 
 @app.get("/system/licences")
-def get_licence_audit():
+def get_licence_audit(request: Request):
     """Which models this build may legally ship — and which defaults block that.
 
     The catalogue has always recorded a licence per model and nothing read it. This
@@ -5944,9 +5993,15 @@ def get_licence_audit():
     unclassified) *and* reachable as a default (audit finding G8).
     """
     from app.core.licensing import audit_catalogue, collect_catalogue, resolve_effective_defaults
+    from app.services.model_manager import model_tree_generation
 
     report = audit_catalogue(collect_catalogue(), defaults=resolve_effective_defaults())
-    return {"status": "ok", **report}
+    return cached_json(
+        request,
+        {"status": "ok", **report},
+        token=state_token("licences", model_tree_generation(),
+                          os.environ.get("MILIMO_NONCOMMERCIAL_OK")),
+    )
 
 
 @app.get("/videos/lipsync-engines")
@@ -5964,7 +6019,7 @@ def list_lipsync_engines():
 
 
 @app.get("/videos/capability-matrix")
-def get_video_capability_matrix():
+def get_video_capability_matrix(request: Request):
     """What this machine will actually render per engine (plan 8.10).
 
     The clamp lives in the generator; this exposes it *before* a long render so the
@@ -5972,15 +6027,24 @@ def get_video_capability_matrix():
     """
     from app.services.video.capability import matrix
 
-    return {"status": "ok", **matrix()}
+    report = matrix()
+    return cached_json(
+        request, {"status": "ok", **report},
+        token=state_token("capability", report.get("device"),
+                          os.environ.get("MILIMO_RIFE_CMD"),
+                          os.environ.get("MILIMO_INTERP_MODE")),
+    )
 
 
 @app.get("/videos/presets")
-def list_video_presets():
-    """Delivery presets a render can target (plan 7.15)."""
+def list_video_presets(request: Request):
+    """Delivery presets a render can target (plan 7.15). Static, so cacheable."""
     from app.services.video.export_presets import list_presets
 
-    return {"status": "ok", "presets": list_presets()}
+    return cached_json(
+        request, {"status": "ok", "presets": list_presets()},
+        token=state_token("video-presets", "v1"), max_age=3600,
+    )
 
 
 @app.post("/videos/{job_id}/export/{preset_id}", status_code=202)

@@ -72,6 +72,14 @@ def _cache_pipeline(key: str, pipe: Any) -> None:
             _dispose_pipeline(old_pipe)
             logger.info("Evicted Wan pipeline %s from the cache (limit=%d)", old_key, limit)
     _WAN_PIPELINE_CACHE[key] = pipe
+    try:
+        # Peak memory is a lifetime maximum: reset it after a load so later readings
+        # describe this job rather than the biggest model ever loaded (plan 10.11).
+        from app.core.memory import reset_mlx_peak
+
+        reset_mlx_peak()
+    except Exception:
+        pass
 
 
 class DiffusersWanGenerator(BaseVideoGenerator):

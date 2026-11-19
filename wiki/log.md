@@ -3350,4 +3350,24 @@ Findings and fixes:
 Deliverables: [Memory Management Audit 2026-11](memory-management-audit-2026-11.md) and
 [Phase 10 — Memory](application-remediation-plan-2026-11.md#phase-10--memory-2026-11-18)
 (12 tasks, 6 shipped), cross-referenced with Phase 9.
-Verification: **787 backend tests**, 38 frontend tests, ruff clean, parity 187/191.
+Verification: **800 backend tests**, 38 frontend tests, ruff clean, parity 187/191.
+
+## [2026-11-18] implement | Execution pass — the code-feasible remainder of Phases 8–10
+Executed every remaining plan item that does not require downloading model weights.
+- **Phase 10 (11/12):** WAL checkpoint job in the sweeper (10.7); memory trend endpoint
+  with a per-minute slope and leak verdict (10.8); `/health` now reports fds, threads,
+  zombie children and footprint (10.10); MLX peak reset after each pipeline load (10.11);
+  and a **model budget guard** that refuses a download larger than the recommended working
+  set instead of swapping the machine (10.12).
+- **Phase 9 (8/12):** 9.8 measured rather than assumed — `scripts/bench_sqlite.py` shows
+  WAL + NORMAL winning and `cache_size` / `mmap_size` giving 0.93x / 0.97x, so they stay
+  unset with the numbers recorded.
+- **Phase 8 (11/19):** planning now resolves the same character the render uses (8.17);
+  delivery exports are genuinely cancellable — `deliver.transcode` runs under `Popen` with
+  a `threading.Event`, so a cancel kills FFmpeg and leaves no take (8.18); the licence
+  audit covers installed **dependencies**, not just the model catalogue (8.19).
+Verification: **800 backend tests**, 38 frontend tests, ruff clean, parity 188/192.
+Remaining and why: the weight-gated adoptions (8.2/8.5/8.7/8.8/8.11/8.14, 8.16) need
+tens of GB of checkpoints plus a hardware smoke test; SSE progress (9.6), list
+virtualisation (9.7) and the React Compiler (9.11) are product-surface work; per-agent
+memory namespaces (10.9) and the character-plate UI (8.15) are designed but not built.

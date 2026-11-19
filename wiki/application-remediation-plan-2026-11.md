@@ -36,12 +36,12 @@ re-verification (§Corrections) and 9 are deferred with reasons below.** Phase 7
 | **4 — Media truth** | ✅ **13/16** | clip duration/geometry normalisation, real timeline export, storyboard persistence, fal-only cloud, scoped cancel, subtitle escaping, temp hygiene, proxies, single fps, performer scoping, real audio analysis; 4.8 **closed by 7.10**, 4.2's reporting clause **closed by 7.3** (4.5 remains unverified without a live fal key) |
 | **5 — Platform & API** | 🟡 **9/12** | one error envelope, 202/201, typed bodies everywhere, idempotency, SSE replay + topics, rate limits by template, share links, accessible confirms |
 | **6 — Hardening** | ✅ **8/8** | CI lint/audit/migration-smoke/unit/E2E jobs, universal lockfile, `npm ci`, observability, log hygiene, capability matrix |
-| **10 — Memory** | 🟡 **6/12** | added 2026-11-18 from the [Memory Management Audit](memory-management-audit-2026-11.md); footprint telemetry, MLX/MPS caps, bounded pipeline cache, budgeted agent history, WAL limit and one release path shipped |
-| **9 — Performance** | 🟡 **7/12** | added 2026-11-18 from the [Performance Audit](performance-audit-2026-11.md); ETag/304 + catalogue memo + boot warm, thread cap, compression decision, lazy LLM SDKs, measured encoder choice, benchmark harness and parallel normalisation shipped |
-| **8 — Capability upgrades** | 🟡 **8/19** + 1 partial | added 2026-11-18 from the [Video Capability Landscape](video-capability-landscape-2026-11.md); verifier/reshoot, character library, external avatar tiers, licence gate, capability matrix, viseme timing, stall sweeper shipped — the weight-dependent adoptions are gated on smoke tests |
+| **10 — Memory** | 🟡 **11/12** | added 2026-11-18 from the [Memory Management Audit](memory-management-audit-2026-11.md); footprint telemetry, MLX/MPS caps, bounded pipeline cache, budgeted agent history, WAL limit and one release path shipped |
+| **9 — Performance** | 🟡 **8/12** | added 2026-11-18 from the [Performance Audit](performance-audit-2026-11.md); ETag/304 + catalogue memo + boot warm, thread cap, compression decision, lazy LLM SDKs, measured encoder choice, benchmark harness and parallel normalisation shipped |
+| **8 — Capability upgrades** | 🟡 **11/19** + 1 partial | added 2026-11-18 from the [Video Capability Landscape](video-capability-landscape-2026-11.md); verifier/reshoot, character library, external avatar tiers, licence gate, capability matrix, viseme timing, stall sweeper shipped — the weight-dependent adoptions are gated on smoke tests |
 | **7 — Music video production** | ✅ **29/29** | added 2026-11-18 from the [Music Video Pipeline Audit](music-video-pipeline-audit-2026-11.md); implemented and verified the same day, plus follow-ups 7.26–7.29 (consistency, lip-sync registry, render reconciliation, chain scope) |
 
-**Verification (2026-11-18, after Phase 10 groundwork):** backend `787 passed, 2 skipped,
+**Verification (2026-11-18, after the execution pass):** backend `800 passed, 2 skipped,
 3 deselected` (0 failures); frontend `38 vitest tests`;
 `tsc -b` + `vite build` green (entry 588 kB / 163 kB gz); `ruff` bug-class gate
 clean; API parity 178 routes / 182 client calls; Alembic at `0008`.
@@ -385,9 +385,9 @@ than silently degrading.
 | ✅ 8.9 | **Licence gate (shipped, CI-enforced).** `core/licensing.py` + `GET /system/licences` classify every model and report blockers (currently `flux_2_klein_9b`, `flux-non-commercial-license`). **8.9b:** CI fails when a reachable default is non-commercial/unknown unless explicitly acknowledged; **8.9c:** territory blocks (`EU/UK/US/South Korea` exclusions) become route-level checks, not prose. | `core/licensing.py`, CI, `.env.example`, avatar registry | A non-commercial or territory-blocked default cannot ship unnoticed |
 | 8.15 | **Attach a reference plate to a character (G14).** Creation from the UI sends only a description, so `has_plate` is false for every UI-created character and the verifier has nothing to compare against. | `VideoInspectorDock.tsx`, `MusicVideosView.tsx`, `characters.py` | A UI-created character carries a plate, and the verifier reports a real score |
 | 8.16 | **Reference-conditioned scene stills (G11).** `generate_scene_background(reference_images=[...])` plumbed to the image backend that supports it; honest "backend cannot condition" otherwise. | `services/image_service.py`, `video_orchestrator.py` | The character plate visibly influences the plate, not just the score |
-| 8.17 | **Plan/render config agreement (G12).** `/videos/plan` accepts `character_id`, `consistency_mode`, `chain_scope` and applies them, so the approved storyboard matches the render. | `VideoPlanParams`, `video_director.py`, `main.py` | Approving a storyboard then rendering produces the same scene descriptions |
-| 8.18 | **Real export cancellation (G13).** Run delivery transcodes as killable subprocesses; a cancelled export stops FFmpeg and leaves no take. | `services/video/deliver.py`, `main.py` | Cancelling an export stops CPU within 2 s and creates no take row |
-| 8.19 | **Dependency licence audit (G16).** Classify installed Python packages too, not just catalogue models. | `core/licensing.py`, `scripts/check_licences.py` | An InsightFace-class dependency appears in the gate output |
+| ✅ 8.17 | **Plan/render config agreement (G12).** `/videos/plan` accepts `character_id`, `consistency_mode`, `chain_scope` and applies them, so the approved storyboard matches the render. | `VideoPlanParams`, `video_director.py`, `main.py` | Approving a storyboard then rendering produces the same scene descriptions |
+| ✅ 8.18 | **Real export cancellation (G13).** Run delivery transcodes as killable subprocesses; a cancelled export stops FFmpeg and leaves no take. | `services/video/deliver.py`, `main.py` | Cancelling an export stops CPU within 2 s and creates no take row |
+| ✅ 8.19 | **Dependency licence audit (G16).** Classify installed Python packages too, not just catalogue models. | `core/licensing.py`, `scripts/check_licences.py` | An InsightFace-class dependency appears in the gate output |
 | ✅ 8.10 | **Video capability matrix** endpoint + UI: per engine, required VRAM/resolution/fps and measured status, so the ceiling is visible *before* a render. | `model_specs.py`, `/videos/models`, `VideoInspectorDock.tsx` | The picker states "720p needs CUDA" instead of failing after 40 minutes |
 | 8.11 | **Ground-truth the cloud path.** One real fal render with a key; refresh the price table from the provider's docs. | `pricing.py`, script | Estimate within 20% of the invoice; the path is no longer theoretical |
 | 8.12 | **Render stall sweeper.** ✅ shipped — `sweep_stalled_renders()` fails a take that has made no progress within `MILIMO_RENDER_STALL_SECONDS` (default 1 h), in the existing sweeper loop. | `services/video/takes.py`, `main.py` | A wedged render reaches a terminal state instead of showing progress forever |
@@ -413,6 +413,9 @@ belief with a measurement, and the four popular-but-wrong moves (more workers,
 > normalisation (9.10).
 > Measured: boot **4.64 s → 3.83 s**; model tree 1 103 ms → 4 ms; 304s 1.0–1.4 ms;
 > encoder benchmark picks x264 (0.21 s) over VideoToolbox (0.31 s) for 1 s of 1080p.
+> **9.8 shipped** as `scripts/bench_sqlite.py` (measured; knobs left unset because the
+> gain did not appear). Still open: SSE progress (9.6), list virtualisation (9.7) and
+> the React Compiler / parse budget (9.11) — all product-surface work.
 
 | ID | Task | Files | Acceptance |
 |---|---|---|---|
@@ -444,9 +447,12 @@ the same question. Everything here was measured before it was changed; the large
 finding (MLX's cache default exceeding physical RAM) came from reading the installed
 library rather than a blog.
 
-> **Status: 6/12.** Shipped: footprint telemetry + `/system/memory` (10.1), MLX/MPS
+> **Status: 11/12.** Shipped: footprint telemetry + `/system/memory` (10.1), MLX/MPS
 > caps (10.2), bounded Wan pipeline cache (10.3), budgeted agent history (10.4), WAL
-> size limit (10.5), and the single release path with opt-in cycle collection (10.6).
+> size limit (10.5), one release path (10.6), WAL checkpoint job (10.7), memory trend +
+> leak verdict (10.8), process hygiene in `/health` (10.10), peak reset per load (10.11)
+> and the model budget guard (10.12). Remaining: per-agent memory namespaces (10.9) —
+> a product feature, not plumbing.
 
 | ID | Task | Files | Acceptance |
 |---|---|---|---|
@@ -456,12 +462,12 @@ library rather than a blog.
 | ✅ 10.4 | **Budgeted agent history.** Character + message budget, system turn preserved, truncation reported to the caller. | new `core/agent_memory.py`, `main.py` | A 200-turn session cannot exceed the prompt budget; the response says what was dropped |
 | ✅ 10.5 | **WAL size limit.** `journal_size_limit=64 MiB` on the engine and the task queue. | `main.py`, `core/task_queue.py` | A long reader cannot grow the `-wal` file without bound |
 | ✅ 10.6 | **One release path.** `release()` clears MLX + MPS pools, reports footprint before/after, and collects cycles only when asked. | `core/memory.py`, `core/hardware_lock.py` | `gc.collect()` is gone from hot paths; a deprecated `mx.metal` call stays gone (test) |
-| 10.7 | **WAL checkpoint job + session hygiene.** Periodic `wal_checkpoint(TRUNCATE)`; audit for `Session` objects held across LLM/FFmpeg calls. | `core/task_queue.py`, `main.py` | The `-wal` file returns to ~4 MiB after a burst |
-| 10.8 | **Memory ring buffer + slope alarm.** Sample footprint/MLX/MPS per minute; flag a positive slope *at idle*. | new `core/memory_guard.py` | `/system/memory/history` shows a trend; a synthetic leak trips it |
+| ✅ 10.7 | **WAL checkpoint job + session hygiene.** Periodic `wal_checkpoint(TRUNCATE)`; audit for `Session` objects held across LLM/FFmpeg calls. | `core/task_queue.py`, `main.py` | The `-wal` file returns to ~4 MiB after a burst |
+| ✅ 10.8 | **Memory ring buffer + slope alarm.** Sample footprint/MLX/MPS per minute; flag a positive slope *at idle*. | new `core/memory_guard.py` | `/system/memory/history` shows a trend; a synthetic leak trips it |
 | 10.9 | **Per-agent memory namespaces.** Separate the critic's context from the songwriter's; distill durable facts instead of replaying turns. | `agents/runtime/context.py`, `agents/*` | One agent's 200 turns do not enter another's prompt |
-| 10.10 | **Process hygiene in `/health`.** fds, threads, zombie children; `-nostdin` + `wait()` audit for every FFmpeg spawn. | `main.py`, `services/video/*`, `transcription/*` | A zombie or fd leak is visible in the health payload |
-| 10.11 | **Peak reset per model load.** `reset_peak_memory()` after a load so peak describes one job, not the lifetime. | `core/memory.py`, generators | Peak readings stay interpretable across model swaps |
-| 10.12 | **Model budget guard.** Compare requested size against `max_recommended_working_set_size` and refuse with a reason instead of swapping. | `services/model_manager.py`, registry | Loading an 80 GB model on a 32 GB box fails fast with a stated reason |
+| ✅ 10.10 | **Process hygiene in `/health`.** fds, threads, zombie children; `-nostdin` + `wait()` audit for every FFmpeg spawn. | `main.py`, `services/video/*`, `transcription/*` | A zombie or fd leak is visible in the health payload |
+| ✅ 10.11 | **Peak reset per model load.** `reset_peak_memory()` after a load so peak describes one job, not the lifetime. | `core/memory.py`, generators | Peak readings stay interpretable across model swaps |
+| ✅ 10.12 | **Model budget guard.** Compare requested size against `max_recommended_working_set_size` and refuse with a reason instead of swapping. | `services/model_manager.py`, registry | Loading an 80 GB model on a 32 GB box fails fast with a stated reason |
 
 ### Phase 10 exit criteria
 

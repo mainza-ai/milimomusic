@@ -108,6 +108,16 @@ eight tests take 16 s, and the full suite 265 s. It is now **opt-in**
 (`MILIMO_MEMORY_GC=1`) and used only on model unload. Tensors are refcounted; cycles and
 framework pools are different problems.
 
+## 2b. Execution pass (same day)
+
+| Task | Shipped | Evidence |
+|---|---|---|
+| 10.7 | **WAL checkpoint job** — `checkpoint_wal()` runs in the sweeper loop, truncating and re-applying the 64 MiB limit | returns `(busy, log_frames, checkpointed)`; a blocked checkpoint is visible instead of hidden |
+| 10.8 | **Memory trend + leak verdict** — `GET /system/memory/history`, samples once a minute, slope per minute per channel | a synthetic +40 MB/min trend trips `leak_suspected` |
+| 10.10 | **Process hygiene in `/health`** — fds, threads, child/zombie counts, footprint | `/health` now answers "is a handle leaking?" |
+| 10.11 | **Peak reset per load** — `reset_mlx_peak()` after a pipeline is cached | peak readings describe one job, not the largest model ever loaded |
+| 10.12 | **Model budget guard** — download refuses a model larger than the recommended working set, with the number | `fits(10 TB)` refuses with "would swap" |
+
 ## 3. What shipped
 
 | Change | Evidence |

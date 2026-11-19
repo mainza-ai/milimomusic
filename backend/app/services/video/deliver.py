@@ -11,6 +11,8 @@ from __future__ import annotations
 import logging
 import os
 import subprocess
+import threading
+from typing import Dict
 from typing import List, Optional, Tuple
 
 from app.services.video.export_presets import (
@@ -18,6 +20,33 @@ from app.services.video.export_presets import (
 )
 
 logger = logging.getLogger("milimo.video.deliver")
+
+#: Export transcodes run in a worker thread; an asyncio cancel cannot reach them.
+#: A per-task threading.Event can, and the cancel endpoint sets it (plan 8.18).
+_CANCELS: Dict[str, threading.Event] = {}
+_CANCELS_LOCK = threading.Lock()
+
+
+def register_cancel(task_id: str) -> threading.Event:
+    event = threading.Event()
+    with _CANCELS_LOCK:
+        _CANCELS[task_id] = event
+    return event
+
+
+def cancel_task(task_id: str) -> bool:
+    """Signal a running export to stop. Returns False when it already finished."""
+    with _CANCELS_LOCK:
+        event = _CANCELS.get(task_id)
+    if not event:
+        return False
+    event.set()
+    return True
+
+
+def release_cancel(task_id: str) -> None:
+    with _CANCELS_LOCK:
+        _CANCELS.pop(task_id, None)
 
 ASPECT_SIZES = {
     "16:9": {720: (1280, 720), 1080: (1920, 1080), 2160: (3840, 2160)},
@@ -59,6 +88,7 @@ def transcode(
     mode: str = "crop",
     start: Optional[float] = None,
     duration: Optional[float] = None,
+    cancel_event: Optional[threading.Event] = None,
 ) -> bool:
     """Re-deliver `src` as `dest` for a preset. Returns False (with a log) on failure."""
     if not src or not os.path.isfile(src):
@@ -102,16 +132,38 @@ def transcode(
         cmd += ["-t", f"{float(duration):.3f}"]
     cmd += [dest]
 
+    # Popen + poll so a cancel actually stops FFmpeg instead of being cosmetic.
     try:
-        proc = subprocess.run(cmd, capture_output=True, timeout=3600)
+        proc = subprocess.Popen(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
     except (subprocess.SubprocessError, OSError) as exc:
         logger.warning("Export failed to start: %s", exc)
         return False
+
+    while proc.poll() is None:
+        if cancel_event is not None and cancel_event.is_set():
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:  # pragma: no cover - stubborn child
+                proc.kill()
+            try:
+                if os.path.isfile(dest):
+                    os.remove(dest)
+            except OSError:
+                pass
+            logger.info("Export %s cancelled", preset.id)
+            return False
+        try:
+            proc.wait(timeout=0.25)
+        except subprocess.TimeoutExpired:
+            continue
+
     if proc.returncode != 0 or not os.path.isfile(dest) or os.path.getsize(dest) == 0:
+        stderr = proc.stderr.read() if proc.stderr else b""
         logger.warning(
             "Export %s failed (%s): %s",
             preset.id, proc.returncode,
-            (proc.stderr or b"")[-400:].decode("utf-8", errors="ignore"),
+            stderr[-400:].decode("utf-8", errors="ignore"),
         )
         return False
     return True

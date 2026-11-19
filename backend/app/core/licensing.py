@@ -173,3 +173,47 @@ def resolve_effective_defaults() -> Dict[str, str]:
         logger.debug("Video default unresolved for licence audit: %s", exc)
 
     return defaults
+
+
+#: Packages whose *installed presence* is a licence consideration, independent of
+#: which model is selected. The audit's first finding was a dependency (InsightFace),
+#: which a model-only gate cannot see.
+_RESTRICTED_DISTRIBUTIONS = {
+    "insightface": "research-only models bundled with the package",
+    "wav2lip": "non-commercial (LRS2 training data)",
+    "sonic": "CC BY-NC-SA 4.0 (non-commercial)",
+    "realesrgan-ncnn-vulkan": "check per-model weights",
+    "ffmpeg-python": None,   # example of an entry with no restriction
+}
+
+
+def audit_dependencies() -> Dict[str, Any]:
+    """Report restricted packages that are actually installed (plan 8.19)."""
+    try:
+        from importlib.metadata import distributions
+    except Exception:  # pragma: no cover - Python < 3.8
+        return {"checked": 0, "flagged": []}
+
+    installed = {}
+    for dist in distributions():
+        try:
+            name = (dist.metadata["Name"] or "").strip().lower()
+        except Exception:
+            continue
+        if name:
+            installed[name] = dist.version
+
+    flagged = []
+    for name, reason in _RESTRICTED_DISTRIBUTIONS.items():
+        if name in installed and reason:
+            flagged.append({"package": name, "version": installed[name], "reason": reason})
+
+    return {
+        "checked": len(installed),
+        "flagged": flagged,
+        "ok": not flagged,
+        "note": (
+            "Dependency licences are independent of the model catalogue. A flagged "
+            "package is a notice, not a build failure."
+        ),
+    }

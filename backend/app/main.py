@@ -464,6 +464,21 @@ async def lifespan(app: FastAPI):
                         await asyncio.to_thread(_takes.sweep_stalled_renders, _s, render_stall)
                 except Exception as _render_sweep_err:  # pragma: no cover - defensive
                     logger.debug(f"Render stall sweep skipped: {_render_sweep_err}")
+
+                # Memory trend (plan 10.8) + WAL truncation (plan 10.7). Both are
+                # cheap and both answer "is something growing?".
+                try:
+                    from app.core.memory_guard import sample as _mem_sample
+
+                    await asyncio.to_thread(_mem_sample)
+                except Exception as _mem_sweep_err:  # pragma: no cover - defensive
+                    logger.debug(f"Memory sample skipped: {_mem_sweep_err}")
+                try:
+                    from app.core.storage_gc import checkpoint_wal as _checkpoint
+
+                    await asyncio.to_thread(_checkpoint)
+                except Exception as _wal_sweep_err:  # pragma: no cover - defensive
+                    logger.debug(f"WAL checkpoint skipped: {_wal_sweep_err}")
             except asyncio.CancelledError:
                 raise
             except Exception as _sweep_err:  # pragma: no cover - defensive
@@ -702,6 +717,9 @@ app.mount("/covers", RangedStaticFiles(directories=covers_dirs), name="covers")
 
 # --- Core & Health ---
 
+from app.core import memory  # noqa: E402  (used by /health and /system/memory)
+
+
 @app.get("/health")
 def health_check(response: Response):
     """Liveness + the three things an operator actually needs: DB, disk, queue."""
@@ -741,6 +759,13 @@ def health_check(response: Response):
         "active_provider": active_caps.provider_id,
         "display_name": active_caps.display_name,
         "version": active_caps.version,
+        # Process hygiene (plan 10.10): a zombie FFmpeg or a leaked pipe is visible
+        # here before it becomes a failure.
+        "process": memory.process_hygiene(),
+        "memory": {
+            "rss_mb": memory.process_stats().get("rss_mb"),
+            "footprint_mb": memory.process_stats().get("footprint_mb"),
+        },
     }
 
 
@@ -1748,6 +1773,24 @@ async def start_model_download(payload: ModelDownloadRequest, background_tasks: 
             raise HTTPException(status_code=409, detail={
                 "error": {"code": "download_in_progress",
                           "message": f"'{target_repo}' is already downloading (id {existing.get('id')})."}})
+
+    # Memory budget (plan 10.12): refusing with a reason beats swapping the machine
+    # into unresponsiveness. Only models above the *recommended working set* are refused.
+    try:
+        from app.core.memory import fits
+
+        budget = fits(total_bytes / (1024 * 1024))
+        if not budget["ok"]:
+            raise HTTPException(status_code=507, detail={"error": {
+                "code": "insufficient_memory",
+                "message": budget["reason"],
+                "budget_mb": budget.get("budget_mb"),
+                "required_mb": budget.get("required_mb"),
+            }})
+    except HTTPException:
+        raise
+    except Exception as _budget_err:
+        logger.debug(f"Memory budget check skipped: {_budget_err}")
 
     disk = shutil.disk_usage(models_dir)
     if total_bytes and disk.free < int(total_bytes * 1.1) + 512 * 1024 * 1024:
@@ -6017,6 +6060,17 @@ def get_memory_snapshot():
     return {"status": "ok", **snapshot()}
 
 
+@app.get("/system/memory/history")
+def get_memory_history(limit: int = 60):
+    """Memory trend and leak verdict (plan 10.8).
+
+    A snapshot cannot tell "large" from "leaking"; a positive slope while idle can.
+    """
+    from app.core.memory_guard import history, report
+
+    return {"status": "ok", "report": report(), "samples": history(limit)}
+
+
 @app.post("/system/memory/release")
 def release_memory_endpoint(reason: str = "manual"):
     """Drop cached accelerator memory (MLX pool, MPS allocator) on demand."""
@@ -6033,10 +6087,16 @@ def get_licence_audit(request: Request):
     reports the classification plus every model that is non-commercial (or
     unclassified) *and* reachable as a default (audit finding G8).
     """
-    from app.core.licensing import audit_catalogue, collect_catalogue, resolve_effective_defaults
+    from app.core.licensing import (
+        audit_catalogue,
+        audit_dependencies,
+        collect_catalogue,
+        resolve_effective_defaults,
+    )
     from app.services.model_manager import model_tree_generation
 
     report = audit_catalogue(collect_catalogue(), defaults=resolve_effective_defaults())
+    report["dependencies"] = audit_dependencies()
     return cached_json(
         request,
         {"status": "ok", **report},
@@ -6092,6 +6152,7 @@ def list_video_presets(request: Request):
 async def export_video_for_preset(job_id: str, preset_id: str, req: VideoExportRequest = Body(default=VideoExportRequest())):
     """Re-deliver the current master for a destination preset (plan 7.15)."""
     from app.services.video import takes as takes_service
+    from app.services.video import deliver as _deliver
     from app.services.video.deliver import size_for, transcode
     from app.services.video.export_presets import PRESETS, get_preset
     from app.services.video_service import VIDEO_DIR
@@ -6130,6 +6191,7 @@ async def export_video_for_preset(job_id: str, preset_id: str, req: VideoExportR
     from app.services.video.video_orchestrator import video_orchestrator as _orch
 
     _orch.begin_task(task_id, str(job_uuid), step=f"Exporting {preset.label}")
+    cancel_event = _deliver.register_cancel(task_id)
 
     async def _run_bg():
         try:
@@ -6138,6 +6200,7 @@ async def export_video_for_preset(job_id: str, preset_id: str, req: VideoExportR
                 width=width, height=height,
                 mode=req.mode or "crop",
                 start=req.start, duration=req.duration,
+                cancel_event=cancel_event,
             )
             if not ok:
                 raise RuntimeError("Export encode failed")
@@ -6175,6 +6238,8 @@ async def export_video_for_preset(job_id: str, preset_id: str, req: VideoExportR
         except Exception as exc:
             logger.error(f"Export failed for {job_id}: {exc}")
             _orch.end_task(task_id, status="error", error=str(exc)[:300])
+        finally:
+            _deliver.release_cancel(task_id)
 
     bg_task = asyncio.create_task(_run_bg())
     video_service = __import__("app.services.video_service", fromlist=["video_service"]).video_service
@@ -6384,6 +6449,19 @@ async def plan_music_video(job_id: str, req: VideoPlanRequest = Body(default=Vid
     use_llm = req.use_llm if req.use_llm is not None else True
     force_refresh = req.force_refresh if req.force_refresh is not None else False
 
+    # Plan 8.17: resolve the same character the render will use, so the approved
+    # storyboard and the rendered scenes describe one performer.
+    character_desc = req.character_desc
+    if req.character_id:
+        try:
+            from app.services.characters import resolve_for_render
+
+            with Session(engine) as _cs:
+                character = resolve_for_render(_cs, req.character_id)
+            character_desc = character.get("description") or character_desc
+        except Exception as _char_err:
+            logger.warning(f"Plan character {req.character_id} unresolved: {_char_err}")
+
     if req.async_mode:
         task_id = f"plan_{uuid.uuid4().hex[:10]}"
         asyncio.create_task(
@@ -6396,7 +6474,7 @@ async def plan_music_video(job_id: str, req: VideoPlanRequest = Body(default=Vid
                 visual_style=req.visual_style or "neon-cyberpunk",
                 custom_style_prompt=req.custom_style_prompt,
                 pacing_bias=req.pacing_bias or 0,
-                character_desc=req.character_desc,
+                character_desc=character_desc,
                 visible_cast=req.visible_cast,
                 user_scenes=req.scenes,
                 use_llm=use_llm,
@@ -6788,8 +6866,13 @@ def get_video_keyframes_endpoint(job_id: str):
 @app.post("/videos/tasks/{task_id}/cancel")
 def cancel_video_task_endpoint(task_id: str):
     """Cancel an active background music video rendering task."""
+    from app.services.video import deliver as _deliver
+
     from app.services.video_service import video_service
     ok = video_service.cancel_video_task(task_id)
+    # Exports run in a worker thread; their own event is the only thing that stops
+    # the FFmpeg child (plan 8.18).
+    ok = _deliver.cancel_task(task_id) or ok
     return {"status": "cancelled", "task_id": task_id, "ok": ok}
 
 

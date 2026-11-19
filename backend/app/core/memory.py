@@ -138,6 +138,36 @@ def torch_stats() -> Dict[str, Any]:
         return {}
 
 
+def process_hygiene() -> Dict[str, Any]:
+    """Cheap process-health counters for /health (plan 10.10).
+
+    A zombie FFmpeg holds no memory but a PID slot, and a leaked pipe shows up as
+    file-descriptor growth long before anything fails. Both are microseconds to read.
+    """
+    stats: Dict[str, Any] = {}
+    try:
+        import psutil
+
+        proc = psutil.Process(os.getpid())
+        children = proc.children(recursive=True)
+        zombies = 0
+        for child in children:
+            try:
+                if child.status() == psutil.STATUS_ZOMBIE:
+                    zombies += 1
+            except psutil.Error:
+                continue
+        stats.update({
+            "open_fds": proc.num_fds() if hasattr(proc, "num_fds") else len(proc.open_files()),
+            "threads": proc.num_threads(),
+            "children": len(children),
+            "zombie_children": zombies,
+        })
+    except Exception as exc:  # pragma: no cover - psutil optional
+        logger.debug("Process hygiene unavailable: %s", exc)
+    return stats
+
+
 def snapshot() -> Dict[str, Any]:
     """Everything the app can honestly report about its memory right now."""
     return {
@@ -145,6 +175,7 @@ def snapshot() -> Dict[str, Any]:
         "system": system_stats(),
         "mlx": mlx_stats(),
         "torch": torch_stats(),
+        "hygiene": process_hygiene(),
         "limits": {
             "mlx_cache_limit_env_mb": os.environ.get("MILIMO_MLX_CACHE_LIMIT_MB"),
         },
@@ -203,6 +234,74 @@ def configure_mlx_cache_limit() -> Optional[int]:
     except Exception as exc:
         logger.debug("Could not set the MLX cache limit: %s", exc)
         return None
+
+
+def resource_limits() -> Dict[str, Any]:
+    """The machine's real ceilings for accelerator work.
+
+    `max_recommended_working_set_size` is Apple's own guidance (84 % of RAM here) and
+    is a recommendation, not a wall — exceeding it means swap, not an exception, which
+    is why a budget check is the honest guard.
+    """
+    limits: Dict[str, Any] = {}
+    try:
+        import mlx.core as mx  # type: ignore
+
+        info = mx.device_info() if hasattr(mx, "device_info") else {}
+        if info:
+            limits["recommended_working_set_mb"] = _mb(info.get("max_recommended_working_set_size"))
+            limits["max_buffer_mb"] = _mb(info.get("max_buffer_length"))
+            limits["total_mb"] = _mb(info.get("memory_size"))
+    except Exception:
+        pass
+    if "recommended_working_set_mb" not in limits:
+        try:
+            import torch
+
+            if hasattr(torch.mps, "recommended_max_memory"):
+                limits["recommended_working_set_mb"] = _mb(torch.mps.recommended_max_memory())
+        except Exception:
+            pass
+    if "total_mb" not in limits:
+        try:
+            import psutil
+
+            limits["total_mb"] = round(psutil.virtual_memory().total / _MB, 1)
+        except Exception:
+            pass
+    return limits
+
+
+def fits(required_mb: float, *, headroom_mb: float = 8 * 1024) -> Dict[str, Any]:
+    """Whether a `required_mb` model can load without relying on swap."""
+    limits = resource_limits()
+    budget = limits.get("recommended_working_set_mb") or limits.get("total_mb")
+    if not budget:
+        return {"ok": True, "reason": "limit unknown", "budget_mb": None}
+    available = float(budget) - max(0.0, headroom_mb)
+    ok = float(required_mb) <= available
+    return {
+        "ok": ok,
+        "budget_mb": round(available, 1),
+        "required_mb": round(float(required_mb), 1),
+        "reason": None if ok else (
+            f"needs ~{required_mb/1024:.1f} GB but only ~{available/1024:.1f} GB is "
+            f"usable on this machine; loading it would swap"
+        ),
+    }
+
+
+def reset_mlx_peak() -> bool:
+    """Reset MLX's lifetime peak so the next reading describes one job (plan 10.11)."""
+    try:
+        import mlx.core as mx  # type: ignore
+
+        if hasattr(mx, "reset_peak_memory"):
+            mx.reset_peak_memory()
+            return True
+    except Exception:
+        pass
+    return False
 
 
 def configure_mps_memory_fraction(fraction: Optional[float] = None) -> Optional[float]:

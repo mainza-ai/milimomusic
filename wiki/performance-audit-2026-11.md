@@ -124,6 +124,23 @@ high-frequency React state (playhead/scrub) and long lists — not chunk size.
 | **Benchmark harness** (9.9) — `scripts/bench_api.py`, `--write-baseline` / `--compare` (ratio-based, 50 % tolerance) + a report-only CI job | warm reads **1.1–1.4 ms**, 304s **1.0–1.2 ms**; JS bundle trackable alongside |
 | **Parallel clip normalisation** (9.10) — bounded pool (`MILIMO_NORMALISE_CONCURRENCY`, default 2), order preserved for the stitcher | 5 clips normalise in ~1/3 of serial wall time in the harness test |
 
+## 2c. SQLite knobs, measured (9.8)
+
+`scripts/bench_sqlite.py` runs 20 000 writes and a point read under each pragma set:
+
+```
+config                  writes/s  point read   wal KB
+defaults                 1657968       0.06ms      0.0
+wal+normal               1795500       0.03ms   1665.7
+wal+normal+limit         1731645       0.03ms   1665.7
+wal+normal+cache64       1661078       0.06ms   1665.7
+wal+normal+mmap256       1732933       0.04ms   1665.7
+```
+
+**Verdict:** WAL + `synchronous=NORMAL` is the win; `cache_size` (0.93×) and `mmap_size`
+(0.97×) are noise or worse on this workload. They stay **unset** — with the numbers
+recorded so nobody "tunes" them back in later.
+
 ## 3. What shipped in this pass
 
 | Change | Evidence |

@@ -401,6 +401,11 @@ class VideoPlanRequest(SQLModel):
     pacing_bias: Optional[int] = 0
     visible_cast: Optional[List[str]] = None
     character_desc: Optional[str] = None
+    # Plan 8.17: planning must see the same performer the render will use, or the
+    # storyboard the user approves describes a different person.
+    character_id: Optional[str] = None
+    consistency_mode: Optional[str] = "character"
+    chain_scope: Optional[str] = "section"
     scenes: Optional[List[Dict[str, Any]]] = None
     use_llm: Optional[bool] = True
     force_refresh: Optional[bool] = False

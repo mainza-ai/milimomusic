@@ -64,6 +64,17 @@ def run() -> int:
         )
         return 1
 
+    try:
+        from app.core.licensing import audit_dependencies
+
+        deps = audit_dependencies()
+        for entry in deps["flagged"]:
+            print(f"  [DEP] {entry['package']} {entry['version']}: {entry['reason']}")
+        if deps["flagged"]:
+            print(f"licence-gate: {len(deps['flagged'])} restricted package(s) installed (notice only)")
+    except Exception as _dep_err:  # pragma: no cover - defensive
+        print(f"licence-gate: dependency audit skipped ({_dep_err})")
+
     print("licence-gate: OK" + (" (non-commercial deployment acknowledged)" if soft else ""))
     return 0
 

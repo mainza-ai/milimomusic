@@ -1962,6 +1962,14 @@ export const systemApi = {
         const res = await axios.get(`${API_BASE_URL}/system/memory`);
         return res.data;
     },
+    /** Memory trend + leak verdict (plan 10.8). */
+    getMemoryHistory: async (limit: number = 60): Promise<{
+        report: { leak_suspected: boolean; slope_per_min: Record<string, number | null>; latest: any };
+        samples: Array<Record<string, number>>;
+    }> => {
+        const res = await axios.get(`${API_BASE_URL}/system/memory/history`, { params: { limit } });
+        return res.data;
+    },
     /** Drop cached accelerator memory (MLX pool, MPS allocator). */
     releaseMemory: async (): Promise<{ status: string; cleared: string[]; before?: number; after?: number }> => {
         const res = await axios.post(`${API_BASE_URL}/system/memory/release`);

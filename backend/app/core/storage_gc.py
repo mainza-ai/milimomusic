@@ -158,6 +158,37 @@ def prune_generated_media(engine=None, retention_days: Optional[int] = None) -> 
     return removed
 
 
+def checkpoint_wal() -> dict:
+    """Checkpoint and truncate the WAL (plan 10.7).
+
+    A checkpoint only makes WAL space *reusable*; the file shrinks only with
+    `TRUNCATE` (or `journal_size_limit`). One long-lived reader blocks checkpoints
+    entirely, which is how a 1 GB `-wal` file happens on a single-user app.
+    """
+    from app.core.paths import get_data_dir
+
+    result: dict = {}
+    try:
+        from app.main import engine  # local import: main owns the engine
+
+        with engine.connect() as conn:
+            row = conn.exec_driver_sql("PRAGMA wal_checkpoint(TRUNCATE);").fetchone()
+            conn.exec_driver_sql("PRAGMA journal_size_limit=67108864;")
+        if row:
+            # (busy, log_frames, checkpointed_frames) — busy=1 means a reader won.
+            result = {"busy": int(row[0]), "log_frames": int(row[1]), "checkpointed": int(row[2])}
+    except Exception as exc:
+        logger.debug("WAL checkpoint skipped: %s", exc)
+    wal = get_data_dir()
+    for candidate in wal.glob("*.db-wal"):
+        try:
+            result.setdefault("wal_bytes", 0)
+            result["wal_bytes"] += candidate.stat().st_size
+        except OSError:
+            continue
+    return result
+
+
 def disk_status() -> dict:
     """Free-space gauge for /health and for refusing new jobs on a full disk."""
     import shutil as _shutil
